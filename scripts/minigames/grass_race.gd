@@ -792,6 +792,16 @@ func _build_rivals() -> void:
 			"yaw": 180.0,
 		}
 		rival.add_child(VehicleVisual.build(entry))
+		var body := StaticBody3D.new()
+		body.collision_layer = 8
+		body.collision_mask = 0
+		var shape := CollisionShape3D.new()
+		var box := BoxShape3D.new()
+		box.size = Vector3(1.7, 1.2, 2.2)
+		shape.shape = box
+		shape.position = Vector3(0.0, 0.65, 0.0)
+		body.add_child(shape)
+		rival.add_child(body)
 		var label := Label3D.new()
 		label.text = RIVAL_NAMES[i]
 		label.font = load(TITLE_FONT)

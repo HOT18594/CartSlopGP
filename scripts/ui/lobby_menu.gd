@@ -48,6 +48,8 @@ var _lan_row: HBoxContainer
 var _lan_code_label: Label
 var _copy_lan_button: Button
 var _advanced_open: bool = false
+var _browse_button: Button
+var _lobby_list: VBoxContainer
 var _session_state: String = "idle"
 
 
@@ -148,6 +150,17 @@ func _build_session_controls() -> void:
 	_game_hint.add_theme_color_override("font_color", UiPalette.BLUE_DARK)
 	_game_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_game_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+
+	# Browse public rooms advertised by the Pi server.
+	var join_row: HBoxContainer = $Center/Panel/Body/JoinBox/JoinRow
+	_browse_button = _candy("BROWSE", UiPalette.CYAN, 52, 16)
+	_browse_button.custom_minimum_size = Vector2(124, 52)
+	_browse_button.pressed.connect(_on_browse_pressed)
+	join_row.add_child(_browse_button)
+	_lobby_list = VBoxContainer.new()
+	_lobby_list.add_theme_constant_override("separation", 4)
+	_lobby_list.visible = false
+	$Center/Panel/Body/JoinBox.add_child(_lobby_list)
 
 	body.add_child(_game_row)
 	body.add_child(_bots_row)
@@ -303,6 +316,7 @@ func _set_mode(mode: String) -> void:
 
 func _on_host_pressed() -> void:
 	_commit_name()
+	_clear_lobby_list()
 	_host_button.disabled = true
 	_set_session_state("host")
 	_host_status.text = "Opening a port (routers can take a moment)..."
@@ -326,8 +340,8 @@ func _on_host_started(code: String) -> void:
 	_start_button.visible = true
 	_copy_button.visible = true
 	_code_label.text = code
-	_lan_row.visible = _mode == MODE_ONLINE and Network.online_code != "" \
-		and Network.lan_code != ""
+	_lan_row.visible = not Network.relay_active and _mode == MODE_ONLINE \
+		and Network.online_code != "" and Network.lan_code != ""
 	_lan_code_label.text = "LAN: " + Network.lan_code
 	if Network.relay_active:
 		_host_status.text = "Online via the Cart Slop Pi server - share this code." \
@@ -372,6 +386,42 @@ func _on_start_pressed() -> void:
 		mode)
 
 
+func _on_browse_pressed() -> void:
+	_browse_button.disabled = true
+	_join_status.visible = true
+	_join_status.text = "Looking for rooms..."
+	var lobbies: Array = await Network.fetch_lobbies()
+	_clear_lobby_list()
+	if lobbies.is_empty():
+		_join_status.text = "No lobby server or rooms found. Host a game first."
+		_browse_button.disabled = false
+		return
+	_lobby_list.visible = true
+	for entry: Variant in lobbies:
+		if not (entry is Dictionary):
+			continue
+		var lobby: Dictionary = entry as Dictionary
+		var code: String = str(lobby.get("room_code", ""))
+		if code == "":
+			continue
+		var label: String = "%s  ·  %d player%s  ·  %s" % [
+			str(lobby.get("name", "HOST")), int(lobby.get("players", 1)),
+			"" if int(lobby.get("players", 1)) == 1 else "s", code]
+		var button: Button = _candy(label, UiPalette.YELLOW, 38, 15)
+		button.pressed.connect(func() -> void:
+			_join_input.text = code
+			_on_join_pressed())
+		_lobby_list.add_child(button)
+	_browse_button.disabled = false
+	_join_status.text = "Pick a room or type its code."
+
+
+func _clear_lobby_list() -> void:
+	for child: Node in _lobby_list.get_children():
+		child.queue_free()
+	_lobby_list.visible = false
+
+
 func _on_join_pressed() -> void:
 	_commit_name()
 	var code: String = _join_input.text.strip_edges()
@@ -397,6 +447,7 @@ func _on_join_failed(reason: String) -> void:
 
 
 func _on_join_succeeded() -> void:
+	_clear_lobby_list()
 	_set_session_state("client")
 	_start_button.visible = false
 	_copy_button.visible = false

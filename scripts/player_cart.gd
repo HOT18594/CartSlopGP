@@ -178,7 +178,8 @@ func setup_remote(peer_id: int) -> void:
 	name = "Remote_%d" % peer_id
 	remove_from_group("player")
 	add_to_group("remote_player")
-	collision_layer = 0
+	collision_layer = 8
+	collision_mask = 0
 	set_physics_process(false)
 	set_process(true)
 	if _push_sensor != null:
@@ -647,7 +648,7 @@ func _sample_wheel_supports() -> void:
 	for i in 4:
 		var origin: Vector3 = base + global_transform.basis * offsets[i] + Vector3.UP * ground_probe_height
 		var query: PhysicsRayQueryParameters3D = PhysicsRayQueryParameters3D.create(
-			origin, origin + Vector3.DOWN * ground_probe_length, collision_mask, [get_rid()])
+			origin, origin + Vector3.DOWN * ground_probe_length, 1, [get_rid()])
 		query.collide_with_areas = false
 		var hit: Dictionary = space_state.intersect_ray(query)
 		_ground_support[i] = false

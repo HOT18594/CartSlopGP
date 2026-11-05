@@ -18,6 +18,8 @@ import threading
 import time
 import urllib.request
 import uuid
+import secrets
+import string
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 HTTP_PORT = int(os.environ.get("CARTSLOP_HTTP_PORT", "42777"))
@@ -26,12 +28,14 @@ RELAY_BASE = int(os.environ.get("CARTSLOP_RELAY_BASE", "42800"))
 RELAY_COUNT = int(os.environ.get("CARTSLOP_RELAY_COUNT", "20"))
 LOBBY_TTL = 75.0
 CLIENT_TTL = 90.0
-VERSION = "1.0.0"
+VERSION = "1.1.0"
+ROOM_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 LOCK = threading.Lock()
 LOBBIES: dict[str, "Lobby"] = {}
 USED_PORTS: set[int] = set()
+ROOM_CODES: set[str] = set()
 STARTED = time.time()
 LAN_IP = "127.0.0.1"
 PUBLIC_IP = ""
@@ -226,8 +230,9 @@ class Relay:
 
 
 class Lobby:
-    def __init__(self, token: str, name: str, host_ip: str, host_port: int, relay_port: int) -> None:
+    def __init__(self, token: str, room_code: str, name: str, host_ip: str, host_port: int, relay_port: int) -> None:
         self.token = token
+        self.room_code = room_code
         self.name = name
         self.host_ip = host_ip
         self.host_port = host_port
@@ -240,6 +245,7 @@ class Lobby:
     def snapshot(self, include_private: bool = False) -> dict:
         data = {
             "name": self.name,
+            "room_code": self.room_code,
             "relay_port": self.relay_port,
             "players": max(self.clients, 1),
             "age": int(time.time() - self.created),
@@ -257,7 +263,27 @@ class Lobby:
         self.relay.stop()
         with LOCK:
             USED_PORTS.discard(self.relay_port)
+            ROOM_CODES.discard(self.room_code)
             LOBBIES.pop(self.token, None)
+
+
+def allocate_room_code() -> str:
+    with LOCK:
+        for _ in range(1000):
+            code = "".join(secrets.choice(ROOM_ALPHABET) for _ in range(5))
+            if code not in ROOM_CODES:
+                ROOM_CODES.add(code)
+                return code
+    return ""
+
+
+def find_lobby_by_code(code: str) -> "Lobby | None":
+    normalized = re.sub(r"[^A-Z0-9]", "", str(code).upper())
+    with LOCK:
+        for lobby in LOBBIES.values():
+            if lobby.room_code == normalized:
+                return lobby
+    return None
 
 
 def allocate_relay_port() -> int | None:
@@ -344,6 +370,13 @@ class Handler(BaseHTTPRequestHandler):
             with LOCK:
                 lobbies = [lobby.snapshot() for lobby in LOBBIES.values()]
             self._json({"lobbies": lobbies})
+        elif path.startswith("/api/room/"):
+            code = path.rsplit("/", 1)[-1]
+            lobby = find_lobby_by_code(code)
+            if lobby is None:
+                self._json({"error": "room not found"}, 404)
+            else:
+                self._json(lobby.snapshot())
         elif path == "/api/events":
             self._sse()
         elif path == "/favicon.ico":
@@ -377,17 +410,24 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"error": "all relay ports are busy"}, 503)
             return
         token = uuid.uuid4().hex
+        room_code = allocate_room_code()
+        if room_code == "":
+            with LOCK:
+                USED_PORTS.discard(relay_port)
+            self._json({"error": "could not allocate room code"}, 503)
+            return
         name = sanitize_name(data.get("name", ""))
         host_ip = self.client_address[0]
-        lobby = Lobby(token, name, host_ip, host_port, relay_port)
+        lobby = Lobby(token, room_code, name, host_ip, host_port, relay_port)
         with LOCK:
             LOBBIES[token] = lobby
         ensure_port_mapped(relay_port, "UDP")
         if not PUBLIC_IP:
             refresh_public_ip()
-        print("LOBBY OPEN %s %s:%d -> relay %d" % (name, host_ip, host_port, relay_port), flush=True)
+        print("LOBBY OPEN %s %s:%d -> relay %d code %s" % (name, host_ip, host_port, relay_port, room_code), flush=True)
         self._json({
             "token": token,
+            "room_code": room_code,
             "relay_port": relay_port,
             "lan_host": LAN_IP,
             "public_host": PUBLIC_IP,

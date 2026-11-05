@@ -59,8 +59,8 @@ footer{padding:12px 32px 28px;color:#7c84a8;font-size:12px;text-align:center}
   <div id="lobbies" class="empty">No lobbies yet. Host a game from the PC.</div>
   <div class="help">
     <div class="card"><b>1 · Start the server</b><br>The Pi starts it on boot. Open <code id="url">http://cartslop.local:42777</code> from any device on the Wi-Fi.</div>
-    <div class="card"><b>2 · Host on the PC</b><br>In the game choose MULTIPLAYER → HOST. The game registers with the Pi automatically and shows a join code.</div>
-    <div class="card"><b>3 · Friends join</b><br>Paste the join code in MULTIPLAYER → JOIN. Traffic goes PC → Pi → friend, so the host needs no port forwarding.</div>
+    <div class="card"><b>2 · Host on the PC</b><br>In the game choose MULTIPLAYER → HOST. The game registers with the Pi automatically and shows a short room code.</div>
+    <div class="card"><b>3 · Friends join</b><br>Paste the 5-character room code in MULTIPLAYER → JOIN, or open <b>BROWSE</b> in the lobby. Traffic goes PC → Pi → friend.</div>
     <div class="card"><b>Router note</b><br>For internet friends the Pi's ports must be reachable. UPnP is attempted automatically; otherwise forward TCP 42777 and UDP 42800–42819.</div>
   </div>
 </main>
@@ -101,14 +101,13 @@ function render(s){
   $("lobbies").className="";
   let rows=lobbies.map((l)=>{
     const lan=l.lan_host||s.lan_ip, pub=l.public_host||s.public_ip;
-    const code=encodeCode(pub||lan,l.relay_port);
-    const lanCode=encodeCode(lan,l.relay_port);
+    const code=l.room_code||encodeCode(pub||lan,l.relay_port);
     return `<tr>
       <td><b>${escapeHtml(l.name||"HOST")}</b></td>
       <td>${l.players||1} player${(l.players||1)===1?"":"s"}</td>
       <td>${Math.floor((l.age||0)/60)}m</td>
       <td class="code">${code||"—"}</td>
-      <td>${pub?`<button data-copy="${code}" data-label="COPY CODE">COPY CODE</button>`:`<button data-copy="${lanCode}" data-label="COPY LAN CODE">COPY LAN CODE</button>`}</td>
+      <td><button data-copy="${code}" data-label="COPY CODE">COPY CODE</button></td>
     </tr>`;
   }).join("");
   $("lobbies").innerHTML=`<table class="table"><thead><tr><th>HOST</th><th>PLAYERS</th><th>AGE</th><th>JOIN CODE</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;

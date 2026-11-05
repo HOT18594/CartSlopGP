@@ -56,6 +56,7 @@ var relay_port: int = 0
 var relay_lan_host: String = ""
 var relay_public_host: String = ""
 var relay_active: bool = false
+var relay_room_code: String = ""
 
 ## Host-chosen configuration, broadcast with _net_begin_game so every peer
 ## loads the same world with the same bots. Clients never write these locally.
@@ -166,7 +167,10 @@ func host_game(mode: String = "online") -> void:
 				lan_code = encode_address(relay_lan_host, relay_port)
 				if relay_public_host != "":
 					online_code = encode_address(relay_public_host, relay_port)
-				join_code = online_code if online_code != "" else lan_code
+				if relay_room_code != "":
+					join_code = relay_room_code
+				else:
+					join_code = online_code if online_code != "" else lan_code
 				public_address = relay_public_host if relay_public_host != "" else relay_lan_host
 		if not relay_active:
 			if _valid_ip(custom_public_ip):
@@ -270,6 +274,36 @@ func _relay_post(path: String, payload: Dictionary) -> Dictionary:
 	return {}
 
 
+func _relay_get(path: String) -> Dictionary:
+	if relay_base == "":
+		return {}
+	var http := HTTPRequest.new()
+	http.timeout = 6.0
+	add_child(http)
+	var error: Error = http.request(relay_base + path, [], HTTPClient.METHOD_GET)
+	if error != OK:
+		http.queue_free()
+		return {}
+	var response: Array = await http.request_completed
+	http.queue_free()
+	if int(response[1]) != 200:
+		return {}
+	var parsed: Variant = JSON.parse_string((response[3] as PackedByteArray).get_string_from_utf8())
+	if parsed is Dictionary:
+		return parsed as Dictionary
+	return {}
+
+
+func fetch_lobbies() -> Array:
+	if not await _discover_relay():
+		return []
+	var response: Dictionary = await _relay_get("/api/lobbies")
+	var lobbies: Variant = response.get("lobbies", [])
+	if lobbies is Array:
+		return lobbies as Array
+	return []
+
+
 func _register_relay(local_port: int) -> bool:
 	var response: Dictionary = await _relay_post("/api/register", {
 		"name": GameSettings.player_name,
@@ -278,6 +312,7 @@ func _register_relay(local_port: int) -> bool:
 	if response.is_empty():
 		return false
 	relay_token = str(response.get("token", ""))
+	relay_room_code = str(response.get("room_code", ""))
 	relay_port = int(response.get("relay_port", 0))
 	relay_lan_host = str(response.get("lan_host", relay_lan_ip))
 	relay_public_host = str(response.get("public_host", ""))
@@ -491,10 +526,31 @@ func name_of(peer_id: int) -> String:
 
 
 func join_game(raw_code: String) -> void:
-	var address: Dictionary = decode_address(raw_code)
+	var text: String = raw_code.strip_edges()
+	var address: Dictionary = decode_address(text)
 	if address.is_empty():
-		join_failed.emit("That code is not valid. Check all 14 characters.")
-		return
+		var short: String = text.to_upper().replace(" ", "")
+		if short.length() < 4 or short.length() > 6:
+			join_failed.emit("That code is not valid. Use a 5-character room code or an address.")
+			return
+		for character: String in short:
+			if not "ABCDEFGHJKLMNPQRSTUVWXYZ23456789".contains(character):
+				join_failed.emit("Room codes use letters and numbers only.")
+				return
+		join_status_changed.emit("Looking up room %s..." % short)
+		if not await _discover_relay():
+			join_failed.emit("Lobby server not found. Use the full code or connect to the same Wi-Fi.")
+			return
+		var room: Dictionary = await _relay_get("/api/room/" + short)
+		if room.is_empty():
+			join_failed.emit("Room %s was not found. Ask the host for a fresh code." % short)
+			return
+		var host: String = str(room.get("lan_host", ""))
+		var relay_port: int = int(room.get("relay_port", 0))
+		if host == "" or relay_port <= 0:
+			join_failed.emit("Room %s has no relay port." % short)
+			return
+		address = {"ip": host, "port": relay_port}
 	leave()
 	join_status_changed.emit("Connecting to %s:%d..." % [address["ip"], address["port"]])
 	var peer := ENetMultiplayerPeer.new()
@@ -535,6 +591,7 @@ func leave() -> void:
 	relay_port = 0
 	relay_lan_host = ""
 	relay_public_host = ""
+	relay_room_code = ""
 	relay_base = ""
 	public_address = ""
 	latency_ms = 0

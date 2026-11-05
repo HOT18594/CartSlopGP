@@ -98,9 +98,17 @@ func _setup_bots() -> void:
 		return
 	var entries: Array[Dictionary] = VehicleCatalog.all()
 	for i in count:
-		var node := Node3D.new()
+		var node := CharacterBody3D.new()
 		node.name = "SandboxBot_%d" % (i + 1)
+		node.collision_layer = 8
+		node.collision_mask = 0
 		var entry: Dictionary = entries[(i + 1) % entries.size()]
+		var shape := CollisionShape3D.new()
+		var box := BoxShape3D.new()
+		box.size = Vector3(1.6, 1.3, float(entry.get("length", 2.4)))
+		shape.shape = box
+		shape.position = Vector3(0.0, 0.75, 0.0)
+		node.add_child(shape)
 		node.add_child(VehicleVisual.build(entry))
 		var label := Label3D.new()
 		label.text = "BOT %d" % (i + 1)

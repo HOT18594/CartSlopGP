@@ -377,6 +377,7 @@ func _install_macos(exe_path: String, staging: String, pid: int) -> bool:
 		"rm -rf \"$APP\"",
 		"cp -R \"$STAGED\" \"$APP\"",
 		"xattr -dr com.apple.quarantine \"$APP\" 2>/dev/null",
+		"codesign --force --deep --sign - \"$APP\" 2>/dev/null",
 		"open \"$APP\"",
 		"rm -f \"$0\"",
 	]
