@@ -47,6 +47,8 @@ func open() -> void:
 func close() -> void:
 	if not _is_open:
 		return
+	if _settings_menu.visible:
+		_settings_menu.close()
 	_is_open = false
 	visible = false
 	get_tree().paused = false

@@ -21,9 +21,10 @@ var wheel_offset: Vector3 = Vector3(0.0, 0.0, 0.55)
 var _mesh: ImmediateMesh
 var _instance: MeshInstance3D
 var _material: StandardMaterial3D
-var _points: Array = [] ## [left: Vector3, right: Vector3, born: float]
+var _points: Array = [] ## [left: Vector3, right: Vector3, born: float, segment: int]
 var _last_pos: Vector3 = Vector3.ZERO
 var _has_last: bool = false
+var _segment: int = 0
 var _now: float = 0.0
 
 
@@ -60,6 +61,7 @@ func _physics_process(delta: float) -> void:
 func clear_trail() -> void:
 	_points.clear()
 	_has_last = false
+	_segment += 1
 	_rebuild()
 
 
@@ -68,7 +70,7 @@ func _emit_samples() -> void:
 		and (cart.is_drifting or Input.is_action_pressed("handbrake")) \
 		and Vector2(cart.velocity.x, cart.velocity.z).length() > min_speed
 	if not skidding:
-		_has_last = false
+		_break_strip()
 		return
 
 	var world: Vector3 = cart.global_transform * wheel_offset
@@ -77,7 +79,7 @@ func _emit_samples() -> void:
 	query.collide_with_areas = false
 	var hit: Dictionary = cart.get_world_3d().direct_space_state.intersect_ray(query)
 	if hit.is_empty():
-		_has_last = false
+		_break_strip()
 		return
 	var position: Vector3 = (hit.position as Vector3) + (hit.normal as Vector3) * ground_lift
 	if _has_last and _last_pos.distance_to(position) < sample_distance:
@@ -85,6 +87,14 @@ func _emit_samples() -> void:
 	_add_point(position)
 	_last_pos = position
 	_has_last = true
+
+
+func _break_strip() -> void:
+	## End the current ribbon without deleting old marks. A new drift starts a
+	## new segment, so the two are never joined by a stripe across the map.
+	if _has_last:
+		_segment += 1
+	_has_last = false
 
 
 func _add_point(position: Vector3) -> void:
@@ -99,7 +109,7 @@ func _add_point(position: Vector3) -> void:
 		direction = -cart.global_transform.basis.z
 	direction = direction.normalized()
 	var side: Vector3 = direction.cross(Vector3.UP).normalized() * (width * 0.5)
-	_points.append([position - side, position + side, _now])
+	_points.append([position - side, position + side, _now, _segment])
 	if _points.size() > max_points:
 		_points.pop_front()
 
@@ -117,6 +127,8 @@ func _rebuild() -> void:
 	for index in _points.size() - 1:
 		var a: Array = _points[index]
 		var b: Array = _points[index + 1]
+		if int(a[3]) != int(b[3]):
+			continue # Separate drifts: never bridge the gap.
 		var alpha_a: float = _alpha(float(a[2]))
 		var alpha_b: float = _alpha(float(b[2]))
 		if alpha_a <= 0.001 and alpha_b <= 0.001:

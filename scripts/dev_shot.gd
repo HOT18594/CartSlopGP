@@ -25,6 +25,13 @@ func _physics_process(_delta: float) -> void:
 			_shot("settings")
 			get_tree().quit()
 		return
+	if mode == "changelog":
+		if _frames == 20:
+			get_parent().get_node("Shot/ChangelogPanel").open()
+		elif _frames == 32:
+			_shot("changelog")
+			get_tree().quit()
+		return
 	if mode == "pause":
 		if _frames == 10:
 			_send_action("pause")

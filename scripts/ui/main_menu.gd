@@ -5,12 +5,14 @@ const PLAY_MENU_SCENE: String = "res://scenes/ui/play_menu.tscn"
 
 @onready var _play_button: Button = %PlayButton
 @onready var _settings_button: Button = %SettingsButton
+@onready var _changelog_button: Button = %ChangelogButton
 @onready var _quit_button: Button = %QuitButton
 @onready var _version_label: Label = %VersionLabel
 @onready var _update_button: Button = %UpdateButton
 @onready var _status_label: Label = %StatusLabel
 @onready var _settings_menu: Control = %SettingsMenu
 @onready var _update_panel: Control = %UpdatePanel
+@onready var _changelog_panel: Control = %ChangelogPanel
 
 
 func _ready() -> void:
@@ -21,12 +23,16 @@ func _ready() -> void:
 
 	_play_button.pressed.connect(_on_play_pressed)
 	_settings_button.pressed.connect(_on_settings_pressed)
+	_changelog_button.pressed.connect(_on_changelog_pressed)
 	_quit_button.pressed.connect(_on_quit_pressed)
 	_update_button.pressed.connect(_on_update_pressed)
 	_settings_menu.closed.connect(_on_settings_closed)
 	_update_panel.closed.connect(_on_update_panel_closed)
+	_changelog_panel.closed.connect(_on_changelog_closed)
 
-	UpdateChecker.update_available.connect(_on_update_available)
+	UpdateChecker.update_available.connect(
+		func(version: String, _release_url: String, _download_url: String) -> void:
+			_on_update_available(version))
 	if UpdateChecker.has_update():
 		_on_update_available(UpdateChecker.latest_version)
 
@@ -43,7 +49,15 @@ func _on_settings_pressed() -> void:
 
 
 func _on_settings_closed() -> void:
-	_play_button.grab_focus()
+	_settings_button.grab_focus()
+
+
+func _on_changelog_pressed() -> void:
+	_changelog_panel.open()
+
+
+func _on_changelog_closed() -> void:
+	_changelog_button.grab_focus()
 
 
 func _on_quit_pressed() -> void:

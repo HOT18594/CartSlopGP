@@ -24,15 +24,22 @@ var _holder: Node3D = null
 
 func _ready() -> void:
 	CursorController.set_menu_mode(true)
+	_back_button.pressed.connect(_on_back)
 	_entries = Catalog.all()
 	if _entries.is_empty():
+		# Never leave the player on a dead screen.
+		_name_label.text = "NO VEHICLES AVAILABLE"
+		_index_label.text = ""
+		_prev_button.disabled = true
+		_next_button.disabled = true
+		_drive_button.disabled = true
+		_back_button.grab_focus()
 		return
 	_current = clampi(Catalog.index_of(GameSettings.selected_vehicle), 0, _entries.size() - 1)
 	_camera.look_at_from_position(Vector3(2.4, 1.6, -3.3), Vector3(0.0, 0.55, 0.0), Vector3.UP)
 	_prev_button.pressed.connect(_step.bind(-1))
 	_next_button.pressed.connect(_step.bind(1))
 	_drive_button.pressed.connect(_on_drive)
-	_back_button.pressed.connect(_on_back)
 	_show_current()
 	_drive_button.grab_focus()
 

@@ -100,9 +100,8 @@ func _build_options() -> void:
 	_difficulty_option.item_selected.connect(_save_options)
 	_rounds_option.item_selected.connect(_save_options)
 	_vehicle_option.item_selected.connect(_save_options)
-	_tour_difficulty_option.item_selected.connect(_save_options)
-	_tour_rounds_option.item_selected.connect(_save_options)
-	_tour_vehicle_option.item_selected.connect(_save_options)
+	# Tournament options are not persisted yet; connecting them here used to
+	# overwrite the Free Play settings with the wrong widgets' values.
 
 
 func _save_options(_index: int = 0) -> void:

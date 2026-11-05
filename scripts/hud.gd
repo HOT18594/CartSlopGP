@@ -61,6 +61,10 @@ func _process(_delta: float) -> void:
 	var horizontal := Vector3(cart.velocity.x, 0.0, cart.velocity.z)
 	var speed_kmh: float = horizontal.length() * 3.6
 	_speed_value.text = str(int(round(speed_kmh)))
+	# Vehicles have different top speeds, so scale the dial to the current car.
+	var gauge_max: float = cart.max_speed * cart.boost_speed_multiplier * 3.6 + 6.0
+	if not is_equal_approx(float(_speed_gauge.get("max_speed_kmh")), gauge_max):
+		_speed_gauge.set("max_speed_kmh", gauge_max)
 	_speed_gauge.speed_kmh = speed_kmh
 
 	var boost_ratio: float = clampf(cart.boost_amount / maxf(cart.max_boost, 0.1), 0.0, 1.0)

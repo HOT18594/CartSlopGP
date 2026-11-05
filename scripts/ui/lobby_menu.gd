@@ -90,15 +90,20 @@ func _on_host_pressed() -> void:
 	_host_button.disabled = true
 	_host_status.text = "Opening a port (routers can take a moment)..."
 	_host_box.visible = true
-	_start_button.visible = true
-	_copy_button.visible = true
+	# START/COPY only work once the server actually exists.
+	_start_button.visible = false
+	_copy_button.visible = false
 	_code_label.text = "...."
 	Network.host_game(_mode)
 
 
 func _on_host_failed(reason: String) -> void:
 	_host_button.disabled = false
+	_host_box.visible = false
+	_join_box.visible = true
 	_host_status.text = reason
+	_join_status.visible = true
+	_join_status.text = reason
 
 
 func _on_host_started(code: String) -> void:
@@ -194,6 +199,6 @@ func _refresh_players() -> void:
 
 
 func _on_back_pressed() -> void:
-	if Network.is_session_active():
-		Network.leave()
+	Network.leave()
+	SceneLoader.end_task()
 	get_tree().change_scene_to_file(PLAY_MENU_SCENE)

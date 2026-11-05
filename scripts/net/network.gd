@@ -42,6 +42,7 @@ var player_names: Dictionary = {} ## peer id -> sanitized display name
 
 var _peer: ENetMultiplayerPeer
 var _upnp: UPNP
+var _host_ticket: int = 0
 var _ping_timer: float = 0.0
 
 
@@ -84,9 +85,14 @@ func peer_count() -> int:
 
 func host_game(mode: String = "online") -> void:
 	leave()
+	_host_ticket += 1
+	var ticket: int = _host_ticket
 	connection_mode = "lan" if mode == "lan" else "online"
 	SceneLoader.begin_task("HOSTING A GAME", "Opening a port...")
 	await get_tree().process_frame
+	if ticket != _host_ticket:
+		SceneLoader.end_task()
+		return
 	_upnp = UPNP.new()
 	local_address = _local_ip()
 	var bound_port: int = _open_server()
@@ -107,16 +113,28 @@ func host_game(mode: String = "online") -> void:
 		else:
 			SceneLoader.task_message("Asking your router for a port (UPnP)...")
 			var upnp_ip: String = await _upnp_lookup(port)
+			if ticket != _host_ticket:
+				SceneLoader.end_task()
+				leave()
+				return
 			if upnp_ip != "":
 				public_address = upnp_ip
 			else:
 				SceneLoader.task_message("Checking your public IP...")
 				var public_ip: String = await _public_ip_lookup()
+				if ticket != _host_ticket:
+					SceneLoader.end_task()
+					leave()
+					return
 				if public_ip != "":
 					public_address = public_ip
 		if public_address != "":
 			join_code = encode_address(public_address, port)
 
+	if ticket != _host_ticket:
+		SceneLoader.end_task()
+		leave()
+		return
 	SceneLoader.end_task()
 	host_started.emit(join_code)
 	peers_changed.emit()
@@ -126,7 +144,8 @@ func _upnp_lookup(udp_port: int) -> String:
 	## Runs discovery in a thread so the loading overlay keeps animating.
 	var result: Dictionary = {"ip": ""}
 	var thread := Thread.new()
-	thread.start(_upnp_worker.bind(udp_port, result))
+	if thread.start(_upnp_worker.bind(udp_port, result)) != OK:
+		return ""
 	while thread.is_alive():
 		await get_tree().process_frame
 	thread.wait_to_finish()
@@ -140,7 +159,9 @@ func _upnp_worker(udp_port: int, result: Dictionary) -> void:
 	var gateway: UPNPDevice = upnp.get_gateway()
 	if gateway == null or not gateway.is_valid_gateway():
 		return
-	if upnp.add_port_mapping(udp_port, udp_port, "Cart Slop GP", "UDP", 0) != OK:
+	# One hour rather than permanent: a crashed/closed game must not leave a
+	# stale forwarding rule on the router forever.
+	if upnp.add_port_mapping(udp_port, udp_port, "Cart Slop GP", "UDP", 3600) != OK:
 		return
 	var external: String = upnp.get_external_ip()
 	if external != "" and external != "0.0.0.0":
@@ -220,6 +241,7 @@ func join_game(raw_code: String) -> void:
 
 
 func leave() -> void:
+	_host_ticket += 1 ## Cancels an in-flight host_game() await chain.
 	if _peer != null:
 		_peer.close()
 	if multiplayer.multiplayer_peer != null and multiplayer.multiplayer_peer != _peer:

@@ -3,6 +3,7 @@ extends CharacterBody3D
 
 const VehicleCatalog := preload("res://scripts/vehicles/vehicle_catalog.gd")
 const VehicleVisual := preload("res://scripts/vehicles/vehicle_visual.gd")
+const REFERENCE_MASS: float = 1200.0 ## Mass at which `engine_power` is quoted.
 
 signal net_push_requested(prop: Node, direction: Vector3, kick: float)
 
@@ -97,6 +98,8 @@ var net_position: Vector3 = Vector3.ZERO
 var net_yaw: float = 0.0
 
 var _boost_exhausted: bool = false
+var _profile_mass: float = REFERENCE_MASS
+var _profile_push_scale: float = 1.0
 
 var _boost_regen_timer: float = 0.0
 var _pad_burst_timer: float = 0.0
@@ -155,10 +158,18 @@ func _ready() -> void:
 		_spawn_transform = spawn_point.global_transform
 	else:
 		_spawn_transform = global_transform
-	_apply_vehicle_visual()
+	var entry: Dictionary = _apply_vehicle_visual()
+	_apply_vehicle_stats(entry)
+	if _feedback != null:
+		_feedback.apply_vehicle_profile(entry)
 	if _push_sensor != null:
 		_push_sensor.body_entered.connect(_on_push_sensor_body_entered)
 	call_deferred("_collect_pushables")
+
+
+func set_spawn_transform(spawn_transform: Transform3D) -> void:
+	## Multiplayer spawns carts on a grid, not on the single-player marker.
+	_spawn_transform = spawn_transform
 
 
 func setup_remote(peer_id: int) -> void:
@@ -183,6 +194,7 @@ func setup_remote(peer_id: int) -> void:
 		_feedback.enable_dust = false
 		_feedback.enable_speed_feedback = false
 		_feedback.reset_feedback()
+		_feedback.set_remote_mode(true)
 	net_position = global_position
 	net_yaw = rotation.y
 
@@ -202,14 +214,36 @@ func set_vehicle_id(vehicle_id: String) -> void:
 	_apply_vehicle_visual_for(entry)
 
 
-func _apply_vehicle_visual() -> void:
+func _apply_vehicle_visual() -> Dictionary:
 	## Swap the placeholder kart for the vehicle picked in the selector.
 	var entry: Dictionary = VehicleCatalog.find(GameSettings.selected_vehicle)
 	if entry.is_empty():
 		entry = VehicleCatalog.find(VehicleCatalog.DEFAULT_ID)
 	if entry.is_empty() or _mesh_root == null:
-		return
+		return entry
 	_apply_vehicle_visual_for(entry)
+	return entry
+
+
+func _apply_vehicle_stats(entry: Dictionary) -> void:
+	## Mass, top speed and engine power all come from the catalog. Engine cars
+	## are quoted at REFERENCE_MASS, so a 3.2 t truck gets a much gentler launch
+	## than the 1.15 t sports car despite a bigger engine.
+	if entry.is_empty():
+		return
+	_profile_mass = maxf(float(entry.get("mass", REFERENCE_MASS)), 1.0)
+	max_speed = float(entry.get("max_speed", max_speed))
+	var engine_power: float = float(entry.get("engine_power", 0.0))
+	if engine_power > 0.0:
+		acceleration = engine_power * REFERENCE_MASS / _profile_mass
+	else:
+		acceleration = float(entry.get("push_accel", acceleration))
+	var weight_ratio: float = clampf(_profile_mass / REFERENCE_MASS, 0.05, 3.0)
+	lateral_grip *= float(entry.get("grip", 1.0))
+	drift_grip *= lerpf(1.0, float(entry.get("grip", 1.0)), 0.5)
+	steering_speed *= float(entry.get("steering", 1.0))
+	brake_power *= clampf(pow(weight_ratio, -0.15), 0.85, 1.10)
+	_profile_push_scale = float(entry.get("push_scale", 1.0))
 
 
 func _apply_vehicle_visual_for(entry: Dictionary) -> void:
@@ -279,7 +313,7 @@ func _update_drive(delta: float) -> void:
 	var eff_max_speed: float = max_speed * (boost_speed_multiplier if boost_active else 1.0)
 	var eff_accel: float = acceleration * (boost_acceleration_multiplier if boost_active else 1.0)
 	if Input.is_action_pressed("accelerate"):
-		var accel_scale: float = clampf(1.0 - fwd_speed / eff_max_speed, 0.25, 1.0)
+		var accel_scale: float = clampf(1.0 - fwd_speed / maxf(eff_max_speed, 0.001), 0.25, 1.0)
 		fwd_speed = move_toward(fwd_speed, eff_max_speed, eff_accel * accel_scale * delta)
 	elif Input.is_action_pressed("brake"):
 		if fwd_speed > 0.5:
@@ -308,7 +342,7 @@ func _update_drive(delta: float) -> void:
 func _apply_steering(steer_input: float, delta: float) -> void:
 	var forward_dir: Vector3 = -global_transform.basis.z
 	var fwd_speed: float = velocity.dot(forward_dir)
-	var speed_frac: float = clampf(absf(fwd_speed) / max_speed, 0.0, 1.0)
+	var speed_frac: float = clampf(absf(fwd_speed) / maxf(max_speed, 0.001), 0.0, 1.0)
 	var start_factor: float = clampf(absf(fwd_speed) / min_turn_speed, 0.0, 1.0)
 	var high_speed_factor: float = lerpf(1.0, high_speed_steering_scale, speed_frac)
 	var authority: float = start_factor * high_speed_factor
@@ -334,9 +368,16 @@ func _process_collisions() -> void:
 		var impact_speed: float = -_prev_velocity.dot(normal)
 		if impact_speed < min_impact_speed:
 			continue
-		var impact_factor: float = clampf(impact_speed / max_speed, 0.0, 1.0)
-		velocity += normal * minf(impact_speed * impact_recoil, max_recoil_speed)
-		var loss: float = impact_speed * impact_speed_loss
+		# p = m * v: a light cart bounces and sheds speed, a loaded truck ploughs
+		# through. Scaling is clamped so neither extreme feels broken.
+		var weight_ratio: float = clampf(_profile_mass / REFERENCE_MASS, 0.05, 3.0)
+		var recoil_scale: float = clampf(1.0 / sqrt(weight_ratio), 0.55, 1.8)
+		var loss_scale: float = clampf(pow(weight_ratio, -0.35), 0.50, 1.60)
+		var shake_scale: float = clampf(1.0 / sqrt(weight_ratio), 0.65, 1.20)
+		var impact_factor: float = clampf(impact_speed / maxf(max_speed, 0.001), 0.0, 1.0)
+		velocity += normal * minf(impact_speed * impact_recoil * recoil_scale,
+			max_recoil_speed * maxf(recoil_scale, 1.0))
+		var loss: float = impact_speed * impact_speed_loss * loss_scale
 		var planar: Vector3 = Vector3(velocity.x, 0.0, velocity.z).move_toward(Vector3.ZERO, loss)
 		velocity.x = planar.x
 		velocity.z = planar.z
@@ -347,7 +388,7 @@ func _process_collisions() -> void:
 		_impact_timer = impact_cooldown
 		_squash_impulse = maxf(_squash_impulse, clampf(impact_factor * 1.2, 0.3, 1.0))
 		if _camera_rig != null:
-			_camera_rig.add_shake(0.08 + 0.30 * impact_factor)
+			_camera_rig.add_shake((0.08 + 0.30 * impact_factor) * shake_scale)
 		if _feedback != null:
 			_feedback.on_collision(impact_factor)
 		break
@@ -376,9 +417,12 @@ func _push_prop(prop: RigidBody3D) -> void:
 		direction = -global_transform.basis.z
 	direction = direction.normalized()
 	var speed: float = Vector2(velocity.x, velocity.z).length()
-	var kick: float = push_force * clampf(speed / 6.0, 0.25, 1.4)
+	# Momentum transfer: the truck launches a crate much harder than the cart.
+	var kick: float = push_force * _profile_push_scale * clampf(speed / 6.0, 0.25, 1.4)
 	var impulse: Vector3 = direction * prop.mass * kick + Vector3.UP * prop.mass * kick * push_lift
 	net_push_requested.emit(prop, direction, kick)
+	if Network.is_session_active() and not Network.is_host:
+		return # The host owns prop physics; it applies the request.
 	prop.apply_central_impulse(impulse)
 	var spin: Vector3 = Vector3(randf_range(-1.0, 1.0), randf_range(-0.5, 0.5), randf_range(-1.0, 1.0))
 	prop.apply_torque_impulse(spin * prop.mass * push_spin)
@@ -439,7 +483,7 @@ func _update_tumble(steer_input: float, delta: float) -> void:
 	match current_state:
 		CartState.RECOVERY:
 			_recover_timer -= delta
-			var t: float = 1.0 - clampf(_recover_timer / auto_flip_duration, 0.0, 1.0)
+			var t: float = 1.0 - clampf(_recover_timer / maxf(auto_flip_duration, 0.001), 0.0, 1.0)
 			_tumble_pitch = lerpf(_recover_from.x, 0.0, t)
 			_tumble_roll = lerpf(_recover_from.y, 0.0, t)
 			if _recover_timer <= 0.0:
@@ -483,6 +527,8 @@ func _land_from_tumble() -> void:
 
 func _enter_crashed(up_dot: float) -> void:
 	current_state = CartState.CRASHED
+	is_drifting = false
+	slide_amount = 0.0
 	_crash_timer = crash_cooldown
 	boost_active = false
 	velocity *= 0.5
@@ -496,6 +542,8 @@ func _enter_crashed(up_dot: float) -> void:
 
 func _enter_recovery() -> void:
 	current_state = CartState.RECOVERY
+	is_drifting = false
+	slide_amount = 0.0
 	_recover_timer = auto_flip_duration
 	_recover_from = Vector3(_tumble_pitch, _tumble_roll, 0.0)
 	velocity.x *= 0.4
@@ -537,7 +585,7 @@ func _update_visuals(steer_input: float, delta: float) -> void:
 	var forward_dir: Vector3 = -global_transform.basis.z
 	var right_dir: Vector3 = global_transform.basis.x
 	var fwd_speed: float = velocity.dot(forward_dir)
-	var speed_frac: float = clampf(absf(fwd_speed) / max_speed, 0.0, 1.0)
+	var speed_frac: float = clampf(absf(fwd_speed) / maxf(max_speed, 0.001), 0.0, 1.0)
 	_squash_impulse = move_toward(_squash_impulse, 0.0, 2.5 * delta)
 	_stretch_impulse = move_toward(_stretch_impulse, 0.0, 2.5 * delta)
 	var accel_stretch: float = 0.0
@@ -561,7 +609,7 @@ func _update_visuals(steer_input: float, delta: float) -> void:
 	_lateral_accel = lerpf(_lateral_accel, clampf(measured_accel.dot(right_dir), -gravity, gravity), 1.0 - exp(-8.0 * delta))
 	var target_pitch: float = _longitudinal_accel / gravity * mesh_pitch_amount
 	var target_roll: float = _lateral_accel / gravity * mesh_tilt_amount
-	target_roll -= steer_input * mesh_tilt_amount * 0.35 * clampf(fwd_speed / max_speed, -1.0, 1.0)
+	target_roll -= steer_input * mesh_tilt_amount * 0.35 * clampf(fwd_speed / maxf(max_speed, 0.001), -1.0, 1.0)
 	if current_state != CartState.DRIVING or not is_on_floor():
 		target_pitch = 0.0
 		target_roll = 0.0
@@ -736,4 +784,7 @@ func _reset_cart() -> void:
 		_camera_rig.reset_camera()
 	if _feedback != null:
 		_feedback.reset_feedback()
-	_restore_pushables()
+	# Props are host-authoritative in a session; a client reset must not snap
+	# frozen bodies around locally.
+	if not (Network.is_session_active() and not Network.is_host):
+		_restore_pushables()

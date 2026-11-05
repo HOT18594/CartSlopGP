@@ -1,13 +1,13 @@
-[gd_scene load_steps=36 format=3]
+[gd_scene format=3 uid="uid://1adlt6fmsra2"]
 
-[ext_resource type="Script" path="res://scripts/driving_test.gd" id="1"]
+[ext_resource type="Script" uid="uid://h51dvo5iixsj" path="res://scripts/driving_test.gd" id="1"]
 [ext_resource type="PackedScene" path="res://scenes/player/cart_player.tscn" id="2"]
-[ext_resource type="PackedScene" path="res://assets/models/kenney_car-kit/Models/GLB format/cone.glb" id="3"]
-[ext_resource type="PackedScene" path="res://assets/models/kenney_car-kit/Models/GLB format/box.glb" id="4"]
+[ext_resource type="PackedScene" uid="uid://dq6w2rak3lk6y" path="res://assets/models/kenney_car-kit/Models/GLB format/cone.glb" id="3"]
+[ext_resource type="PackedScene" uid="uid://c6mnlklk0xky1" path="res://assets/models/kenney_car-kit/Models/GLB format/box.glb" id="4"]
 [ext_resource type="PackedScene" path="res://scenes/track/boost_pad.tscn" id="5"]
 [ext_resource type="PackedScene" path="res://scenes/ui/hud.tscn" id="6"]
 [ext_resource type="PackedScene" path="res://scenes/ui/pause_menu.tscn" id="7"]
-[ext_resource type="Shader" path="res://assets/materials/checker.gdshader" id="8_checker"]
+[ext_resource type="Shader" uid="uid://y7dwqfjaubc" path="res://assets/materials/checker.gdshader" id="8_checker"]
 
 [sub_resource type="ProceduralSkyMaterial" id="sky_mat"]
 sky_top_color = Color(0.38, 0.55, 0.85, 1)
@@ -22,42 +22,11 @@ sky_material = SubResource("sky_mat")
 background_mode = 2
 sky = SubResource("sky")
 
-[sub_resource type="StandardMaterial3D" id="ground_mat"]
-albedo_color = Color(0.63, 0.67, 0.74, 1)
-
-[sub_resource type="StandardMaterial3D" id="wall_mat"]
-albedo_color = Color(0.16, 0.2, 0.32, 1)
-
-[sub_resource type="StandardMaterial3D" id="ramp_mat"]
-albedo_color = Color(0.95, 0.66, 0.24, 1)
-
-[sub_resource type="StandardMaterial3D" id="bump_mat"]
-albedo_color = Color(1, 0.82, 0.18, 1)
-
-[sub_resource type="StandardMaterial3D" id="lane_mat"]
-albedo_color = Color(0.56, 0.85, 0.96, 1)
-
-[sub_resource type="StandardMaterial3D" id="edge_mat"]
-albedo_color = Color(0.96, 0.97, 1, 1)
-
-[sub_resource type="StandardMaterial3D" id="pad_mat"]
-albedo_color = Color(1, 0.91, 0.66, 1)
-
-[sub_resource type="StandardMaterial3D" id="ring_mat"]
-albedo_color = Color(0.95, 0.42, 0.65, 1)
-
-[sub_resource type="StandardMaterial3D" id="bowl_mat"]
-albedo_color = Color(1, 0.94, 0.78, 1)
-
-[sub_resource type="StandardMaterial3D" id="brake_mat"]
-albedo_color = Color(0.95, 0.33, 0.36, 1)
-
-[sub_resource type="PhysicsMaterial" id="prop_phys"]
-friction = 0.9
-bounce = 0.15
-
 [sub_resource type="BoxShape3D" id="ground_shape"]
 size = Vector3(140, 1, 140)
+
+[sub_resource type="StandardMaterial3D" id="ground_mat"]
+albedo_color = Color(0.63, 0.67, 0.74, 1)
 
 [sub_resource type="BoxMesh" id="ground_mesh"]
 material = SubResource("ground_mat")
@@ -66,51 +35,85 @@ size = Vector3(140, 1, 140)
 [sub_resource type="BoxShape3D" id="wall_shape"]
 size = Vector3(142, 2.4, 1)
 
+[sub_resource type="StandardMaterial3D" id="wall_mat"]
+albedo_color = Color(0.16, 0.2, 0.32, 1)
+
 [sub_resource type="BoxMesh" id="wall_mesh"]
 material = SubResource("wall_mat")
 size = Vector3(142, 2.4, 1)
 
 [sub_resource type="ShaderMaterial" id="trim_mat"]
+render_priority = 0
 shader = ExtResource("8_checker")
+shader_parameter/light_color = Color(1, 1, 1, 1)
+shader_parameter/dark_color = Color(0.118, 0.106, 0.227, 1)
 shader_parameter/cells = Vector2(32, 1)
 
 [sub_resource type="BoxMesh" id="trim_mesh"]
 material = SubResource("trim_mat")
 size = Vector3(142, 0.02, 0.9)
 
+[sub_resource type="StandardMaterial3D" id="lane_mat"]
+albedo_color = Color(0.56, 0.85, 0.96, 1)
+
 [sub_resource type="BoxMesh" id="lane_mesh"]
 material = SubResource("lane_mat")
 size = Vector3(10, 0.02, 64)
+
+[sub_resource type="StandardMaterial3D" id="edge_mat"]
+albedo_color = Color(0.96, 0.97, 1, 1)
 
 [sub_resource type="BoxMesh" id="edge_mesh"]
 material = SubResource("edge_mat")
 size = Vector3(0.2, 0.02, 64)
 
 [sub_resource type="ShaderMaterial" id="start_mat"]
+render_priority = 0
 shader = ExtResource("8_checker")
+shader_parameter/light_color = Color(1, 1, 1, 1)
+shader_parameter/dark_color = Color(0.118, 0.106, 0.227, 1)
 shader_parameter/cells = Vector2(18, 2)
 
 [sub_resource type="BoxMesh" id="start_mesh"]
 material = SubResource("start_mat")
 size = Vector3(16, 0.02, 1.2)
 
-[sub_resource type="BoxShape3D" id="ramp_shape"]
-size = Vector3(8, 0.4, 9)
-
-[sub_resource type="BoxMesh" id="ramp_mesh"]
-material = SubResource("ramp_mat")
-size = Vector3(8, 0.4, 9)
-
 [sub_resource type="BoxShape3D" id="roller_shape"]
 size = Vector3(10, 0.12, 2.3)
+
+[sub_resource type="StandardMaterial3D" id="bump_mat"]
+albedo_color = Color(1, 0.82, 0.18, 1)
 
 [sub_resource type="BoxMesh" id="roller_mesh"]
 material = SubResource("bump_mat")
 size = Vector3(10, 0.12, 2.3)
 
+[sub_resource type="BoxShape3D" id="ramp_shape"]
+size = Vector3(8, 0.4, 9)
+
+[sub_resource type="StandardMaterial3D" id="ramp_mat"]
+albedo_color = Color(0.95, 0.66, 0.24, 1)
+
+[sub_resource type="BoxMesh" id="ramp_mesh"]
+material = SubResource("ramp_mat")
+size = Vector3(8, 0.4, 9)
+
+[sub_resource type="StandardMaterial3D" id="pad_mat"]
+albedo_color = Color(1, 0.91, 0.66, 1)
+
 [sub_resource type="BoxMesh" id="pad_mesh"]
 material = SubResource("pad_mat")
 size = Vector3(12, 0.02, 14)
+
+[sub_resource type="StandardMaterial3D" id="brake_mat"]
+albedo_color = Color(0.95, 0.33, 0.36, 1)
+
+[sub_resource type="BoxMesh" id="brake_mesh"]
+material = SubResource("brake_mat")
+size = Vector3(8, 0.02, 0.5)
+
+[sub_resource type="StandardMaterial3D" id="ring_mat"]
+albedo_color = Color(0.95, 0.42, 0.65, 1)
 
 [sub_resource type="CylinderMesh" id="ring_mesh"]
 material = SubResource("ring_mat")
@@ -119,13 +122,12 @@ bottom_radius = 9.0
 height = 0.02
 radial_segments = 48
 
+[sub_resource type="StandardMaterial3D" id="bowl_mat"]
+albedo_color = Color(1, 0.94, 0.78, 1)
+
 [sub_resource type="BoxMesh" id="bowl_mesh"]
 material = SubResource("bowl_mat")
 size = Vector3(16, 0.02, 18)
-
-[sub_resource type="BoxMesh" id="brake_mesh"]
-material = SubResource("brake_mat")
-size = Vector3(8, 0.02, 0.5)
 
 [sub_resource type="BoxShape3D" id="cliff_shape"]
 size = Vector3(6, 0.4, 10)
@@ -141,836 +143,861 @@ size = Vector3(10, 0.4, 8)
 material = SubResource("ramp_mat")
 size = Vector3(10, 0.4, 8)
 
+[sub_resource type="PhysicsMaterial" id="prop_phys"]
+friction = 0.9
+bounce = 0.15
+
 [sub_resource type="CylinderShape3D" id="cone_shape"]
-radius = 0.2
 height = 0.54
+radius = 0.2
 
 [sub_resource type="BoxShape3D" id="crate_shape"]
 size = Vector3(0.67, 0.71, 0.67)
 
-[node name="DrivingTest" type="Node3D"]
+[node name="DrivingTest" type="Node3D" unique_id=420376149]
 script = ExtResource("1")
 
-[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+[node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=985894155]
 environment = SubResource("env")
 
-[node name="Sun" type="DirectionalLight3D" parent="."]
-transform = Transform3D(0.921061, -0.279352, 0.271310, 0.000000, 0.696707, 0.717356, -0.389418, -0.660729, 0.641709, 0.000000, 0.000000, 0.000000)
+[node name="Sun" type="DirectionalLight3D" parent="." unique_id=1197509602]
+transform = Transform3D(0.921061, -0.279352, 0.27131, 0, 0.696707, 0.717356, -0.389418, -0.660729, 0.641709, 0, 0, 0)
 shadow_enabled = true
-[node name="Ground" type="StaticBody3D" parent="."]
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="Ground"]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 0.000000, -0.500000, 0.000000)
+[node name="Ground" type="StaticBody3D" parent="." unique_id=1536077187]
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Ground" unique_id=1283475755]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.5, 0)
 shape = SubResource("ground_shape")
 
-[node name="MeshInstance3D" type="MeshInstance3D" parent="Ground"]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 0.000000, -0.500000, 0.000000)
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Ground" unique_id=1867468882]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.5, 0)
 mesh = SubResource("ground_mesh")
-[node name="WallNorth" type="StaticBody3D" parent="."]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 0.000000, 1.200000, -70.500000)
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="WallNorth"]
+[node name="WallNorth" type="StaticBody3D" parent="." unique_id=768854799]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.2, -70.5)
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="WallNorth" unique_id=1343868561]
 shape = SubResource("wall_shape")
 
-[node name="MeshInstance3D" type="MeshInstance3D" parent="WallNorth"]
+[node name="MeshInstance3D" type="MeshInstance3D" parent="WallNorth" unique_id=159317021]
 mesh = SubResource("wall_mesh")
 
-[node name="Trim" type="MeshInstance3D" parent="WallNorth"]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 0.000000, 1.210000, 0.000000)
+[node name="Trim" type="MeshInstance3D" parent="WallNorth" unique_id=218582835]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.21, 0)
 mesh = SubResource("trim_mesh")
-[node name="WallSouth" type="StaticBody3D" parent="."]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 0.000000, 1.200000, 70.500000)
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="WallSouth"]
+[node name="WallSouth" type="StaticBody3D" parent="." unique_id=1281515791]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.2, 70.5)
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="WallSouth" unique_id=56606449]
 shape = SubResource("wall_shape")
 
-[node name="MeshInstance3D" type="MeshInstance3D" parent="WallSouth"]
+[node name="MeshInstance3D" type="MeshInstance3D" parent="WallSouth" unique_id=1595432887]
 mesh = SubResource("wall_mesh")
 
-[node name="Trim" type="MeshInstance3D" parent="WallSouth"]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 0.000000, 1.210000, 0.000000)
+[node name="Trim" type="MeshInstance3D" parent="WallSouth" unique_id=1419905743]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.21, 0)
 mesh = SubResource("trim_mesh")
-[node name="WallWest" type="StaticBody3D" parent="."]
-transform = Transform3D(0.000000, 0.000000, 1.000000, 0.000000, 1.000000, -0.000000, -1.000000, 0.000000, 0.000000, -70.500000, 1.200000, 0.000000)
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="WallWest"]
+[node name="WallWest" type="StaticBody3D" parent="." unique_id=728676216]
+transform = Transform3D(0, 0, 1, 0, 1, 0, -1, 0, 0, -70.5, 1.2, 0)
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="WallWest" unique_id=1943417537]
 shape = SubResource("wall_shape")
 
-[node name="MeshInstance3D" type="MeshInstance3D" parent="WallWest"]
+[node name="MeshInstance3D" type="MeshInstance3D" parent="WallWest" unique_id=939290878]
 mesh = SubResource("wall_mesh")
 
-[node name="Trim" type="MeshInstance3D" parent="WallWest"]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 0.000000, 1.210000, 0.000000)
+[node name="Trim" type="MeshInstance3D" parent="WallWest" unique_id=1994722961]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.21, 0)
 mesh = SubResource("trim_mesh")
-[node name="WallEast" type="StaticBody3D" parent="."]
-transform = Transform3D(0.000000, 0.000000, 1.000000, 0.000000, 1.000000, -0.000000, -1.000000, 0.000000, 0.000000, 70.500000, 1.200000, 0.000000)
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="WallEast"]
+[node name="WallEast" type="StaticBody3D" parent="." unique_id=28571209]
+transform = Transform3D(0, 0, 1, 0, 1, 0, -1, 0, 0, 70.5, 1.2, 0)
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="WallEast" unique_id=1149522338]
 shape = SubResource("wall_shape")
 
-[node name="MeshInstance3D" type="MeshInstance3D" parent="WallEast"]
+[node name="MeshInstance3D" type="MeshInstance3D" parent="WallEast" unique_id=1693104673]
 mesh = SubResource("wall_mesh")
 
-[node name="Trim" type="MeshInstance3D" parent="WallEast"]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 0.000000, 1.210000, 0.000000)
+[node name="Trim" type="MeshInstance3D" parent="WallEast" unique_id=1651203076]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.21, 0)
 mesh = SubResource("trim_mesh")
-[node name="LanePad" type="MeshInstance3D" parent="."]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 0.000000, 0.011000, 36.000000)
+
+[node name="LanePad" type="MeshInstance3D" parent="." unique_id=211571089]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.011, 36)
 mesh = SubResource("lane_mesh")
 
-[node name="LaneEdgeL" type="MeshInstance3D" parent="."]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, -5.100000, 0.020000, 36.000000)
+[node name="LaneEdgeL" type="MeshInstance3D" parent="." unique_id=1650196942]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -5.1, 0.02, 36)
 mesh = SubResource("edge_mesh")
 
-[node name="LaneEdgeR" type="MeshInstance3D" parent="."]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 5.100000, 0.020000, 36.000000)
+[node name="LaneEdgeR" type="MeshInstance3D" parent="." unique_id=765607827]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5.1, 0.02, 36)
 mesh = SubResource("edge_mesh")
 
-[node name="StartLine" type="MeshInstance3D" parent="."]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 0.000000, 0.030000, 60.000000)
+[node name="StartLine" type="MeshInstance3D" parent="." unique_id=387395491]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.03, 60)
 mesh = SubResource("start_mesh")
-[node name="RollerA" type="StaticBody3D" parent="."]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 0.975897, -0.218230, -0.000000, 0.218230, 0.975897, 0.000000, 0.190000, 50.000000)
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="RollerA"]
+[node name="RollerA" type="StaticBody3D" parent="." unique_id=1895222548]
+transform = Transform3D(1, 0, 0, 0, 0.975897, -0.21823, 0, 0.21823, 0.975897, 0, 0.19, 50)
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="RollerA" unique_id=2088669236]
 shape = SubResource("roller_shape")
 
-[node name="MeshInstance3D" type="MeshInstance3D" parent="RollerA"]
+[node name="MeshInstance3D" type="MeshInstance3D" parent="RollerA" unique_id=1684210499]
 mesh = SubResource("roller_mesh")
-[node name="RollerB" type="StaticBody3D" parent="."]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 0.975897, -0.218230, -0.000000, 0.218230, 0.975897, 0.000000, 0.190000, 38.000000)
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="RollerB"]
+[node name="RollerB" type="StaticBody3D" parent="." unique_id=1912375524]
+transform = Transform3D(1, 0, 0, 0, 0.975897, -0.21823, 0, 0.21823, 0.975897, 0, 0.19, 38)
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="RollerB" unique_id=1018605717]
 shape = SubResource("roller_shape")
 
-[node name="MeshInstance3D" type="MeshInstance3D" parent="RollerB"]
+[node name="MeshInstance3D" type="MeshInstance3D" parent="RollerB" unique_id=25619194]
 mesh = SubResource("roller_mesh")
-[node name="JumpRamp" type="StaticBody3D" parent="."]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 0.982004, -0.188859, -0.000000, 0.188859, 0.982004, 0.000000, 0.550000, 18.000000)
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="JumpRamp"]
+[node name="JumpRamp" type="StaticBody3D" parent="." unique_id=127920114]
+transform = Transform3D(1, 0, 0, 0, 0.982004, -0.188859, 0, 0.188859, 0.982004, 0, 0.55, 18)
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="JumpRamp" unique_id=1624846825]
 shape = SubResource("ramp_shape")
 
-[node name="MeshInstance3D" type="MeshInstance3D" parent="JumpRamp"]
+[node name="MeshInstance3D" type="MeshInstance3D" parent="JumpRamp" unique_id=196359462]
 mesh = SubResource("ramp_mesh")
-[node name="LandingPad" type="MeshInstance3D" parent="."]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 0.000000, 0.025000, 2.000000)
-mesh = SubResource("pad_mesh")
-[node name="BrakeStrip1" type="MeshInstance3D" parent="."]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 0.000000, 0.022000, 34.000000)
-mesh = SubResource("brake_mesh")
-[node name="BrakeStrip2" type="MeshInstance3D" parent="."]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 0.000000, 0.022000, 32.400000)
-mesh = SubResource("brake_mesh")
-[node name="BrakeStrip3" type="MeshInstance3D" parent="."]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 0.000000, 0.022000, 30.800000)
-mesh = SubResource("brake_mesh")
-[node name="DriftPad" type="MeshInstance3D" parent="."]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, -36.000000, 0.011000, 24.000000)
-mesh = SubResource("ring_mesh")
-[node name="BowlPad" type="MeshInstance3D" parent="."]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, -36.000000, 0.011000, -16.000000)
-mesh = SubResource("bowl_mesh")
-[node name="CliffRamp" type="StaticBody3D" parent="."]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 0.982004, -0.188859, -0.000000, 0.188859, 0.982004, 48.000000, 0.750000, -26.000000)
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="CliffRamp"]
+[node name="LandingPad" type="MeshInstance3D" parent="." unique_id=1654927865]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.025, 2)
+mesh = SubResource("pad_mesh")
+
+[node name="BrakeStrip1" type="MeshInstance3D" parent="." unique_id=232924040]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.022, 34)
+mesh = SubResource("brake_mesh")
+
+[node name="BrakeStrip2" type="MeshInstance3D" parent="." unique_id=624597813]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.022, 32.4)
+mesh = SubResource("brake_mesh")
+
+[node name="BrakeStrip3" type="MeshInstance3D" parent="." unique_id=218387407]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.022, 30.8)
+mesh = SubResource("brake_mesh")
+
+[node name="DriftPad" type="MeshInstance3D" parent="." unique_id=1380753178]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -36, 0.011, 24)
+mesh = SubResource("ring_mesh")
+
+[node name="BowlPad" type="MeshInstance3D" parent="." unique_id=1256352054]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -36, 0.011, -16)
+mesh = SubResource("bowl_mesh")
+
+[node name="CliffRamp" type="StaticBody3D" parent="." unique_id=1317515712]
+transform = Transform3D(1, 0, 0, 0, 0.982004, -0.188859, 0, 0.188859, 0.982004, 48, 0.75, -26)
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="CliffRamp" unique_id=388574984]
 shape = SubResource("cliff_shape")
 
-[node name="MeshInstance3D" type="MeshInstance3D" parent="CliffRamp"]
+[node name="MeshInstance3D" type="MeshInstance3D" parent="CliffRamp" unique_id=1151364586]
 mesh = SubResource("cliff_mesh")
-[node name="CliffPlatform" type="StaticBody3D" parent="."]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 48.000000, 1.700000, -35.000000)
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="CliffPlatform"]
+[node name="CliffPlatform" type="StaticBody3D" parent="." unique_id=1472095138]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 48, 1.7, -35)
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="CliffPlatform" unique_id=1176026893]
 shape = SubResource("platform_shape")
 
-[node name="MeshInstance3D" type="MeshInstance3D" parent="CliffPlatform"]
+[node name="MeshInstance3D" type="MeshInstance3D" parent="CliffPlatform" unique_id=2113093530]
 mesh = SubResource("platform_mesh")
-[node name="BoostPadA" parent="." instance=ExtResource("5")]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 0.000000, 0.021000, 56.000000)
-[node name="BoostPadB" parent="." instance=ExtResource("5")]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 0.000000, 0.021000, 24.000000)
-[node name="BoostPadC" parent="." instance=ExtResource("5")]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, -36.000000, 0.021000, 34.000000)
-[node name="SpawnPoint" type="Marker3D" parent="." groups=["spawn_point"]]
+
+[node name="BoostPadA" parent="." unique_id=440351960 instance=ExtResource("5")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.021, 56)
+
+[node name="BoostPadB" parent="." unique_id=180555673 instance=ExtResource("5")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.021, 24)
+
+[node name="BoostPadC" parent="." unique_id=930135763 instance=ExtResource("5")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -36, 0.021, 34)
+
+[node name="SpawnPoint" type="Marker3D" parent="." unique_id=689465965 groups=["spawn_point"]]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.2, 66)
 
-[node name="CartPlayer" parent="." instance=ExtResource("2")]
+[node name="CartPlayer" parent="." unique_id=3017960 instance=ExtResource("2")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.2, 66)
 
-[node name="HUD" parent="." instance=ExtResource("6")]
+[node name="HUD" parent="." unique_id=1212570587 instance=ExtResource("6")]
 
-[node name="PauseMenu" parent="." instance=ExtResource("7")]
-[node name="DriftCone1" type="RigidBody3D" parent="." groups=["pushable"]]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, -26.000000, 0.000000, 24.000000)
+[node name="PauseMenu" parent="." unique_id=34644606 instance=ExtResource("7")]
+
+[node name="DriftCone1" type="RigidBody3D" parent="." unique_id=2025933360 groups=["pushable"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -26, 0, 24)
 collision_layer = 4
 collision_mask = 5
 mass = 0.35
-continuous_cd = true
-can_sleep = true
 physics_material_override = SubResource("prop_phys")
+continuous_cd = true
 
-[node name="Model" parent="DriftCone1" instance=ExtResource("3")]
+[node name="Model" parent="DriftCone1" unique_id=1300821264 instance=ExtResource("3")]
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="DriftCone1"]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 0.000000, 0.270000, 0.000000)
+[node name="CollisionShape3D" type="CollisionShape3D" parent="DriftCone1" unique_id=249557828]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.27, 0)
 shape = SubResource("cone_shape")
-[node name="DriftCone2" type="RigidBody3D" parent="." groups=["pushable"]]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, -27.909830, 0.000000, 29.877853)
+
+[node name="DriftCone2" type="RigidBody3D" parent="." unique_id=1522171671 groups=["pushable"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -27.90983, 0, 29.877853)
 collision_layer = 4
 collision_mask = 5
 mass = 0.35
-continuous_cd = true
-can_sleep = true
 physics_material_override = SubResource("prop_phys")
+continuous_cd = true
 
-[node name="Model" parent="DriftCone2" instance=ExtResource("3")]
+[node name="Model" parent="DriftCone2" unique_id=1469499315 instance=ExtResource("3")]
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="DriftCone2"]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 0.000000, 0.270000, 0.000000)
+[node name="CollisionShape3D" type="CollisionShape3D" parent="DriftCone2" unique_id=80715048]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.27, 0)
 shape = SubResource("cone_shape")
-[node name="DriftCone3" type="RigidBody3D" parent="." groups=["pushable"]]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, -32.909830, 0.000000, 33.510565)
+
+[node name="DriftCone3" type="RigidBody3D" parent="." unique_id=1672099428 groups=["pushable"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -32.90983, 0, 33.510567)
 collision_layer = 4
 collision_mask = 5
 mass = 0.35
-continuous_cd = true
-can_sleep = true
 physics_material_override = SubResource("prop_phys")
+continuous_cd = true
 
-[node name="Model" parent="DriftCone3" instance=ExtResource("3")]
+[node name="Model" parent="DriftCone3" unique_id=664215807 instance=ExtResource("3")]
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="DriftCone3"]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 0.000000, 0.270000, 0.000000)
+[node name="CollisionShape3D" type="CollisionShape3D" parent="DriftCone3" unique_id=105929411]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.27, 0)
 shape = SubResource("cone_shape")
-[node name="DriftCone4" type="RigidBody3D" parent="." groups=["pushable"]]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, -39.090170, 0.000000, 33.510565)
+
+[node name="DriftCone4" type="RigidBody3D" parent="." unique_id=58565704 groups=["pushable"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -39.09017, 0, 33.510567)
 collision_layer = 4
 collision_mask = 5
 mass = 0.35
-continuous_cd = true
-can_sleep = true
 physics_material_override = SubResource("prop_phys")
+continuous_cd = true
 
-[node name="Model" parent="DriftCone4" instance=ExtResource("3")]
+[node name="Model" parent="DriftCone4" unique_id=1227227035 instance=ExtResource("3")]
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="DriftCone4"]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 0.000000, 0.270000, 0.000000)
+[node name="CollisionShape3D" type="CollisionShape3D" parent="DriftCone4" unique_id=1919286107]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.27, 0)
 shape = SubResource("cone_shape")
-[node name="DriftCone5" type="RigidBody3D" parent="." groups=["pushable"]]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, -44.090170, 0.000000, 29.877853)
+
+[node name="DriftCone5" type="RigidBody3D" parent="." unique_id=332160210 groups=["pushable"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -44.09017, 0, 29.877853)
 collision_layer = 4
 collision_mask = 5
 mass = 0.35
-continuous_cd = true
-can_sleep = true
 physics_material_override = SubResource("prop_phys")
+continuous_cd = true
 
-[node name="Model" parent="DriftCone5" instance=ExtResource("3")]
+[node name="Model" parent="DriftCone5" unique_id=643757845 instance=ExtResource("3")]
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="DriftCone5"]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 0.000000, 0.270000, 0.000000)
+[node name="CollisionShape3D" type="CollisionShape3D" parent="DriftCone5" unique_id=262202377]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.27, 0)
 shape = SubResource("cone_shape")
-[node name="DriftCone6" type="RigidBody3D" parent="." groups=["pushable"]]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, -46.000000, 0.000000, 24.000000)
+
+[node name="DriftCone6" type="RigidBody3D" parent="." unique_id=1598403571 groups=["pushable"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -46, 0, 24)
 collision_layer = 4
 collision_mask = 5
 mass = 0.35
-continuous_cd = true
-can_sleep = true
 physics_material_override = SubResource("prop_phys")
+continuous_cd = true
 
-[node name="Model" parent="DriftCone6" instance=ExtResource("3")]
+[node name="Model" parent="DriftCone6" unique_id=1036343644 instance=ExtResource("3")]
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="DriftCone6"]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 0.000000, 0.270000, 0.000000)
+[node name="CollisionShape3D" type="CollisionShape3D" parent="DriftCone6" unique_id=1900931358]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.27, 0)
 shape = SubResource("cone_shape")
-[node name="DriftCone7" type="RigidBody3D" parent="." groups=["pushable"]]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, -44.090170, 0.000000, 18.122147)
+
+[node name="DriftCone7" type="RigidBody3D" parent="." unique_id=476397292 groups=["pushable"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -44.09017, 0, 18.122147)
 collision_layer = 4
 collision_mask = 5
 mass = 0.35
-continuous_cd = true
-can_sleep = true
 physics_material_override = SubResource("prop_phys")
+continuous_cd = true
 
-[node name="Model" parent="DriftCone7" instance=ExtResource("3")]
+[node name="Model" parent="DriftCone7" unique_id=310057235 instance=ExtResource("3")]
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="DriftCone7"]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 0.000000, 0.270000, 0.000000)
+[node name="CollisionShape3D" type="CollisionShape3D" parent="DriftCone7" unique_id=1861023188]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.27, 0)
 shape = SubResource("cone_shape")
-[node name="DriftCone8" type="RigidBody3D" parent="." groups=["pushable"]]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, -39.090170, 0.000000, 14.489435)
+
+[node name="DriftCone8" type="RigidBody3D" parent="." unique_id=1915180501 groups=["pushable"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -39.09017, 0, 14.489435)
 collision_layer = 4
 collision_mask = 5
 mass = 0.35
-continuous_cd = true
-can_sleep = true
 physics_material_override = SubResource("prop_phys")
+continuous_cd = true
 
-[node name="Model" parent="DriftCone8" instance=ExtResource("3")]
+[node name="Model" parent="DriftCone8" unique_id=883577921 instance=ExtResource("3")]
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="DriftCone8"]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 0.000000, 0.270000, 0.000000)
+[node name="CollisionShape3D" type="CollisionShape3D" parent="DriftCone8" unique_id=427626657]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.27, 0)
 shape = SubResource("cone_shape")
-[node name="DriftCone9" type="RigidBody3D" parent="." groups=["pushable"]]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, -32.909830, 0.000000, 14.489435)
+
+[node name="DriftCone9" type="RigidBody3D" parent="." unique_id=57549100 groups=["pushable"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -32.90983, 0, 14.489435)
 collision_layer = 4
 collision_mask = 5
 mass = 0.35
-continuous_cd = true
-can_sleep = true
 physics_material_override = SubResource("prop_phys")
+continuous_cd = true
 
-[node name="Model" parent="DriftCone9" instance=ExtResource("3")]
+[node name="Model" parent="DriftCone9" unique_id=566019092 instance=ExtResource("3")]
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="DriftCone9"]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 0.000000, 0.270000, 0.000000)
+[node name="CollisionShape3D" type="CollisionShape3D" parent="DriftCone9" unique_id=639083251]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.27, 0)
 shape = SubResource("cone_shape")
-[node name="DriftCone10" type="RigidBody3D" parent="." groups=["pushable"]]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, -27.909830, 0.000000, 18.122147)
+
+[node name="DriftCone10" type="RigidBody3D" parent="." unique_id=1733253026 groups=["pushable"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -27.90983, 0, 18.122147)
 collision_layer = 4
 collision_mask = 5
 mass = 0.35
-continuous_cd = true
-can_sleep = true
 physics_material_override = SubResource("prop_phys")
+continuous_cd = true
 
-[node name="Model" parent="DriftCone10" instance=ExtResource("3")]
+[node name="Model" parent="DriftCone10" unique_id=1818349371 instance=ExtResource("3")]
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="DriftCone10"]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 0.000000, 0.270000, 0.000000)
+[node name="CollisionShape3D" type="CollisionShape3D" parent="DriftCone10" unique_id=1113232964]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.27, 0)
 shape = SubResource("cone_shape")
-[node name="SlalomCone1" type="RigidBody3D" parent="." groups=["pushable"]]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 29.500000, 0.000000, 48.000000)
+
+[node name="SlalomCone1" type="RigidBody3D" parent="." unique_id=453654260 groups=["pushable"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 29.5, 0, 48)
 collision_layer = 4
 collision_mask = 5
 mass = 0.35
-continuous_cd = true
-can_sleep = true
 physics_material_override = SubResource("prop_phys")
+continuous_cd = true
 
-[node name="Model" parent="SlalomCone1" instance=ExtResource("3")]
+[node name="Model" parent="SlalomCone1" unique_id=863220649 instance=ExtResource("3")]
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="SlalomCone1"]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 0.000000, 0.270000, 0.000000)
+[node name="CollisionShape3D" type="CollisionShape3D" parent="SlalomCone1" unique_id=564605123]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.27, 0)
 shape = SubResource("cone_shape")
-[node name="SlalomCone2" type="RigidBody3D" parent="." groups=["pushable"]]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 34.500000, 0.000000, 44.000000)
+
+[node name="SlalomCone2" type="RigidBody3D" parent="." unique_id=91498740 groups=["pushable"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 34.5, 0, 44)
 collision_layer = 4
 collision_mask = 5
 mass = 0.35
-continuous_cd = true
-can_sleep = true
 physics_material_override = SubResource("prop_phys")
+continuous_cd = true
 
-[node name="Model" parent="SlalomCone2" instance=ExtResource("3")]
+[node name="Model" parent="SlalomCone2" unique_id=836463606 instance=ExtResource("3")]
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="SlalomCone2"]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 0.000000, 0.270000, 0.000000)
+[node name="CollisionShape3D" type="CollisionShape3D" parent="SlalomCone2" unique_id=1108648368]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.27, 0)
 shape = SubResource("cone_shape")
-[node name="SlalomCone3" type="RigidBody3D" parent="." groups=["pushable"]]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 29.500000, 0.000000, 40.000000)
+
+[node name="SlalomCone3" type="RigidBody3D" parent="." unique_id=1481897052 groups=["pushable"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 29.5, 0, 40)
 collision_layer = 4
 collision_mask = 5
 mass = 0.35
-continuous_cd = true
-can_sleep = true
 physics_material_override = SubResource("prop_phys")
+continuous_cd = true
 
-[node name="Model" parent="SlalomCone3" instance=ExtResource("3")]
+[node name="Model" parent="SlalomCone3" unique_id=1228998794 instance=ExtResource("3")]
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="SlalomCone3"]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 0.000000, 0.270000, 0.000000)
+[node name="CollisionShape3D" type="CollisionShape3D" parent="SlalomCone3" unique_id=1360359323]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.27, 0)
 shape = SubResource("cone_shape")
-[node name="SlalomCone4" type="RigidBody3D" parent="." groups=["pushable"]]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 34.500000, 0.000000, 36.000000)
+
+[node name="SlalomCone4" type="RigidBody3D" parent="." unique_id=2012592025 groups=["pushable"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 34.5, 0, 36)
 collision_layer = 4
 collision_mask = 5
 mass = 0.35
-continuous_cd = true
-can_sleep = true
 physics_material_override = SubResource("prop_phys")
+continuous_cd = true
 
-[node name="Model" parent="SlalomCone4" instance=ExtResource("3")]
+[node name="Model" parent="SlalomCone4" unique_id=1811468050 instance=ExtResource("3")]
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="SlalomCone4"]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 0.000000, 0.270000, 0.000000)
+[node name="CollisionShape3D" type="CollisionShape3D" parent="SlalomCone4" unique_id=1066118393]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.27, 0)
 shape = SubResource("cone_shape")
-[node name="SlalomCone5" type="RigidBody3D" parent="." groups=["pushable"]]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 29.500000, 0.000000, 32.000000)
+
+[node name="SlalomCone5" type="RigidBody3D" parent="." unique_id=115993653 groups=["pushable"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 29.5, 0, 32)
 collision_layer = 4
 collision_mask = 5
 mass = 0.35
-continuous_cd = true
-can_sleep = true
 physics_material_override = SubResource("prop_phys")
+continuous_cd = true
 
-[node name="Model" parent="SlalomCone5" instance=ExtResource("3")]
+[node name="Model" parent="SlalomCone5" unique_id=113098507 instance=ExtResource("3")]
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="SlalomCone5"]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 0.000000, 0.270000, 0.000000)
+[node name="CollisionShape3D" type="CollisionShape3D" parent="SlalomCone5" unique_id=1800863855]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.27, 0)
 shape = SubResource("cone_shape")
-[node name="SlalomCone6" type="RigidBody3D" parent="." groups=["pushable"]]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 34.500000, 0.000000, 28.000000)
+
+[node name="SlalomCone6" type="RigidBody3D" parent="." unique_id=293844447 groups=["pushable"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 34.5, 0, 28)
 collision_layer = 4
 collision_mask = 5
 mass = 0.35
-continuous_cd = true
-can_sleep = true
 physics_material_override = SubResource("prop_phys")
+continuous_cd = true
 
-[node name="Model" parent="SlalomCone6" instance=ExtResource("3")]
+[node name="Model" parent="SlalomCone6" unique_id=429622974 instance=ExtResource("3")]
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="SlalomCone6"]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 0.000000, 0.270000, 0.000000)
+[node name="CollisionShape3D" type="CollisionShape3D" parent="SlalomCone6" unique_id=2119459856]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.27, 0)
 shape = SubResource("cone_shape")
-[node name="SlalomCone7" type="RigidBody3D" parent="." groups=["pushable"]]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 29.500000, 0.000000, 24.000000)
+
+[node name="SlalomCone7" type="RigidBody3D" parent="." unique_id=1614994131 groups=["pushable"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 29.5, 0, 24)
 collision_layer = 4
 collision_mask = 5
 mass = 0.35
-continuous_cd = true
-can_sleep = true
 physics_material_override = SubResource("prop_phys")
+continuous_cd = true
 
-[node name="Model" parent="SlalomCone7" instance=ExtResource("3")]
+[node name="Model" parent="SlalomCone7" unique_id=451467577 instance=ExtResource("3")]
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="SlalomCone7"]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 0.000000, 0.270000, 0.000000)
+[node name="CollisionShape3D" type="CollisionShape3D" parent="SlalomCone7" unique_id=1626647579]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.27, 0)
 shape = SubResource("cone_shape")
-[node name="SlalomCone8" type="RigidBody3D" parent="." groups=["pushable"]]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 34.500000, 0.000000, 20.000000)
+
+[node name="SlalomCone8" type="RigidBody3D" parent="." unique_id=371235007 groups=["pushable"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 34.5, 0, 20)
 collision_layer = 4
 collision_mask = 5
 mass = 0.35
-continuous_cd = true
-can_sleep = true
 physics_material_override = SubResource("prop_phys")
+continuous_cd = true
 
-[node name="Model" parent="SlalomCone8" instance=ExtResource("3")]
+[node name="Model" parent="SlalomCone8" unique_id=660530626 instance=ExtResource("3")]
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="SlalomCone8"]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 0.000000, 0.270000, 0.000000)
+[node name="CollisionShape3D" type="CollisionShape3D" parent="SlalomCone8" unique_id=691525110]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.27, 0)
 shape = SubResource("cone_shape")
-[node name="FieldCone1" type="RigidBody3D" parent="." groups=["pushable"]]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 28.500000, 0.000000, -14.500000)
+
+[node name="FieldCone1" type="RigidBody3D" parent="." unique_id=1797114693 groups=["pushable"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 28.5, 0, -14.5)
 collision_layer = 4
 collision_mask = 5
 mass = 0.35
-continuous_cd = true
-can_sleep = true
 physics_material_override = SubResource("prop_phys")
+continuous_cd = true
 
-[node name="Model" parent="FieldCone1" instance=ExtResource("3")]
+[node name="Model" parent="FieldCone1" unique_id=1858306076 instance=ExtResource("3")]
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="FieldCone1"]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 0.000000, 0.270000, 0.000000)
+[node name="CollisionShape3D" type="CollisionShape3D" parent="FieldCone1" unique_id=898664735]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.27, 0)
 shape = SubResource("cone_shape")
-[node name="FieldCone2" type="RigidBody3D" parent="." groups=["pushable"]]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 32.000000, 0.000000, -14.500000)
+
+[node name="FieldCone2" type="RigidBody3D" parent="." unique_id=1957839783 groups=["pushable"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 32, 0, -14.5)
 collision_layer = 4
 collision_mask = 5
 mass = 0.35
-continuous_cd = true
-can_sleep = true
 physics_material_override = SubResource("prop_phys")
+continuous_cd = true
 
-[node name="Model" parent="FieldCone2" instance=ExtResource("3")]
+[node name="Model" parent="FieldCone2" unique_id=1984079491 instance=ExtResource("3")]
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="FieldCone2"]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 0.000000, 0.270000, 0.000000)
+[node name="CollisionShape3D" type="CollisionShape3D" parent="FieldCone2" unique_id=1491233140]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.27, 0)
 shape = SubResource("cone_shape")
-[node name="FieldCone3" type="RigidBody3D" parent="." groups=["pushable"]]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 35.500000, 0.000000, -14.500000)
+
+[node name="FieldCone3" type="RigidBody3D" parent="." unique_id=24337285 groups=["pushable"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 35.5, 0, -14.5)
 collision_layer = 4
 collision_mask = 5
 mass = 0.35
-continuous_cd = true
-can_sleep = true
 physics_material_override = SubResource("prop_phys")
+continuous_cd = true
 
-[node name="Model" parent="FieldCone3" instance=ExtResource("3")]
+[node name="Model" parent="FieldCone3" unique_id=1736648352 instance=ExtResource("3")]
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="FieldCone3"]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 0.000000, 0.270000, 0.000000)
+[node name="CollisionShape3D" type="CollisionShape3D" parent="FieldCone3" unique_id=156947807]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.27, 0)
 shape = SubResource("cone_shape")
-[node name="FieldCone4" type="RigidBody3D" parent="." groups=["pushable"]]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 39.000000, 0.000000, -14.500000)
+
+[node name="FieldCone4" type="RigidBody3D" parent="." unique_id=1056729987 groups=["pushable"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 39, 0, -14.5)
 collision_layer = 4
 collision_mask = 5
 mass = 0.35
-continuous_cd = true
-can_sleep = true
 physics_material_override = SubResource("prop_phys")
+continuous_cd = true
 
-[node name="Model" parent="FieldCone4" instance=ExtResource("3")]
+[node name="Model" parent="FieldCone4" unique_id=70536988 instance=ExtResource("3")]
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="FieldCone4"]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 0.000000, 0.270000, 0.000000)
+[node name="CollisionShape3D" type="CollisionShape3D" parent="FieldCone4" unique_id=1091314052]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.27, 0)
 shape = SubResource("cone_shape")
-[node name="FieldCone5" type="RigidBody3D" parent="." groups=["pushable"]]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 28.500000, 0.000000, -11.000000)
+
+[node name="FieldCone5" type="RigidBody3D" parent="." unique_id=1825821400 groups=["pushable"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 28.5, 0, -11)
 collision_layer = 4
 collision_mask = 5
 mass = 0.35
-continuous_cd = true
-can_sleep = true
 physics_material_override = SubResource("prop_phys")
+continuous_cd = true
 
-[node name="Model" parent="FieldCone5" instance=ExtResource("3")]
+[node name="Model" parent="FieldCone5" unique_id=1338672953 instance=ExtResource("3")]
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="FieldCone5"]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 0.000000, 0.270000, 0.000000)
+[node name="CollisionShape3D" type="CollisionShape3D" parent="FieldCone5" unique_id=1748778254]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.27, 0)
 shape = SubResource("cone_shape")
-[node name="FieldCone6" type="RigidBody3D" parent="." groups=["pushable"]]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 32.000000, 0.000000, -11.000000)
+
+[node name="FieldCone6" type="RigidBody3D" parent="." unique_id=1953596966 groups=["pushable"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 32, 0, -11)
 collision_layer = 4
 collision_mask = 5
 mass = 0.35
-continuous_cd = true
-can_sleep = true
 physics_material_override = SubResource("prop_phys")
+continuous_cd = true
 
-[node name="Model" parent="FieldCone6" instance=ExtResource("3")]
+[node name="Model" parent="FieldCone6" unique_id=1041402717 instance=ExtResource("3")]
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="FieldCone6"]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 0.000000, 0.270000, 0.000000)
+[node name="CollisionShape3D" type="CollisionShape3D" parent="FieldCone6" unique_id=520358950]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.27, 0)
 shape = SubResource("cone_shape")
-[node name="FieldCone7" type="RigidBody3D" parent="." groups=["pushable"]]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 35.500000, 0.000000, -11.000000)
+
+[node name="FieldCone7" type="RigidBody3D" parent="." unique_id=1132848367 groups=["pushable"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 35.5, 0, -11)
 collision_layer = 4
 collision_mask = 5
 mass = 0.35
-continuous_cd = true
-can_sleep = true
 physics_material_override = SubResource("prop_phys")
+continuous_cd = true
 
-[node name="Model" parent="FieldCone7" instance=ExtResource("3")]
+[node name="Model" parent="FieldCone7" unique_id=1350457616 instance=ExtResource("3")]
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="FieldCone7"]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 0.000000, 0.270000, 0.000000)
+[node name="CollisionShape3D" type="CollisionShape3D" parent="FieldCone7" unique_id=2071492461]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.27, 0)
 shape = SubResource("cone_shape")
-[node name="FieldCone8" type="RigidBody3D" parent="." groups=["pushable"]]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 39.000000, 0.000000, -11.000000)
+
+[node name="FieldCone8" type="RigidBody3D" parent="." unique_id=1332238532 groups=["pushable"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 39, 0, -11)
 collision_layer = 4
 collision_mask = 5
 mass = 0.35
-continuous_cd = true
-can_sleep = true
 physics_material_override = SubResource("prop_phys")
+continuous_cd = true
 
-[node name="Model" parent="FieldCone8" instance=ExtResource("3")]
+[node name="Model" parent="FieldCone8" unique_id=1852795898 instance=ExtResource("3")]
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="FieldCone8"]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 0.000000, 0.270000, 0.000000)
+[node name="CollisionShape3D" type="CollisionShape3D" parent="FieldCone8" unique_id=1887938140]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.27, 0)
 shape = SubResource("cone_shape")
-[node name="FieldCone9" type="RigidBody3D" parent="." groups=["pushable"]]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 28.500000, 0.000000, -7.500000)
+
+[node name="FieldCone9" type="RigidBody3D" parent="." unique_id=1880628746 groups=["pushable"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 28.5, 0, -7.5)
 collision_layer = 4
 collision_mask = 5
 mass = 0.35
-continuous_cd = true
-can_sleep = true
 physics_material_override = SubResource("prop_phys")
+continuous_cd = true
 
-[node name="Model" parent="FieldCone9" instance=ExtResource("3")]
+[node name="Model" parent="FieldCone9" unique_id=1929974819 instance=ExtResource("3")]
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="FieldCone9"]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 0.000000, 0.270000, 0.000000)
+[node name="CollisionShape3D" type="CollisionShape3D" parent="FieldCone9" unique_id=1011067413]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.27, 0)
 shape = SubResource("cone_shape")
-[node name="FieldCone10" type="RigidBody3D" parent="." groups=["pushable"]]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 32.000000, 0.000000, -7.500000)
+
+[node name="FieldCone10" type="RigidBody3D" parent="." unique_id=580929791 groups=["pushable"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 32, 0, -7.5)
 collision_layer = 4
 collision_mask = 5
 mass = 0.35
-continuous_cd = true
-can_sleep = true
 physics_material_override = SubResource("prop_phys")
+continuous_cd = true
 
-[node name="Model" parent="FieldCone10" instance=ExtResource("3")]
+[node name="Model" parent="FieldCone10" unique_id=1507587441 instance=ExtResource("3")]
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="FieldCone10"]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 0.000000, 0.270000, 0.000000)
+[node name="CollisionShape3D" type="CollisionShape3D" parent="FieldCone10" unique_id=1656619564]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.27, 0)
 shape = SubResource("cone_shape")
-[node name="FieldCone11" type="RigidBody3D" parent="." groups=["pushable"]]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 35.500000, 0.000000, -7.500000)
+
+[node name="FieldCone11" type="RigidBody3D" parent="." unique_id=1523977730 groups=["pushable"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 35.5, 0, -7.5)
 collision_layer = 4
 collision_mask = 5
 mass = 0.35
-continuous_cd = true
-can_sleep = true
 physics_material_override = SubResource("prop_phys")
+continuous_cd = true
 
-[node name="Model" parent="FieldCone11" instance=ExtResource("3")]
+[node name="Model" parent="FieldCone11" unique_id=1299865634 instance=ExtResource("3")]
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="FieldCone11"]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 0.000000, 0.270000, 0.000000)
+[node name="CollisionShape3D" type="CollisionShape3D" parent="FieldCone11" unique_id=2098926107]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.27, 0)
 shape = SubResource("cone_shape")
-[node name="FieldCone12" type="RigidBody3D" parent="." groups=["pushable"]]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 39.000000, 0.000000, -7.500000)
+
+[node name="FieldCone12" type="RigidBody3D" parent="." unique_id=1963210810 groups=["pushable"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 39, 0, -7.5)
 collision_layer = 4
 collision_mask = 5
 mass = 0.35
-continuous_cd = true
-can_sleep = true
 physics_material_override = SubResource("prop_phys")
+continuous_cd = true
 
-[node name="Model" parent="FieldCone12" instance=ExtResource("3")]
+[node name="Model" parent="FieldCone12" unique_id=1579255014 instance=ExtResource("3")]
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="FieldCone12"]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 0.000000, 0.270000, 0.000000)
+[node name="CollisionShape3D" type="CollisionShape3D" parent="FieldCone12" unique_id=1946634377]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.27, 0)
 shape = SubResource("cone_shape")
-[node name="FieldCone13" type="RigidBody3D" parent="." groups=["pushable"]]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 28.500000, 0.000000, -4.000000)
+
+[node name="FieldCone13" type="RigidBody3D" parent="." unique_id=1734641219 groups=["pushable"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 28.5, 0, -4)
 collision_layer = 4
 collision_mask = 5
 mass = 0.35
-continuous_cd = true
-can_sleep = true
 physics_material_override = SubResource("prop_phys")
+continuous_cd = true
 
-[node name="Model" parent="FieldCone13" instance=ExtResource("3")]
+[node name="Model" parent="FieldCone13" unique_id=218394528 instance=ExtResource("3")]
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="FieldCone13"]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 0.000000, 0.270000, 0.000000)
+[node name="CollisionShape3D" type="CollisionShape3D" parent="FieldCone13" unique_id=253911798]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.27, 0)
 shape = SubResource("cone_shape")
-[node name="FieldCone14" type="RigidBody3D" parent="." groups=["pushable"]]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 32.000000, 0.000000, -4.000000)
+
+[node name="FieldCone14" type="RigidBody3D" parent="." unique_id=1893580221 groups=["pushable"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 32, 0, -4)
 collision_layer = 4
 collision_mask = 5
 mass = 0.35
-continuous_cd = true
-can_sleep = true
 physics_material_override = SubResource("prop_phys")
+continuous_cd = true
 
-[node name="Model" parent="FieldCone14" instance=ExtResource("3")]
+[node name="Model" parent="FieldCone14" unique_id=1217773619 instance=ExtResource("3")]
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="FieldCone14"]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 0.000000, 0.270000, 0.000000)
+[node name="CollisionShape3D" type="CollisionShape3D" parent="FieldCone14" unique_id=1223029237]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.27, 0)
 shape = SubResource("cone_shape")
-[node name="FieldCone15" type="RigidBody3D" parent="." groups=["pushable"]]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 35.500000, 0.000000, -4.000000)
+
+[node name="FieldCone15" type="RigidBody3D" parent="." unique_id=498459423 groups=["pushable"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 35.5, 0, -4)
 collision_layer = 4
 collision_mask = 5
 mass = 0.35
-continuous_cd = true
-can_sleep = true
 physics_material_override = SubResource("prop_phys")
+continuous_cd = true
 
-[node name="Model" parent="FieldCone15" instance=ExtResource("3")]
+[node name="Model" parent="FieldCone15" unique_id=1458455653 instance=ExtResource("3")]
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="FieldCone15"]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 0.000000, 0.270000, 0.000000)
+[node name="CollisionShape3D" type="CollisionShape3D" parent="FieldCone15" unique_id=862443034]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.27, 0)
 shape = SubResource("cone_shape")
-[node name="FieldCone16" type="RigidBody3D" parent="." groups=["pushable"]]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 39.000000, 0.000000, -4.000000)
+
+[node name="FieldCone16" type="RigidBody3D" parent="." unique_id=1881323628 groups=["pushable"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 39, 0, -4)
 collision_layer = 4
 collision_mask = 5
 mass = 0.35
-continuous_cd = true
-can_sleep = true
 physics_material_override = SubResource("prop_phys")
+continuous_cd = true
 
-[node name="Model" parent="FieldCone16" instance=ExtResource("3")]
+[node name="Model" parent="FieldCone16" unique_id=1700266907 instance=ExtResource("3")]
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="FieldCone16"]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 0.000000, 0.270000, 0.000000)
+[node name="CollisionShape3D" type="CollisionShape3D" parent="FieldCone16" unique_id=576500605]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.27, 0)
 shape = SubResource("cone_shape")
-[node name="BowlCone1" type="RigidBody3D" parent="." groups=["pushable"]]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, -43.000000, 0.000000, -24.000000)
+
+[node name="BowlCone1" type="RigidBody3D" parent="." unique_id=2122977395 groups=["pushable"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -43, 0, -24)
 collision_layer = 4
 collision_mask = 5
 mass = 0.35
-continuous_cd = true
-can_sleep = true
 physics_material_override = SubResource("prop_phys")
+continuous_cd = true
 
-[node name="Model" parent="BowlCone1" instance=ExtResource("3")]
+[node name="Model" parent="BowlCone1" unique_id=1092592757 instance=ExtResource("3")]
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="BowlCone1"]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 0.000000, 0.270000, 0.000000)
+[node name="CollisionShape3D" type="CollisionShape3D" parent="BowlCone1" unique_id=349480566]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.27, 0)
 shape = SubResource("cone_shape")
-[node name="BowlCone2" type="RigidBody3D" parent="." groups=["pushable"]]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, -29.000000, 0.000000, -24.000000)
+
+[node name="BowlCone2" type="RigidBody3D" parent="." unique_id=1121103487 groups=["pushable"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -29, 0, -24)
 collision_layer = 4
 collision_mask = 5
 mass = 0.35
-continuous_cd = true
-can_sleep = true
 physics_material_override = SubResource("prop_phys")
+continuous_cd = true
 
-[node name="Model" parent="BowlCone2" instance=ExtResource("3")]
+[node name="Model" parent="BowlCone2" unique_id=1142942451 instance=ExtResource("3")]
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="BowlCone2"]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 0.000000, 0.270000, 0.000000)
+[node name="CollisionShape3D" type="CollisionShape3D" parent="BowlCone2" unique_id=1836891752]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.27, 0)
 shape = SubResource("cone_shape")
-[node name="BowlCone3" type="RigidBody3D" parent="." groups=["pushable"]]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, -43.000000, 0.000000, -8.000000)
+
+[node name="BowlCone3" type="RigidBody3D" parent="." unique_id=1494394383 groups=["pushable"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -43, 0, -8)
 collision_layer = 4
 collision_mask = 5
 mass = 0.35
-continuous_cd = true
-can_sleep = true
 physics_material_override = SubResource("prop_phys")
+continuous_cd = true
 
-[node name="Model" parent="BowlCone3" instance=ExtResource("3")]
+[node name="Model" parent="BowlCone3" unique_id=1903510321 instance=ExtResource("3")]
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="BowlCone3"]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 0.000000, 0.270000, 0.000000)
+[node name="CollisionShape3D" type="CollisionShape3D" parent="BowlCone3" unique_id=178312770]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.27, 0)
 shape = SubResource("cone_shape")
-[node name="BowlCone4" type="RigidBody3D" parent="." groups=["pushable"]]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, -29.000000, 0.000000, -8.000000)
+
+[node name="BowlCone4" type="RigidBody3D" parent="." unique_id=1481329957 groups=["pushable"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -29, 0, -8)
 collision_layer = 4
 collision_mask = 5
 mass = 0.35
-continuous_cd = true
-can_sleep = true
 physics_material_override = SubResource("prop_phys")
+continuous_cd = true
 
-[node name="Model" parent="BowlCone4" instance=ExtResource("3")]
+[node name="Model" parent="BowlCone4" unique_id=505305738 instance=ExtResource("3")]
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="BowlCone4"]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 0.000000, 0.270000, 0.000000)
+[node name="CollisionShape3D" type="CollisionShape3D" parent="BowlCone4" unique_id=1777874700]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.27, 0)
 shape = SubResource("cone_shape")
-[node name="Crate1" type="RigidBody3D" parent="." groups=["pushable"]]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, -6.000000, 0.000000, -24.000000)
+
+[node name="Crate1" type="RigidBody3D" parent="." unique_id=881389698 groups=["pushable"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -6, 0, -24)
 collision_layer = 4
 collision_mask = 5
 mass = 0.8
-continuous_cd = true
-can_sleep = true
 physics_material_override = SubResource("prop_phys")
+continuous_cd = true
 
-[node name="Model" parent="Crate1" instance=ExtResource("4")]
+[node name="Model" parent="Crate1" unique_id=2067232552 instance=ExtResource("4")]
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="Crate1"]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 0.000000, 0.355000, 0.000000)
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Crate1" unique_id=1677403392]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.355, 0)
 shape = SubResource("crate_shape")
-[node name="Crate2" type="RigidBody3D" parent="." groups=["pushable"]]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, -3.000000, 0.000000, -24.000000)
+
+[node name="Crate2" type="RigidBody3D" parent="." unique_id=742920102 groups=["pushable"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -3, 0, -24)
 collision_layer = 4
 collision_mask = 5
 mass = 0.8
-continuous_cd = true
-can_sleep = true
 physics_material_override = SubResource("prop_phys")
+continuous_cd = true
 
-[node name="Model" parent="Crate2" instance=ExtResource("4")]
+[node name="Model" parent="Crate2" unique_id=1746176454 instance=ExtResource("4")]
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="Crate2"]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 0.000000, 0.355000, 0.000000)
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Crate2" unique_id=1537671164]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.355, 0)
 shape = SubResource("crate_shape")
-[node name="Crate3" type="RigidBody3D" parent="." groups=["pushable"]]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 0.000000, 0.000000, -24.000000)
+
+[node name="Crate3" type="RigidBody3D" parent="." unique_id=1860584770 groups=["pushable"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -24)
 collision_layer = 4
 collision_mask = 5
 mass = 0.8
-continuous_cd = true
-can_sleep = true
 physics_material_override = SubResource("prop_phys")
+continuous_cd = true
 
-[node name="Model" parent="Crate3" instance=ExtResource("4")]
+[node name="Model" parent="Crate3" unique_id=2096500037 instance=ExtResource("4")]
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="Crate3"]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 0.000000, 0.355000, 0.000000)
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Crate3" unique_id=1807367096]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.355, 0)
 shape = SubResource("crate_shape")
-[node name="Crate4" type="RigidBody3D" parent="." groups=["pushable"]]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 3.000000, 0.000000, -24.000000)
+
+[node name="Crate4" type="RigidBody3D" parent="." unique_id=1807296911 groups=["pushable"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3, 0, -24)
 collision_layer = 4
 collision_mask = 5
 mass = 0.8
-continuous_cd = true
-can_sleep = true
 physics_material_override = SubResource("prop_phys")
+continuous_cd = true
 
-[node name="Model" parent="Crate4" instance=ExtResource("4")]
+[node name="Model" parent="Crate4" unique_id=882298884 instance=ExtResource("4")]
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="Crate4"]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 0.000000, 0.355000, 0.000000)
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Crate4" unique_id=1390753137]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.355, 0)
 shape = SubResource("crate_shape")
-[node name="Crate5" type="RigidBody3D" parent="." groups=["pushable"]]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 6.000000, 0.000000, -24.000000)
+
+[node name="Crate5" type="RigidBody3D" parent="." unique_id=1332086215 groups=["pushable"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 6, 0, -24)
 collision_layer = 4
 collision_mask = 5
 mass = 0.8
-continuous_cd = true
-can_sleep = true
 physics_material_override = SubResource("prop_phys")
+continuous_cd = true
 
-[node name="Model" parent="Crate5" instance=ExtResource("4")]
+[node name="Model" parent="Crate5" unique_id=1220285647 instance=ExtResource("4")]
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="Crate5"]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 0.000000, 0.355000, 0.000000)
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Crate5" unique_id=228133710]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.355, 0)
 shape = SubResource("crate_shape")
-[node name="Crate6" type="RigidBody3D" parent="." groups=["pushable"]]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, -6.000000, 0.710000, -24.000000)
+
+[node name="Crate6" type="RigidBody3D" parent="." unique_id=1690075625 groups=["pushable"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -6, 0.71, -24)
 collision_layer = 4
 collision_mask = 5
 mass = 0.8
-continuous_cd = true
-can_sleep = true
 physics_material_override = SubResource("prop_phys")
+continuous_cd = true
 
-[node name="Model" parent="Crate6" instance=ExtResource("4")]
+[node name="Model" parent="Crate6" unique_id=1570272528 instance=ExtResource("4")]
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="Crate6"]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 0.000000, 0.355000, 0.000000)
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Crate6" unique_id=714426669]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.355, 0)
 shape = SubResource("crate_shape")
-[node name="Crate7" type="RigidBody3D" parent="." groups=["pushable"]]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, -3.000000, 0.710000, -24.000000)
+
+[node name="Crate7" type="RigidBody3D" parent="." unique_id=568781702 groups=["pushable"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -3, 0.71, -24)
 collision_layer = 4
 collision_mask = 5
 mass = 0.8
-continuous_cd = true
-can_sleep = true
 physics_material_override = SubResource("prop_phys")
+continuous_cd = true
 
-[node name="Model" parent="Crate7" instance=ExtResource("4")]
+[node name="Model" parent="Crate7" unique_id=1575033290 instance=ExtResource("4")]
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="Crate7"]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 0.000000, 0.355000, 0.000000)
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Crate7" unique_id=1621182630]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.355, 0)
 shape = SubResource("crate_shape")
-[node name="Crate8" type="RigidBody3D" parent="." groups=["pushable"]]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 0.000000, 0.710000, -24.000000)
+
+[node name="Crate8" type="RigidBody3D" parent="." unique_id=1625103412 groups=["pushable"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.71, -24)
 collision_layer = 4
 collision_mask = 5
 mass = 0.8
-continuous_cd = true
-can_sleep = true
 physics_material_override = SubResource("prop_phys")
+continuous_cd = true
 
-[node name="Model" parent="Crate8" instance=ExtResource("4")]
+[node name="Model" parent="Crate8" unique_id=623939003 instance=ExtResource("4")]
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="Crate8"]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 0.000000, 0.355000, 0.000000)
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Crate8" unique_id=1251562668]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.355, 0)
 shape = SubResource("crate_shape")
-[node name="Crate9" type="RigidBody3D" parent="." groups=["pushable"]]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 3.000000, 0.710000, -24.000000)
+
+[node name="Crate9" type="RigidBody3D" parent="." unique_id=901676262 groups=["pushable"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3, 0.71, -24)
 collision_layer = 4
 collision_mask = 5
 mass = 0.8
-continuous_cd = true
-can_sleep = true
 physics_material_override = SubResource("prop_phys")
+continuous_cd = true
 
-[node name="Model" parent="Crate9" instance=ExtResource("4")]
+[node name="Model" parent="Crate9" unique_id=1211895392 instance=ExtResource("4")]
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="Crate9"]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 0.000000, 0.355000, 0.000000)
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Crate9" unique_id=861142085]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.355, 0)
 shape = SubResource("crate_shape")
-[node name="Crate10" type="RigidBody3D" parent="." groups=["pushable"]]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 6.000000, 0.710000, -24.000000)
+
+[node name="Crate10" type="RigidBody3D" parent="." unique_id=441590812 groups=["pushable"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 6, 0.71, -24)
 collision_layer = 4
 collision_mask = 5
 mass = 0.8
-continuous_cd = true
-can_sleep = true
 physics_material_override = SubResource("prop_phys")
+continuous_cd = true
 
-[node name="Model" parent="Crate10" instance=ExtResource("4")]
+[node name="Model" parent="Crate10" unique_id=1397726831 instance=ExtResource("4")]
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="Crate10"]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -0.000000, -0.000000, 0.000000, 1.000000, 0.000000, 0.355000, 0.000000)
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Crate10" unique_id=978989038]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.355, 0)
 shape = SubResource("crate_shape")

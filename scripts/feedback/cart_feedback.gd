@@ -36,6 +36,10 @@ var _dust_burst: GPUParticles3D
 var _wind: GPUParticles3D
 var _camera: Camera3D
 var _skid_trails: Array[Node3D] = []
+var _has_engine: bool = true
+var _loop_idle: bool = true
+var _loop_base_pitch: float = 0.8
+var _loop_pitch_span: float = 0.7
 
 @onready var _engine_audio: AudioStreamPlayer3D = $EngineAudio
 @onready var _skid_audio: AudioStreamPlayer3D = $SkidAudio
@@ -65,8 +69,43 @@ func _spawn_skid_trails() -> void:
 		var trail: Node3D = SkidTrailScript.new()
 		trail.cart = _cart
 		trail.wheel_offset = Vector3(0.43 * side, 0.0, 0.55)
+		trail.set_meta("wheel_side", side)
 		add_child(trail)
 		_skid_trails.append(trail)
+
+
+func set_remote_mode(remote: bool) -> void:
+	## Ghost carts need no smoke/skid simulation at all.
+	set_physics_process(not remote)
+	for trail: Node3D in _skid_trails:
+		if is_instance_valid(trail):
+			trail.set_physics_process(not remote)
+
+
+func apply_vehicle_profile(entry: Dictionary) -> void:
+	## Per-vehicle feel: smoke volume, skid width/track and its own sound loop.
+	if entry.is_empty():
+		return
+	smoke_intensity = clampf(float(entry.get("smoke", smoke_intensity)), 0.05, 1.0)
+	smoke_lifetime = 1.15 + smoke_intensity * 0.55
+	_has_engine = bool(entry.get("has_engine", true))
+	_loop_idle = bool(entry.get("loop_idle", _has_engine))
+	_loop_base_pitch = float(entry.get("loop_pitch", 0.8))
+	_loop_pitch_span = float(entry.get("loop_pitch_span", 0.7))
+	var loop_sound: String = str(entry.get("loop_sound", ""))
+	if loop_sound != "" and ResourceLoader.exists(loop_sound):
+		_set_stream(_engine_audio, loop_sound, "")
+		if not _has_engine and _engine_audio != null:
+			_engine_audio.stop()
+	var side: float = float(entry.get("skid_side", 0.43))
+	var back: float = float(entry.get("skid_back", 0.55))
+	var mark_width: float = float(entry.get("skid_width", 0.17))
+	for trail: Node3D in _skid_trails:
+		if is_instance_valid(trail):
+			var trail_side: float = float(trail.get_meta("wheel_side", 1.0))
+			trail.set("wheel_offset", Vector3(side * trail_side, 0.0, back))
+			trail.set("width", mark_width)
+			trail.set("opacity", 0.55 + smoke_intensity * 0.10)
 
 
 func _load_audio() -> void:
@@ -152,12 +191,20 @@ func _update_speed_feedback(speed: float) -> void:
 func _update_audio(speed: float, grounded: bool, drifting: bool, handbraking: bool) -> void:
 	var sliding: bool = grounded and (drifting or handbraking) and speed > slide_sound_min_speed
 	if _engine_audio != null:
-		var want_engine: bool = enable_audio and _engine_audio.stream != null
-		if want_engine and not _engine_audio.playing:
+		# Cars idle all the time; the shopping cart's wheel rattle only exists
+		# once it is actually rolling.
+		var want_loop: bool = enable_audio and _engine_audio.stream != null and (_loop_idle or speed > 0.4)
+		if want_loop and not _engine_audio.playing:
 			_engine_audio.play()
-		_engine_audio.stream_paused = not want_engine
-		if want_engine:
-			_engine_audio.pitch_scale = 0.8 + clampf(speed / 18.0, 0.0, 1.0) * 0.7
+		_engine_audio.stream_paused = not want_loop
+		if want_loop:
+			var speed_ratio: float = clampf(speed / maxf(_cart.max_speed, 1.0), 0.0, 1.0)
+			var base_pitch: float = _loop_base_pitch + speed_ratio * _loop_pitch_span
+			_engine_audio.pitch_scale = minf(base_pitch * (1.0 + 0.18 * _cart.boost_visual), 2.4)
+			if _loop_idle:
+				_engine_audio.volume_db = -12.0 + speed_ratio * 3.0
+			else:
+				_engine_audio.volume_db = lerpf(-34.0, -11.0, clampf(speed / 8.0, 0.0, 1.0))
 	if _skid_audio != null:
 		var want_skid: bool = enable_audio and sliding and _skid_audio.stream != null
 		if want_skid and not _skid_audio.playing:
@@ -165,9 +212,6 @@ func _update_audio(speed: float, grounded: bool, drifting: bool, handbraking: bo
 		_skid_audio.stream_paused = not want_skid
 		_skid_audio.volume_db = lerpf(-18.0, -8.0, clampf(_cart.slide_amount, 0.0, 1.0))
 	var boosting: bool = _cart.boost_active or _cart.boost_visual > 0.5
-	if _engine_audio != null:
-		var base_pitch: float = 0.8 + clampf(speed / 18.0, 0.0, 1.0) * 0.7
-		_engine_audio.pitch_scale = minf(base_pitch * (1.0 + 0.18 * _cart.boost_visual), 2.2)
 	if _boost_loop_audio != null:
 		var want_boost_loop: bool = enable_audio and boosting and _boost_loop_audio.stream != null
 		if want_boost_loop and not _boost_loop_audio.playing:
@@ -180,7 +224,8 @@ func on_collision(impact_factor: float) -> void:
 	if not enable_collision_feedback:
 		return
 	if _dust_burst != null and enable_dust:
-		_dust_burst.amount_ratio = clampf(0.6 + impact_factor * 0.5, 0.3, 1.0)
+		var smoke_scale: float = clampf(0.70 + smoke_intensity * 0.50, 0.70, 1.20)
+		_dust_burst.amount_ratio = clampf((0.6 + impact_factor * 0.5) * smoke_scale, 0.25, 1.0)
 		_dust_burst.restart()
 	var player: AudioStreamPlayer3D = _impact_heavy_audio if impact_factor > 0.55 else _impact_light_audio
 	if player != null and player.stream == null:
@@ -193,7 +238,8 @@ func on_collision(impact_factor: float) -> void:
 func on_landing(fall_speed: float) -> void:
 	## Called by the player on touchdown after a jump: landing puff + thud.
 	if _dust_burst != null and enable_dust:
-		_dust_burst.amount_ratio = clampf(landing_burst_strength * clampf(fall_speed * 0.12, 0.35, 1.0), 0.2, 1.0)
+		var smoke_scale: float = clampf(0.70 + smoke_intensity * 0.50, 0.70, 1.20)
+		_dust_burst.amount_ratio = clampf(landing_burst_strength * clampf(fall_speed * 0.12, 0.35, 1.0) * smoke_scale, 0.2, 1.0)
 		_dust_burst.restart()
 	if _thud_audio != null and enable_audio and _thud_audio.stream != null:
 		_thud_audio.pitch_scale = randf_range(0.95, 1.05)

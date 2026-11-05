@@ -3,6 +3,75 @@
 All notable changes to Cart Slop GP. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer.
 
+## [0.4.1] - 2026-11-05
+
+Every vehicle now has its own personality - and the game has a changelog.
+
+### Added
+
+- **Per-vehicle physics**: each catalog entry has a real mass, top speed,
+  engine power, grip and steering. Engine power is quoted at a 1.2 t reference,
+  so the 3.2 t truck launches gently while the 1.15 t sports car is quick.
+- **Momentum-based impacts**: hitting walls uses the vehicle's mass (light cart
+  bounces and sheds speed; heavy truck ploughs on) and ramming props transfers
+  proportionally more momentum from heavier vehicles. Camera shake scales down
+  with weight.
+- **Unique vehicle audio**: six distinct synthesized engine loops plus a
+  shopping-cart wheel rattle (no engine), all pitch-shifted by speed. Generated
+  by `tools/gen_vehicle_loops.py`; free CC0 source links in
+  `docs/AUDIO_SOURCES.md`.
+- **Per-vehicle smoke and skid marks**: sports car and truck produce the most
+  smoke; skid width and rear track now match each vehicle (cart thin, truck
+  wide).
+- **CHANGELOG button** on the main menu with a scrollable history built from
+  `CHANGELOG.md`, so every released version is listed in-game.
+
+### Changed
+
+- The speedometer dial rescales to the current vehicle's boosted top speed
+  instead of clipping at 90 km/h.
+- Vehicle picker/README now document the weight and top-speed differences.
+
+### Fixed
+
+- Skid trails for wide vehicles were both offset to the same side and merged
+  into one thick mark; they now keep their left/right wheel sides.
+- The update badge never appeared on the first menu load: the 3-argument
+  `update_available` signal was connected to a 1-argument handler.
+- The update dialog could not be dismissed once an update was ready; Escape
+  now closes it, release notes close it after opening, and "no matching build"
+  opens the download page instead of getting stuck on "DOWNLOADING".
+- Changing scenes while paused (host start / host quit) carried the pause flag
+  into the new menu, freezing it. Transitions always unpause first.
+- The loading overlay hid the custom cursor and let clicks reach the menu
+  behind it; it now blocks input and draws the cursor above the overlay.
+- Lobby could START before hosting finished, and a failed host left a fake
+  code panel; buttons wait for `host_started`, failures reset the panel, and
+  BACK cancels an in-flight host instead of leaking a server.
+- Tab focus could escape update/settings/changelog overlays; focus now loops
+  inside each overlay and closing pause clears an open settings panel.
+- Tournament dropdowns overwrote Free Play settings with the wrong widgets.
+- Vehicle select had no working buttons if the catalog was empty.
+- The loading screen kept redrawing while hidden and skipped the first tip.
+- Remote peers could keep the wrong vehicle model when joining mid-game; the
+  sandbox now exchanges a full vehicle map when each peer enters the scene.
+- Skid ribbons joined separate drifts with a stripe across the map; strips now
+  break into segments that fade independently.
+- Navigation requested during a transition was silently dropped, which could
+  desync host/client scene loads; it is queued instead.
+- Reset in multiplayer respawned on the single-player marker and snapped
+  host-owned props around; it now uses the network spawn and leaves props to
+  the host.
+- Crashed/recovering carts kept emitting drift smoke and skid marks.
+- Knocked-over props stayed upright on clients; full rotation is replicated.
+- Client pushes applied impulses to frozen props and the host ignored spin;
+  clients now only request, and the host validates and applies the kick.
+- Ghost carts ran smoke/skid/audio logic and could briefly steal the camera.
+- UPnP mappings are now time-limited instead of permanent.
+- Download progress no longer jumps to 100% when the CDN omits Content-Length,
+  and old update zips are pruned.
+- Guarded divide-by-zero on designer-exposed speed/recovery values.
+
 ## [0.4.0] - 2026-11-05
 
 Playtest polish: real skid marks, music, a complete update flow and a quieter

@@ -7,7 +7,7 @@
 [ext_resource type="AudioStream" path="res://assets/audio/sfx/ui/ui_confirm.ogg" id="5"]
 
 [node name="CursorController" type="CanvasLayer"]
-layer = 128
+layer = 250
 script = ExtResource("1")
 normal_texture = ExtResource("2")
 hover_texture = ExtResource("3")

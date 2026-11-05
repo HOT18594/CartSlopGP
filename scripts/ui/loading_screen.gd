@@ -23,9 +23,11 @@ var _tip_label: Label
 
 
 func _ready() -> void:
-	mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# Swallow clicks while the overlay is up: the menu underneath is about to
+	# be replaced, and a blind click must not trigger its buttons.
+	mouse_filter = Control.MOUSE_FILTER_STOP
 	_tip_label = get_node_or_null("Tip") as Label
-	_pick_tip()
+	_show_tip()
 
 
 func set_progress(value: float) -> void:
@@ -39,19 +41,20 @@ func set_indeterminate(value: bool) -> void:
 
 
 func _process(delta: float) -> void:
+	if not is_visible_in_tree():
+		return
 	_time += delta
 	_tip_timer += delta
 	if _tip_timer >= 4.5:
 		_tip_timer = 0.0
-		_pick_tip()
+		_tip_index = (_tip_index + 1) % TIPS.size()
+		_show_tip()
 	queue_redraw()
 
 
-func _pick_tip() -> void:
-	if _tip_label == null:
-		return
-	_tip_index = (_tip_index + 1) % TIPS.size()
-	_tip_label.text = TIPS[_tip_index]
+func _show_tip() -> void:
+	if _tip_label != null:
+		_tip_label.text = TIPS[_tip_index]
 
 
 func _fill_ratio() -> float:

@@ -28,6 +28,9 @@ func _ready() -> void:
 	_update_status.text = ""
 	_back_button.pressed.connect(_on_back_pressed)
 	UpdateChecker.check_finished.connect(_on_check_finished)
+	# Keep Tab focus inside the overlay instead of leaking to the menu behind.
+	_master_slider.focus_previous = _master_slider.get_path_to(_back_button)
+	_back_button.focus_next = _back_button.get_path_to(_master_slider)
 
 
 func open() -> void:

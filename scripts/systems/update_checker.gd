@@ -60,7 +60,11 @@ func _process(delta: float) -> void:
 	_progress_accum = 0.0
 	var total: int = _download_request.get_body_size()
 	var received: int = _download_request.get_downloaded_bytes()
-	var ratio: float = clampf(float(received) / float(maxi(total, 1)), 0.0, 1.0)
+	if total <= 0:
+		# No Content-Length from the CDN: don't fake 100% while bytes still
+		# arrive; the final download_finished signal is authoritative.
+		return
+	var ratio: float = clampf(float(received) / float(total), 0.0, 1.0)
 	download_progress.emit(ratio, received, total)
 
 
@@ -238,10 +242,26 @@ func _on_download_completed(result: int, response_code: int, _headers: PackedStr
 		_downloaded_file = target_path
 		_downloaded_version = latest_version
 		_save_download_state()
+		_prune_old_downloads(target_path)
 		download_finished.emit(target_path)
 	if is_instance_valid(_download_request):
 		_download_request.queue_free()
 		_download_request = null
+
+
+func _prune_old_downloads(keep_path: String) -> void:
+	var dir: DirAccess = DirAccess.open(UPDATE_DIR)
+	if dir == null:
+		return
+	dir.list_dir_begin()
+	var entry: String = dir.get_next()
+	while entry != "":
+		if not dir.current_is_dir() and entry.to_lower().ends_with(".zip"):
+			var full: String = UPDATE_DIR + "/" + entry
+			if full != keep_path:
+				DirAccess.remove_absolute(full)
+		entry = dir.get_next()
+	dir.list_dir_end()
 
 
 func get_download_ratio() -> float:

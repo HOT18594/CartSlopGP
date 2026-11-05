@@ -24,6 +24,11 @@ func _ready() -> void:
 	UpdateChecker.download_progress.connect(_on_progress)
 	UpdateChecker.download_finished.connect(_on_download_finished)
 	UpdateChecker.download_failed.connect(_on_download_failed)
+	# Two-button focus loop so Tab never escapes behind the dim.
+	_primary_button.focus_next = _primary_button.get_path_to(_secondary_button)
+	_primary_button.focus_previous = _primary_button.get_path_to(_secondary_button)
+	_secondary_button.focus_next = _secondary_button.get_path_to(_primary_button)
+	_secondary_button.focus_previous = _secondary_button.get_path_to(_primary_button)
 
 
 func _desktop_updates() -> bool:
@@ -50,6 +55,7 @@ func open() -> void:
 		_progress_bar.value = ratio * 100.0
 		_progress_label.text = "%d%%" % int(round(ratio * 100.0))
 		show()
+		_secondary_button.grab_focus()
 		return
 	_install_ready = _desktop_updates() and UpdateChecker.has_downloaded_update(UpdateChecker.latest_version)
 	if _install_ready:
@@ -68,6 +74,7 @@ func open() -> void:
 		_primary_button.disabled = false
 		_secondary_button.text = "LATER"
 	show()
+	_primary_button.grab_focus()
 
 
 func _show_install_state() -> void:
@@ -91,14 +98,14 @@ func _on_primary() -> void:
 			_notes_label.text = "Could not install automatically - opening the release page."
 			UpdateChecker.open_release_page()
 		return
-	if not _desktop_updates():
+	if not _desktop_updates() or UpdateChecker.latest_asset_url == "":
 		UpdateChecker.open_release_page()
 		close()
 		return
 	_busy = true
 	_primary_button.disabled = true
 	_primary_button.text = "DOWNLOADING..."
-	_secondary_button.text = "CANCEL"
+	_secondary_button.text = "HIDE"
 	_progress_bar.visible = true
 	_progress_label.visible = true
 	_progress_bar.value = 0.0
@@ -112,8 +119,17 @@ func _on_secondary() -> void:
 		return
 	if _secondary_opens_page:
 		UpdateChecker.open_release_page()
+		close()
 		return
 	close()
+
+
+func _unhandled_input(event: InputEvent) -> void:
+	if not visible:
+		return
+	if event.is_action_pressed("pause") or event.is_action_pressed("ui_cancel"):
+		close()
+		get_viewport().set_input_as_handled()
 
 
 func _on_progress(ratio: float, received: int, total: int) -> void:

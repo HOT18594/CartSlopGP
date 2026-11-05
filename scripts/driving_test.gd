@@ -8,6 +8,7 @@ extends Node3D
 ##   - clients freeze their props and ask the host to apply pushes.
 
 const CART_SCENE := preload("res://scenes/player/cart_player.tscn")
+const VehicleCatalog := preload("res://scripts/vehicles/vehicle_catalog.gd")
 const CART_SYNC_INTERVAL: float = 0.05
 const PROP_SYNC_INTERVAL: float = 0.10
 
@@ -38,6 +39,7 @@ func _setup_multiplayer() -> void:
 
 	if _local_cart != null:
 		_local_cart.global_position = Network.spawn_position(multiplayer.get_unique_id())
+		_local_cart.set_spawn_transform(_local_cart.global_transform)
 		if not _local_cart.net_push_requested.is_connected(_on_local_push_requested):
 			_local_cart.net_push_requested.connect(_on_local_push_requested)
 
@@ -52,8 +54,13 @@ func _setup_multiplayer() -> void:
 	multiplayer.peer_connected.connect(_on_peer_connected)
 	multiplayer.peer_disconnected.connect(_on_peer_disconnected)
 	Network.names_changed.connect(_refresh_name_labels)
-	# Announce our vehicle so ghosts show the right model (also covers late joiners).
-	rpc("_net_hello", GameSettings.selected_vehicle)
+	# Vehicle models are exchanged through the scene, not the lobby: tell the
+	# host we are ready, or broadcast ours to everyone if we are the host.
+	_peer_vehicles[multiplayer.get_unique_id()] = GameSettings.selected_vehicle
+	if _host_mode:
+		rpc("_net_peer_vehicle", multiplayer.get_unique_id(), GameSettings.selected_vehicle)
+	else:
+		rpc("_net_client_ready", GameSettings.selected_vehicle)
 
 
 func _physics_process(delta: float) -> void:
@@ -79,7 +86,6 @@ func _physics_process(delta: float) -> void:
 
 func _on_peer_connected(peer_id: int) -> void:
 	_spawn_remote(peer_id)
-	rpc("_net_hello", GameSettings.selected_vehicle)
 
 
 func _on_peer_disconnected(peer_id: int) -> void:
@@ -97,6 +103,12 @@ func _spawn_remote(peer_id: int) -> void:
 	var cart: CartPlayer = CART_SCENE.instantiate() as CartPlayer
 	add_child(cart)
 	cart.setup_remote(peer_id)
+	# The ghost scene briefly owns a current Camera3D; make sure the local
+	# driving camera stays in charge.
+	if _local_cart != null:
+		var local_camera := _local_cart.get_node_or_null("CameraArm/Camera3D") as Camera3D
+		if local_camera != null:
+			local_camera.current = true
 	cart.global_position = Network.spawn_position(peer_id)
 	cart.net_position = cart.global_position
 	if _peer_vehicles.has(peer_id):
@@ -141,21 +153,42 @@ func _net_cart_state(position: Vector3, yaw: float) -> void:
 
 
 @rpc("any_peer", "reliable")
-func _net_hello(vehicle_id: String) -> void:
+func _net_client_ready(vehicle_id: String) -> void:
+	## A peer has entered the sandbox. The host stores its vehicle and replies
+	## with the whole map, covering late joins and clients that missed an
+	## earlier hello while they were still in the lobby.
 	var sender: int = multiplayer.get_remote_sender_id()
-	_peer_vehicles[sender] = vehicle_id
-	var cart: CartPlayer = _remote_carts.get(sender)
+	if sender <= 1 or sender == multiplayer.get_unique_id():
+		return
+	_store_peer_vehicle(sender, vehicle_id)
+	if not _host_mode:
+		return
+	rpc("_net_peer_vehicle", sender, vehicle_id)
+	for peer_id: Variant in _peer_vehicles.keys():
+		rpc_id(sender, "_net_peer_vehicle", int(peer_id), str(_peer_vehicles[peer_id]))
+
+
+@rpc("authority", "reliable")
+func _net_peer_vehicle(peer_id: int, vehicle_id: String) -> void:
+	_store_peer_vehicle(peer_id, vehicle_id)
+
+
+func _store_peer_vehicle(peer_id: int, vehicle_id: String) -> void:
+	if VehicleCatalog.find(vehicle_id).is_empty():
+		return
+	_peer_vehicles[peer_id] = vehicle_id
+	var cart: CartPlayer = _remote_carts.get(peer_id)
 	if cart != null:
 		cart.set_vehicle_id(vehicle_id)
 
 
 @rpc("authority", "unreliable")
-func _net_props(positions: PackedVector3Array, yaws: PackedFloat32Array) -> void:
+func _net_props(positions: PackedVector3Array, rotations: PackedVector3Array) -> void:
 	if _host_mode:
 		return
 	var count: int = mini(_props.size(), positions.size())
 	for index in count:
-		_prop_targets[index] = [positions[index], yaws[index]]
+		_prop_targets[index] = [positions[index], rotations[index]]
 
 
 @rpc("any_peer", "reliable")
@@ -164,7 +197,11 @@ func _net_request_push(index: int, direction: Vector3, kick: float) -> void:
 		return
 	var prop: RigidBody3D = _props[index]
 	prop.sleeping = false
+	kick = clampf(kick, 0.1, 4.0)
+	direction = direction.normalized()
 	prop.apply_central_impulse(direction * prop.mass * kick + Vector3.UP * prop.mass * kick * 0.85)
+	var spin := Vector3(randf_range(-1.0, 1.0), randf_range(-0.5, 0.5), randf_range(-1.0, 1.0))
+	prop.apply_torque_impulse(spin * prop.mass * 1.6)
 
 
 # --------------------------------------------------------------------------
@@ -175,11 +212,11 @@ func _broadcast_props() -> void:
 	if _props.is_empty():
 		return
 	var positions := PackedVector3Array()
-	var yaws := PackedFloat32Array()
+	var rotations := PackedVector3Array()
 	for prop: RigidBody3D in _props:
 		positions.append(prop.global_position)
-		yaws.append(prop.rotation.y)
-	rpc("_net_props", positions, yaws)
+		rotations.append(prop.global_rotation)
+	rpc("_net_props", positions, rotations)
 
 
 func _apply_prop_targets(delta: float) -> void:
@@ -192,7 +229,11 @@ func _apply_prop_targets(delta: float) -> void:
 		var prop: RigidBody3D = _props[index]
 		var data: Array = _prop_targets[index]
 		prop.global_position = prop.global_position.lerp(data[0] as Vector3, blend)
-		prop.rotation.y = lerp_angle(prop.rotation.y, float(data[1]), blend)
+		var target_rotation: Vector3 = data[1] as Vector3
+		prop.global_rotation = Vector3(
+			lerp_angle(prop.global_rotation.x, target_rotation.x, blend),
+			lerp_angle(prop.global_rotation.y, target_rotation.y, blend),
+			lerp_angle(prop.global_rotation.z, target_rotation.z, blend))
 
 
 func _on_local_push_requested(prop: Node, direction: Vector3, kick: float) -> void:

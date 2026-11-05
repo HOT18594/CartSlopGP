@@ -1,7 +1,7 @@
-[gd_resource type="Theme" format=3]
+[gd_resource type="Theme" format=3 uid="uid://fringedb84ub"]
 
-[ext_resource type="FontFile" path="res://assets/ui/fonts/LuckiestGuy-Regular.ttf" id="1_ib6tx"]
-[ext_resource type="FontFile" path="res://assets/ui/fonts/Fredoka-Medium.ttf" id="2_fenpc"]
+[ext_resource type="FontFile" uid="uid://cnym3a8fycbr3" path="res://assets/ui/fonts/LuckiestGuy-Regular.ttf" id="1_ib6tx"]
+[ext_resource type="FontFile" uid="uid://crukb23pdjc52" path="res://assets/ui/fonts/Fredoka-Medium.ttf" id="2_fenpc"]
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_omlnh"]
 content_margin_left = 30.0
