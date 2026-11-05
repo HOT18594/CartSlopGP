@@ -10,6 +10,7 @@ const GAME_SCENE: String = "res://scenes/dev/driving_test.tscn"
 @onready var _version_label: Label = %VersionLabel
 @onready var _update_button: Button = %UpdateButton
 @onready var _status_label: Label = %StatusLabel
+@onready var _notes_button: Button = %NotesButton
 @onready var _settings_menu: Control = %SettingsMenu
 
 var _install_ready: bool = false
@@ -25,6 +26,7 @@ func _ready() -> void:
 	_settings_button.pressed.connect(_on_settings_pressed)
 	_quit_button.pressed.connect(_on_quit_pressed)
 	_update_button.pressed.connect(_on_update_pressed)
+	_notes_button.pressed.connect(UpdateChecker.open_release_page)
 	_settings_menu.closed.connect(_on_settings_closed)
 
 	UpdateChecker.update_available.connect(_on_update_available)
@@ -70,6 +72,7 @@ func _on_update_available(version: String, release_url: String, download_url: St
 	_update_button.text = "UPDATE AVAILABLE  v%s" % version
 	_update_button.tooltip_text = "Click to get v%s" % version
 	_update_button.visible = true
+	_notes_button.visible = release_url != ""
 	_status_label.text = "New version %s is out" % version
 	if download_url == "" and release_url != "":
 		_update_button.tooltip_text = "Opens the GitHub release page"

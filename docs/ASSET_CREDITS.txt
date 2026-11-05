@@ -1,0 +1,55 @@
+ASSET CREDITS - Cart Slop GP
+============================
+Updated: 2026-11-04 (v0.1.0, UI + cursor + fonts)
+
+UI / CURSOR
+-----------
+Kenney "Cursor Pack" v1.1 - https://kenney.nl/assets/cursor-pack
+License: Creative Commons Zero 1.0 (CC0, public domain)
+Author: Kenney (www.kenney.nl)
+Local license copy: assets/ui/cursor/License.txt
+Files used (renamed from the pack):
+  assets/ui/cursor/cursor_idle.png     <- PNG/Outline/Default/pointer_toon_a.png
+  assets/ui/cursor/cursor_hover.png    <- PNG/Outline/Default/hand_small_point.png
+  assets/ui/cursor/cursor_pressed.png  <- PNG/Outline/Default/pointer_toon_b.png
+The "Outline" style was chosen so the white fill reads on both dark panels and
+the bright sky in the menu backdrop.
+
+FONTS
+-----
+Fredoka - https://fonts.google.com/specimen/Fredoka
+License: SIL Open Font License 1.1
+Copyright 2016 The Fredoka Project Authors
+Local license: assets/ui/fonts/OFL-Fredoka.txt
+Files:
+  assets/ui/fonts/Fredoka.ttf          <- upstream variable font (kept for reference)
+  assets/ui/fonts/Fredoka-Medium.ttf   <- static wght=500 instance, generated locally
+  assets/ui/fonts/Fredoka-Bold.ttf     <- static wght=700 instance, generated locally
+Why static instances: Godot ignores the OpenType variable weight axis in this
+pipeline, so tools/build_ui_theme.gd needs real static files. They were produced
+with fontTools.varLib.instancer (wdth pinned to 100, wght pinned to 500/700).
+
+Luckiest Guy - https://fonts.google.com/specimen/Luckiest+Guy
+License: Apache License 2.0
+Copyright (c) 2010 by Brian J. Bonislawsky DBA Astigmatic (AOETI)
+Local license: assets/ui/fonts/LICENSE-LuckiestGuy.txt
+File: assets/ui/fonts/LuckiestGuy-Regular.ttf (menu titles)
+
+TEXTURES
+--------
+assets/textures/smoke_sheet.png
+Generated for this project by tools/gen_smoke_sheet.py (no external source).
+16 frames, 4x4 atlas, 128 px cells, soft smoke puff.
+
+ENGINE
+------
+Godot Engine 4.7.2 - https://godotengine.org
+License: MIT
+
+PRE-EXISTING ASSETS (unchanged in this pass)
+--------------------------------------------
+- Kenney Car Kit (CC0) - assets/models/kenney_car-kit/License.txt
+- Kenney Impact Sounds / Digital Audio / Interface Sounds (CC0) -
+  see docs/AUDIO_CREDITS.txt
+- Poly Pizza go-kart and shopping-cart models - assets/models/poly_pizza/CREDITS.txt
+  (check each model page for its exact license)
