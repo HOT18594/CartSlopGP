@@ -14,7 +14,7 @@ const MAIN_MENU_SCENE: String = "res://scenes/ui/main_menu.tscn"
 
 func _ready() -> void:
 	CursorController.set_menu_mode(true)
-	_notice.visible = false
+	_notice.text = ""
 	_sandbox_button.pressed.connect(_on_sandbox)
 	_host_button.pressed.connect(_on_host)
 	_join_button.pressed.connect(_on_join)

@@ -20,8 +20,14 @@ extends SpringArm3D
 @export var speed_height_drop: float = 0.3 ## Pivot lowering at full speed (m).
 
 @export_group("Shake")
-@export var shake_decay: float = 5.5 ## Shake decay speed (higher = shorter shake).
-@export var shake_max_offset: float = 0.14 ## Max view shake (m). Kept small and smooth.
+@export var shake_decay: float = 6.5 ## Shake decay speed (higher = shorter shake).
+@export var shake_max_offset: float = 0.10 ## Max view shake (m). Kept small and smooth.
+@export var impact_shake_scale: float = 0.65 ## Multiplier on every add_shake() request.
+
+@export_group("Feel")
+@export var bank_strength: float = 0.055 ## Camera roll into corners (radians at full slip).
+@export var vertical_lag: float = 0.06 ## Camera height lag against vertical speed.
+@export var vertical_lag_max: float = 0.45 ## Max height lag while jumping/falling (m).
 
 var current_fov: float = 70.0 ## Live FOV, for the debug HUD.
 
@@ -31,7 +37,9 @@ var _base_pitch: float = 0.0
 var _yaw_smooth: float = 0.0
 var _speed_smooth: float = 0.0
 var _shake: float = 0.0
+var _shake_time: float = 0.0
 var _lag_z: float = 0.0
+var _roll: float = 0.0
 
 
 func _ready() -> void:
@@ -62,15 +70,27 @@ func _process(delta: float) -> void:
 	_lag_z = lerpf(_lag_z, accel_proxy, 1.0 - exp(-5.0 * delta))
 	var target_length: float = minf(camera_distance + speed_distance_multiplier * speed_frac, max_camera_distance) + _lag_z
 	spring_length = lerpf(spring_length, target_length, 1.0 - exp(-4.0 * delta))
-	position.y = lerpf(position.y, camera_height - speed_height_drop * speed_frac, 1.0 - exp(-4.0 * delta))
+	var vertical_target: float = camera_height - speed_height_drop * speed_frac 		+ clampf(-_cart.velocity.y * vertical_lag, -vertical_lag_max, vertical_lag_max)
+	position.y = lerpf(position.y, vertical_target, 1.0 - exp(-5.0 * delta))
+
+	# Bank into drifts and steering for a softer, more dynamic chase cam.
+	var lateral_speed: float = _cart.velocity.dot(_cart.global_transform.basis.x)
+	var steer: float = Input.get_axis("steer_left", "steer_right")
+	var roll_target: float = clampf(-lateral_speed / 9.0, -1.0, 1.0) * bank_strength 		+ steer * bank_strength * 0.5 * clampf(_speed_smooth / maxf(_cart.max_speed, 0.1), 0.0, 1.0)
+	_roll = lerpf(_roll, roll_target, 1.0 - exp(-6.0 * delta))
+	_camera.rotation.z = _roll
 	# Shake: decays smoothly; applied as view offsets, never as transforms,
 	# so it cannot fight the SpringArm's child placement.
 	_shake *= exp(-shake_decay * delta)
-	if _shake < 0.005:
+	_shake_time += delta
+	if _shake < 0.004:
 		_shake = 0.0
 	if _shake > 0.0:
-		_camera.h_offset = randf_range(-1.0, 1.0) * shake_max_offset * _shake
-		_camera.v_offset = randf_range(-1.0, 1.0) * shake_max_offset * _shake
+		# Layered sine noise instead of per-frame random: smooth, no jitter.
+		var noise_x: float = sin(_shake_time * 41.0) * sin(_shake_time * 17.3 + 1.7)
+		var noise_y: float = cos(_shake_time * 37.7 + 0.4) * sin(_shake_time * 13.1)
+		_camera.h_offset = noise_x * shake_max_offset * _shake
+		_camera.v_offset = noise_y * shake_max_offset * _shake
 	else:
 		_camera.h_offset = 0.0
 		_camera.v_offset = 0.0
@@ -91,13 +111,14 @@ func _update_yaw(delta: float) -> void:
 
 func add_shake(amount: float) -> void:
 	## Called by the cart on impacts and hard landings.
-	_shake = minf(_shake + amount, 1.0)
+	_shake = minf(_shake + amount * impact_shake_scale, 1.0)
 
 
 func reset_camera() -> void:
 	## Snap everything back to defaults (used by the cart's reset).
 	_shake = 0.0
 	_lag_z = 0.0
+	_roll = 0.0
 	if _cart != null:
 		_yaw_smooth = _cart.global_rotation.y
 		_speed_smooth = _cart.velocity.length()
@@ -106,6 +127,7 @@ func reset_camera() -> void:
 		_camera.fov = base_fov
 		_camera.h_offset = 0.0
 		_camera.v_offset = 0.0
+		_camera.rotation.z = 0.0
 	current_fov = base_fov
 	spring_length = camera_distance
 	position.y = camera_height

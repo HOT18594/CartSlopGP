@@ -288,7 +288,7 @@ func _process_collisions() -> void:
 		_impact_timer = impact_cooldown
 		_squash_impulse = maxf(_squash_impulse, clampf(impact_factor * 1.2, 0.3, 1.0))
 		if _camera_rig != null:
-			_camera_rig.add_shake(0.15 + 0.5 * impact_factor)
+			_camera_rig.add_shake(0.08 + 0.30 * impact_factor)
 		if _feedback != null:
 			_feedback.on_collision(impact_factor)
 		break
@@ -413,7 +413,7 @@ func _enter_crashed(up_dot: float) -> void:
 	if not is_on_floor():
 		global_position.y += 0.4
 	if _camera_rig != null:
-		_camera_rig.add_shake(0.8)
+		_camera_rig.add_shake(0.5)
 	if _feedback != null:
 		_feedback.on_crash(clampf(1.0 - up_dot, 0.4, 1.0))
 
@@ -443,7 +443,7 @@ func _process_landing_and_launch() -> void:
 		_squash_impulse = maxf(_squash_impulse, clampf(fall_speed * 0.12, 0.15, 1.0))
 		_susp_vel -= clampf(fall_speed * suspension_landing_dip * 0.08, 0.06, 0.9)
 		if _camera_rig != null:
-			_camera_rig.add_shake(clampf(fall_speed * 0.03, 0.0, 0.3))
+			_camera_rig.add_shake(clampf(fall_speed * 0.012, 0.0, 0.16))
 		if _feedback != null:
 			_feedback.on_landing(fall_speed)
 		var forward_dir: Vector3 = -global_transform.basis.z

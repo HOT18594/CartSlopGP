@@ -28,7 +28,7 @@ func _ready() -> void:
 	if _entries.is_empty():
 		return
 	_current = clampi(Catalog.index_of(GameSettings.selected_vehicle), 0, _entries.size() - 1)
-	_camera.look_at_from_position(Vector3(2.4, 1.6, 3.3), Vector3(0.0, 0.55, 0.0), Vector3.UP)
+	_camera.look_at_from_position(Vector3(2.4, 1.6, -3.3), Vector3(0.0, 0.55, 0.0), Vector3.UP)
 	_prev_button.pressed.connect(_step.bind(-1))
 	_next_button.pressed.connect(_step.bind(1))
 	_drive_button.pressed.connect(_on_drive)
