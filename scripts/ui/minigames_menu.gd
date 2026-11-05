@@ -11,6 +11,7 @@ const PLAY_MENU_SCENE: String = "res://scenes/ui/play_menu.tscn"
 const LOBBY_SCENE: String = "res://scenes/ui/lobby_menu.tscn"
 const MEADOW_LOBBY: String = "res://scenes/minigames/meadow_lobby.tscn"
 const CANDY_BUTTON: String = "res://scripts/ui/candy_button.gd"
+const PILL_CYCLER: String = "res://scripts/ui/pill_cycler.gd"
 const PREVIEW_DIR: String = "res://assets/ui/minigames/"
 const UiPalette := preload("res://scripts/ui/ui_palette.gd")
 
@@ -151,8 +152,20 @@ func _build_ui() -> void:
 	var actions := VBoxContainer.new()
 	actions.add_theme_constant_override("separation", 6)
 	bottom.add_child(actions)
-	_vehicle_button = _button("VEHICLE: SHOPPING CART", UiPalette.CYAN, 34, 14)
-	_vehicle_button.pressed.connect(_on_vehicle_pressed)
+	_vehicle_button = Button.new()
+	_vehicle_button.set_script(load(PILL_CYCLER))
+	_vehicle_button.set("corner_radius", 17)
+	_vehicle_button.set("shadow_offset", 5)
+	_vehicle_button.custom_minimum_size = Vector2(280, 34)
+	_vehicle_button.add_theme_font_size_override("font_size", 14)
+	var vehicle_names := PackedStringArray()
+	var vehicle_ids: Array[String] = []
+	for entry: Dictionary in Catalog.all():
+		vehicle_names.append("VEHICLE: " + str(entry.get("name", "?")))
+		vehicle_ids.append(str(entry.get("id", Catalog.DEFAULT_ID)))
+	_vehicle_button.call("configure", vehicle_names, vehicle_ids,
+		Catalog.index_of(GameSettings.minigame_vehicle))
+	_vehicle_button.connect("option_changed", _on_vehicle_changed)
 	actions.add_child(_vehicle_button)
 	_play_button = _button("PLAY  ·  MEADOW LOOP", UiPalette.YELLOW, 54, 21)
 	_play_button.pressed.connect(_on_play)
@@ -250,18 +263,13 @@ func _refresh_vehicle() -> void:
 	var entry: Dictionary = Catalog.find(GameSettings.minigame_vehicle)
 	if entry.is_empty():
 		entry = Catalog.find(Catalog.DEFAULT_ID)
-	_vehicle_button.text = "VEHICLE: " + str(entry.get("name", "SHOPPING CART"))
+	_vehicle_button.call("set_index", Catalog.index_of(str(entry.get("id", Catalog.DEFAULT_ID))))
 	_vehicle_button.set("fill_color", Color("8ed8f6"))
 
 
-func _on_vehicle_pressed() -> void:
-	var options: Array[Dictionary] = Catalog.all()
-	if options.is_empty():
-		return
-	var index: int = Catalog.index_of(GameSettings.minigame_vehicle)
-	index = wrapi(index + 1, 0, options.size())
+func _on_vehicle_changed(vehicle_id: Variant) -> void:
 	GameSettings.set_minigame_options(GameSettings.minigame_difficulty,
-		GameSettings.minigame_rounds, str(options[index].get("id", Catalog.DEFAULT_ID)))
+		GameSettings.minigame_rounds, str(vehicle_id))
 	_refresh_vehicle()
 
 

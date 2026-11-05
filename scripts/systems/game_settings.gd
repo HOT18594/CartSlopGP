@@ -148,6 +148,14 @@ func effective_bot_count() -> int:
 	return clampi(bot_count, 0, 5) if bots_enabled else 0
 
 
+func set_bot_total(total: int) -> void:
+	## One-click pill value: 0 = NO BOTS, 1..5 = that many AI carts.
+	bot_count = clampi(total, 0, 5)
+	bots_enabled = bot_count > 0
+	save_settings()
+	session_changed.emit()
+
+
 func set_session_config(mode: int, game: String, bots: bool, count: int) -> void:
 	## Used by Network so every peer runs the host's exact configuration.
 	play_mode = MODE_MULTIPLAYER if mode == MODE_MULTIPLAYER else MODE_SINGLE

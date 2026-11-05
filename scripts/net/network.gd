@@ -29,6 +29,8 @@ const RACE_SCENE: String = "res://scenes/minigames/grass_race.tscn"
 const LOBBY_SCENE: String = "res://scenes/ui/lobby_menu.tscn"
 const MINIGAMES_SCENE: String = "res://scenes/ui/minigames_menu.tscn"
 const PING_INTERVAL: float = 2.0
+const RELAY_DISCOVERY_PORT: int = 42778
+const RELAY_HEARTBEAT_INTERVAL: float = 20.0
 
 var is_host: bool = false
 var is_client: bool = false
@@ -47,6 +49,13 @@ var online_code: String = "" ## Public code, only when a route actually exists.
 var upnp_mapped: bool = false ## True when the router accepted a port mapping.
 var behind_cgnat: bool = false ## Router reports a carrier-shared address.
 var join_pending: bool = false
+var relay_base: String = ""
+var relay_lan_ip: String = ""
+var relay_token: String = ""
+var relay_port: int = 0
+var relay_lan_host: String = ""
+var relay_public_host: String = ""
+var relay_active: bool = false
 
 ## Host-chosen configuration, broadcast with _net_begin_game so every peer
 ## loads the same world with the same bots. Clients never write these locally.
@@ -61,6 +70,8 @@ var _upnp: UPNP
 var _host_ticket: int = 0
 var _ping_timer: float = 0.0
 var _join_started_ms: int = 0
+var _relay_heartbeat: float = 0.0
+var _relay_busy: bool = false
 var _upnp_thread: Thread
 var _upnp_result: Dictionary = {}
 var _upnp_ticket: int = 0
@@ -77,6 +88,7 @@ func _ready() -> void:
 
 func _process(delta: float) -> void:
 	_poll_upnp_thread()
+	_relay_heartbeat_tick(delta)
 	if join_pending and Time.get_ticks_msec() - _join_started_ms > 12000:
 		join_pending = false
 		leave()
@@ -133,54 +145,72 @@ func host_game(mode: String = "online") -> void:
 	public_address = ""
 	upnp_mapped = false
 	behind_cgnat = false
+	session_mode = GameSettings.multiplayer_mode
+	session_bots = GameSettings.bots_enabled
+	session_bot_count = GameSettings.effective_bot_count()
 	lan_code = encode_address(local_address, port)
 	online_code = ""
 	join_code = lan_code
 	player_names[1] = GameSettings.player_name
 
 	if connection_mode == "online":
-		if _valid_ip(custom_public_ip):
-			# The player says they forwarded the port (or uses a VPN address).
-			public_address = custom_public_ip
-			online_code = encode_address(public_address, port)
-			join_code = online_code
-		else:
-			SceneLoader.task_message("Asking your router for a port (UPnP)...")
-			var upnp_result: Dictionary = await _upnp_lookup(port)
-			if ticket != _host_ticket:
-				SceneLoader.end_task()
-				leave()
-				return
-			behind_cgnat = bool(upnp_result.get("cgnet", false))
-			var upnp_ip: String = str(upnp_result.get("ip", ""))
-			if upnp_ip != "":
-				upnp_mapped = true
-				public_address = upnp_ip
+		SceneLoader.task_message("Looking for the Cart Slop server...")
+		var found: bool = await _discover_relay()
+		if ticket != _host_ticket:
+			SceneLoader.end_task()
+			return
+		if found:
+			SceneLoader.task_message("Registering with the Cart Slop server...")
+			if await _register_relay(port):
+				relay_active = true
+				lan_code = encode_address(relay_lan_host, relay_port)
+				if relay_public_host != "":
+					online_code = encode_address(relay_public_host, relay_port)
+				join_code = online_code if online_code != "" else lan_code
+				public_address = relay_public_host if relay_public_host != "" else relay_lan_host
+		if not relay_active:
+			if _valid_ip(custom_public_ip):
+				# The player says they forwarded the port (or uses a VPN address).
+				public_address = custom_public_ip
 				online_code = encode_address(public_address, port)
 				join_code = online_code
-			elif bool(upnp_result.get("mapped", false)) and not bool(upnp_result.get("cgnet", false)):
-				# The router accepted the mapping but would not report its
-				# external address; ask the public-IP service instead.
-				var mapped_ip: String = await _public_ip_lookup()
-				if mapped_ip != "":
-					upnp_mapped = true
-					public_address = mapped_ip
-					online_code = encode_address(public_address, port)
-					join_code = online_code
-				else:
-					public_address = ""
-					join_code = lan_code
 			else:
-				# Mapping failed. A public IP alone is NOT reachable, so keep the
-				# LAN code and show the public IP as a diagnostic only.
-				SceneLoader.task_message("Router mapping failed - checking your public IP...")
-				var public_ip: String = await _public_ip_lookup()
+				SceneLoader.task_message("Asking your router for a port (UPnP)...")
+				var upnp_result: Dictionary = await _upnp_lookup(port)
 				if ticket != _host_ticket:
 					SceneLoader.end_task()
 					leave()
 					return
-				public_address = public_ip
-				join_code = lan_code
+				behind_cgnat = bool(upnp_result.get("cgnet", false))
+				var upnp_ip: String = str(upnp_result.get("ip", ""))
+				if upnp_ip != "":
+					upnp_mapped = true
+					public_address = upnp_ip
+					online_code = encode_address(public_address, port)
+					join_code = online_code
+				elif bool(upnp_result.get("mapped", false)) and not bool(upnp_result.get("cgnet", false)):
+					# The router accepted the mapping but would not report its
+					# external address; ask the public-IP service instead.
+					var mapped_ip: String = await _public_ip_lookup()
+					if mapped_ip != "":
+						upnp_mapped = true
+						public_address = mapped_ip
+						online_code = encode_address(public_address, port)
+						join_code = online_code
+					else:
+						public_address = ""
+						join_code = lan_code
+				else:
+					# Mapping failed. A public IP alone is NOT reachable, so keep the
+					# LAN code and show the public IP as a diagnostic only.
+					SceneLoader.task_message("Router mapping failed - checking your public IP...")
+					var public_ip: String = await _public_ip_lookup()
+					if ticket != _host_ticket:
+						SceneLoader.end_task()
+						leave()
+						return
+					public_address = public_ip
+					join_code = lan_code
 
 	if ticket != _host_ticket:
 		SceneLoader.end_task()
@@ -189,6 +219,95 @@ func host_game(mode: String = "online") -> void:
 	SceneLoader.end_task()
 	host_started.emit(join_code)
 	peers_changed.emit()
+
+
+func _discover_relay() -> bool:
+	## UDP broadcast to the Pi's discovery port; no DNS/.local dependency.
+	if relay_base != "":
+		return true
+	var udp := PacketPeerUDP.new()
+	if udp.bind(0) != OK:
+		return false
+	udp.set_broadcast_enabled(true)
+	udp.set_dest_address("255.255.255.255", RELAY_DISCOVERY_PORT)
+	udp.put_packet("CARTSLOP_DISCOVER".to_utf8_buffer())
+	var deadline: int = Time.get_ticks_msec() + 1200
+	while Time.get_ticks_msec() < deadline:
+		while udp.get_available_packet_count() > 0:
+			var text: String = udp.get_packet().get_string_from_utf8()
+			var parsed: Variant = JSON.parse_string(text)
+			if parsed is Dictionary and str((parsed as Dictionary).get("service", "")) == "cartslop":
+				relay_lan_ip = str((parsed as Dictionary).get("lan_ip", ""))
+				var http_port: int = int((parsed as Dictionary).get("http_port", 42777))
+				if relay_lan_ip != "":
+					relay_base = "http://%s:%d" % [relay_lan_ip, http_port]
+					udp.close()
+					return true
+		await get_tree().process_frame
+	udp.close()
+	return false
+
+
+func _relay_post(path: String, payload: Dictionary) -> Dictionary:
+	if relay_base == "":
+		return {}
+	var http := HTTPRequest.new()
+	http.timeout = 6.0
+	add_child(http)
+	var headers: PackedStringArray = ["Content-Type: application/json"]
+	var error: Error = http.request(relay_base + path, headers,
+		HTTPClient.METHOD_POST, JSON.stringify(payload))
+	if error != OK:
+		http.queue_free()
+		return {}
+	var response: Array = await http.request_completed
+	http.queue_free()
+	if int(response[1]) != 200:
+		return {}
+	var parsed: Variant = JSON.parse_string((response[3] as PackedByteArray).get_string_from_utf8())
+	if parsed is Dictionary:
+		return parsed as Dictionary
+	return {}
+
+
+func _register_relay(local_port: int) -> bool:
+	var response: Dictionary = await _relay_post("/api/register", {
+		"name": GameSettings.player_name,
+		"local_port": local_port,
+	})
+	if response.is_empty():
+		return false
+	relay_token = str(response.get("token", ""))
+	relay_port = int(response.get("relay_port", 0))
+	relay_lan_host = str(response.get("lan_host", relay_lan_ip))
+	relay_public_host = str(response.get("public_host", ""))
+	_relay_heartbeat = 0.0
+	return relay_token != "" and relay_port > 0
+
+
+func _relay_heartbeat_tick(delta: float) -> void:
+	if not relay_active or not is_host or _relay_busy or relay_token == "":
+		return
+	_relay_heartbeat += delta
+	if _relay_heartbeat < RELAY_HEARTBEAT_INTERVAL:
+		return
+	_relay_heartbeat = 0.0
+	_relay_busy = true
+	await _relay_post("/api/heartbeat", {"token": relay_token})
+	_relay_busy = false
+
+
+func _relay_unregister_async(token: String, base: String) -> void:
+	if token == "" or base == "":
+		return
+	var http := HTTPRequest.new()
+	http.timeout = 3.0
+	add_child(http)
+	http.request_completed.connect(func(_r: int, _c: int, _h: PackedStringArray, _b: PackedByteArray) -> void:
+		http.queue_free())
+	var headers: PackedStringArray = ["Content-Type: application/json"]
+	http.request(base + "/api/unregister", headers, HTTPClient.METHOD_POST,
+		JSON.stringify({"token": token}))
 
 
 func _upnp_lookup(udp_port: int) -> Dictionary:
@@ -394,6 +513,8 @@ func join_game(raw_code: String) -> void:
 
 func leave() -> void:
 	_host_ticket += 1 ## Cancels an in-flight host_game() await chain.
+	if relay_active and relay_token != "":
+		_relay_unregister_async(relay_token, relay_base)
 	if _peer != null:
 		_peer.close()
 	if multiplayer.multiplayer_peer != null and multiplayer.multiplayer_peer != _peer:
@@ -409,6 +530,12 @@ func leave() -> void:
 	online_code = ""
 	upnp_mapped = false
 	behind_cgnat = false
+	relay_active = false
+	relay_token = ""
+	relay_port = 0
+	relay_lan_host = ""
+	relay_public_host = ""
+	relay_base = ""
 	public_address = ""
 	latency_ms = 0
 	last_error = ""

@@ -8,6 +8,7 @@ extends Node
 const MUSIC_DIR: String = "res://assets/audio/music/"
 const MENU_TRACK: String = "menu_loop"
 const SANDBOX_TRACK: String = "sandbox_loop"
+const RACE_TRACK: String = "race_loop"
 const POLL_INTERVAL: float = 0.5
 const FADE_TIME: float = 1.4
 
@@ -47,6 +48,8 @@ func _track_for_current_scene() -> String:
 	var path: String = scene.scene_file_path
 	if path.ends_with("driving_test.tscn"):
 		return SANDBOX_TRACK
+	if path.ends_with("grass_race.tscn") or path.ends_with("meadow_lobby.tscn"):
+		return RACE_TRACK
 	if path.contains("/ui/"):
 		return MENU_TRACK
 	return ""

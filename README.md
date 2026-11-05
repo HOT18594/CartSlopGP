@@ -1,7 +1,7 @@
 # Cart Slop GP
 
 A silly shopping-cart racing sandbox built in **Godot 4.7.2**.
-Current version: **0.5.0**.
+Current version: **0.5.1**.
 
 Drive a shopping cart (or a sedan, truck, van...) around a 140 × 140 m arena,
 hit boost pads, drift, smash cones and crates, then host a shared sandbox and
@@ -13,10 +13,10 @@ invite a friend with a join code.
 
 1. Open **[github.com/HOT18594/CartSlopGP/releases/latest](https://github.com/HOT18594/CartSlopGP/releases/latest)**.
 2. Download the zip for your computer:
-   - **Windows** — `CartSlopGP_v0.5.0_windows.zip`
-   - **Mac** — `CartSlopGP_v0.5.0_macos.zip`
-   - **Linux** — `CartSlopGP_v0.5.0_linux.zip`
-   - **Browser** — `CartSlopGP_v0.5.0_web.zip` (no multiplayer)
+   - **Windows** — `CartSlopGP_v0.5.1_windows.zip`
+   - **Mac** — `CartSlopGP_v0.5.1_macos.zip`
+   - **Linux** — `CartSlopGP_v0.5.1_linux.zip`
+   - **Browser** — `CartSlopGP_v0.5.1_web.zip` (no multiplayer)
 3. Unzip it, then:
    - **Windows:** double-click `CartSlopGP.exe`. If Windows SmartScreen warns,
      click **More info → Run anyway** (the build is unsigned and safe).
@@ -84,6 +84,17 @@ NAT. Three options that work reliably:
    same virtual network, host a **LAN** game and share the LAN code. A UDP
    tunnel such as playit.gg also works: create a UDP tunnel to the shown port
    and have your friend join with the tunnel's `host:port`.
+
+### Cart Slop Pi server
+
+A Raspberry Pi 4 on the same network can run the lobby + UDP relay:
+
+- Console: **`http://cartslop.local:42777`**
+- HTTP/API: TCP **42777**, discovery: UDP **42778**, relay: UDP **42800–42819**
+- The game finds it automatically over UDP broadcast, registers the host and
+  shows a relay join code. Friends connect through the Pi, so the host needs no
+  port forwarding. The Pi attempts UPnP for its own ports.
+- Server source is in `server/`; Pi image setup notes are in `docs/PI_SERVER.md`.
 
 ## Vehicles
 
@@ -176,13 +187,13 @@ From `godot_project/`:
 ```bash
 GODOT="C:/Users/ethan/AppData/Local/Programs/Godot/Godot_v4.7.2-stable_win64_console.exe"
 
-"$GODOT" --headless --path . --export-release "Windows Desktop" ../builds/v0.5.0/windows/CartSlopGP.exe
-"$GODOT" --headless --path . --export-release "macOS"           ../builds/v0.5.0/mac/CartSlopGP.zip
-"$GODOT" --headless --path . --export-release "Linux"           ../builds/v0.5.0/linux/CartSlopGP.x86_64
-"$GODOT" --headless --path . --export-release "Web"             ../builds/v0.5.0/web/index.html
+"$GODOT" --headless --path . --export-release "Windows Desktop" ../builds/v0.5.1/windows/CartSlopGP.exe
+"$GODOT" --headless --path . --export-release "macOS"           ../builds/v0.5.1/mac/CartSlopGP.zip
+"$GODOT" --headless --path . --export-release "Linux"           ../builds/v0.5.1/linux/CartSlopGP.x86_64
+"$GODOT" --headless --path . --export-release "Web"             ../builds/v0.5.1/web/index.html
 ```
 
-Then zip each platform folder as `CartSlopGP_v0.5.0_<platform>.zip`.
+Then zip each platform folder as `CartSlopGP_v0.5.1_<platform>.zip`.
 Full details, signing notes and the release checklist are in
 `docs/PLATFORMS.md` and `docs/RELEASE_WORKFLOW.md`.
 

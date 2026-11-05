@@ -1,0 +1,18 @@
+[Unit]
+Description=Cart Slop GP lobby and UDP relay
+After=network-online.target NetworkManager-wait-online.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/opt/cartslop
+ExecStart=/usr/bin/python3 /opt/cartslop/cartslop_server.py
+Restart=always
+RestartSec=3
+Environment=PYTHONUNBUFFERED=1
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

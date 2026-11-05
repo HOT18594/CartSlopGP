@@ -6,6 +6,7 @@ Drop **MP3 files** in this folder using these exact names:
 |---|---|---|
 | `menu_loop.mp3` | Main menu, play/lobby/vehicle screens | 60–120 s |
 | `sandbox_loop.mp3` | Driving in the sandbox | 60–120 s |
+| `race_loop.mp3` | Meadow Loop waiting room and race | 60–120 s |
 
 That's all the game needs right now. `MusicPlayer` crossfades between them and
 silently skips any file that is missing, so you can test with just one.
@@ -62,6 +63,26 @@ energetic surf garage-rock, frantic and fun, fuzz guitar, driving bass, live dru
 
 ```
 vocals, spoken word, ballad, slow tempo, fade out
+```
+
+### 3. race_loop.mp3
+
+**Style**
+
+```
+fast bluegrass-racing rock, bright and breathless, banjo, acoustic strums, driving kick drum, upright bass, instrumental, 152 BPM, tight punchy mix
+```
+
+**Lyrics**
+
+```
+[Instrumental]
+```
+
+**Exclude styles**
+
+```
+vocals, spoken word, slow tempo, fade out
 ```
 
 ### Optional alternates

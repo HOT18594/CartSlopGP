@@ -3,6 +3,27 @@
 All notable changes to Cart Slop GP. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer.
 
+## [0.5.1] - 2026-11-05
+
+Compact pill controls and the Raspberry Pi lobby/relay backend.
+
+### Added
+
+- **Cart Slop Pi server**: a headless Raspberry Pi 4 lobby + UDP relay with an
+  HTML console at `http://cartslop.local:42777`. The game discovers it by UDP
+  broadcast, registers the host, heartbeats, and gets a join code that routes
+  friends through the Pi. Relay ports are mapped with UPnP.
+- **Pill cycling controls**: one button cycles NO BOTS → 1 BOT → … → 5 BOTS in
+  PLAY and the lobby. Game mode and LAN/ONLINE are also single cycling pills.
+- **Race music**: `race_loop.mp3` plays in the Meadow Loop waiting room/race.
+- ADVANCED toggle reveals the optional PUBLIC IP field only when needed.
+
+### Changed
+
+- PLAY is shorter and clearer; the lobby shows only profile/mode/host/join
+  while idle, then switches to a compact host panel with game/bots pills.
+- Removed the extra bots count button and the always-visible public IP row.
+
 ## [0.5.0] - 2026-11-05
 
 Meadow Loop, a real minigame grid, and a much more reliable multiplayer lobby.

@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cart Slop GP · Pi Server</title>
+<style>
+:root{
+  --ink:#1e1b3a; --cream:#fff6e3; --yellow:#ffd22e; --green:#4fbf52;
+  --blue:#45b6f0; --red:#f2545b; --pink:#f26ca7; --dim:#b9b2c9;
+  --bg:#0d1024; --panel:#171b35; --line:#2b3158;
+}
+*{box-sizing:border-box}
+body{margin:0;background:radial-gradient(1200px 700px at 20% 0%,#1b2450,#0d1024 60%);
+  color:var(--cream);font:15px/1.45 "Segoe UI",system-ui,sans-serif;min-height:100vh}
+header{padding:28px 32px 14px;display:flex;align-items:flex-end;gap:18px;flex-wrap:wrap}
+h1{margin:0;font-size:38px;letter-spacing:.5px;color:var(--yellow);text-shadow:0 4px 0 #0a0c1a}
+.sub{color:var(--dim);padding-bottom:5px}
+.live{margin-left:auto;padding:8px 14px;border-radius:999px;background:#123522;color:#8dffab;
+  border:1px solid #2c7d4b;font-weight:700;font-size:13px}
+.live.off{background:#3a1520;color:#ff9aa1;border-color:#8c3340}
+main{padding:0 32px 40px;max-width:1280px;margin:auto}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin:12px 0 24px}
+.card{background:linear-gradient(180deg,#1b2142,#151a32);border:1px solid var(--line);
+  border-radius:18px;padding:14px 16px;box-shadow:0 10px 24px rgba(0,0,0,.25)}
+.card .k{font-size:12px;text-transform:uppercase;letter-spacing:.12em;color:var(--dim)}
+.card .v{font-size:21px;font-weight:800;margin-top:4px;word-break:break-word}
+.card .v.small{font-size:16px}
+h2{font-size:22px;margin:26px 0 10px;color:var(--cream)}
+.table{width:100%;border-collapse:separate;border-spacing:0 8px}
+th{text-align:left;font-size:12px;letter-spacing:.1em;color:var(--dim);padding:0 12px}
+td{background:var(--panel);padding:12px;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+td:first-child{border-left:1px solid var(--line);border-radius:14px 0 0 14px}
+td:last-child{border-right:1px solid var(--line);border-radius:0 14px 14px 0}
+.code{font:700 15px/1.2 ui-monospace,Consolas,monospace;color:var(--yellow);letter-spacing:.06em}
+.pill{display:inline-block;padding:4px 10px;border-radius:999px;font-size:12px;font-weight:800}
+.pill.on{background:#173a26;color:#8dffab;border:1px solid #2c7d4b}
+.pill.off{background:#3a1520;color:#ff9aa1;border:1px solid #8c3340}
+button{background:var(--blue);color:var(--ink);border:2px solid var(--ink);border-radius:999px;
+  padding:8px 14px;font-weight:800;cursor:pointer;box-shadow:0 3px 0 var(--ink)}
+button:active{transform:translateY(2px);box-shadow:0 1px 0 var(--ink)}
+.empty{padding:26px;text-align:center;color:var(--dim);border:2px dashed var(--line);border-radius:18px}
+.help{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;margin-top:26px}
+.help .card{color:var(--dim)}
+.help b{color:var(--cream)}
+.help code{color:var(--yellow)}
+footer{padding:12px 32px 28px;color:#7c84a8;font-size:12px;text-align:center}
+</style>
+</head>
+<body>
+<header>
+  <h1>CART SLOP GP · PI SERVER</h1>
+  <div class="sub" id="hostname">cartslop.local</div>
+  <div class="live off" id="live">CONNECTING</div>
+</header>
+<main>
+  <div class="cards" id="cards"></div>
+  <h2>Active lobbies</h2>
+  <div id="lobbies" class="empty">No lobbies yet. Host a game from the PC.</div>
+  <div class="help">
+    <div class="card"><b>1 · Start the server</b><br>The Pi starts it on boot. Open <code id="url">http://cartslop.local:42777</code> from any device on the Wi-Fi.</div>
+    <div class="card"><b>2 · Host on the PC</b><br>In the game choose MULTIPLAYER → HOST. The game registers with the Pi automatically and shows a join code.</div>
+    <div class="card"><b>3 · Friends join</b><br>Paste the join code in MULTIPLAYER → JOIN. Traffic goes PC → Pi → friend, so the host needs no port forwarding.</div>
+    <div class="card"><b>Router note</b><br>For internet friends the Pi's ports must be reachable. UPnP is attempted automatically; otherwise forward TCP 42777 and UDP 42800–42819.</div>
+  </div>
+</main>
+<footer>Cart Slop GP server · <span id="version">1.0.0</span> · refresh every 2 s</footer>
+<script>
+const $ = (id) => document.getElementById(id);
+function fmtBytes(n){ if(!n) return "0 MB"; const mb=n/1048576; return mb>1024 ? (mb/1024).toFixed(1)+" GB" : Math.round(mb)+" MB"; }
+function fmtUptime(s){ const d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60); return (d?d+"d ":"")+h+"h "+m+"m"; }
+function encodeCode(ip, port){
+  const parts=String(ip||"").split(".").map(Number);
+  if(parts.length!==4 || parts.some(v=>!Number.isFinite(v)||v<0||v>255)) return "";
+  const bytes=[...parts,(port>>8)&255,port&255];
+  const sum=bytes.reduce((a,b)=>a+b,0)&255;
+  return bytes.map(b=>b.toString(16).padStart(2,"0").toUpperCase()).join("") + sum.toString(16).padStart(2,"0").toUpperCase();
+}
+function copy(text, btn){
+  navigator.clipboard.writeText(text).then(()=>{ const old=btn.textContent; btn.textContent="COPIED"; setTimeout(()=>btn.textContent=old,900); });
+}
+function card(k,v,small){ return `<div class="card"><div class="k">${k}</div><div class="v ${small?"small":""}">${v}</div></div>`; }
+function render(s){
+  $("live").textContent="ONLINE"; $("live").classList.remove("off");
+  $("hostname").textContent=(s.hostname||"cartslop")+".local";
+  $("url").textContent="http://"+(s.hostname||"cartslop")+".local:"+s.http_port;
+  $("version").textContent=s.version||"1.0.0";
+  const mem=s.memory||{}; const up=s.upnp||{};
+  $("cards").innerHTML = [
+    card("LAN ADDRESS", (s.lan_ip||"?")+":"+s.http_port, true),
+    card("PUBLIC ADDRESS", s.public_ip ? s.public_ip+":"+s.http_port : "not detected", true),
+    card("UPnP", (up.available?"mapped ":"off ")+(up.mapped||0)+"/"+(up.total||0), true),
+    card("LOBBIES", s.lobby_count||0),
+    card("UPTIME", fmtUptime(s.uptime||0), true),
+    card("CPU TEMP", (s.cpu_temp||0).toFixed(1)+" °C", true),
+    card("MEMORY", fmtBytes(mem.used)+" / "+fmtBytes(mem.total), true),
+    card("RELAY PORTS", (s.relay_base||42800)+"–"+((s.relay_base||42800)+(s.relay_count||20)-1), true),
+  ].join("");
+  const lobbies=s.lobbies||[];
+  if(!lobbies.length){ $("lobbies").className="empty"; $("lobbies").textContent="No lobbies yet. Host a game from the PC."; return; }
+  $("lobbies").className="";
+  let rows=lobbies.map((l)=>{
+    const lan=l.lan_host||s.lan_ip, pub=l.public_host||s.public_ip;
+    const code=encodeCode(pub||lan,l.relay_port);
+    const lanCode=encodeCode(lan,l.relay_port);
+    return `<tr>
+      <td><b>${escapeHtml(l.name||"HOST")}</b></td>
+      <td>${l.players||1} player${(l.players||1)===1?"":"s"}</td>
+      <td>${Math.floor((l.age||0)/60)}m</td>
+      <td class="code">${code||"—"}</td>
+      <td>${pub?`<button data-copy="${code}" data-label="COPY CODE">COPY CODE</button>`:`<button data-copy="${lanCode}" data-label="COPY LAN CODE">COPY LAN CODE</button>`}</td>
+    </tr>`;
+  }).join("");
+  $("lobbies").innerHTML=`<table class="table"><thead><tr><th>HOST</th><th>PLAYERS</th><th>AGE</th><th>JOIN CODE</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
+  document.querySelectorAll("button[data-copy]").forEach(btn=>btn.onclick=()=>copy(btn.dataset.copy,btn));
+}
+function escapeHtml(s){ return String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+async function tick(){
+  try{
+    const r=await fetch("/api/status",{cache:"no-store"});
+    if(!r.ok) throw new Error("status");
+    render(await r.json());
+  }catch(e){
+    $("live").textContent="OFFLINE"; $("live").classList.add("off");
+  }
+}
+tick(); setInterval(tick,2000);
+</script>
+</body>
+</html>
