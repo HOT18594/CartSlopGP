@@ -44,6 +44,8 @@ scale_max = 1.2
 color = Color(1, 0.86, 0.35, 1)
 
 [node name="BoostPad" type="Area3D"]
+collision_layer = 0
+collision_mask = 2
 script = ExtResource("1_padscript")
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="."]

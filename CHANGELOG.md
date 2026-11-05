@@ -25,6 +25,17 @@ First tagged prototype build: playable driving sandbox plus the full menu/shell 
 
 ### Fixed
 
+- Boost pads were inert: their Area3D masked layer 1 while the kart is layer 2.
+- Props now live on their own layer with a push sensor, so they pop away
+  instead of blocking or launching the kart; a horizontal speed clamp is a
+  safety net.
+- Cliff ramp/platform lip removed; the route is drivable.
+- Crate stack is supported (two rows of five) and no longer collapses at spawn.
+- Coplanar track decals staggered to stop z-fighting.
+- Particle sheet: emission box moved to the process material, orbit/turbulence
+  property names corrected.
+- An empty boost tank no longer micro-pulses while the button is held.
+- Camera banks into corners instead of outward.
 - Update installer wrote a `user://` path into `update_install.bat`, so the
   batch could never copy files. It now gets a globalised Windows path.
 - A finished download is remembered across restarts (and no longer resets to

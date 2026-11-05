@@ -1,0 +1,12 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/dev_shot.gd" id="1"]
+[ext_resource type="PackedScene" path="res://scenes/ui/vehicle_select.tscn" id="2"]
+
+[node name="VehicleShot" type="Node"]
+
+[node name="Shot" parent="." instance=ExtResource("2")]
+
+[node name="Runner" type="Node" parent="."]
+script = ExtResource("1")
+mode = "vehicle"

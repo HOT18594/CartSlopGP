@@ -129,6 +129,7 @@ var _pushable_spawn_transforms: Dictionary[int, Transform3D] = {}
 @onready var _mesh_root: Node3D = $MeshRoot
 @onready var _camera_rig: ChaseCamera = $CameraArm
 @onready var _feedback: CartFeedback = $Feedback
+@onready var _push_sensor: Area3D = $PushSensor
 
 var _collision_shapes: Array[CollisionShape3D] = []
 var _collision_rest_transforms: Array[Transform3D] = []
@@ -146,6 +147,8 @@ func _ready() -> void:
 	else:
 		_spawn_transform = global_transform
 	_apply_vehicle_visual()
+	if _push_sensor != null:
+		_push_sensor.body_entered.connect(_on_push_sensor_body_entered)
 	call_deferred("_collect_pushables")
 
 
@@ -191,7 +194,7 @@ func _physics_process(delta: float) -> void:
 		velocity.y -= gravity * (extra_fall_gravity if velocity.y < 0.0 else 1.0) * delta
 	_prev_velocity = velocity
 	move_and_slide()
-	_push_pushables()
+	_clamp_horizontal_speed()
 	_process_collisions()
 	_process_landing_and_launch()
 	_update_ground_tilt(delta)
@@ -294,33 +297,44 @@ func _process_collisions() -> void:
 		break
 
 
-func _push_pushables() -> void:
-	## Off-center impulses transfer both momentum and spin instead of sliding
-	## every prop straight ahead regardless of where the kart made contact.
-	if push_force <= 0.0:
+func _on_push_sensor_body_entered(body: Node3D) -> void:
+	var prop := body as RigidBody3D
+	if prop == null or not prop.is_in_group("pushable"):
 		return
-	var push_speed: float = Vector2(_prev_velocity.x, _prev_velocity.z).length()
-	var kick: float = push_force * clampf(push_speed / 6.0, 0.2, 1.3)
+	_push_prop(prop)
+
+
+func _push_prop(prop: RigidBody3D) -> void:
+	## Props live on their own collision layer, so they never block the kart.
+	## The sensor pops them away with an upward, spinning impulse instead.
+	var id: int = prop.get_instance_id()
 	var now_s: float = Time.get_ticks_msec() / 1000.0
-	for i in get_slide_collision_count():
-		var collision: KinematicCollision3D = get_slide_collision(i)
-		var collider: Object = collision.get_collider()
-		if collider == null or not (collider is RigidBody3D):
-			continue
-		var prop: RigidBody3D = collider as RigidBody3D
-		var id := prop.get_instance_id()
-		var last: float = float(_push_cooldowns.get(id, -10000.0))
-		if now_s - last < 0.08:
-			continue
-		_push_cooldowns[id] = now_s
-		if prop.sleeping:
-			prop.sleeping = false
-		var impulse: Vector3 = -collision.get_normal() * prop.mass * kick
-		impulse.y = prop.mass * kick * push_lift
-		var contact_offset: Vector3 = (collision.get_position() - prop.global_position).limit_length(1.0)
-		prop.apply_impulse(impulse, contact_offset * 0.5)
-		var spin: Vector3 = Vector3(randf_range(-1.0, 1.0), randf_range(-0.5, 0.5), randf_range(-1.0, 1.0))
-		prop.apply_torque_impulse(spin * prop.mass * push_spin)
+	if now_s - float(_push_cooldowns.get(id, -10000.0)) < 0.12:
+		return
+	_push_cooldowns[id] = now_s
+	if prop.sleeping:
+		prop.sleeping = false
+	var direction: Vector3 = prop.global_position - global_position
+	direction.y = 0.0
+	if direction.length() < 0.05:
+		direction = -global_transform.basis.z
+	direction = direction.normalized()
+	var speed: float = Vector2(velocity.x, velocity.z).length()
+	var kick: float = push_force * clampf(speed / 6.0, 0.25, 1.4)
+	var impulse: Vector3 = direction * prop.mass * kick + Vector3.UP * prop.mass * kick * push_lift
+	prop.apply_central_impulse(impulse)
+	var spin: Vector3 = Vector3(randf_range(-1.0, 1.0), randf_range(-0.5, 0.5), randf_range(-1.0, 1.0))
+	prop.apply_torque_impulse(spin * prop.mass * push_spin)
+
+
+func _clamp_horizontal_speed() -> void:
+	## Safety net: never let an impact or physics recovery fling the kart.
+	var cap: float = max_speed * boost_speed_multiplier + 2.0
+	var horizontal := Vector2(velocity.x, velocity.z)
+	if horizontal.length() > cap:
+		horizontal = horizontal.normalized() * cap
+		velocity.x = horizontal.x
+		velocity.z = horizontal.y
 
 
 func _update_boost(delta: float) -> void:

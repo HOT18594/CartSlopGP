@@ -63,6 +63,7 @@ def static_body(name: str, pos, shape: str, mesh: str, pitch: float = 0.0) -> li
 def prop(name: str, model_id: str, shape: str, pos, mass: float, shape_y: float) -> list[str]:
     return [
         node(name, "RigidBody3D", parent=".", groups='["pushable"]', transform=transform(pos),
+             collision_layer=4, collision_mask=5,
              mass=mass, continuous_cd="true", can_sleep="true",
              physics_material_override='SubResource("prop_phys")'),
         f'[node name="Model" parent="{name}" instance=ExtResource("{model_id}")]',
@@ -265,9 +266,9 @@ for name, pos, yaw in walls:
 # main straight
 blocks.append("\n\n".join([
     node("LanePad", "MeshInstance3D", transform=transform((0, 0.011, 36)), mesh='SubResource("lane_mesh")'),
-    node("LaneEdgeL", "MeshInstance3D", transform=transform((-5.1, 0.014, 36)), mesh='SubResource("edge_mesh")'),
-    node("LaneEdgeR", "MeshInstance3D", transform=transform((5.1, 0.014, 36)), mesh='SubResource("edge_mesh")'),
-    node("StartLine", "MeshInstance3D", transform=transform((0, 0.014, 60)), mesh='SubResource("start_mesh")'),
+    node("LaneEdgeL", "MeshInstance3D", transform=transform((-5.1, 0.020, 36)), mesh='SubResource("edge_mesh")'),
+    node("LaneEdgeR", "MeshInstance3D", transform=transform((5.1, 0.020, 36)), mesh='SubResource("edge_mesh")'),
+    node("StartLine", "MeshInstance3D", transform=transform((0, 0.030, 60)), mesh='SubResource("start_mesh")'),
 ]))
 
 # speed bumps (rotation +0.22 = low edge toward +Z)
@@ -276,12 +277,12 @@ for name, z in (("RollerA", 50.0), ("RollerB", 38.0)):
 
 # jump ramp + landing
 blocks.append("\n\n".join(static_body("JumpRamp", (0, 0.55, 18), "ramp_shape", "ramp_mesh", pitch=0.19)))
-blocks.append(node("LandingPad", "MeshInstance3D", transform=transform((0, 0.011, 2)),
+blocks.append(node("LandingPad", "MeshInstance3D", transform=transform((0, 0.025, 2)),
                    mesh='SubResource("pad_mesh")'))
 
 # brake warning strips before the jump
 for index, z in enumerate((34.0, 32.4, 30.8), start=1):
-    blocks.append(node(f"BrakeStrip{index}", "MeshInstance3D", transform=transform((0, 0.012, z)),
+    blocks.append(node(f"BrakeStrip{index}", "MeshInstance3D", transform=transform((0, 0.022, z)),
                        mesh='SubResource("brake_mesh")'))
 
 # drift pad + bowl
@@ -292,7 +293,7 @@ blocks.append(node("BowlPad", "MeshInstance3D", transform=transform((-36, 0.011,
 
 # cliff jump on the right
 blocks.append("\n\n".join(static_body("CliffRamp", (48, 0.75, -26), "cliff_shape", "cliff_mesh", pitch=0.19)))
-blocks.append("\n\n".join(static_body("CliffPlatform", (48, 1.7, -34), "platform_shape", "platform_mesh")))
+blocks.append("\n\n".join(static_body("CliffPlatform", (48, 1.7, -35), "platform_shape", "platform_mesh")))
 
 # boost pads
 for name, pos in (("BoostPadA", (0, 0.021, 56)), ("BoostPadB", (0, 0.021, 24)), ("BoostPadC", (-36, 0.021, 34))):
@@ -344,11 +345,8 @@ for i, (x, z) in enumerate(((-43, -24), (-29, -24), (-43, -8), (-29, -8)), start
     props.append("\n\n".join(prop(f"BowlCone{i}", "3", "cone_shape", (x, 0.0, z), 0.35, 0.27)))
 
 # crate pyramid
-crate_slots = [
-    (-6.0, 0.355), (-3.0, 0.355), (0.0, 0.355), (3.0, 0.355), (6.0, 0.355),
-    (-4.5, 1.065), (-1.5, 1.065), (1.5, 1.065),
-    (0.0, 1.775),
-]
+crate_row = (-6.0, -3.0, 0.0, 3.0, 6.0)
+crate_slots = [(x, 0.355) for x in crate_row] + [(x, 1.065) for x in crate_row]
 for index, (x, y) in enumerate(crate_slots, start=1):
     props.append("\n\n".join(prop(f"Crate{index}", "4", "crate_shape", (x, y - 0.355, -24.0), 0.8, 0.355)))
 

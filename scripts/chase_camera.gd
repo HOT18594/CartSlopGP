@@ -75,8 +75,8 @@ func _process(delta: float) -> void:
 
 	# Bank into drifts and steering for a softer, more dynamic chase cam.
 	var lateral_speed: float = _cart.velocity.dot(_cart.global_transform.basis.x)
-	var steer: float = Input.get_axis("steer_left", "steer_right")
-	var roll_target: float = clampf(-lateral_speed / 9.0, -1.0, 1.0) * bank_strength 		+ steer * bank_strength * 0.5 * clampf(_speed_smooth / maxf(_cart.max_speed, 0.1), 0.0, 1.0)
+	var steer: float = Input.get_axis("steer_right", "steer_left")
+	var roll_target: float = -(clampf(-lateral_speed / 9.0, -1.0, 1.0) * bank_strength) 		- steer * bank_strength * 0.5 * clampf(_speed_smooth / maxf(_cart.max_speed, 0.1), 0.0, 1.0)
 	_roll = lerpf(_roll, roll_target, 1.0 - exp(-6.0 * delta))
 	_camera.rotation.z = _roll
 	# Shake: decays smoothly; applied as view offsets, never as transforms,
