@@ -146,10 +146,15 @@ Or authenticate once (`gh auth login`) and I can do it from here.
 - Preset **Windows Desktop** in `export_presets.cfg` (x86_64, release,
   external .pck, resource modifiers off)
 - Built to `CartSlopGP/builds/v0.1.0/CartSlopGP.exe` + `CartSlopGP.pck`
+- `include_filter="version.txt"` in the preset - a plain .txt is not a Godot
+  resource, so without this the exported build reads v0.0.0 and the updater
+  compares against the wrong version
 - Zipped: `CartSlopGP/builds/CartSlopGP_v0.1.0_windows.zip` (~39 MB)
 - The exported exe was launched headless (`--quit-after`) and exited 0 with no
-  script errors. A visual check of the exported window is still worth doing on
-  your side.
+  script errors. A screenshot taken from inside the exported build (viewport
+  texture) shows the full menu rendering correctly, cursor included; ordinary
+  desktop captures of that window come back grey on this machine, which is a
+  capture artifact, not a rendering problem.
 
 ## 7. Update checker
 
@@ -188,6 +193,7 @@ Tested: unit checks for version parsing/comparison
 - `tools/test_update_checker.gd` - 9/9 passed
 - Live GitHub API check - passed
 - Rendered screenshots of menu, settings, pause, drift smoke - all correct
+- Exported build screenshot (from inside the game) - menu renders, v0.1.0 label
 - Exported `.exe` launches and quits cleanly
 
 ## 9. Missing pieces / manual steps for you
