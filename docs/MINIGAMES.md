@@ -1,106 +1,47 @@
-# Minigames menu
+# Minigames
 
-Status: the hub is reachable again from **PLAY -> MINIGAMES**. **MEADOW LOOP**
-is implemented and playable; the other Free Play cards and the Tournament stay
-disabled with "COMING SOON". See `docs/MEADOW_LOOP.md` for the race design.
+**PLAY -> MINIGAMES** opens a grid of preview cards. **MEADOW LOOP** is
+implemented; the other four events are marked COMING SOON.
 
-Cards carry `available: true/false` in `MINIGAMES`. Available cards enable the
-PLAY button and load their `scene` through `SceneLoader`; unavailable ones keep
-the disabled "PLAY - COMING SOON" label. New minigames only need an entry in
-that array plus their own scene.
+## Layout
+
+- Title row with the event count.
+- 3-column card grid; every card has a generated preview image, a name and a
+  READY / SOON tag.
+- Selected-event details below the grid: name, tag, description.
+- A **VEHICLE** cycle button (writes `GameSettings.minigame_vehicle`) and a
+  **PLAY** button that is disabled for unreleased events.
+- BACK returns to PLAY, or to the live multiplayer lobby when the host opened
+  this screen from a session.
+
+Cards carry `available`, `preview`, `accent` and `scene` in the `EVENTS` array
+of `scripts/ui/minigames_menu.gd`. Adding a playable event means adding an
+entry, a preview image and its scene.
 
 ## Flow
 
 ```
 MAIN MENU
 └── PLAY
-    ├── SANDBOX          -> vehicle picker -> driving sandbox (solo)
-    ├── MULTIPLAYER      -> lobby: name, LAN/ONLINE, host code, join code
-    ├── MINIGAMES        -> Free Play | Tournament
-    └── BACK
-
-MINIGAMES (tabs)
-├── FREE PLAY          -> card list + details + options + PLAY
-│   └── MEADOW LOOP    -> WAITING ROOM (ready up + rivals joining) -> START RACE
-│                          -> 3-2-1-GO -> the race scene
-└── TOURNAMENT         -> rounds / difficulty / vehicle + START
-    └── BACK -> PLAY
+    ├── SINGLE PLAYER
+    │   ├── SANDBOX       -> vehicle picker -> open arena
+    │   └── MINIGAMES     -> grid -> MEADOW LOOP -> waiting room -> race
+    └── MULTIPLAYER
+        ├── SANDBOX SESSION  -> lobby -> shared arena
+        └── MINIGAME SESSION -> lobby -> Meadow Loop for every peer
 ```
 
-## Free Play screen (button placement)
+## Multiplayer
 
-```
-+--------------------------------------------------------------+
-|                        MINIGAMES                             |
-|--------------------------------------------------------------|
-| [ FREE PLAY ]  [ TOURNAMENT ]        <- tabs, equal width    |
-|                                                              |
-| [ MEADOW LOOP   SOLO   READY ]       <- card, full width     |
-| [ CONE SLALOM   SOLO   SOON ]                                |
-| [ CRATE SMASH   SOLO   SOON ]                                |
-| [ DRIFT SCORE   SOLO   SOON ]                                |
-| [ BOOST RUN     SOLO   SOON ]                                |
-|                                                              |
-| +----------------------------------------------------------+ |
-| | MEADOW LOOP                                              | |
-| | description ...                                          | |
-| | [DIFFICULTY v] [ROUNDS v] [VEHICLE v]   <- 3 equal opts  | |
-| +----------------------------------------------------------+ |
-| [ PLAY  -  MEADOW LOOP ]            <- enabled, primary      |
-| "Every minigame is solo..."          <- rule line            |
-| [ BACK ]                             <- secondary, red       |
-+--------------------------------------------------------------+
-```
+The host chooses SANDBOX or MINIGAMES in the lobby. START RACE sends the scene
+and session config to every peer. In Meadow Loop each peer owns its cart,
+streams position/yaw plus lap distance at 20 Hz, exchanges its vehicle model,
+and the host relays client states so everyone sees everyone. The result card
+hides RACE AGAIN (which would desync the field); BACK TO LOBBY returns the
+whole session to the lobby.
 
-Placement rules:
+## Preview images
 
-- The tab row is always at the top and uses equal widths, so the active tab can
-  be highlighted without moving the layout.
-- Cards are full-width rows in a fixed order; the selected card is yellow, the
-  rest grey. Selection never moves the details panel (fixed slot below).
-- The three options share one row at equal widths: Difficulty, Rounds, Vehicle.
-- PLAY is the only primary button and sits directly under the details; BACK is
-  the only red button and is always last.
-
-## Tournament screen
-
-```
-+--------------------------------------------------------------+
-| description: solo gauntlet, points carry over                |
-| [MINIGAMES v] [DIFFICULTY v] [VEHICLE v]                     |
-| [ START TOURNAMENT - COMING SOON ]   (disabled)               |
-| note: ghost times / friend leaderboards later                 |
-+--------------------------------------------------------------+
-```
-
-## Data model
-
-`scripts/ui/minigames_menu.gd`
-
-```gdscript
-const MINIGAMES = [
-  {id, name, desc, scene, available}, ...   # add an entry -> a new card appears
-]
-```
-
-`scene` is the `res://` path loaded by `SceneLoader.go_to()`; `available`
-controls the card's READY/SOON tag and whether PLAY is enabled. Cards are
-44 px tall so five of them still fit the 720p panel.
-
-Options are persisted in `GameSettings` (`user://settings.cfg`):
-
-| Setting | Values | Default |
-| --- | --- | --- |
-| `minigame_difficulty` | 0 easy, 1 normal, 2 hard | 1 |
-| `minigame_rounds` | 3, 5, 7 | 3 |
-| `minigame_vehicle` | vehicle catalog id | `shopping_cart` |
-
-## Rules for future minigames
-
-- Every minigame is **solo** by default. The special multiplayer ones are wired
-  separately (they use the same Network session, but start from their own
-  screen and are not listed in Free Play).
-- A minigame scene should receive its options from `GameSettings` and return to
-  the minigames hub when finished, not to the main menu.
-- Scores/times are local for now; a future update adds ghost times and
-  leaderboards (the tournament screen is where they will surface).
+`tools/gen_minigame_previews.py` builds the five 480x270 cards in
+`assets/ui/minigames/`. Meadow Loop uses a real in-game screenshot when one is
+available; the coming-soon cards are flat illustrations in the same palette.

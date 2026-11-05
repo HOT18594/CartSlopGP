@@ -3,82 +3,66 @@
 All notable changes to Cart Slop GP. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer.
 
-## [Unreleased] - Meadow Loop v2: realistic scenery, effects and waiting room
+## [0.5.0] - 2026-11-05
 
-`version.txt` still stays at 0.4.2 - no new builds or GitHub release.
-
-### Added
-
-- **Waiting room** (`scenes/minigames/meadow_lobby.tscn`): live 3D preview with
-  an orbiting camera and procedural PBR trees, editable player name, READY UP,
-  three rivals joining one by one with status dots and pop animations, a status
-  ticker, drifting leaf stickers and a 3-2-1-GO start countdown.
-  `MINIGAMES -> PLAY` now goes to the lobby; the result card gained
-  **BACK TO LOBBY**.
-- **Realistic PBR scenery**: six procedurally generated tree variants built
-  from CC0 Poly Haven bark/leaf scans (~387 near-field trees), 1k PBR
-  meadow/dirt ground with normal and roughness maps, and five instanced
-  photogrammetry ground-cover models. Kenney low-poly trees remain as cheap
-  far-field canopy.
-- **CC0 Poly Haven assets**: 16 PBR/alpha textures, 5 scanned glTF models and
-  six derived RGBA foliage/particle cards. Full credits in
-  `assets/models/polyhaven/CREDITS.txt` and `docs/ASSET_CREDITS.txt`.
-- **Wind + interaction shaders**: `foliage_wind.gdshader` (gusting sway,
-  alpha-scissor shadows, grass bending away from the kart via a live
-  `kart_position` uniform) and `ground_pbr.gdshader` (repeat-enabled tiling,
-  normal-map bump, macro colour drift).
-- **Effects**: speed-scaled rear-wheel dirt dust, drift/boost/landing bursts,
-  lap confetti, ambient drifting leaves, four boost pads, 34 pushable cones,
-  a five-lamp start gantry, flashing checkpoint gates, and rivals that bank,
-  bob, pulse their name labels and kick up their own dust.
-- **Heavier rendering**: 4x MSAA, ACES tonemapping, bloom, contrast/saturation
-  and a longer shadow distance, all scoped to the race and lobby viewports.
-- `tools/build_foliage_atlases.py` and `docs` for the v2 pipeline.
-
-### Changed
-
-- `minigames_menu.gd` PLAY now loads `meadow_lobby.tscn`, not the race directly.
-- Scanned glTF models are merged per material by `scripts/minigames/pbr_baker.gd`
-  with `max_parts=2`, keeping the PBR look at a sane polygon budget.
-
-## [Unreleased] - Meadow Loop minigame
-
-`version.txt` stays at 0.4.2 until a build is exported and a GitHub release is
-published. Nothing here changes the in-game updater.
+Meadow Loop, a real minigame grid, and a much more reliable multiplayer lobby.
 
 ### Added
 
 - **MEADOW LOOP** — the first playable minigame: three laps of a winding 491 m
-  dirt track through a dense grassy forest. Three ghost rivals, a 3-2-1-GO
-  countdown, LAP / place HUD badges, lap times and a candy result card with
-  RACE AGAIN / MINIGAMES / MAIN MENU. Completing three laps wins.
-- **PLAY → MINIGAMES** is back in the menu. Free Play cards now carry
-  `available` and `scene`; MEADOW LOOP is READY, the other four stay SOON.
-- **87 curated CC0 models** from Kenney *Nature Kit* 2.1 (trees, bushes, grass,
-  wildflowers, rocks, stumps, logs, mushrooms, fence). ~8,600 deterministic
-  scenery instances render in ~75 MultiMesh draw calls.
-- **Generated seamless grass/dirt ground textures** plus a tiled-surface
-  shader (`tools/gen_track_textures.py`).
-- **Invisible barrier walls** along both track edges, an off-track grass
-  slowdown and auto-respawn, and sector-gated lap counting that cannot be
-  cheesed by reversing over the finish line.
-- `docs/MEADOW_LOOP.md` and `tools/smoke_meadow_loop.gd`, a headless test that
-  builds the full scene and drives three laps.
+  dirt circuit through a dense grassy forest, with a 3-2-1-GO countdown, four
+  boost pads, 34 pushable cones, checkpoint gates, lap times, place badges and
+  a candy result card.
+- **Waiting room** (`meadow_lobby.tscn`): live 3D preview, editable name,
+  READY UP, rivals joining one by one and a start countdown.
+- **Realistic PBR scenery**: ~387 procedural trees built from CC0 Poly Haven
+  bark/leaf scans, tiled PBR ground, 5 scanned ground-cover models, wind and
+  kart-bending foliage shaders, and heavy viewport settings for the race only.
+- **Minigame grid** with generated preview cards for all five events; Meadow
+  Loop is READY and the other four are marked COMING SOON. Includes a vehicle
+  cycler and selected-event details.
+- **AI carts in the sandbox** when the BOTS toggle is on, plus the self-hosted
+  race rivals.
+- **Multiplayer race support**: peers own their carts, stream position/yaw at
+  20 Hz, exchange vehicle models, see name labels and are counted in the race
+  position. Result cards hide RACE AGAIN (which would desync the field).
+- **LAN code alongside the online code**, connection diagnostics for
+  UPnP/CGNAT failures, and a visible warning when only a LAN route exists.
+- Optional **PUBLIC IP** override remains for manual port-forwarding or a
+  VPN/tunnel address.
 
 ### Changed
 
-- The minigame vehicle picker now actually applies: the race temporarily swaps
-  `GameSettings.minigame_vehicle` into the kart and restores the sandbox
-  choice on exit, without writing `user://settings.cfg`.
-- `docs/MINIGAMES.md` updated from prototype spec to the live data model.
+- PLAY now has SINGLE PLAYER / MULTIPLAYER tabs with shared BOTS controls.
+- The multiplayer lobby switches between idle, host and client layouts instead
+  of showing every control at once.
+- Minigames are reached from PLAY again; the grid replaces the old options
+  prototype and tournament placeholder.
 
 ### Fixed
 
-- The loading screen's rolling-hills polygon closed through `Vector2.ZERO`,
-  crossing its own wavy top edge. Godot logged "Invalid polygon data,
-  triangulation failed" on every `SceneLoader` transition (including the new
-  PLAY → MEADOW LOOP path) and skipped the hills layer. It now closes along the
-  bottom edge.
+- Online hosting could hang forever on a router that never answered UPnP. The
+  host now gives discovery a hard 6 s budget, keeps loading in the background
+  and upgrades the code if the mapping arrives later.
+- The host no longer advertises a public IP as a joinable code when UPnP
+  failed; it shows the LAN code plus a clear port-forward/CGNAT explanation.
+- LAN IP selection skips VPN, Hyper-V, WSL, Docker and VirtualBox adapters.
+- Joining now times out after 12 s with an actionable message instead of
+  hanging on "Connecting...".
+- Starting any scene while another transition was in flight is queued instead
+  of silently dropped, and pause is cleared before every transition.
+- Multiplayer Meadow Loop now actually shows the other players and their
+  vehicle models instead of loading a solo scene.
+- In 3+ player sessions, client names and cart positions were only sent to the
+  host; the host now relays them so every client sees every player.
+- Race result titles now reflect the finishing place instead of always saying
+  YOU WIN, and the field size is no longer hard-coded to four.
+- Race sync stops cleanly when the host leaves, instead of spamming RPC errors
+  during the disconnect transition.
+- The loading screen no longer spams an invalid-polygon error; the hills layer
+  triangulates cleanly.
+- Minigame vehicle choice now applies to the race without overwriting the
+  saved sandbox choice.
 
 ## [0.4.2] - 2026-11-05
 

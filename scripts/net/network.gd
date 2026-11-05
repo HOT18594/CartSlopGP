@@ -19,12 +19,15 @@ signal peers_changed()
 signal names_changed()
 signal latency_changed(ms: int)
 signal code_updated(code: String)
+signal session_config_changed()
 
 const DEFAULT_PORT: int = 8910
 const PORT_RANGE: int = 40
 const MAX_PLAYERS: int = 8
 const GAME_SCENE: String = "res://scenes/dev/driving_test.tscn"
+const RACE_SCENE: String = "res://scenes/minigames/grass_race.tscn"
 const LOBBY_SCENE: String = "res://scenes/ui/lobby_menu.tscn"
+const MINIGAMES_SCENE: String = "res://scenes/ui/minigames_menu.tscn"
 const PING_INTERVAL: float = 2.0
 
 var is_host: bool = false
@@ -39,11 +42,28 @@ var last_error: String = ""
 var connection_mode: String = "online" ## "lan" or "online"
 var custom_public_ip: String = ""
 var player_names: Dictionary = {} ## peer id -> sanitized display name
+var lan_code: String = "" ## Always-valid code for players on the same network.
+var online_code: String = "" ## Public code, only when a route actually exists.
+var upnp_mapped: bool = false ## True when the router accepted a port mapping.
+var behind_cgnat: bool = false ## Router reports a carrier-shared address.
+var join_pending: bool = false
+
+## Host-chosen configuration, broadcast with _net_begin_game so every peer
+## loads the same world with the same bots. Clients never write these locally.
+var game_scene: String = GAME_SCENE
+var session_mode: String = GameSettings.GAME_SANDBOX
+var session_bots: bool = false
+var session_bot_count: int = 0
+var race_standings: Array[Dictionary] = [] ## peer id/name/time/place, filled by the race.
 
 var _peer: ENetMultiplayerPeer
 var _upnp: UPNP
 var _host_ticket: int = 0
 var _ping_timer: float = 0.0
+var _join_started_ms: int = 0
+var _upnp_thread: Thread
+var _upnp_result: Dictionary = {}
+var _upnp_ticket: int = 0
 
 
 func _ready() -> void:
@@ -56,6 +76,12 @@ func _ready() -> void:
 
 
 func _process(delta: float) -> void:
+	_poll_upnp_thread()
+	if join_pending and Time.get_ticks_msec() - _join_started_ms > 12000:
+		join_pending = false
+		leave()
+		join_failed.emit("Connection timed out. The host's port may be blocked, or the code is stale.")
+		return
 	if not is_session_active() or not is_connected_to_server():
 		return
 	_ping_timer += delta
@@ -88,6 +114,7 @@ func host_game(mode: String = "online") -> void:
 	_host_ticket += 1
 	var ticket: int = _host_ticket
 	connection_mode = "lan" if mode == "lan" else "online"
+	GameSettings.connection_preference = connection_mode
 	SceneLoader.begin_task("HOSTING A GAME", "Opening a port...")
 	await get_tree().process_frame
 	if ticket != _host_ticket:
@@ -104,32 +131,56 @@ func host_game(mode: String = "online") -> void:
 	is_host = true
 	in_game = false
 	public_address = ""
-	join_code = encode_address(local_address, port)
+	upnp_mapped = false
+	behind_cgnat = false
+	lan_code = encode_address(local_address, port)
+	online_code = ""
+	join_code = lan_code
 	player_names[1] = GameSettings.player_name
 
 	if connection_mode == "online":
 		if _valid_ip(custom_public_ip):
+			# The player says they forwarded the port (or uses a VPN address).
 			public_address = custom_public_ip
+			online_code = encode_address(public_address, port)
+			join_code = online_code
 		else:
 			SceneLoader.task_message("Asking your router for a port (UPnP)...")
-			var upnp_ip: String = await _upnp_lookup(port)
+			var upnp_result: Dictionary = await _upnp_lookup(port)
 			if ticket != _host_ticket:
 				SceneLoader.end_task()
 				leave()
 				return
+			behind_cgnat = bool(upnp_result.get("cgnet", false))
+			var upnp_ip: String = str(upnp_result.get("ip", ""))
 			if upnp_ip != "":
+				upnp_mapped = true
 				public_address = upnp_ip
+				online_code = encode_address(public_address, port)
+				join_code = online_code
+			elif bool(upnp_result.get("mapped", false)) and not bool(upnp_result.get("cgnet", false)):
+				# The router accepted the mapping but would not report its
+				# external address; ask the public-IP service instead.
+				var mapped_ip: String = await _public_ip_lookup()
+				if mapped_ip != "":
+					upnp_mapped = true
+					public_address = mapped_ip
+					online_code = encode_address(public_address, port)
+					join_code = online_code
+				else:
+					public_address = ""
+					join_code = lan_code
 			else:
-				SceneLoader.task_message("Checking your public IP...")
+				# Mapping failed. A public IP alone is NOT reachable, so keep the
+				# LAN code and show the public IP as a diagnostic only.
+				SceneLoader.task_message("Router mapping failed - checking your public IP...")
 				var public_ip: String = await _public_ip_lookup()
 				if ticket != _host_ticket:
 					SceneLoader.end_task()
 					leave()
 					return
-				if public_ip != "":
-					public_address = public_ip
-		if public_address != "":
-			join_code = encode_address(public_address, port)
+				public_address = public_ip
+				join_code = lan_code
 
 	if ticket != _host_ticket:
 		SceneLoader.end_task()
@@ -140,32 +191,76 @@ func host_game(mode: String = "online") -> void:
 	peers_changed.emit()
 
 
-func _upnp_lookup(udp_port: int) -> String:
-	## Runs discovery in a thread so the loading overlay keeps animating.
-	var result: Dictionary = {"ip": ""}
+func _upnp_lookup(udp_port: int) -> Dictionary:
+	## Runs discovery in a thread so the loading overlay keeps animating. Some
+	## routers never answer, so the UI waits at most 6 seconds and keeps the
+	## thread alive in the background; if it answers later we upgrade the code.
+	var result: Dictionary = {"ip": "", "external": "", "cgnet": false, "mapped": false}
 	var thread := Thread.new()
 	if thread.start(_upnp_worker.bind(udp_port, result)) != OK:
-		return ""
-	while thread.is_alive():
+		return result
+	var deadline: int = Time.get_ticks_msec() + 6000
+	while thread.is_alive() and Time.get_ticks_msec() < deadline:
 		await get_tree().process_frame
+	if thread.is_alive():
+		_upnp_thread = thread
+		_upnp_result = result
+		_upnp_ticket = _host_ticket
+		return result
 	thread.wait_to_finish()
-	return str(result.get("ip", ""))
+	return result
+
+
+func _poll_upnp_thread() -> void:
+	if _upnp_thread == null or _upnp_thread.is_alive():
+		return
+	_upnp_thread.wait_to_finish()
+	_upnp_thread = null
+	var result: Dictionary = _upnp_result
+	_upnp_result = {}
+	if _upnp_ticket != _host_ticket or not is_host:
+		return
+	behind_cgnat = bool(result.get("cgnet", false))
+	var ip: String = str(result.get("ip", ""))
+	if ip == "" or online_code != "":
+		return
+	# The router finally answered after the overlay was dismissed.
+	upnp_mapped = true
+	public_address = ip
+	online_code = encode_address(ip, port)
+	join_code = online_code
+	code_updated.emit(online_code)
 
 
 func _upnp_worker(udp_port: int, result: Dictionary) -> void:
 	var upnp := UPNP.new()
-	if upnp.discover(1500, 2, "InternetGatewayDevice") != OK:
+	var found: Error = upnp.discover(2000, 2, "InternetGatewayDevice")
+	if found != OK:
+		# Some IGDv2 routers only answer an unfiltered search.
+		upnp = UPNP.new()
+		found = upnp.discover(2000, 2, "")
+	if found != OK:
 		return
 	var gateway: UPNPDevice = upnp.get_gateway()
 	if gateway == null or not gateway.is_valid_gateway():
 		return
-	# One hour rather than permanent: a crashed/closed game must not leave a
-	# stale forwarding rule on the router forever.
-	if upnp.add_port_mapping(udp_port, udp_port, "Cart Slop GP", "UDP", 3600) != OK:
+	# Try a one-hour lease first, then permanent for routers that reject leases.
+	var mapped: bool = false
+	for duration: int in [3600, 0]:
+		if upnp.add_port_mapping(udp_port, udp_port, "Cart Slop GP", "UDP", duration) == OK:
+			mapped = true
+			break
+	if not mapped:
 		return
+	result["mapped"] = true
 	var external: String = upnp.get_external_ip()
-	if external != "" and external != "0.0.0.0":
+	result["external"] = external
+	if external == "" or external == "0.0.0.0":
+		return
+	if _is_public_ipv4(external):
 		result["ip"] = external
+	elif _is_cgnat_ipv4(external):
+		result["cgnet"] = true
 
 
 func _public_ip_lookup() -> String:
@@ -195,12 +290,67 @@ func _open_server() -> int:
 
 
 func _local_ip() -> String:
+	## Pick the most likely physical LAN adapter. VPNs, Hyper-V, WSL, Docker and
+	## VirtualBox adapters often sort first, and their address is not reachable
+	## from the player's friend.
+	var best: String = ""
+	var best_score: int = -1000
+	var interfaces: Array = IP.get_local_interfaces()
+	for iface: Dictionary in interfaces:
+		var label: String = (str(iface.get("name", "")) + " " + str(iface.get("friendly", ""))).to_lower()
+		var score: int = 0
+		if label.contains("wi-fi") or label.contains("wifi") or label.contains("wireless") or label.contains("wlan"):
+			score += 30
+		elif label.contains("ethernet") or label.contains("eth"):
+			score += 20
+		for bad: String in ["virtual", "vmware", "vbox", "hyper-v", "vethernet", "wsl",
+				"docker", "tailscale", "zerotier", "vpn", "loopback", "bluetooth"]:
+			if label.contains(bad):
+				score -= 100
+				break
+		for value: Variant in iface.get("addresses", []) as Array:
+			var address: String = str(value)
+			if not _valid_ip(address) or address.begins_with("127.") or address.begins_with("169.254."):
+				continue
+			if score > best_score:
+				best = address
+				best_score = score
+	if best != "":
+		return best
 	for address: String in IP.get_local_addresses():
 		if address.begins_with("127.") or address.contains(":"):
 			continue
 		if address.begins_with("192.168.") or address.begins_with("10.") or address.begins_with("172."):
 			return address
 	return "127.0.0.1"
+
+
+func has_online_route() -> bool:
+	return online_code != ""
+
+
+func _is_public_ipv4(text: String) -> bool:
+	if not _valid_ip(text):
+		return false
+	if text.begins_with("10.") or text.begins_with("127.") or text.begins_with("169.254."):
+		return false
+	if text.begins_with("192.168."):
+		return false
+	if text.begins_with("172."):
+		var second: int = int(text.split(".")[1])
+		if second >= 16 and second <= 31:
+			return false
+	if _is_cgnat_ipv4(text):
+		return false
+	return true
+
+
+func _is_cgnat_ipv4(text: String) -> bool:
+	## RFC 6598 shared address space (carrier-grade NAT).
+	if not _valid_ip(text) or not text.begins_with("100."):
+		return false
+	var second: int = int(text.split(".")[1])
+	return second >= 64 and second <= 127
 
 
 # --------------------------------------------------------------------------
@@ -214,7 +364,7 @@ func set_custom_public_ip(address: String) -> void:
 func set_local_name(raw_name: String) -> void:
 	GameSettings.set_player_name(raw_name)
 	if is_session_active():
-		rpc("_net_set_name", GameSettings.player_name)
+		rpc("_net_set_name", multiplayer.get_unique_id(), GameSettings.player_name)
 
 
 func name_of(peer_id: int) -> String:
@@ -237,6 +387,8 @@ func join_game(raw_code: String) -> void:
 	multiplayer.multiplayer_peer = peer
 	is_client = true
 	in_game = false
+	join_pending = true
+	_join_started_ms = Time.get_ticks_msec()
 	player_names.clear()
 
 
@@ -251,34 +403,104 @@ func leave() -> void:
 	is_host = false
 	is_client = false
 	in_game = false
+	join_pending = false
 	join_code = ""
+	lan_code = ""
+	online_code = ""
+	upnp_mapped = false
+	behind_cgnat = false
 	public_address = ""
 	latency_ms = 0
 	last_error = ""
 	player_names.clear()
+	race_standings.clear()
+
+
+# --------------------------------------------------------------------------
+# session config (host -> everyone, while still in the lobby)
+
+
+func configure_session(mode: String, bots: bool, count: int) -> void:
+	if not is_host:
+		return
+	session_mode = mode
+	session_bots = bots
+	session_bot_count = count
+	rpc("_net_session_config", mode, bots, count)
+
+
+@rpc("authority", "call_local", "reliable")
+func _net_session_config(mode: String, bots: bool, count: int) -> void:
+	session_mode = mode
+	session_bots = bots
+	session_bot_count = count
+	GameSettings.set_session_config(GameSettings.MODE_MULTIPLAYER, mode, bots, count)
+	session_config_changed.emit()
+
+
+func is_lan() -> bool:
+	return connection_mode == "lan"
 
 
 # --------------------------------------------------------------------------
 # session flow
 
 
-func start_game() -> void:
+func start_game(scene_path: String = "", mode: String = "") -> void:
+	## Host-only. Picks the scene from the host's session mode when omitted,
+	## then pushes the exact configuration to every peer before loading.
 	if not is_host:
 		return
+	var target: String = scene_path
+	var chosen_mode: String = mode
+	if chosen_mode == "":
+		chosen_mode = GameSettings.multiplayer_mode
+	if target == "":
+		target = RACE_SCENE if chosen_mode == GameSettings.GAME_MINIGAMES else GAME_SCENE
 	in_game = true
-	rpc("_net_begin_game")
+	game_scene = target
+	session_mode = chosen_mode
+	session_bots = GameSettings.bots_enabled
+	session_bot_count = GameSettings.effective_bot_count()
+	rpc("_net_begin_game", target, chosen_mode, session_bots, session_bot_count)
 
 
 @rpc("authority", "call_local", "reliable")
-func _net_begin_game() -> void:
+func _net_begin_game(scene_path: String, mode: String, bots: bool, count: int) -> void:
 	in_game = true
-	SceneLoader.go_to(GAME_SCENE, "STARTING SANDBOX", "Syncing players and props...")
+	game_scene = scene_path
+	session_mode = mode
+	session_bots = bots
+	session_bot_count = count
+	# The host's settings win for this session; nothing is written to disk.
+	GameSettings.set_session_config(GameSettings.MODE_MULTIPLAYER, mode, bots, count)
+	var title: String = "STARTING RACE" if mode == GameSettings.GAME_MINIGAMES else "STARTING SANDBOX"
+	SceneLoader.go_to(scene_path, title, "Syncing players...")
 
 
 func return_to_lobby(reason: String = "") -> void:
 	if is_session_active():
 		leave()
 	session_ended.emit(reason)
+	SceneLoader.go_to(LOBBY_SCENE, "MULTIPLAYER")
+
+
+func return_to_lobby_keep_session() -> void:
+	## Used after a race result. The host brings everyone back to the lobby;
+	## a client waits in its own lobby while the connection stays open.
+	if not is_session_active():
+		SceneLoader.go_to(LOBBY_SCENE, "MULTIPLAYER")
+		return
+	if is_host:
+		in_game = false
+		rpc("_net_return_lobby")
+	else:
+		SceneLoader.go_to(LOBBY_SCENE, "MULTIPLAYER")
+
+
+@rpc("authority", "call_local", "reliable")
+func _net_return_lobby() -> void:
+	in_game = false
 	SceneLoader.go_to(LOBBY_SCENE, "MULTIPLAYER")
 
 
@@ -289,19 +511,23 @@ func return_to_lobby(reason: String = "") -> void:
 func _on_peer_connected(id: int) -> void:
 	peers_changed.emit()
 	if is_host and in_game:
-		rpc_id(id, "_net_begin_game")
+		rpc_id(id, "_net_begin_game", game_scene, session_mode,
+			session_bots, session_bot_count)
 	if is_session_active():
 		# Re-announce our name so the newcomer (and everyone) has it.
-		rpc("_net_set_name", GameSettings.player_name)
+		rpc("_net_set_name", multiplayer.get_unique_id(), GameSettings.player_name)
 
 
 @rpc("any_peer", "call_local", "reliable")
-func _net_set_name(raw_name: String) -> void:
+func _net_set_name(peer_id: int, raw_name: String) -> void:
 	var sender: int = multiplayer.get_remote_sender_id()
-	if sender == 0:
-		sender = multiplayer.get_unique_id()
-	player_names[sender] = GameSettings.sanitize_name(raw_name)
+	# Host relays client names so every client sees the whole player list.
+	if sender != 0 and sender != 1 and peer_id != sender:
+		return
+	player_names[peer_id] = GameSettings.sanitize_name(raw_name)
 	names_changed.emit()
+	if is_host and sender != 0 and sender != 1:
+		rpc("_net_set_name", peer_id, raw_name)
 
 
 func _on_peer_disconnected(id: int) -> void:
@@ -312,7 +538,8 @@ func _on_peer_disconnected(id: int) -> void:
 
 func _on_connected_to_server() -> void:
 	is_client = true
-	rpc("_net_set_name", GameSettings.player_name)
+	join_pending = false
+	rpc("_net_set_name", multiplayer.get_unique_id(), GameSettings.player_name)
 	join_status_changed.emit("Connected. Waiting for the host to start...")
 	join_succeeded.emit()
 	peers_changed.emit()

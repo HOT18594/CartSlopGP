@@ -3,9 +3,17 @@ extends Node
 ## Volumes are 0-1 linear; they are converted to dB when applied.
 
 signal changed
+signal session_changed
 
 const SETTINGS_PATH: String = "user://settings.cfg"
 const SFX_BUS: String = "SFX"
+
+const MODE_SINGLE: int = 0
+const MODE_MULTIPLAYER: int = 1
+const GAME_SANDBOX: String = "sandbox"
+const GAME_MINIGAMES: String = "minigames"
+const CONN_LAN: String = "lan"
+const CONN_ONLINE: String = "online"
 
 @export_range(0.0, 1.0, 0.01) var master_volume: float = 0.8
 @export_range(0.0, 1.0, 0.01) var sfx_volume: float = 0.85
@@ -18,6 +26,13 @@ const SFX_BUS: String = "SFX"
 @export_range(0, 2) var minigame_difficulty: int = 1
 @export_range(3, 7, 2) var minigame_rounds: int = 3
 @export var minigame_vehicle: String = "shopping_cart"
+
+@export_group("Session")
+@export var play_mode: int = MODE_SINGLE ## MODE_SINGLE or MODE_MULTIPLAYER.
+@export var multiplayer_mode: String = GAME_SANDBOX ## GAME_SANDBOX or GAME_MINIGAMES.
+@export var connection_preference: String = CONN_ONLINE ## CONN_LAN (Wi-Fi) or CONN_ONLINE.
+@export var bots_enabled: bool = false ## OFF by default - bots are strictly opt-in.
+@export_range(0, 5) var bot_count: int = 3 ## How many AI carts to add when enabled.
 
 
 func _ready() -> void:
@@ -94,6 +109,54 @@ func set_minigame_options(difficulty: int, rounds: int, vehicle_id: String) -> v
 	save_settings()
 
 
+# --------------------------------------------------------------------------
+# session config (shared by single player and multiplayer)
+
+
+func set_play_mode(mode: int) -> void:
+	play_mode = MODE_MULTIPLAYER if mode == MODE_MULTIPLAYER else MODE_SINGLE
+	save_settings()
+	session_changed.emit()
+
+
+func set_multiplayer_mode(mode: String) -> void:
+	multiplayer_mode = GAME_MINIGAMES if mode == GAME_MINIGAMES else GAME_SANDBOX
+	save_settings()
+	session_changed.emit()
+
+
+func set_connection_preference(mode: String) -> void:
+	connection_preference = CONN_LAN if mode == CONN_LAN else CONN_ONLINE
+	save_settings()
+	session_changed.emit()
+
+
+func set_bots_enabled(enabled: bool) -> void:
+	bots_enabled = enabled
+	save_settings()
+	session_changed.emit()
+
+
+func set_bot_count(count: int) -> void:
+	bot_count = clampi(count, 0, 5)
+	save_settings()
+	session_changed.emit()
+
+
+func effective_bot_count() -> int:
+	## The single number every scene should use. Zero when bots are off.
+	return clampi(bot_count, 0, 5) if bots_enabled else 0
+
+
+func set_session_config(mode: int, game: String, bots: bool, count: int) -> void:
+	## Used by Network so every peer runs the host's exact configuration.
+	play_mode = MODE_MULTIPLAYER if mode == MODE_MULTIPLAYER else MODE_SINGLE
+	multiplayer_mode = GAME_MINIGAMES if game == GAME_MINIGAMES else GAME_SANDBOX
+	bots_enabled = bots
+	bot_count = clampi(count, 0, 5)
+	session_changed.emit()
+
+
 static func sanitize_name(raw_name: String) -> String:
 	## Keep names short, printable and free of control characters.
 	var cleaned: String = ""
@@ -127,6 +190,11 @@ func load_settings() -> void:
 	minigame_difficulty = int(config.get_value("gameplay", "minigame_difficulty", minigame_difficulty))
 	minigame_rounds = int(config.get_value("gameplay", "minigame_rounds", minigame_rounds))
 	minigame_vehicle = str(config.get_value("gameplay", "minigame_vehicle", minigame_vehicle))
+	play_mode = int(config.get_value("session", "play_mode", play_mode))
+	multiplayer_mode = str(config.get_value("session", "multiplayer_mode", multiplayer_mode))
+	connection_preference = str(config.get_value("session", "connection", connection_preference))
+	bots_enabled = bool(config.get_value("session", "bots_enabled", bots_enabled))
+	bot_count = int(config.get_value("session", "bot_count", bot_count))
 
 
 func save_settings() -> void:
@@ -140,4 +208,9 @@ func save_settings() -> void:
 	config.set_value("gameplay", "minigame_difficulty", minigame_difficulty)
 	config.set_value("gameplay", "minigame_rounds", minigame_rounds)
 	config.set_value("gameplay", "minigame_vehicle", minigame_vehicle)
+	config.set_value("session", "play_mode", play_mode)
+	config.set_value("session", "multiplayer_mode", multiplayer_mode)
+	config.set_value("session", "connection", connection_preference)
+	config.set_value("session", "bots_enabled", bots_enabled)
+	config.set_value("session", "bot_count", bot_count)
 	config.save(SETTINGS_PATH)

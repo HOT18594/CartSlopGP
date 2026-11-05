@@ -4,5 +4,5 @@
 
 [node name="UiStateShot" type="Node"]
 script = ExtResource("1")
-scene_path = "res://scenes/ui/play_menu.tscn"
-shot_name = "play_state"
+scene_path = "res://scenes/ui/lobby_menu.tscn"
+shot_name = "lobby_new"

@@ -1,155 +1,286 @@
 extends Control
-## Minigames hub: Free Play (solo cards + options) and Tournament.
-## Cards with `available: true` load their scene; the rest stay "COMING SOON".
+## Minigames hub, rebuilt as a scroll-free grid of preview cards.
+##
+## Only MEADOW LOOP is playable today; the other cards are clearly marked
+## COMING SOON. When the host opened this screen from a live lobby, PLAY starts
+## the race for the whole session instead of entering the solo waiting room.
 
 const Catalog := preload("res://scripts/vehicles/vehicle_catalog.gd")
-const PLAY_MENU_SCENE: String = "res://scenes/ui/play_menu.tscn"
 
-const MINIGAMES: Array[Dictionary] = [
+const PLAY_MENU_SCENE: String = "res://scenes/ui/play_menu.tscn"
+const LOBBY_SCENE: String = "res://scenes/ui/lobby_menu.tscn"
+const MEADOW_LOBBY: String = "res://scenes/minigames/meadow_lobby.tscn"
+const CANDY_BUTTON: String = "res://scripts/ui/candy_button.gd"
+const PREVIEW_DIR: String = "res://assets/ui/minigames/"
+const UiPalette := preload("res://scripts/ui/ui_palette.gd")
+
+const EVENTS: Array[Dictionary] = [
 	{
 		"id": "meadow_loop",
 		"name": "MEADOW LOOP",
-		"desc": "Three laps of a winding dirt track through a dense grassy forest. Meet your rivals in the waiting room, then take the win. Solo.",
-		"scene": "res://scenes/minigames/meadow_lobby.tscn",
+		"tag": "3 LAPS · READY",
+		"desc": "A winding dirt circuit through a dense grassy forest. Three laps, four boost pads, three rivals and a lot of dust.",
+		"preview": "meadow_loop.png",
+		"scene": MEADOW_LOBBY,
 		"available": true,
+		"accent": UiPalette.GRASS,
 	},
 	{
 		"id": "slalom",
 		"name": "CONE SLALOM",
-		"desc": "Weave through the cone lane as fast as you can without clipping a cone. Solo.",
+		"tag": "SOLO · SOON",
+		"desc": "Weave through a long cone lane without clipping a single cone.",
+		"preview": "slalom.png",
 		"available": false,
+		"accent": UiPalette.CYAN,
 	},
 	{
 		"id": "crates",
 		"name": "CRATE SMASH",
-		"desc": "Shatter the crate wall in as few hits as possible. Solo.",
+		"tag": "SOLO · SOON",
+		"desc": "Shatter the crate wall in as few hits as possible.",
+		"preview": "crates.png",
 		"available": false,
+		"accent": UiPalette.YELLOW,
 	},
 	{
 		"id": "drift",
 		"name": "DRIFT SCORE",
-		"desc": "Chain drifts around the ring and bank the highest score before time runs out. Solo.",
+		"tag": "SOLO · SOON",
+		"desc": "Chain drifts around the ring and bank the highest score before time runs out.",
+		"preview": "drift.png",
 		"available": false,
+		"accent": UiPalette.PINK,
 	},
 	{
 		"id": "boost",
 		"name": "BOOST RUN",
-		"desc": "Hit every boost pad down the straight and finish under the target time. Solo.",
+		"tag": "SOLO · SOON",
+		"desc": "Hit every boost pad down the straight and finish under the target time.",
+		"preview": "boost.png",
 		"available": false,
+		"accent": UiPalette.BLUE,
 	},
 ]
 
-const DIFFICULTIES: PackedStringArray = ["EASY", "NORMAL", "HARD"]
-const ROUND_OPTIONS: Array[int] = [3, 5, 7]
-
-@onready var _free_tab: Button = %FreePlayTab
-@onready var _tour_tab: Button = %TournamentTab
-@onready var _free_box: VBoxContainer = %FreeBox
-@onready var _tour_box: VBoxContainer = %TournamentBox
-@onready var _card_list: VBoxContainer = %CardList
-@onready var _detail_name: Label = %DetailName
-@onready var _detail_desc: Label = %DetailDesc
-@onready var _play_button: Button = %PlayButton
-@onready var _difficulty_option: OptionButton = %DifficultyOption
-@onready var _rounds_option: OptionButton = %RoundsOption
-@onready var _vehicle_option: OptionButton = %VehicleOption
-@onready var _tour_rounds_option: OptionButton = %TourRoundsOption
-@onready var _tour_difficulty_option: OptionButton = %TourDifficultyOption
-@onready var _tour_vehicle_option: OptionButton = %TourVehicleOption
-@onready var _back_button: Button = %BackButton
-
+var _body: VBoxContainer
+var _grid: GridContainer
 var _cards: Array[Button] = []
 var _selected: int = 0
+var _detail_name: Label
+var _detail_desc: Label
+var _detail_meta: Label
+var _vehicle_button: Button
+var _play_button: Button
+var _back_button: Button
 
 
 func _ready() -> void:
 	CursorController.set_menu_mode(true)
-	_free_tab.pressed.connect(_show_tab.bind(0))
-	_tour_tab.pressed.connect(_show_tab.bind(1))
-	_back_button.pressed.connect(_on_back)
-	_play_button.pressed.connect(_on_play)
-	_build_cards()
-	_build_options()
+	_body = $Center/Panel/Body
+	_build_ui()
 	_select(0)
-	_show_tab(0)
+	_play_button.grab_focus()
 
 
-func _build_cards() -> void:
-	for index in MINIGAMES.size():
-		var data: Dictionary = MINIGAMES[index]
-		var button := Button.new()
-		var tag: String = "READY" if bool(data.get("available", false)) else "SOON"
-		button.text = "%s      SOLO      %s" % [str(data["name"]), tag]
-		button.custom_minimum_size = Vector2(0, 44)
-		button.add_theme_font_size_override("font_size", 17)
-		button.pressed.connect(_select.bind(index))
-		var script: Script = load("res://scripts/ui/candy_button.gd")
-		button.set_script(script)
-		_card_list.add_child(button)
-		_cards.append(button)
+func _build_ui() -> void:
+	var title_row := HBoxContainer.new()
+	title_row.add_theme_constant_override("separation", 12)
+	_body.add_child(title_row)
+
+	var title := Label.new()
+	title.theme_type_variation = &"TitleLabel"
+	title.add_theme_font_size_override("font_size", 48)
+	title.add_theme_color_override("font_color", UiPalette.INK)
+	title.text = "MINIGAMES"
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	title_row.add_child(title)
+
+	var count := Label.new()
+	count.text = "%d EVENTS" % EVENTS.size()
+	count.add_theme_font_size_override("font_size", 15)
+	count.add_theme_color_override("font_color", UiPalette.BLUE_DARK)
+	count.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	title_row.add_child(count)
+
+	var subtitle := Label.new()
+	subtitle.text = "PICK AN EVENT  ·  MEADOW LOOP IS READY TO RACE"
+	subtitle.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	subtitle.add_theme_font_size_override("font_size", 14)
+	subtitle.add_theme_color_override("font_color", UiPalette.BLUE_DARK)
+	_body.add_child(subtitle)
+
+	_grid = GridContainer.new()
+	_grid.columns = 3
+	_grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_grid.add_theme_constant_override("h_separation", 12)
+	_grid.add_theme_constant_override("v_separation", 12)
+	_body.add_child(_grid)
+	for index in EVENTS.size():
+		var card: Button = _make_card(EVENTS[index], index)
+		_grid.add_child(card)
+		_cards.append(card)
+
+	var rule := ColorRect.new()
+	rule.custom_minimum_size = Vector2(0, 3)
+	rule.color = UiPalette.INK
+	_body.add_child(rule)
+
+	var bottom := HBoxContainer.new()
+	bottom.add_theme_constant_override("separation", 16)
+	_body.add_child(bottom)
+
+	var info := VBoxContainer.new()
+	info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	info.add_theme_constant_override("separation", 2)
+	bottom.add_child(info)
+	_detail_name = Label.new()
+	_detail_name.add_theme_font_size_override("font_size", 24)
+	_detail_name.add_theme_color_override("font_color", UiPalette.INK)
+	info.add_child(_detail_name)
+	_detail_meta = Label.new()
+	_detail_meta.add_theme_font_size_override("font_size", 13)
+	_detail_meta.add_theme_color_override("font_color", UiPalette.BLUE_DARK)
+	info.add_child(_detail_meta)
+	_detail_desc = Label.new()
+	_detail_desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_detail_desc.add_theme_font_size_override("font_size", 13)
+	_detail_desc.add_theme_color_override("font_color", UiPalette.INK)
+	info.add_child(_detail_desc)
+
+	var actions := VBoxContainer.new()
+	actions.add_theme_constant_override("separation", 6)
+	bottom.add_child(actions)
+	_vehicle_button = _button("VEHICLE: SHOPPING CART", UiPalette.CYAN, 34, 14)
+	_vehicle_button.pressed.connect(_on_vehicle_pressed)
+	actions.add_child(_vehicle_button)
+	_play_button = _button("PLAY  ·  MEADOW LOOP", UiPalette.YELLOW, 54, 21)
+	_play_button.pressed.connect(_on_play)
+	actions.add_child(_play_button)
+
+	_back_button = _button("BACK", UiPalette.RED, 46, 20)
+	_back_button.pressed.connect(_on_back)
+	_body.add_child(_back_button)
+
+	_refresh_vehicle()
 
 
-func _build_options() -> void:
-	for name: String in DIFFICULTIES:
-		_difficulty_option.add_item(name)
-	for rounds: int in ROUND_OPTIONS:
-		_rounds_option.add_item("%d ROUNDS" % rounds)
-		_tour_rounds_option.add_item("%d MINIGAMES" % rounds)
-	for difficulty: String in DIFFICULTIES:
-		_tour_difficulty_option.add_item(difficulty)
-	for entry: Dictionary in Catalog.all():
-		var label: String = str(entry.get("name", entry.get("id", "?")))
-		_vehicle_option.add_item(label)
-		_tour_vehicle_option.add_item(label)
+func _make_card(data: Dictionary, index: int) -> Button:
+	var card := Button.new()
+	card.set_script(load(CANDY_BUTTON))
+	card.set("fill_color", UiPalette.CREAM)
+	card.set("corner_radius", 20)
+	card.set("shadow_offset", 6)
+	card.custom_minimum_size = Vector2(320, 168)
+	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	card.focus_mode = Control.FOCUS_ALL
+	card.pressed.connect(_select.bind(index))
 
-	_difficulty_option.selected = clampi(GameSettings.minigame_difficulty, 0, 2)
-	_tour_difficulty_option.selected = clampi(GameSettings.minigame_difficulty, 0, 2)
-	var rounds_index: int = ROUND_OPTIONS.find(GameSettings.minigame_rounds)
-	_rounds_option.selected = rounds_index if rounds_index >= 0 else 0
-	_tour_rounds_option.selected = rounds_index if rounds_index >= 0 else 0
-	var vehicle_index: int = Catalog.index_of(GameSettings.minigame_vehicle)
-	_vehicle_option.selected = vehicle_index
-	_tour_vehicle_option.selected = vehicle_index
+	var margin := MarginContainer.new()
+	margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	margin.add_theme_constant_override("margin_left", 7)
+	margin.add_theme_constant_override("margin_top", 7)
+	margin.add_theme_constant_override("margin_right", 7)
+	margin.add_theme_constant_override("margin_bottom", 7)
+	margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	card.add_child(margin)
 
-	_difficulty_option.item_selected.connect(_save_options)
-	_rounds_option.item_selected.connect(_save_options)
-	_vehicle_option.item_selected.connect(_save_options)
-	# Tournament options are not persisted yet; connecting them here used to
-	# overwrite the Free Play settings with the wrong widgets' values.
+	var column := VBoxContainer.new()
+	column.add_theme_constant_override("separation", 3)
+	column.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	margin.add_child(column)
+
+	var preview := TextureRect.new()
+	preview.custom_minimum_size = Vector2(0, 98)
+	preview.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	preview.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	preview.clip_contents = true
+	preview.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var texture_path: String = PREVIEW_DIR + str(data.get("preview", ""))
+	if ResourceLoader.exists(texture_path):
+		preview.texture = load(texture_path)
+	column.add_child(preview)
+
+	var name_label := Label.new()
+	name_label.text = str(data["name"])
+	name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	name_label.add_theme_font_size_override("font_size", 18)
+	name_label.add_theme_color_override("font_color", UiPalette.INK)
+	name_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	column.add_child(name_label)
+
+	var tag := Label.new()
+	tag.text = str(data["tag"])
+	tag.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	tag.add_theme_font_size_override("font_size", 11)
+	tag.add_theme_color_override("font_color", UiPalette.BLUE_DARK if bool(data.get("available", false)) else UiPalette.TEXT_DIM)
+	tag.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	column.add_child(tag)
+	return card
 
 
-func _save_options(_index: int = 0) -> void:
-	var vehicle: String = str(Catalog.all()[_vehicle_option.selected].get("id", "shopping_cart"))
-	GameSettings.set_minigame_options(_difficulty_option.selected,
-		ROUND_OPTIONS[_rounds_option.selected], vehicle)
+func _button(text: String, color: Color, height: int, font_size: int) -> Button:
+	var button := Button.new()
+	button.set_script(load(CANDY_BUTTON))
+	button.set("fill_color", color)
+	button.text = text
+	button.custom_minimum_size = Vector2(280, height)
+	button.add_theme_font_size_override("font_size", font_size)
+	return button
 
 
 func _select(index: int) -> void:
 	_selected = index
-	var data: Dictionary = MINIGAMES[index]
+	var data: Dictionary = EVENTS[index]
 	var available: bool = bool(data.get("available", false))
 	_detail_name.text = str(data["name"])
+	_detail_meta.text = str(data["tag"])
 	_detail_desc.text = str(data["desc"])
 	_play_button.disabled = not available
-	_play_button.text = "PLAY  ·  %s" % str(data["name"]) if available else "PLAY - COMING SOON"
+	_play_button.text = "PLAY  ·  %s" % str(data["name"]) if available \
+		else "COMING SOON"
+	_play_button.set("fill_color", UiPalette.YELLOW if available else UiPalette.TEXT_DIM)
 	for card_index in _cards.size():
-		_cards[card_index].fill_color = Color("ffd22e") if card_index == index else Color("b9b2c9")
+		var card: Button = _cards[card_index]
+		var accent: Color = EVENTS[card_index].get("accent", UiPalette.CREAM)
+		card.set("fill_color", accent if card_index == index else UiPalette.CREAM)
+
+
+func _refresh_vehicle() -> void:
+	var entry: Dictionary = Catalog.find(GameSettings.minigame_vehicle)
+	if entry.is_empty():
+		entry = Catalog.find(Catalog.DEFAULT_ID)
+	_vehicle_button.text = "VEHICLE: " + str(entry.get("name", "SHOPPING CART"))
+	_vehicle_button.set("fill_color", Color("8ed8f6"))
+
+
+func _on_vehicle_pressed() -> void:
+	var options: Array[Dictionary] = Catalog.all()
+	if options.is_empty():
+		return
+	var index: int = Catalog.index_of(GameSettings.minigame_vehicle)
+	index = wrapi(index + 1, 0, options.size())
+	GameSettings.set_minigame_options(GameSettings.minigame_difficulty,
+		GameSettings.minigame_rounds, str(options[index].get("id", Catalog.DEFAULT_ID)))
+	_refresh_vehicle()
 
 
 func _on_play() -> void:
-	var data: Dictionary = MINIGAMES[_selected]
+	var data: Dictionary = EVENTS[_selected]
 	if not bool(data.get("available", false)):
 		return
-	_save_options()
+	if Network.is_session_active():
+		if not Network.is_host:
+			return
+		Network.configure_session(GameSettings.GAME_MINIGAMES, GameSettings.bots_enabled,
+			GameSettings.effective_bot_count())
+		Network.start_game(Network.RACE_SCENE, GameSettings.GAME_MINIGAMES)
+		return
 	SceneLoader.go_to(str(data["scene"]), "WAITING ROOM", "3 LAPS TO WIN")
 
 
-func _show_tab(tab: int) -> void:
-	_free_box.visible = tab == 0
-	_tour_box.visible = tab == 1
-	_free_tab.fill_color = Color("ffd22e") if tab == 0 else Color("b9b2c9")
-	_tour_tab.fill_color = Color("ffd22e") if tab == 1 else Color("b9b2c9")
-
-
 func _on_back() -> void:
-	get_tree().change_scene_to_file(PLAY_MENU_SCENE)
+	if Network.is_session_active():
+		get_tree().change_scene_to_file(LOBBY_SCENE)
+	else:
+		get_tree().change_scene_to_file(PLAY_MENU_SCENE)

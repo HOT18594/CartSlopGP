@@ -9,6 +9,8 @@ extends Node3D
 
 const CART_SCENE := preload("res://scenes/player/cart_player.tscn")
 const VehicleCatalog := preload("res://scripts/vehicles/vehicle_catalog.gd")
+const VehicleVisual := preload("res://scripts/vehicles/vehicle_visual.gd")
+const TITLE_FONT: String = "res://assets/ui/fonts/LuckiestGuy-Regular.ttf"
 const CART_SYNC_INTERVAL: float = 0.05
 const PROP_SYNC_INTERVAL: float = 0.10
 
@@ -21,6 +23,8 @@ var _host_mode: bool = false
 var _name_labels: Dictionary = {} ## peer id -> Label3D
 var _cart_sync_timer: float = 0.0
 var _prop_sync_timer: float = 0.0
+var _bots: Array[Dictionary] = []
+var _bot_time: float = 0.0
 
 
 func _ready() -> void:
@@ -28,6 +32,7 @@ func _ready() -> void:
 	_local_cart = get_tree().get_first_node_in_group("player") as CartPlayer
 	if Network.is_session_active():
 		_setup_multiplayer()
+	_setup_bots()
 
 
 func _setup_multiplayer() -> void:
@@ -64,12 +69,14 @@ func _setup_multiplayer() -> void:
 
 
 func _physics_process(delta: float) -> void:
+	_update_bots(delta)
 	if not Network.is_session_active():
 		return
 	_cart_sync_timer += delta
 	if _cart_sync_timer >= CART_SYNC_INTERVAL and _local_cart != null:
 		_cart_sync_timer = 0.0
-		rpc("_net_cart_state", _local_cart.global_position, _local_cart.rotation.y)
+		rpc("_net_cart_state", multiplayer.get_unique_id(),
+			_local_cart.global_position, _local_cart.rotation.y)
 
 	if _host_mode:
 		_prop_sync_timer += delta
@@ -78,6 +85,55 @@ func _physics_process(delta: float) -> void:
 			_broadcast_props()
 	else:
 		_apply_prop_targets(delta)
+
+
+# --------------------------------------------------------------------------
+# optional AI carts (visual ghosts on a relaxed loop)
+
+
+func _setup_bots() -> void:
+	var count: int = Network.session_bot_count if Network.is_session_active() \
+		else GameSettings.effective_bot_count()
+	if count <= 0:
+		return
+	var entries: Array[Dictionary] = VehicleCatalog.all()
+	for i in count:
+		var node := Node3D.new()
+		node.name = "SandboxBot_%d" % (i + 1)
+		var entry: Dictionary = entries[(i + 1) % entries.size()]
+		node.add_child(VehicleVisual.build(entry))
+		var label := Label3D.new()
+		label.text = "BOT %d" % (i + 1)
+		label.font = load(TITLE_FONT)
+		label.font_size = 48
+		label.pixel_size = 0.007
+		label.outline_size = 14
+		label.outline_modulate = Color(0.118, 0.106, 0.227)
+		label.modulate = Color(1.0, 0.83, 0.35)
+		label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+		label.no_depth_test = true
+		label.position = Vector3(0.0, 2.4, 0.0)
+		node.add_child(label)
+		add_child(node)
+		_bots.append({
+			"node": node,
+			"angle": TAU * float(i) / float(count) + 0.7,
+			"radius": 20.0 + float(i) * 4.5,
+			"speed": 0.22 + float(i) * 0.025,
+		})
+
+
+func _update_bots(delta: float) -> void:
+	if _bots.is_empty():
+		return
+	_bot_time += delta
+	for bot: Dictionary in _bots:
+		var angle: float = float(bot["angle"]) + _bot_time * float(bot["speed"])
+		var radius: float = float(bot["radius"])
+		var node: Node3D = bot["node"]
+		node.global_position = Vector3(cos(angle) * radius, 0.12,
+			sin(angle) * radius)
+		node.rotation.y = PI - angle
 
 
 # --------------------------------------------------------------------------
@@ -144,12 +200,17 @@ func _refresh_name_labels() -> void:
 
 
 @rpc("any_peer", "unreliable")
-func _net_cart_state(position: Vector3, yaw: float) -> void:
+func _net_cart_state(peer_id: int, position: Vector3, yaw: float) -> void:
 	var sender: int = multiplayer.get_remote_sender_id()
-	var cart: CartPlayer = _remote_carts.get(sender)
+	# A client may only speak for itself; the host relays it to everyone else.
+	if sender != 1 and peer_id != sender:
+		return
+	var cart: CartPlayer = _remote_carts.get(peer_id)
 	if cart != null and cart.remote_mode:
 		cart.net_position = position
 		cart.net_yaw = yaw
+	if _host_mode and sender != 1:
+		rpc("_net_cart_state", peer_id, position, yaw)
 
 
 @rpc("any_peer", "reliable")

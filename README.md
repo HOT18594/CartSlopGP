@@ -1,7 +1,7 @@
 # Cart Slop GP
 
 A silly shopping-cart racing sandbox built in **Godot 4.7.2**.
-Current version: **0.4.2**.
+Current version: **0.5.0**.
 
 Drive a shopping cart (or a sedan, truck, van...) around a 140 × 140 m arena,
 hit boost pads, drift, smash cones and crates, then host a shared sandbox and
@@ -13,10 +13,10 @@ invite a friend with a join code.
 
 1. Open **[github.com/HOT18594/CartSlopGP/releases/latest](https://github.com/HOT18594/CartSlopGP/releases/latest)**.
 2. Download the zip for your computer:
-   - **Windows** — `CartSlopGP_v0.4.2_windows.zip`
-   - **Mac** — `CartSlopGP_v0.4.2_macos.zip`
-   - **Linux** — `CartSlopGP_v0.4.2_linux.zip`
-   - **Browser** — `CartSlopGP_v0.4.2_web.zip` (no multiplayer)
+   - **Windows** — `CartSlopGP_v0.5.0_windows.zip`
+   - **Mac** — `CartSlopGP_v0.5.0_macos.zip`
+   - **Linux** — `CartSlopGP_v0.5.0_linux.zip`
+   - **Browser** — `CartSlopGP_v0.5.0_web.zip` (no multiplayer)
 3. Unzip it, then:
    - **Windows:** double-click `CartSlopGP.exe`. If Windows SmartScreen warns,
      click **More info → Run anyway** (the build is unsigned and safe).
@@ -59,18 +59,31 @@ classic skid marks that slowly fade away.
 
 **PLAY → MULTIPLAYER** opens the lobby:
 
+- Choose **SINGLE PLAYER** or **MULTIPLAYER**, and pick SANDBOX or MINIGAMES.
+  **AI BOTS** adds sandbox company (off by default).
 - Type a name (up to 16 characters).
-- Choose **ONLINE** (works across the internet) or **LAN** (same Wi-Fi).
-- **HOST GAME** shows a 14-character code. Send it to your friend.
+- Choose **ONLINE** (across the internet) or **WI-FI / LAN** (same network).
+- **HOST A GAME** shows a 14-character code. Send it to your friend.
 - Your friend opens **MULTIPLAYER**, pastes the code into **JOIN**, and clicks
-  **JOIN GAME**.
-- The host clicks **START SANDBOX**. Everyone drives the same arena.
+  **JOIN**.
+- The host chooses SANDBOX or MINIGAMES and clicks **START**.
 
-Online hosting asks your router for a UPnP port mapping automatically. If your
-router has UPnP disabled, the code falls back to your LAN address; in that case
-forward UDP port shown in the code, or type your public IP in the **PUBLIC IP**
-field before hosting. No accounts and no game servers are involved — it is
-direct peer-to-peer ENet/UDP.
+Online hosting asks your router for a UPnP port mapping automatically. The
+lobby always also shows a **LAN code**; if UPnP is blocked, use that on the same
+Wi-Fi, forward the UDP port shown in the code, or put a public/VPN address in
+the **PUBLIC IP** field before hosting. No accounts and no game servers are
+involved — it is direct peer-to-peer ENet/UDP.
+
+**If online join fails:** many routers block UPnP or sit behind carrier-grade
+NAT. Three options that work reliably:
+
+1. **Same Wi-Fi:** share the LAN code.
+2. **Port forward:** forward the UDP port shown in the code to the host PC, put
+   your public IP in **PUBLIC IP**, then host again.
+3. **No router access:** install Tailscale or ZeroTier on both PCs, join the
+   same virtual network, host a **LAN** game and share the LAN code. A UDP
+   tunnel such as playit.gg also works: create a UDP tunnel to the shown port
+   and have your friend join with the tunnel's `host:port`.
 
 ## Vehicles
 
@@ -111,11 +124,16 @@ optional variants. Without the files the game runs silently — nothing breaks.
 
 ## Minigames
 
-**PLAY → MINIGAMES** opens the Free Play hub. **MEADOW LOOP** is the first
-playable minigame: three laps of a winding, 491 m dirt track through a dense
-grassy forest, with three ghost rivals setting the pace. Three laps is all it
-takes to win. Pick a difficulty, round count and vehicle on the hub, then hit
-PLAY.
+**PLAY → MINIGAMES** opens a grid of preview cards. **MEADOW LOOP** is the
+first playable event: three laps of a winding, 491 m dirt track through a
+dense grassy forest, with three ghost rivals setting the pace. Three laps is
+all it takes to win. Pick it, cycle the vehicle if you like, and hit PLAY.
+The other four cards are marked COMING SOON.
+
+In multiplayer the host can choose **MINIGAME SESSION** in the lobby; START
+RACE then loads Meadow Loop for every peer, with real remote carts, name
+labels and race positions. The host's result card brings everyone back to the
+lobby instead of restarting only one player's race.
 
 You land in a **waiting room** with a live 3D preview of the meadow: edit your
 name, watch BEEP / POPPY / TURBO join one by one, press **READY UP**, then
@@ -134,8 +152,7 @@ start gantry and animated rivals all react as you drive.
 The kart, drift, boost, camera, speedometer and pause menu are the same as the
 sandbox. The loop is fenced by invisible barrier walls; if you somehow get out,
 grass slows you down and the kart respawns on the track. Full design notes:
-`docs/MEADOW_LOOP.md`. The other four cards and the Tournament tab are still
-marked COMING SOON.
+`docs/MEADOW_LOOP.md`. The other four cards are still marked COMING SOON.
 
 ---
 
@@ -159,13 +176,13 @@ From `godot_project/`:
 ```bash
 GODOT="C:/Users/ethan/AppData/Local/Programs/Godot/Godot_v4.7.2-stable_win64_console.exe"
 
-"$GODOT" --headless --path . --export-release "Windows Desktop" ../builds/v0.4.2/windows/CartSlopGP.exe
-"$GODOT" --headless --path . --export-release "macOS"           ../builds/v0.4.2/mac/CartSlopGP.zip
-"$GODOT" --headless --path . --export-release "Linux"           ../builds/v0.4.2/linux/CartSlopGP.x86_64
-"$GODOT" --headless --path . --export-release "Web"             ../builds/v0.4.2/web/index.html
+"$GODOT" --headless --path . --export-release "Windows Desktop" ../builds/v0.5.0/windows/CartSlopGP.exe
+"$GODOT" --headless --path . --export-release "macOS"           ../builds/v0.5.0/mac/CartSlopGP.zip
+"$GODOT" --headless --path . --export-release "Linux"           ../builds/v0.5.0/linux/CartSlopGP.x86_64
+"$GODOT" --headless --path . --export-release "Web"             ../builds/v0.5.0/web/index.html
 ```
 
-Then zip each platform folder as `CartSlopGP_v0.4.2_<platform>.zip`.
+Then zip each platform folder as `CartSlopGP_v0.5.0_<platform>.zip`.
 Full details, signing notes and the release checklist are in
 `docs/PLATFORMS.md` and `docs/RELEASE_WORKFLOW.md`.
 

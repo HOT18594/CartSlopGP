@@ -13,6 +13,8 @@ extends Node3D
 ## the sandbox uses. Nothing here touches multiplayer.
 
 const TrackSpline := preload("res://scripts/minigames/track_spline.gd")
+const CART_SCENE := preload("res://scenes/player/cart_player.tscn")
+const VehicleCatalog := preload("res://scripts/vehicles/vehicle_catalog.gd")
 const FoliageBaker := preload("res://scripts/minigames/foliage_baker.gd")
 const RaceScenery := preload("res://scripts/minigames/race_scenery.gd")
 const RaceEffects := preload("res://scripts/minigames/race_effects.gd")
@@ -34,6 +36,7 @@ const THEME: String = "res://assets/ui/theme.tres"
 const TITLE_FONT: String = "res://assets/ui/fonts/LuckiestGuy-Regular.ttf"
 const KART_ROOT: String = "res://assets/models/kenney_car-kit/Models/GLB format/"
 const CONFIRM_SOUND: String = "res://assets/audio/sfx/ui/ui_confirm.ogg"
+const NET_SYNC_INTERVAL: float = 0.05
 
 const TOTAL_LAPS: int = 3
 const ROAD_HALF: float = 5.5
@@ -124,6 +127,13 @@ var _off_timer: float = 0.0
 var _base_max_speed: float = 19.0
 var _saved_vehicle: String = ""
 var _toast_timer: float = 0.0
+var _multiplayer: bool = false
+var _is_host: bool = false
+var _remote_carts: Dictionary = {}
+var _peer_vehicles: Dictionary = {}
+var _name_labels: Dictionary = {}
+var _remote_progress: Dictionary = {}
+var _net_sync_timer: float = 0.0
 
 var _canvas: CanvasLayer
 var _countdown_label: Label
@@ -185,6 +195,8 @@ func _ready() -> void:
 		_effects.name = "RaceEffects"
 		add_child(_effects)
 		_effects.call("setup", _cart)
+		if Network.is_session_active():
+			_setup_multiplayer()
 
 	_hud.call("set_lap", 1, TOTAL_LAPS)
 	_hud.call("set_race_position", 1)
@@ -872,7 +884,14 @@ func _place() -> int:
 	for rival: Dictionary in _rivals:
 		if float(rival["progress"]) > _unwrapped:
 			position += 1
+	for peer_id: int in _remote_progress:
+		if float(_remote_progress[peer_id]) > _unwrapped:
+			position += 1
 	return position
+
+
+func _field_size() -> int:
+	return 1 + _rivals.size() + _remote_progress.size()
 
 
 # --------------------------------------------------------------------------
@@ -965,6 +984,11 @@ func _build_overlay() -> void:
 	var menu: Button = _make_button("MAIN MENU", UiPalette.RED)
 	menu.pressed.connect(_on_main_menu)
 	body.add_child(menu)
+	if _multiplayer:
+		# Restarting only one peer would desync the field.
+		again.visible = false
+		hub.visible = false
+		lobby.text = "BACK TO LOBBY"
 
 
 func _make_label(parent: Control, font_size: int, color: Color,
@@ -1017,6 +1041,150 @@ func _pop_label(label: Label) -> void:
 
 
 # --------------------------------------------------------------------------
+# multiplayer ghosts (host-authoritative start, peers own their carts)
+
+
+func _setup_multiplayer() -> void:
+	_multiplayer = true
+	_is_host = Network.is_host
+	if OS.get_environment("CART_DEBUG_NET") == "1":
+		print("RACE_NET setup peers=", multiplayer.get_peers(), " host=", _is_host)
+	_peer_vehicles[multiplayer.get_unique_id()] = GameSettings.minigame_vehicle
+	_place_local_on_grid()
+	for peer_id: int in multiplayer.get_peers():
+		_spawn_remote(peer_id)
+	multiplayer.peer_connected.connect(_on_net_peer_connected)
+	multiplayer.peer_disconnected.connect(_on_net_peer_disconnected)
+	Network.names_changed.connect(_refresh_net_names)
+	if _is_host:
+		rpc("_net_race_vehicle", multiplayer.get_unique_id(), GameSettings.minigame_vehicle)
+	else:
+		rpc("_net_race_ready", GameSettings.minigame_vehicle)
+
+
+func _place_local_on_grid() -> void:
+	if _cart == null:
+		return
+	var ids: Array[int] = Network.participants()
+	var index: int = maxi(ids.find(multiplayer.get_unique_id()), 0)
+	var row: int = index / 2
+	var column: int = index % 2
+	var start_s: float = START_DISTANCE - float(row) * 4.5
+	var spawn: Transform3D = _track_transform(start_s, -2.6 + float(column) * 5.2)
+	_cart.set_spawn_transform(spawn)
+	_cart.global_transform = spawn
+	_cart.velocity = Vector3.ZERO
+	_last_cart_pos = _cart.global_position
+	_prev_s = start_s
+	_unwrapped = start_s
+
+
+func _on_net_peer_connected(peer_id: int) -> void:
+	_spawn_remote(peer_id)
+
+
+func _on_net_peer_disconnected(peer_id: int) -> void:
+	var cart: CartPlayer = _remote_carts.get(peer_id)
+	if cart != null:
+		cart.queue_free()
+		_remote_carts.erase(peer_id)
+	_peer_vehicles.erase(peer_id)
+	_name_labels.erase(peer_id)
+	_remote_progress.erase(peer_id)
+
+
+func _spawn_remote(peer_id: int) -> void:
+	if _remote_carts.has(peer_id) or peer_id == multiplayer.get_unique_id():
+		return
+	var cart: CartPlayer = CART_SCENE.instantiate() as CartPlayer
+	add_child(cart)
+	cart.setup_remote(peer_id)
+	var ids: Array[int] = Network.participants()
+	var index: int = maxi(ids.find(peer_id), 0)
+	var row: int = index / 2
+	var column: int = index % 2
+	cart.global_transform = _track_transform(START_DISTANCE - float(row) * 4.5,
+		-2.6 + float(column) * 5.2)
+	cart.net_position = cart.global_position
+	cart.net_yaw = cart.rotation.y
+	if _peer_vehicles.has(peer_id):
+		cart.set_vehicle_id(str(_peer_vehicles[peer_id]))
+	var label := Label3D.new()
+	label.text = Network.name_of(peer_id)
+	label.font = load(TITLE_FONT)
+	label.font_size = 56
+	label.pixel_size = 0.011
+	label.outline_size = 16
+	label.outline_modulate = UiPalette.OUTLINE
+	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	label.no_depth_test = true
+	label.position = Vector3(0.0, 2.2, 0.0)
+	cart.add_child(label)
+	_name_labels[peer_id] = label
+	_remote_carts[peer_id] = cart
+	_remote_progress[peer_id] = START_DISTANCE - float(row) * 4.5
+	if OS.get_environment("CART_DEBUG_NET") == "1":
+		print("RACE_NET remote=", peer_id, " vehicle=", _peer_vehicles.get(peer_id, "?"))
+	if _cart != null:
+		var camera := _cart.get_node_or_null("CameraArm/Camera3D") as Camera3D
+		if camera != null:
+			camera.current = true
+
+
+func _refresh_net_names() -> void:
+	for peer_id: int in _name_labels:
+		var label: Label3D = _name_labels[peer_id]
+		if is_instance_valid(label):
+			label.text = Network.name_of(peer_id)
+
+
+@rpc("any_peer", "reliable")
+func _net_race_ready(vehicle_id: String) -> void:
+	var sender: int = multiplayer.get_remote_sender_id()
+	if OS.get_environment("CART_DEBUG_NET") == "1":
+		print("RACE_NET ready from=", sender, " vehicle=", vehicle_id)
+	if sender <= 1 or sender == multiplayer.get_unique_id():
+		return
+	_store_net_vehicle(sender, vehicle_id)
+	if not _is_host:
+		return
+	rpc("_net_race_vehicle", sender, vehicle_id)
+	for peer_id: Variant in _peer_vehicles.keys():
+		rpc_id(sender, "_net_race_vehicle", int(peer_id), str(_peer_vehicles[peer_id]))
+
+
+@rpc("authority", "reliable")
+func _net_race_vehicle(peer_id: int, vehicle_id: String) -> void:
+	_store_net_vehicle(peer_id, vehicle_id)
+
+
+func _store_net_vehicle(peer_id: int, vehicle_id: String) -> void:
+	if OS.get_environment("CART_DEBUG_NET") == "1":
+		print("RACE_NET store peer=", peer_id, " vehicle=", vehicle_id)
+	if VehicleCatalog.find(vehicle_id).is_empty():
+		return
+	_peer_vehicles[peer_id] = vehicle_id
+	var cart: CartPlayer = _remote_carts.get(peer_id)
+	if cart != null:
+		cart.set_vehicle_id(vehicle_id)
+
+
+@rpc("any_peer", "unreliable")
+func _net_race_cart_state(peer_id: int, position: Vector3, yaw: float, progress: float) -> void:
+	var sender: int = multiplayer.get_remote_sender_id()
+	if sender != 1 and peer_id != sender:
+		return
+	var cart: CartPlayer = _remote_carts.get(peer_id)
+	if cart != null and cart.remote_mode:
+		cart.net_position = position
+		cart.net_yaw = yaw
+		_remote_progress[peer_id] = clampf(progress, 0.0,
+			float(TOTAL_LAPS + 1) * _spline.total_length)
+	if _is_host and sender != 1:
+		rpc("_net_race_cart_state", peer_id, position, yaw, progress)
+
+
+# --------------------------------------------------------------------------
 # race loop
 
 
@@ -1025,6 +1193,13 @@ func _process(delta: float) -> void:
 		_toast_timer -= delta
 		if _toast_timer <= 0.0:
 			_toast_label.visible = false
+	if _multiplayer and _cart != null and _phase != Phase.FINISHED \
+			and Network.is_session_active() and Network.is_connected_to_server():
+		_net_sync_timer += delta
+		if _net_sync_timer >= NET_SYNC_INTERVAL:
+			_net_sync_timer = 0.0
+			rpc("_net_race_cart_state", multiplayer.get_unique_id(),
+				_cart.global_position, _cart.rotation.y, _unwrapped)
 	match _phase:
 		Phase.COUNTDOWN:
 			_tick_countdown(delta)
@@ -1160,11 +1335,14 @@ func _finish() -> void:
 	var best: float = _lap_times[0] if not _lap_times.is_empty() else 0.0
 	for time: float in _lap_times:
 		best = minf(best, time)
-	var suffix: String = _ordinal(_place())
+	var place: int = _place()
+	var suffix: String = _ordinal(place)
+	_result_title.text = "YOU WIN!" if place == 1 \
+		else ("ON THE PODIUM!" if place <= 3 else "FINISHED")
 	var lines: PackedStringArray = [
 		"TOTAL  %s" % _format_time(_race_time),
 		"BEST LAP  %s" % _format_time(best),
-		"FINISHED  %s OF 4" % suffix,
+		"FINISHED  %s OF %d" % [suffix, _field_size()],
 		"",
 	]
 	for i in _lap_times.size():
@@ -1210,11 +1388,16 @@ func _ordinal(place: int) -> String:
 
 
 func _on_race_again() -> void:
+	if _multiplayer:
+		return
 	SceneLoader.go_to(RACE_SCENE, "MEADOW LOOP", "GET READY")
 
 
 func _on_back_to_lobby() -> void:
-	SceneLoader.go_to(LOBBY_SCENE, "WAITING ROOM", "MEADOW LOOP")
+	if _multiplayer:
+		Network.return_to_lobby_keep_session()
+	else:
+		SceneLoader.go_to(LOBBY_SCENE, "WAITING ROOM", "MEADOW LOOP")
 
 
 func _on_back_to_minigames() -> void:
@@ -1222,4 +1405,6 @@ func _on_back_to_minigames() -> void:
 
 
 func _on_main_menu() -> void:
+	if Network.is_session_active():
+		Network.leave()
 	SceneLoader.go_to(MAIN_MENU, "MAIN MENU")

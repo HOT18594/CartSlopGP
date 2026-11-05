@@ -1,6 +1,6 @@
 # Meadow Loop - minigame design
 
-Status: **implemented and playable** (v0.4.2 tree, unreleased).
+Status: **implemented and playable** (v0.5.0).
 
 `PLAY -> MINIGAMES -> MEADOW LOOP -> PLAY -> WAITING ROOM -> START RACE -> race`.
 
@@ -56,7 +56,9 @@ has a **BACK TO LOBBY** button as well as RACE AGAIN / MINIGAMES / MAIN MENU.
 
 A solo 3-lap race on a winding dirt loop cut through a very dense low-poly
 grassy forest. It reuses the sandbox kart, chase camera, boost/drift physics,
-HUD, pause menu and candy UI theme. No multiplayer code is involved.
+HUD, pause menu and candy UI theme. The solo path uses the waiting room; when a
+host starts a minigame session, the same scene adds remote player carts, name
+labels, 20 Hz position/lap sync and host-relayed standings.
 
 ## Track
 
