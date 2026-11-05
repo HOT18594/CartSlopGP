@@ -33,6 +33,7 @@ func _init() -> void:
 	_progress(theme)
 	_slider(theme)
 	_checkbutton(theme)
+	_line_edit(theme)
 
 	var error := ResourceSaver.save(theme, "res://assets/ui/theme.tres")
 	print("theme saved: ", error, " -> res://assets/ui/theme.tres")
@@ -152,6 +153,25 @@ func _slider(theme: Theme) -> void:
 	theme.set_stylebox("grabber_area", "HSlider", filled)
 	theme.set_stylebox("grabber_area_highlight", "HSlider", filled)
 	theme.set_constant("center_grabber", "HSlider", 1)
+
+
+func _line_edit(theme: Theme) -> void:
+	var normal := _flat(Color(1, 1, 1), 14, OUTLINE, 4)
+	normal.content_margin_left = 16
+	normal.content_margin_right = 16
+	normal.content_margin_top = 10
+	normal.content_margin_bottom = 10
+	var focus := normal.duplicate() as StyleBoxFlat
+	focus.border_color = BLUE
+	focus.border_width_left = 5
+	focus.border_width_top = 5
+	focus.border_width_right = 5
+	focus.border_width_bottom = 5
+	theme.set_stylebox("normal", "LineEdit", normal)
+	theme.set_stylebox("focus", "LineEdit", focus)
+	theme.set_color("font_color", "LineEdit", INK)
+	theme.set_color("font_placeholder_color", "LineEdit", Color("8a84a0"))
+	theme.set_font_size("font_size", "LineEdit", 22)
 
 
 func _checkbutton(theme: Theme) -> void:

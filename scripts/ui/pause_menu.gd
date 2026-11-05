@@ -65,4 +65,6 @@ func _on_quit_pressed() -> void:
 	_is_open = false
 	visible = false
 	get_tree().paused = false
+	if Network.is_session_active():
+		Network.leave()
 	get_tree().change_scene_to_file(MAIN_MENU_SCENE)

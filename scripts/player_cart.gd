@@ -4,6 +4,8 @@ extends CharacterBody3D
 const VehicleCatalog := preload("res://scripts/vehicles/vehicle_catalog.gd")
 const VehicleVisual := preload("res://scripts/vehicles/vehicle_visual.gd")
 
+signal net_push_requested(prop: Node, direction: Vector3, kick: float)
+
 enum CartState { DRIVING, AIRBORNE_TUMBLE, CRASHED, RECOVERY }
 ## Arcade cart controller with four-point terrain support, slope-aware driving,
 ## dynamic weight transfer, oriented compound collision shapes and air tumble.
@@ -89,6 +91,13 @@ var boost_active: bool = false ## True while the boost is actually applied.
 var boost_visual: float = 0.0 ## Smoothed 0-1 boost intensity for camera/audio.
 var slide_amount: float = 0.0 ## 0-1 sideways-slide intensity (for the skid audio volume).
 
+## Multiplayer ghost state (set by the sandbox when this cart is another peer).
+var remote_mode: bool = false
+var net_position: Vector3 = Vector3.ZERO
+var net_yaw: float = 0.0
+
+var _boost_exhausted: bool = false
+
 var _boost_regen_timer: float = 0.0
 var _pad_burst_timer: float = 0.0
 var _was_boosting: bool = false
@@ -152,12 +161,59 @@ func _ready() -> void:
 	call_deferred("_collect_pushables")
 
 
+func setup_remote(peer_id: int) -> void:
+	## Turn this cart into an interpolated ghost for another player.
+	remote_mode = true
+	name = "Remote_%d" % peer_id
+	remove_from_group("player")
+	add_to_group("remote_player")
+	collision_layer = 0
+	set_physics_process(false)
+	set_process(true)
+	if _push_sensor != null:
+		_push_sensor.monitoring = false
+	if _camera_rig != null:
+		_camera_rig.set_process(false)
+		_camera_rig.process_mode = Node.PROCESS_MODE_DISABLED
+		var camera := _camera_rig.get_node_or_null("Camera3D") as Camera3D
+		if camera != null:
+			camera.current = false
+	if _feedback != null:
+		_feedback.enable_audio = false
+		_feedback.enable_dust = false
+		_feedback.enable_speed_feedback = false
+		_feedback.reset_feedback()
+	net_position = global_position
+	net_yaw = rotation.y
+
+
+func _process(delta: float) -> void:
+	if not remote_mode:
+		return
+	global_position = global_position.lerp(net_position, 1.0 - exp(-14.0 * delta))
+	rotation.y = lerp_angle(rotation.y, net_yaw, 1.0 - exp(-14.0 * delta))
+
+
+func set_vehicle_id(vehicle_id: String) -> void:
+	## Rebuild the visual for a remote player's chosen vehicle.
+	var entry: Dictionary = VehicleCatalog.find(vehicle_id)
+	if entry.is_empty():
+		return
+	_apply_vehicle_visual_for(entry)
+
+
 func _apply_vehicle_visual() -> void:
 	## Swap the placeholder kart for the vehicle picked in the selector.
 	var entry: Dictionary = VehicleCatalog.find(GameSettings.selected_vehicle)
 	if entry.is_empty():
 		entry = VehicleCatalog.find(VehicleCatalog.DEFAULT_ID)
 	if entry.is_empty() or _mesh_root == null:
+		return
+	_apply_vehicle_visual_for(entry)
+
+
+func _apply_vehicle_visual_for(entry: Dictionary) -> void:
+	if _mesh_root == null or entry.is_empty():
 		return
 	var existing: Node = _mesh_root.get_node_or_null("KartModel")
 	if existing != null:
@@ -322,6 +378,7 @@ func _push_prop(prop: RigidBody3D) -> void:
 	var speed: float = Vector2(velocity.x, velocity.z).length()
 	var kick: float = push_force * clampf(speed / 6.0, 0.25, 1.4)
 	var impulse: Vector3 = direction * prop.mass * kick + Vector3.UP * prop.mass * kick * push_lift
+	net_push_requested.emit(prop, direction, kick)
 	prop.apply_central_impulse(impulse)
 	var spin: Vector3 = Vector3(randf_range(-1.0, 1.0), randf_range(-0.5, 0.5), randf_range(-1.0, 1.0))
 	prop.apply_torque_impulse(spin * prop.mass * push_spin)
@@ -339,10 +396,15 @@ func _clamp_horizontal_speed() -> void:
 
 func _update_boost(delta: float) -> void:
 	_pad_burst_timer = maxf(_pad_burst_timer - delta, 0.0)
+	if not Input.is_action_pressed("boost"):
+		_boost_exhausted = false
 	var want_boost: bool = Input.is_action_pressed("boost") \
 		and current_state == CartState.DRIVING \
 		and is_on_floor() \
-		and boost_amount > 0.0
+		and boost_amount > 0.0 \
+		and not _boost_exhausted
+	if boost_amount <= 0.0:
+		_boost_exhausted = true
 	if want_boost:
 		_boost_regen_timer = boost_regen_delay
 		boost_amount = maxf(boost_amount - boost_drain_per_second * delta, 0.0)
@@ -648,6 +710,7 @@ func _reset_cart() -> void:
 	_boost_regen_timer = 0.0
 	_pad_burst_timer = 0.0
 	_was_boosting = false
+	_boost_exhausted = false
 	_air_time = 0.0
 	_tumble_pitch = 0.0
 	_tumble_roll = 0.0

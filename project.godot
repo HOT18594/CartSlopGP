@@ -11,7 +11,7 @@ config_version=5
 [application]
 
 config/name="Cart Slop GP"
-config/version="0.1.0"
+config/version="0.2.0"
 run/main_scene="res://scenes/ui/main_menu.tscn"
 config/features=PackedStringArray("4.7", "Mobile")
 config/icon="res://assets/models/kenney_car-kit/Preview.png"
@@ -21,6 +21,7 @@ config/icon="res://assets/models/kenney_car-kit/Preview.png"
 GameSettings="*res://scripts/systems/game_settings.gd"
 UpdateChecker="*res://scripts/systems/update_checker.gd"
 CursorController="*res://scenes/ui/cursor_controller.tscn"
+Network="*res://scripts/net/network.gd"
 
 [display]
 
@@ -82,3 +83,4 @@ boost={
 [rendering]
 
 renderer/rendering_method="mobile"
+textures/vram_compression/import_etc2_astc=true

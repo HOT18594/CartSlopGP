@@ -178,6 +178,38 @@ corner_radius_bottom_right = 8
 corner_radius_bottom_left = 8
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_ek3dl"]
+content_margin_left = 16.0
+content_margin_top = 10.0
+content_margin_right = 16.0
+content_margin_bottom = 10.0
+bg_color = Color(1, 1, 1, 1)
+border_width_left = 5
+border_width_top = 5
+border_width_right = 5
+border_width_bottom = 5
+border_color = Color(0.27058825, 0.7137255, 0.9411765, 1)
+corner_radius_top_left = 14
+corner_radius_top_right = 14
+corner_radius_bottom_right = 14
+corner_radius_bottom_left = 14
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_5qnlr"]
+content_margin_left = 16.0
+content_margin_top = 10.0
+content_margin_right = 16.0
+content_margin_bottom = 10.0
+bg_color = Color(1, 1, 1, 1)
+border_width_left = 4
+border_width_top = 4
+border_width_right = 4
+border_width_bottom = 4
+border_color = Color(0.11764706, 0.105882354, 0.22745098, 1)
+corner_radius_top_left = 14
+corner_radius_top_right = 14
+corner_radius_bottom_right = 14
+corner_radius_bottom_left = 14
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_s0eex"]
 content_margin_left = 36.0
 content_margin_top = 30.0
 content_margin_right = 36.0
@@ -195,7 +227,7 @@ corner_radius_bottom_left = 26
 shadow_color = Color(0.12, 0.1, 0.23, 0.45)
 shadow_offset = Vector2(0, 10)
 
-[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_5qnlr"]
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_llups"]
 content_margin_top = 0.0
 content_margin_bottom = 0.0
 bg_color = Color(0.05490196, 0.16470589, 0.27058825, 1)
@@ -209,7 +241,7 @@ corner_radius_top_right = 14
 corner_radius_bottom_right = 14
 corner_radius_bottom_left = 14
 
-[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_s0eex"]
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_iy48a"]
 content_margin_top = 0.0
 content_margin_bottom = 0.0
 bg_color = Color(0.21960784, 0.8392157, 0.9411765, 1)
@@ -260,11 +292,16 @@ Label/colors/font_shadow_color = Color(0, 0, 0, 0.25)
 Label/constants/outline_size = 0
 Label/constants/shadow_offset_x = 0
 Label/constants/shadow_offset_y = 2
-Panel/styles/panel = SubResource("StyleBoxFlat_ek3dl")
-PanelContainer/styles/panel = SubResource("StyleBoxFlat_ek3dl")
+LineEdit/colors/font_color = Color(0.11764706, 0.105882354, 0.22745098, 1)
+LineEdit/colors/font_placeholder_color = Color(0.5411765, 0.5176471, 0.627451, 1)
+LineEdit/font_sizes/font_size = 22
+LineEdit/styles/focus = SubResource("StyleBoxFlat_ek3dl")
+LineEdit/styles/normal = SubResource("StyleBoxFlat_5qnlr")
+Panel/styles/panel = SubResource("StyleBoxFlat_s0eex")
+PanelContainer/styles/panel = SubResource("StyleBoxFlat_s0eex")
 ProgressBar/colors/font_color = Color(1, 1, 1, 1)
-ProgressBar/styles/background = SubResource("StyleBoxFlat_5qnlr")
-ProgressBar/styles/fill = SubResource("StyleBoxFlat_s0eex")
+ProgressBar/styles/background = SubResource("StyleBoxFlat_llups")
+ProgressBar/styles/fill = SubResource("StyleBoxFlat_iy48a")
 TitleLabel/base_type = &"Label"
 TitleLabel/colors/font_color = Color(1, 1, 1, 1)
 TitleLabel/colors/font_outline_color = Color(0.11764706, 0.105882354, 0.22745098, 1)

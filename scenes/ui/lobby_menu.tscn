@@ -1,0 +1,174 @@
+[gd_scene load_steps=5 format=3]
+
+[ext_resource type="Theme" path="res://assets/ui/theme.tres" id="1"]
+[ext_resource type="Script" path="res://scripts/ui/lobby_menu.gd" id="2"]
+[ext_resource type="PackedScene" path="res://scenes/ui/menu_background.tscn" id="3"]
+[ext_resource type="Script" path="res://scripts/ui/candy_button.gd" id="4"]
+
+[node name="LobbyMenu" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme = ExtResource("1")
+script = ExtResource("2")
+
+[node name="Background" parent="." instance=ExtResource("3")]
+layout_mode = 1
+
+[node name="Center" type="CenterContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="Panel" type="PanelContainer" parent="Center"]
+custom_minimum_size = Vector2(660, 0)
+layout_mode = 2
+
+[node name="Body" type="VBoxContainer" parent="Center/Panel"]
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="Title" type="Label" parent="Center/Panel/Body"]
+layout_mode = 2
+theme_type_variation = &"TitleLabel"
+theme_override_colors/font_color = Color(0.117647, 0.105882, 0.227451, 1)
+theme_override_font_sizes/font_size = 54
+text = "MULTIPLAYER"
+horizontal_alignment = 1
+
+[node name="Rule" type="ColorRect" parent="Center/Panel/Body"]
+custom_minimum_size = Vector2(0, 4)
+layout_mode = 2
+color = Color(0.117647, 0.105882, 0.227451, 1)
+
+[node name="HostButton" type="Button" parent="Center/Panel/Body"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 74)
+layout_mode = 2
+theme_override_font_sizes/font_size = 30
+text = "HOST A GAME"
+script = ExtResource("4")
+fill_color = Color(1, 0.823529, 0.180392, 1)
+
+[node name="JoinBox" type="VBoxContainer" parent="Center/Panel/Body"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="JoinCaption" type="Label" parent="Center/Panel/Body/JoinBox"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.164706, 0.560784, 0.768627, 1)
+theme_override_font_sizes/font_size = 16
+text = "OR JOIN WITH A CODE"
+horizontal_alignment = 1
+
+[node name="JoinInput" type="LineEdit" parent="Center/Panel/Body/JoinBox"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 56)
+layout_mode = 2
+placeholder_text = "PASTE THE JOIN CODE"
+alignment = 1
+max_length = 40
+
+[node name="JoinButton" type="Button" parent="Center/Panel/Body/JoinBox"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 64)
+layout_mode = 2
+theme_override_font_sizes/font_size = 26
+text = "JOIN GAME"
+script = ExtResource("4")
+fill_color = Color(0.270588, 0.713726, 0.941176, 1)
+
+[node name="JoinStatus" type="Label" parent="Center/Panel/Body/JoinBox"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 20)
+layout_mode = 2
+theme_override_colors/font_color = Color(0.94902, 0.329412, 0.356863, 1)
+theme_override_font_sizes/font_size = 16
+text = ""
+horizontal_alignment = 1
+autowrap_mode = 2
+
+[node name="HostBox" type="VBoxContainer" parent="Center/Panel/Body"]
+unique_name_in_owner = true
+visible = false
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="CodeCaption" type="Label" parent="Center/Panel/Body/HostBox"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.164706, 0.560784, 0.768627, 1)
+theme_override_font_sizes/font_size = 16
+text = "JOIN CODE"
+horizontal_alignment = 1
+
+[node name="CodeLabel" type="Label" parent="Center/Panel/Body/HostBox"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 56)
+layout_mode = 2
+theme_type_variation = &"TitleLabel"
+theme_override_colors/font_color = Color(0.117647, 0.105882, 0.227451, 1)
+theme_override_font_sizes/font_size = 34
+text = "----"
+horizontal_alignment = 1
+selection_enabled = true
+
+[node name="CodeRow" type="HBoxContainer" parent="Center/Panel/Body/HostBox"]
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="CopyButton" type="Button" parent="Center/Panel/Body/HostBox/CodeRow"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 56)
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 20
+text = "COPY"
+script = ExtResource("4")
+fill_color = Color(0.270588, 0.713726, 0.941176, 1)
+corner_radius = 22
+
+[node name="StartButton" type="Button" parent="Center/Panel/Body/HostBox/CodeRow"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 56)
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 22
+text = "START SANDBOX"
+script = ExtResource("4")
+fill_color = Color(1, 0.823529, 0.180392, 1)
+corner_radius = 22
+
+[node name="HostStatus" type="Label" parent="Center/Panel/Body/HostBox"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 20)
+layout_mode = 2
+theme_override_colors/font_color = Color(0.164706, 0.560784, 0.768627, 1)
+theme_override_font_sizes/font_size = 15
+text = ""
+horizontal_alignment = 1
+autowrap_mode = 2
+
+[node name="PlayersLabel" type="Label" parent="Center/Panel/Body/HostBox"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 48)
+layout_mode = 2
+theme_override_font_sizes/font_size = 18
+text = ""
+horizontal_alignment = 1
+
+[node name="BackButton" type="Button" parent="Center/Panel/Body"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 60)
+layout_mode = 2
+theme_override_font_sizes/font_size = 24
+text = "BACK"
+script = ExtResource("4")
+fill_color = Color(0.94902, 0.329412, 0.356863, 1)
+shadow_offset = 7

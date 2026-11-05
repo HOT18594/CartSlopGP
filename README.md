@@ -1,7 +1,7 @@
 # Cart Slop GP
 
 An arcade cart-racing prototype built in **Godot 4.7.2** (GDScript, Mobile renderer).
-Current version: **0.1.1**.
+Current version: **0.2.0**.
 
 The repo is UI + tooling + the existing driving prototype: main menu, pause/settings,
 in-game HUD, custom cursor, Windows export and a free in-game update checker that uses
@@ -68,6 +68,21 @@ When a newer tag exists, the menu shows an **UPDATE AVAILABLE vX.Y.Z** button:
 
 Set the owner/repo once in `scripts/systems/update_checker.gd` (currently
 `HOT18594/CartSlopGP`).
+
+## Multiplayer (host / join)
+
+Play -> HOST GAME opens a lobby with a 12-character join code.
+
+- Host: opens a UDP port (8910+), asks the router for a UPnP mapping, and shows
+  the code. If UPnP is unavailable the code uses the LAN address; sharing over
+  the internet then needs UDP port forwarding (the port is in the code).
+- Join: paste the code (or an `ip:port` address) into the lobby.
+- Host presses START SANDBOX; late joiners drop straight in.
+
+Design: each player simulates their own cart and streams its transform at
+20 Hz; the host simulates props and broadcasts them at 10 Hz. Ping is measured
+every two seconds and shown in the lobby. All of it is free and serverless -
+ENet over UDP directly between players.
 
 ## Vehicles
 

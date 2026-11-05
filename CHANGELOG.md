@@ -3,6 +3,32 @@
 All notable changes to Cart Slop GP. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer.
 
+## [0.2.0] - 2026-11-05
+
+Peer-to-peer multiplayer.
+
+### Added
+
+- **Host / join over the internet** with a 12-character join code (ENet over
+  UDP, no account or server). Hosting opens a port, asks the router for a UPnP
+  mapping and falls back to a public-IP lookup; the lobby shows the code, a
+  copy button, the player list and a measured ping.
+- **Lobby screen** (`lobby_menu`) reachable from HOST GAME / JOIN GAME, with a
+  paste-code field that also accepts `ip:port`.
+- **Shared sandbox**: every peer drives its own cart (position streamed at
+  20 Hz and interpolated on the other clients), the host simulates props and
+  broadcasts snapshots at 10 Hz, and client pushes are forwarded to the host.
+- Late join: connecting while a session is running drops you into the sandbox
+  with the existing players.
+- Per-player vehicle choice is synced to the ghosts.
+- `Network` autoload with join-code encode/decode, ping measurement and clean
+  disconnect handling.
+
+### Changed
+
+- Pause -> QUIT TO MENU leaves the session.
+- The HOST/JOIN notice on the play screen is gone; those buttons open the lobby.
+
 ## [0.1.1] - 2026-11-05
 
 Playtest pass: vehicle feel, arena rebuild, UI polish and audit fixes.

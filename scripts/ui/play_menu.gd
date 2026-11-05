@@ -4,6 +4,7 @@ extends Control
 
 const VEHICLE_SCENE: String = "res://scenes/ui/vehicle_select.tscn"
 const MAIN_MENU_SCENE: String = "res://scenes/ui/main_menu.tscn"
+const LOBBY_SCENE: String = "res://scenes/ui/lobby_menu.tscn"
 
 @onready var _sandbox_button: Button = %SandboxButton
 @onready var _host_button: Button = %HostButton
@@ -27,11 +28,11 @@ func _on_sandbox() -> void:
 
 
 func _on_host() -> void:
-	_show_notice("Hosting opens with multiplayer. Use the sandbox for now.")
+	get_tree().change_scene_to_file(LOBBY_SCENE)
 
 
 func _on_join() -> void:
-	_show_notice("Joining opens with multiplayer. Use the sandbox for now.")
+	get_tree().change_scene_to_file(LOBBY_SCENE)
 
 
 func _on_back() -> void:
