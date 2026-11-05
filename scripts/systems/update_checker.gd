@@ -15,6 +15,7 @@ signal download_finished(path: String)
 signal download_failed(reason: String)
 
 const UPDATE_DIR: String = "user://updates"
+const DOWNLOAD_STATE_PATH: String = "user://updates/download.cfg"
 const API_HOST: String = "https://api.github.com"
 
 @export_group("Update Checks")
@@ -41,11 +42,13 @@ var _download_request: HTTPRequest
 var _checking: bool = false
 var _downloading: bool = false
 var _downloaded_file: String = ""
+var _downloaded_version: String = ""
 
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	DirAccess.make_dir_recursive_absolute(UPDATE_DIR)
+	_load_download_state()
 
 
 func has_update() -> bool:
@@ -187,6 +190,9 @@ func download_update() -> void:
 	var error: Error = _download_request.request(latest_asset_url, headers, HTTPClient.METHOD_GET)
 	if error != OK:
 		_downloading = false
+		if is_instance_valid(_download_request):
+			_download_request.queue_free()
+			_download_request = null
 		download_failed.emit("request_error_%d" % error)
 
 
@@ -200,6 +206,8 @@ func _on_download_completed(result: int, response_code: int, _headers: PackedStr
 		download_failed.emit("missing_file")
 	else:
 		_downloaded_file = target_path
+		_downloaded_version = latest_version
+		_save_download_state()
 		download_finished.emit(target_path)
 	if is_instance_valid(_download_request):
 		_download_request.queue_free()
@@ -217,6 +225,35 @@ func get_download_ratio() -> float:
 
 func downloaded_zip_path() -> String:
 	return _downloaded_file
+
+
+func downloaded_version() -> String:
+	return _downloaded_version
+
+
+func has_downloaded_update(version: String) -> bool:
+	## True when the zip for this exact version is already on disk.
+	if _downloaded_file == "" or _downloaded_version != version:
+		return false
+	return FileAccess.file_exists(_downloaded_file)
+
+
+func _load_download_state() -> void:
+	var config := ConfigFile.new()
+	if config.load(DOWNLOAD_STATE_PATH) != OK:
+		return
+	_downloaded_file = str(config.get_value("download", "path", ""))
+	_downloaded_version = str(config.get_value("download", "version", ""))
+	if _downloaded_file == "" or not FileAccess.file_exists(_downloaded_file):
+		_downloaded_file = ""
+		_downloaded_version = ""
+
+
+func _save_download_state() -> void:
+	var config := ConfigFile.new()
+	config.set_value("download", "path", _downloaded_file)
+	config.set_value("download", "version", _downloaded_version)
+	config.save(DOWNLOAD_STATE_PATH)
 
 
 func install_downloaded_update(zip_path: String = "") -> bool:
@@ -247,8 +284,9 @@ func install_downloaded_update(zip_path: String = "") -> bool:
 			return false
 
 	var game_dir: String = exe_path.get_base_dir()
+	var stage_windows: String = ProjectSettings.globalize_path(exe_dir)
 	var bat_path: String = game_dir + "/update_install.bat"
-	if not _write_installer(bat_path, game_dir, exe_dir, exe_name):
+	if not _write_installer(bat_path, game_dir, stage_windows, exe_name):
 		last_error = "cannot_write_bat"
 		return false
 
@@ -263,10 +301,18 @@ func _extract_zip(zip_path: String, destination: String) -> bool:
 	if reader.open(zip_path) != OK:
 		return false
 	var files: PackedStringArray = reader.get_files()
+	var root: String = destination.simplify_path() + "/"
 	for file_name: String in files:
 		if file_name.ends_with("/"):
 			continue
-		var target: String = destination + "/" + file_name
+		var safe_name: String = file_name.replace("\\", "/")
+		if safe_name.begins_with("/") or safe_name.contains("..") or safe_name.contains(":"):
+			reader.close()
+			return false
+		var target: String = (destination + "/" + safe_name).simplify_path()
+		if not target.begins_with(root):
+			reader.close()
+			return false
 		DirAccess.make_dir_recursive_absolute(target.get_base_dir())
 		var data: PackedByteArray = reader.read_file(file_name)
 		var out: FileAccess = FileAccess.open(target, FileAccess.WRITE)

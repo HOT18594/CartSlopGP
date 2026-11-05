@@ -34,9 +34,10 @@ func _ready() -> void:
 	UpdateChecker.download_failed.connect(_on_download_failed)
 
 	if UpdateChecker.has_update():
-		_on_update_available(UpdateChecker.latest_version, UpdateChecker.latest_release_url, UpdateChecker.latest_asset_url)
-	elif UpdateChecker.downloaded_zip_path() != "" and UpdateChecker.latest_version != "":
-		_mark_install_ready()
+		if UpdateChecker.has_downloaded_update(UpdateChecker.latest_version):
+			_mark_install_ready()
+		else:
+			_on_update_available(UpdateChecker.latest_version, UpdateChecker.latest_release_url, UpdateChecker.latest_asset_url)
 
 	_play_button.grab_focus()
 	UpdateChecker.check_for_updates()
@@ -67,6 +68,9 @@ func _on_quit_pressed() -> void:
 
 
 func _on_update_available(version: String, release_url: String, download_url: String) -> void:
+	if UpdateChecker.has_downloaded_update(version):
+		_mark_install_ready()
+		return
 	_install_ready = false
 	_update_button.disabled = false
 	_update_button.text = "UPDATE AVAILABLE  v%s" % version

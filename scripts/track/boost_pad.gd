@@ -24,6 +24,8 @@ func _ready() -> void:
 	_visual = get_node_or_null("Visual") as MeshInstance3D
 	_puff = get_node_or_null("Puff") as GPUParticles3D
 	_audio = get_node_or_null("PadAudio") as AudioStreamPlayer3D
+	if _audio != null:
+		_audio.bus = "SFX"
 	if _visual != null and _visual.mesh != null:
 		var mat: Material = _visual.get_surface_override_material(0)
 		if mat is StandardMaterial3D:

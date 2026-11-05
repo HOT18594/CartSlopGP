@@ -58,6 +58,9 @@ func _ready() -> void:
 func _load_audio() -> void:
 	## Assign downloaded CC0 streams where present and fall back to the bundled
 	## synthesized sounds; anything unavailable is logged, never fatal.
+	for child in get_children():
+		if child is AudioStreamPlayer3D:
+			(child as AudioStreamPlayer3D).bus = "SFX"
 	_set_stream($EngineAudio, "res://assets/audio/sfx/engine/engine_loop.wav", "res://assets/audio/engine_loop.wav")
 	_set_stream($SkidAudio, "res://assets/audio/sfx/skid/skid_loop.wav", "res://assets/audio/skid_loop.wav")
 	_set_stream($ImpactLightAudio, "res://assets/audio/sfx/impacts/impact_light.ogg", "res://assets/audio/impact.wav")

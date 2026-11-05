@@ -23,6 +23,17 @@ First tagged prototype build: playable driving sandbox plus the full menu/shell 
 - Windows export preset and `builds/v0.1.0/` packaging.
 - `version.txt`, `CHANGELOG.md`, `README.md`, `docs/RELEASE_WORKFLOW.md`.
 
+### Fixed
+
+- Update installer wrote a `user://` path into `update_install.bat`, so the
+  batch could never copy files. It now gets a globalised Windows path.
+- A finished download is remembered across restarts (and no longer resets to
+  "update available" when the menu reloads), so "RESTART TO INSTALL" works.
+- SFX volume now actually controls gameplay audio: engine, skid, impacts,
+  landing and boost players are routed to the SFX bus.
+- Zip extraction rejects `..`/absolute entries (zip-slip) and a failed download
+  request no longer leaks an HTTPRequest.
+
 ### Changed
 
 - **Vehicle selector**: SANDBOX now opens `vehicle_select` with a spinning 3D
