@@ -64,8 +64,8 @@ Updated: 2026-11-05
 
 - [x] GitHub updater with progress and restart-to-install
 - [x] macOS ad-hoc re-sign after replacing the .app
-- [x] Release v0.5.3 builds for Windows/macOS/Linux/Web
-- [x] Verify GitHub latest release and platform asset names (v0.5.3)
+- [x] Release v0.5.4 builds for Windows/macOS/Linux/Web
+- [x] Verify GitHub latest release and platform asset names (v0.5.4)
 - [ ] Verify updater download/install on each desktop platform
 - [ ] Optional Pi update mirror + release automation
 
