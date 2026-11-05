@@ -3,6 +3,43 @@
 All notable changes to Cart Slop GP. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer.
 
+## [0.1.1] - 2026-11-05
+
+Playtest pass: vehicle feel, arena rebuild, UI polish and audit fixes.
+
+### Added
+
+- Vehicle picker after SANDBOX: shopping cart (default), sedan, sports car,
+  taxi, van, box truck, police cruiser, with a spinning 3D preview.
+- Planned sandbox arena (`tools/build_arena.py` + `docs/ARENA_LAYOUT.md`):
+  140 x 140 m, start straight with speed bumps, jump + landing, drift ring,
+  slalom, cone field, crate wall, bowl and cliff jump.
+
+### Fixed
+
+- Kenney vehicles drove backwards (180 degree yaw error); the shopping cart was
+  the only one facing correctly.
+- Boost pads never fired: the Area3D masked layer 1 while the kart is layer 2.
+- Props could stop or launch the kart; they now sit on their own layer and are
+  popped by a push sensor, with a horizontal speed clamp as a safety net.
+- Cliff ramp/platform had a 0.2 m lip that trapped the kart.
+- Crate stack was unsupported and collapsed at spawn.
+- Coplanar track decals z-fought; decal heights are staggered.
+- Smoke particles: emission box moved onto the process material, orbit and
+  turbulence property names corrected (settings were silently ignored).
+- Update installer wrote a `user://` path into `update_install.bat`; it now
+  gets a globalised Windows path.
+- A finished update download is remembered across restarts, and zip extraction
+  rejects `..`/absolute entries.
+- SFX volume now controls gameplay audio, not just the menu click.
+- Holding boost on an empty tank no longer micro-pulses the FOV and boost sound.
+
+### Changed
+
+- Camera: smooth layered-sine shake, softer impact/landing trauma, corner
+  banking, vertical lag on jumps.
+- HUD shrunk (~40% smaller) and tilted; menu/panel spacing made consistent.
+
 ## [0.1.0] - 2026-11-04
 
 First tagged prototype build: playable driving sandbox plus the full menu/shell layer.
