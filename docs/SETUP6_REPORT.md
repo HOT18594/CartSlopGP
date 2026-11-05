@@ -9,24 +9,39 @@ requested smoke fix.
 
 ## 1. UI scenes and how they map to the reference images
 
-**Important:** the two mockup images did not arrive with the brief - only the
-text file. Everything below was built in a self-designed chunky cartoon arcade
-style so the scenes are complete and usable now. The whole look is theme-driven
-(`assets/ui/theme.tres`) plus one vector background script, so re-skinning to
-your mockups is a palette/font/layout pass, not a rebuild. Send the images and
-I will match them.
+The two mockups arrived after the first pass, and the menu and HUD were
+rebuilt to match them. Everything is drawn with vector primitives and
+StyleBoxFlat - no screenshots are pasted anywhere.
+
+**Menu (mockup 1):** bright sky gradient, clouds, city skyline, SlopMart store
+with sign and windows, parking lot with perspective bay lines, lamp posts,
+green trees/bushes and three shopping carts. Title is three stacked Labels
+(`CART` white, `SLOP` pink with drawn paint drips, `GP` yellow) with heavy
+dark outlines, small rotations and drop shadows, plus a waving checkered flag
+behind `GP`. Buttons use `candy_button.gd`: thick dark border, saturated fill,
+hard offset shadow and a gloss highlight - yellow PLAY, blue SETTINGS, red
+QUIT. HOST/JOIN stay as dimmed placeholders below PLAY.
+
+**HUD (mockup 2):** bottom-right round speedometer (`speedometer.gd`) with
+white rim, dark face, cyan-yellow-red sweep, ticks and a needle; bottom-left
+segmented boost bar (`boost_meter.gd`) with a lightning bolt; cream state pill
+top-centre; outlined controls hint. The mockup's `1st` position badge and
+`LAP 1 / 3` pill are built too (top-left, checker strip included) but hidden by
+default because you only want them in race-style minigames - enable with
+`show_position_badge` / `show_lap_badge`, then `set_race_position(n)` and
+`set_lap(current, total)`.
 
 | File | Contents |
 | --- | --- |
-| `scenes/ui/main_menu.tscn` | Title lockup (`CART SLOP` + accent `GP`), subtitle, PLAY, HOST/JOIN (disabled placeholders), SETTINGS, QUIT, version label bottom-left, update badge + release-notes button top-right, settings overlay instance |
-| `scenes/ui/hud.tscn` | Speed panel top-left (number + KM/H + state chip), boost bar bottom-centre with percentage, controls hint bottom-right, hidden F3 debug readout |
-| `scenes/ui/pause_menu.tscn` | CanvasLayer overlay, dimmed backdrop, PAUSED panel with RESUME / SETTINGS / QUIT TO MENU, settings overlay instance |
+| `scenes/ui/main_menu.tscn` | Title stack + checkered flag, PLAY / HOST+JOIN / SETTINGS / QUIT, version label, update badge, settings overlay |
+| `scenes/ui/hud.tscn` | Speedometer, boost meter, state pill, controls hint, optional position/lap pills, hidden F3 debug readout |
+| `scenes/ui/pause_menu.tscn` | CanvasLayer overlay, dimmed backdrop, PAUSED panel with RESUME / SETTINGS / QUIT TO MENU |
 | `scenes/ui/settings_menu.tscn` | Master volume, SFX volume, fullscreen, custom cursor, offline note, BACK |
-| `assets/ui/theme.tres` | Theme: colours, StyleBoxFlat buttons/panels/progress/slider, Fredoka body + Luckiest Guy titles |
+| `assets/ui/theme.tres` | Cream sticker panels, candy buttons, check buttons, sliders; Fredoka + Luckiest Guy |
 
 Background: `scripts/ui/menu_background.gd` draws the whole backdrop with
-`_draw()` - dusk gradient, sun with retro stripes, two hill layers, road with
-perspective dashes, checkered strip. No static screenshot anywhere.
+`_draw()`. Helper draw nodes: `checker_flag.gd`, `checker_strip.gd`,
+`drip_label.gd`, `candy_button.gd`, `speedometer.gd`, `boost_meter.gd`.
 
 Wiring:
 
@@ -37,7 +52,8 @@ Wiring:
 - Main scene is now `scenes/ui/main_menu.tscn` (was the driving test)
 
 Layout was verified by rendering the real scenes (1280x720): menu, settings,
-pause, and the driving HUD all render correctly.
+pause, and the driving HUD all render correctly. Screenshots live in
+`CartSlopGP/_shots/` if you want to compare against the mockups.
 
 ## 2. Cursor
 

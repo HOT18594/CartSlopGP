@@ -68,6 +68,17 @@ When a newer tag exists, the menu shows an **UPDATE AVAILABLE vX.Y.Z** button:
 Set the owner/repo once in `scripts/systems/update_checker.gd` (currently
 `HOT18594/CartSlopGP`).
 
+## HUD for minigames
+
+The HUD ships with race position and lap pills that stay hidden in the free-drive
+prototype. For a race minigame, instance `scenes/ui/hud.tscn` and either set
+`show_position_badge` / `show_lap_badge` in the inspector or call:
+
+```gdscript
+hud.set_race_position(1)   # 1st, 2nd, 3rd...
+hud.set_lap(2, 3)          # LAP 2 / 3
+```
+
 ## Project layout
 
 ```
