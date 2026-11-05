@@ -1,0 +1,24 @@
+# Godot 4 editor cache and imported binaries (regenerated on first open)
+.godot/
+*.translation
+export_credentials.cfg
+
+# Exported builds (also written outside the repo by the release script)
+builds/
+exports/
+*.pck
+*.exe.tmp
+
+# Logs and temp files
+*.log
+*.tmp
+user://*
+
+# OS junk
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# Local tool output / screenshots
+tools/smoke_sheet_preview.png
+_shots/

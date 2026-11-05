@@ -1,0 +1,140 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Theme" path="res://assets/ui/theme.tres" id="1"]
+[ext_resource type="Script" path="res://scripts/hud.gd" id="2"]
+
+[node name="HUD" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+theme = ExtResource("1")
+script = ExtResource("2")
+
+[node name="SpeedPanel" type="PanelContainer" parent="."]
+layout_mode = 1
+anchors_preset = 0
+offset_left = 32.0
+offset_top = 28.0
+offset_right = 336.0
+offset_bottom = 152.0
+mouse_filter = 2
+
+[node name="SpeedBody" type="VBoxContainer" parent="SpeedPanel"]
+layout_mode = 2
+mouse_filter = 2
+theme_override_constants/separation = 0
+
+[node name="SpeedRow" type="HBoxContainer" parent="SpeedPanel/SpeedBody"]
+layout_mode = 2
+mouse_filter = 2
+theme_override_constants/separation = 10
+
+[node name="SpeedValue" type="Label" parent="SpeedPanel/SpeedBody/SpeedRow"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 0.788235, 0.235294, 1)
+theme_override_colors/font_outline_color = Color(0.039216, 0.047059, 0.094118, 1)
+theme_override_constants/outline_size = 8
+theme_override_font_sizes/font_size = 64
+text = "0"
+vertical_alignment = 1
+
+[node name="SpeedUnit" type="Label" parent="SpeedPanel/SpeedBody/SpeedRow"]
+layout_mode = 2
+size_flags_vertical = 8
+theme_override_colors/font_color = Color(0.72549, 0.698039, 0.788235, 1)
+theme_override_font_sizes/font_size = 18
+text = "KM/H"
+vertical_alignment = 1
+
+[node name="StateLabel" type="Label" parent="SpeedPanel/SpeedBody"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 0.788235, 0.235294, 1)
+theme_override_font_sizes/font_size = 20
+text = "DRIVING"
+
+[node name="BoostPanel" type="PanelContainer" parent="."]
+layout_mode = 1
+anchors_preset = 12
+anchor_left = 0.5
+anchor_top = 1.0
+anchor_right = 0.5
+anchor_bottom = 1.0
+offset_left = -230.0
+offset_top = -104.0
+offset_right = 230.0
+offset_bottom = -34.0
+grow_horizontal = 2
+grow_vertical = 0
+mouse_filter = 2
+
+[node name="BoostBody" type="VBoxContainer" parent="BoostPanel"]
+layout_mode = 2
+mouse_filter = 2
+theme_override_constants/separation = 4
+
+[node name="BoostRow" type="HBoxContainer" parent="BoostPanel/BoostBody"]
+layout_mode = 2
+mouse_filter = 2
+
+[node name="BoostTitle" type="Label" parent="BoostPanel/BoostBody/BoostRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_colors/font_color = Color(1, 0.972549, 0.898039, 1)
+theme_override_font_sizes/font_size = 16
+text = "BOOST"
+
+[node name="BoostValue" type="Label" parent="BoostPanel/BoostBody/BoostRow"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 0.788235, 0.235294, 1)
+theme_override_font_sizes/font_size = 16
+text = "100%"
+horizontal_alignment = 2
+
+[node name="BoostBar" type="ProgressBar" parent="BoostPanel/BoostBody"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 22)
+layout_mode = 2
+mouse_filter = 2
+value = 100.0
+show_percentage = false
+
+[node name="HintLabel" type="Label" parent="."]
+layout_mode = 1
+anchors_preset = 3
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -560.0
+offset_top = -52.0
+offset_right = -32.0
+offset_bottom = -28.0
+grow_horizontal = 0
+grow_vertical = 0
+theme_override_colors/font_color = Color(0.72549, 0.698039, 0.788235, 0.9)
+theme_override_font_sizes/font_size = 15
+text = "W/UP ACCELERATE   A/D STEER   SPACE DRIFT   SHIFT BOOST   R RESET   ESC PAUSE"
+horizontal_alignment = 2
+
+[node name="DebugLabel" type="Label" parent="."]
+unique_name_in_owner = true
+visible = false
+layout_mode = 1
+anchors_preset = 5
+anchor_left = 0.5
+anchor_right = 0.5
+offset_left = -320.0
+offset_right = 320.0
+offset_top = 20.0
+offset_bottom = 80.0
+grow_horizontal = 2
+theme_override_colors/font_color = Color(0.72549, 0.698039, 0.788235, 1)
+theme_override_font_sizes/font_size = 14
+horizontal_alignment = 1

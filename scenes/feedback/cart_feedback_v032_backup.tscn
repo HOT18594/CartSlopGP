@@ -1,0 +1,173 @@
+[gd_scene load_steps=20 format=3]
+
+[ext_resource type="Script" path="res://scripts/feedback/cart_feedback.gd" id="1"]
+[ext_resource type="Script" path="res://scripts/feedback/skid_trail.gd" id="2"]
+[ext_resource type="AudioStream" path="res://assets/audio/engine_loop.wav" id="3"]
+[ext_resource type="AudioStream" path="res://assets/audio/skid_loop.wav" id="4"]
+[ext_resource type="AudioStream" path="res://assets/audio/impact.wav" id="5"]
+[ext_resource type="AudioStream" path="res://assets/audio/landing_thud.wav" id="6"]
+[ext_resource type="Texture2D" path="res://assets/textures/smoke_sheet.png" id="7"]
+
+[sub_resource type="Gradient" id="dust_grad"]
+offsets = PackedFloat32Array(0, 0.12, 0.55, 1)
+colors = PackedColorArray(0.8, 0.77, 0.72, 0, 0.78, 0.75, 0.7, 0.5, 0.74, 0.71, 0.67, 0.32, 0.72, 0.7, 0.66, 0)
+
+[sub_resource type="GradientTexture1D" id="dust_ramp"]
+gradient = SubResource("dust_grad")
+
+[sub_resource type="Curve" id="scale_curve"]
+_data = [Vector2(0, 0.35), 0.0, 0.0, 0, 0, Vector2(1, 1.7), 0.0, 0.0, 0, 0]
+point_count = 2
+min_value = 0.0
+max_value = 2.0
+
+[sub_resource type="CurveTexture" id="scale_curve_tex"]
+curve = SubResource("scale_curve")
+
+[sub_resource type="ParticleProcessMaterial" id="dust_mat"]
+direction = Vector3(0, 1, 0)
+spread = 32.0
+initial_velocity_min = 1.2
+initial_velocity_max = 2.6
+gravity = Vector3(0, 0.45, 0)
+angle_min = -180.0
+angle_max = 180.0
+angular_velocity_min = -50.0
+angular_velocity_max = 50.0
+anim_speed_min = 1.0
+anim_speed_max = 1.0
+scale_curve = SubResource("scale_curve_tex")
+color_ramp = SubResource("dust_ramp")
+turbulence_enabled = true
+turbulence_strength = 0.8
+turbulence_scale = 2.5
+turbulence_noise_scale = 1.5
+turbulence_influence_min = 0.1
+turbulence_influence_max = 0.6
+
+[sub_resource type="StandardMaterial3D" id="smoke_draw"]
+transparency = 1
+shading_mode = 0
+vertex_color_use_as_albedo = true
+billboard_mode = 3
+albedo_texture = ExtResource("7")
+particles_anim_h_frames = 4
+particles_anim_v_frames = 4
+particles_anim_loop = false
+
+[sub_resource type="QuadMesh" id="smoke_mesh"]
+material = SubResource("smoke_draw")
+size = Vector2(0.9, 0.9)
+
+[sub_resource type="ParticleProcessMaterial" id="burst_mat"]
+direction = Vector3(0, 1, 0)
+spread = 70.0
+initial_velocity_min = 2.5
+initial_velocity_max = 5.5
+gravity = Vector3(0, 0.4, 0)
+angle_min = -180.0
+angle_max = 180.0
+angular_velocity_min = -80.0
+angular_velocity_max = 80.0
+anim_speed_min = 1.0
+anim_speed_max = 1.4
+scale_curve = SubResource("scale_curve_tex")
+color_ramp = SubResource("dust_ramp")
+turbulence_enabled = true
+turbulence_strength = 1.2
+turbulence_scale = 3.0
+turbulence_noise_scale = 1.5
+turbulence_influence_min = 0.15
+turbulence_influence_max = 0.8
+
+[sub_resource type="ParticleProcessMaterial" id="wind_mat"]
+emission_shape = 3
+emission_box_extents = Vector3(1.7, 0.9, 0.4)
+emission_shape_offset = Vector3(0, 0, -2.0)
+direction = Vector3(0, 0, 1)
+spread = 0.0
+initial_velocity_min = 9.0
+initial_velocity_max = 14.0
+gravity = Vector3(0, 0, 0)
+scale_min = 0.8
+scale_max = 1.6
+
+[sub_resource type="StandardMaterial3D" id="wind_draw"]
+transparency = 1
+shading_mode = 0
+albedo_color = Color(1, 1, 1, 0.16)
+
+[sub_resource type="BoxMesh" id="wind_mesh"]
+material = SubResource("wind_draw")
+size = Vector3(0.02, 0.02, 0.3)
+
+[sub_resource type="StandardMaterial3D" id="line_mat"]
+transparency = 1
+shading_mode = 0
+vertex_color_use_as_albedo = true
+render_priority = 1
+
+[node name="CartFeedback" type="Node3D"]
+script = ExtResource("1")
+
+[node name="Dust" type="GPUParticles3D" parent="."]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.340000, 0.850000)
+cast_shadow = 0
+amount = 30
+lifetime = 1.4
+amount_ratio = 0.85
+emitting = false
+process_material = SubResource("dust_mat")
+draw_pass_1 = SubResource("smoke_mesh")
+
+[node name="DustBurst" type="GPUParticles3D" parent="."]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.500000, 0.000000)
+cast_shadow = 0
+amount = 40
+lifetime = 1.6
+one_shot = true
+explosiveness = 1.0
+emitting = false
+process_material = SubResource("burst_mat")
+draw_pass_1 = SubResource("smoke_mesh")
+
+[node name="WindStreaks" type="GPUParticles3D" parent="."]
+cast_shadow = 0
+amount = 14
+lifetime = 0.35
+emitting = false
+process_material = SubResource("wind_mat")
+draw_pass_1 = SubResource("wind_mesh")
+
+[node name="SkidTrailLeft" type="MeshInstance3D" parent="."]
+cast_shadow = 0
+material_override = SubResource("line_mat")
+script = ExtResource("2")
+
+[node name="SkidTrailRight" type="MeshInstance3D" parent="."]
+cast_shadow = 0
+material_override = SubResource("line_mat")
+script = ExtResource("2")
+
+[node name="EngineAudio" type="AudioStreamPlayer3D" parent="."]
+stream = ExtResource("3")
+volume_db = -12.0
+autoplay = true
+
+[node name="SkidAudio" type="AudioStreamPlayer3D" parent="."]
+stream = ExtResource("4")
+volume_db = -10.0
+autoplay = false
+
+[node name="ImpactAudio" type="AudioStreamPlayer3D" parent="."]
+stream = ExtResource("5")
+volume_db = -5.0
+autoplay = false
+
+[node name="ThudAudio" type="AudioStreamPlayer3D" parent="."]
+stream = ExtResource("6")
+volume_db = -7.0
+autoplay = false
+
+[node name="BoostPlaceholder" type="AudioStreamPlayer3D" parent="."]
+volume_db = -10.0

@@ -1,0 +1,56 @@
+AUDIO CREDITS - Cart Slop GP
+============================
+Updated: 2026-11-04 (Kenney CC0 acquisition pass)
+
+LICENSE SUMMARY
+---------------
+- Downloaded packs: Kenney "Impact Sounds", "Digital Audio",
+  "Interface Sounds" - all released under Creative Commons CC0 1.0
+  Universal (public domain dedication, no attribution required).
+  Author: Kenney (kenney.nl).
+- Synthesized files were generated procedurally for this project:
+  no external source, no attribution required.
+
+FORMAT NOTE (read before wiring)
+--------------------------------
+Kenney audio packs ship as .ogg (Ogg Vorbis) only. ffmpeg was not
+available on the build machine, so the downloaded one-shots keep their
+native .ogg format; Godot 4 imports .ogg natively. Wire these slots to
+the .ogg names below (not .wav). The synthesized files are true .wav
+(16-bit PCM mono, 22050 Hz).
+
+TABLE: sound name | source pack + URL | license | where used
+------------------------------------------------------------
+impacts/impact_light.ogg  | Impact Sounds  - https://kenney.nl/assets/impact-sounds (source file impactGeneric_light_000.ogg)  | CC0 1.0 Kenney | light impacts / small bumps
+impacts/impact_heavy.ogg  | Impact Sounds  - https://kenney.nl/assets/impact-sounds (source file impactPunch_heavy_000.ogg)  | CC0 1.0 Kenney | heavy collisions
+impacts/crash_flip.ogg    | Impact Sounds  - https://kenney.nl/assets/impact-sounds (source file impactGlass_heavy_000.ogg)  | CC0 1.0 Kenney | crash / flip debris (glass break)
+landing/landing_thud.ogg  | Impact Sounds  - https://kenney.nl/assets/impact-sounds (source file impactSoft_medium_000.ogg)  | CC0 1.0 Kenney | landing after jump / airtime
+boost/boost_start.ogg     | Digital Audio  - https://kenney.nl/assets/digital-audio (source file powerUp3.ogg)               | CC0 1.0 Kenney | boost activation
+boost/boost_pad.ogg       | Digital Audio  - https://kenney.nl/assets/digital-audio (source file powerUp1.ogg)               | CC0 1.0 Kenney | boost pad pickup / power-up
+ui/ui_confirm.ogg         | Interface Sounds - https://kenney.nl/assets/interface-sounds (source file confirmation_001.ogg)   | CC0 1.0 Kenney | UI confirm / select blip
+engine/engine_loop.wav    | synthesized in-house (see below) | n/a | engine idle / drive loop
+engine/engine_boost.wav   | synthesized in-house (see below) | n/a | boost engine loop (1.2x speed)
+skid/skid_loop.wav        | synthesized in-house (see below) | n/a | drift / skid loop
+
+SYNTHESIZED (procedural, in-house)
+----------------------------------
+- engine/engine_loop.wav : copy of assets/audio/engine_loop.wav;
+  layered sines 110/220/330 Hz with 13 Hz wobble, 2.0 s seamless
+  forward loop.
+- engine/engine_boost.wav : procedural derivative of engine_loop.wav,
+  resampled at 1.2x speed with linear interpolation (44100 -> 36750
+  frames, 16-bit PCM mono, 22050 Hz). No external source.
+- skid/skid_loop.wav : copy of assets/audio/skid_loop.wav;
+  high-passed noise with circular crossfade, 1.4 s seamless loop.
+- assets/audio/impact.wav and assets/audio/landing_thud.wav remain
+  synthesized placeholders (noise burst + 70 Hz thump; 55/110 Hz
+  decaying tones + rattle) and are superseded by the Kenney one-shots
+  under assets/audio/sfx/.
+
+GAPS / NOTES
+------------
+- No pack or file was unavailable or blocked; all three Kenney packs
+  downloaded and every target slot filled.
+- Only the three named packs were downloaded (no full-archive pulls).
+- Kenney CC0 1.0 legal text:
+  https://creativecommons.org/publicdomain/zero/1.0/

@@ -1,0 +1,102 @@
+[gd_scene load_steps=12 format=3]
+
+[ext_resource type="PackedScene" path="res://assets/models/kenney_car-kit/Models/GLB format/kart-oozi.glb" id="1"]
+[ext_resource type="PackedScene" path="res://assets/models/kenney_car-kit/Models/GLB format/kart-oobi.glb" id="2"]
+[ext_resource type="PackedScene" path="res://assets/models/poly_pizza/go_kart/go_kart.glb" id="3"]
+[ext_resource type="PackedScene" path="res://assets/models/poly_pizza/shopping_cart/shopping_cart.glb" id="4"]
+[ext_resource type="PackedScene" path="res://assets/models/kenney_car-kit/Models/GLB format/cone.glb" id="5"]
+[ext_resource type="PackedScene" path="res://assets/models/kenney_car-kit/Models/GLB format/wheel-default.glb" id="6"]
+
+[sub_resource type="ProceduralSkyMaterial" id="sky_mat"]
+sky_top_color = Color(0.38, 0.55, 0.85, 1)
+sky_horizon_color = Color(0.68, 0.72, 0.78, 1)
+ground_bottom_color = Color(0.2, 0.2, 0.22, 1)
+ground_horizon_color = Color(0.68, 0.72, 0.78, 1)
+
+[sub_resource type="Sky" id="sky"]
+sky_material = SubResource("sky_mat")
+
+[sub_resource type="Environment" id="env"]
+background_mode = 2
+sky = SubResource("sky")
+
+[sub_resource type="StandardMaterial3D" id="ground_mat"]
+albedo_color = Color(0.5, 0.52, 0.5, 1)
+
+[sub_resource type="PlaneMesh" id="ground_mesh"]
+material = SubResource("ground_mat")
+size = Vector2(150, 150)
+
+[node name="AssetPreview" type="Node3D"]
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("env")
+
+[node name="Sun" type="DirectionalLight3D" parent="."]
+transform = Transform3D(0.877583, -0.360183, 0.316413, 0.000000, 0.659983, 0.751280, -0.479426, -0.659311, 0.579190, 0.000000, 0.000000, 0.000000)
+shadow_enabled = true
+
+[node name="Ground" type="MeshInstance3D" parent="."]
+mesh = SubResource("ground_mesh")
+
+[node name="Camera3D" type="Camera3D" parent="."]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 0.968912, 0.247404, 0.000000, -0.247404, 0.968912, 0.000000, 4.500000, 14.500000)
+current = true
+
+[node name="Models" type="Node3D" parent="."]
+
+[node name="KartOozi" parent="Models" instance=ExtResource("1")]
+transform = Transform3D(-1.540881, 0.000000, 0.000000, 0.000000, 1.540881, 0.000000, 0.000000, 0.000000, -1.540881, -10.000000, 0.000000, 0.000000)
+[node name="KartOobi" parent="Models" instance=ExtResource("2")]
+transform = Transform3D(-1.540881, 0.000000, 0.000000, 0.000000, 1.540881, 0.000000, 0.000000, 0.000000, -1.540881, -6.000000, 0.000000, 0.000000)
+[node name="PolyGoKart" parent="Models" instance=ExtResource("3")]
+transform = Transform3D(-0.101472, 0.000000, 0.000000, 0.000000, 0.101472, 0.000000, 0.000000, 0.000000, -0.101472, -2.000000, 0.119323, 0.000000)
+[node name="PolyShoppingCart" parent="Models" instance=ExtResource("4")]
+transform = Transform3D(-0.000003, 0.000000, 0.000000, 0.000000, 0.000003, 0.000000, 0.000000, 0.000000, -0.000003, 2.000000, 0.004226, 0.000000)
+[node name="Cone" parent="Models" instance=ExtResource("5")]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 6.000000, 0.000000, 0.000000)
+[node name="Wheel" parent="Models" instance=ExtResource("6")]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 10.000000, 0.300000, 0.000000)
+
+[node name="KartOoziLabel" type="Label3D" parent="Models"]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -10.000000, 2.200000, 0.000000)
+billboard = 1
+pixel_size = 0.008
+font_size = 40
+outline_size = 10
+text = "kart-oozi"
+[node name="KartOobiLabel" type="Label3D" parent="Models"]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -6.000000, 2.200000, 0.000000)
+billboard = 1
+pixel_size = 0.008
+font_size = 40
+outline_size = 10
+text = "kart-oobi"
+[node name="PolyGoKartLabel" type="Label3D" parent="Models"]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -2.000000, 2.200000, 0.000000)
+billboard = 1
+pixel_size = 0.008
+font_size = 40
+outline_size = 10
+text = "go_kart"
+[node name="PolyShoppingCartLabel" type="Label3D" parent="Models"]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 2.000000, 2.200000, 0.000000)
+billboard = 1
+pixel_size = 0.008
+font_size = 40
+outline_size = 10
+text = "shopping_cart"
+[node name="ConeLabel" type="Label3D" parent="Models"]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 6.000000, 2.200000, 0.000000)
+billboard = 1
+pixel_size = 0.008
+font_size = 40
+outline_size = 10
+text = "cone"
+[node name="WheelLabel" type="Label3D" parent="Models"]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 10.000000, 2.200000, 0.000000)
+billboard = 1
+pixel_size = 0.008
+font_size = 40
+outline_size = 10
+text = "wheel-default"

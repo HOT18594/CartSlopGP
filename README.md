@@ -1,0 +1,102 @@
+# Cart Slop GP
+
+An arcade cart-racing prototype built in **Godot 4.7.2** (GDScript, Mobile renderer).
+Current version: **0.1.0**.
+
+The repo is UI + tooling + the existing driving prototype: main menu, pause/settings,
+in-game HUD, custom cursor, Windows export and a free in-game update checker that uses
+GitHub Releases. Gameplay systems (handling, jumps, drift smoke, boost) are unchanged
+from the prototype.
+
+## Requirements
+
+- Windows 10/11
+- [Godot 4.7.2 stable](https://godotengine.org/download/windows/) (standard build, not .NET)
+- The export templates for 4.7.2 (only needed to build the .exe)
+
+## Open in Godot
+
+1. Launch Godot 4.7.2.
+2. **Import** → select `godot_project/project.godot` → **Import & Edit**.
+3. Press **F5** to run. The project boots into the main menu.
+
+The first open reimports assets into `.godot/`; that folder is git-ignored.
+
+## Controls
+
+| Action | Key |
+| --- | --- |
+| Accelerate | W / Up |
+| Brake / reverse | S / Down |
+| Steer | A / D or Left / Right |
+| Handbrake (drift) | Space |
+| Boost | Shift or Left Mouse |
+| Reset cart | R |
+| Pause | Esc |
+
+In menus: mouse. The custom cursor is drawn by the game, so the OS pointer is hidden
+while a menu is open.
+
+## Build the Windows .exe
+
+**From the editor:** Project → Export → *Windows Desktop* → *Export Project*.
+Uncheck *Export With Debug* for a release build.
+
+**From the command line** (from `godot_project/`):
+
+```bash
+godot --headless --export-release "Windows Desktop" "../builds/v0.1.0/CartSlopGP.exe"
+```
+
+The build lands in `CartSlopGP/builds/v0.1.0/` and contains `CartSlopGP.exe` plus
+`CartSlopGP.pck`. Zip that folder to publish it. See `docs/RELEASE_WORKFLOW.md`.
+
+## Auto-updates
+
+`scripts/systems/update_checker.gd` runs as the `UpdateChecker` autoload. On the main
+menu it asks the GitHub API for the latest release (5 s timeout). Offline or rate-limited
+means the check is skipped silently — the game never blocks on the network.
+
+When a newer tag exists, the menu shows an **UPDATE AVAILABLE vX.Y.Z** button:
+
+1. opens the release page in the browser,
+2. or downloads the release zip into `user://updates/`,
+3. and can hand the swap to a generated `update_install.bat` (a running .exe cannot
+   overwrite itself on Windows, so the .bat waits for the game to exit, copies the
+   staged files over, restarts, and deletes itself).
+
+Set the owner/repo once in `scripts/systems/update_checker.gd` (currently
+`HOT18594/CartSlopGP`).
+
+## Project layout
+
+```
+godot_project/
+  scenes/ui/          main menu, HUD, pause, settings
+  scenes/player/      cart_player.tscn
+  scenes/feedback/    smoke, wind, audio
+  scenes/dev/         driving_test.tscn (the playable prototype)
+  scripts/            gameplay + UI scripts
+  scripts/systems/    update_checker.gd
+  assets/ui/          theme, fonts, cursor
+  assets/models/      Kenney Car Kit, Poly Pizza props
+  assets/audio/       Kenney CC0 SFX + synthesized loops
+  assets/textures/    particle sheets
+  docs/               credits, reports, release workflow
+  tools/              asset generators (smoke sheet)
+  version.txt         current version (read by the updater + menu)
+```
+
+## Credits
+
+- **Engine:** Godot Engine 4.7.2 (MIT).
+- **Models:** Kenney *Car Kit* (CC0) — [kenney.nl](https://kenney.nl/assets/car-kit).
+  Poly Pizza go-kart and shopping-cart models (see `assets/models/poly_pizza/CREDITS.txt`).
+- **Audio:** Kenney *Impact Sounds*, *Digital Audio*, *Interface Sounds* (CC0), plus
+  synthesized engine/skid loops. Full table in `docs/AUDIO_CREDITS.txt`.
+- **UI:** Kenney *Cursor Pack* (CC0), Fredoka font (SIL Open Font License 1.1).
+- Full list: `docs/ASSET_CREDITS.txt`.
+
+## Repo
+
+https://github.com/HOT18594/CartSlopGP

@@ -1,0 +1,5 @@
+Poly Pizza models - downloaded 2026-11-04
+- go_kart.glb: https://poly.pizza/m/MkByxZCSMA
+- shopping_cart.glb: https://poly.pizza/m/4lhRcMbl1pw
+Source files kept in CartSlopGP\downloads (poly_pizza_*.glb).
+Check each model page on poly.pizza for the exact license/attribution requirements.

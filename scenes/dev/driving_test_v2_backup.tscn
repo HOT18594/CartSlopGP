@@ -1,0 +1,385 @@
+[gd_scene load_steps=28 format=3]
+
+[ext_resource type="Script" path="res://scripts/hud.gd" id="1"]
+[ext_resource type="PackedScene" path="res://scenes/player/cart_player.tscn" id="2"]
+[ext_resource type="PackedScene" path="res://assets/models/kenney_car-kit/Models/GLB format/cone.glb" id="3"]
+[ext_resource type="PackedScene" path="res://assets/models/kenney_car-kit/Models/GLB format/box.glb" id="4"]
+[ext_resource type="PackedScene" path="res://assets/models/kenney_car-kit/Models/GLB format/debris-tire.glb" id="5"]
+[ext_resource type="PackedScene" path="res://assets/models/kenney_car-kit/Models/GLB format/debris-plate-a.glb" id="6"]
+[ext_resource type="PackedScene" path="res://assets/models/kenney_car-kit/Models/GLB format/debris-bolt.glb" id="7"]
+[ext_resource type="PackedScene" path="res://assets/models/kenney_car-kit/Models/GLB format/debris-nut.glb" id="8"]
+[ext_resource type="PackedScene" path="res://assets/models/kenney_car-kit/Models/GLB format/debris-bumper.glb" id="9"]
+
+[sub_resource type="ProceduralSkyMaterial" id="sky_mat"]
+sky_top_color = Color(0.38, 0.55, 0.85, 1)
+sky_horizon_color = Color(0.68, 0.72, 0.78, 1)
+ground_bottom_color = Color(0.2, 0.2, 0.22, 1)
+ground_horizon_color = Color(0.68, 0.72, 0.78, 1)
+
+[sub_resource type="Sky" id="sky"]
+sky_material = SubResource("sky_mat")
+
+[sub_resource type="Environment" id="env"]
+background_mode = 2
+sky = SubResource("sky")
+
+[sub_resource type="StandardMaterial3D" id="ground_mat"]
+albedo_color = Color(0.55, 0.57, 0.55, 1)
+
+[sub_resource type="StandardMaterial3D" id="wall_mat"]
+albedo_color = Color(0.45, 0.5, 0.6, 1)
+
+[sub_resource type="StandardMaterial3D" id="ramp_mat"]
+albedo_color = Color(0.35, 0.38, 0.42, 1)
+
+[sub_resource type="StandardMaterial3D" id="pad_mat"]
+albedo_color = Color(0.35, 0.6, 0.4, 1)
+
+[sub_resource type="BoxShape3D" id="ground_shape"]
+size = Vector3(140, 1, 140)
+
+[sub_resource type="BoxMesh" id="ground_mesh"]
+material = SubResource("ground_mat")
+size = Vector3(140, 1, 140)
+
+[sub_resource type="BoxShape3D" id="wall_shape"]
+size = Vector3(142, 2.5, 1)
+
+[sub_resource type="BoxMesh" id="wall_mesh"]
+material = SubResource("wall_mat")
+size = Vector3(142, 2.5, 1)
+
+[sub_resource type="BoxShape3D" id="ramp_shape"]
+size = Vector3(6, 0.4, 9)
+
+[sub_resource type="BoxMesh" id="ramp_mesh"]
+material = SubResource("ramp_mat")
+size = Vector3(6, 0.4, 9)
+
+[sub_resource type="BoxShape3D" id="roller_shape"]
+size = Vector3(10, 0.5, 2.2)
+
+[sub_resource type="BoxMesh" id="roller_mesh"]
+material = SubResource("ramp_mat")
+size = Vector3(10, 0.5, 2.2)
+
+[sub_resource type="BoxMesh" id="pad_mesh"]
+material = SubResource("pad_mat")
+size = Vector3(10, 0.02, 12)
+
+[sub_resource type="CylinderShape3D" id="cone_shape"]
+radius = 0.202383
+height = 0.535719
+
+[sub_resource type="BoxShape3D" id="crate_shape"]
+size = Vector3(0.679250, 0.679250, 0.679250)
+
+[node name="DrivingTest" type="Node3D"]
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("env")
+
+[node name="Sun" type="DirectionalLight3D" parent="."]
+transform = Transform3D(0.921061, -0.279352, 0.271310, 0.000000, 0.696707, 0.717356, -0.389418, -0.660729, 0.641709, 0.000000, 0.000000, 0.000000)
+shadow_enabled = true
+
+[node name="Ground" type="StaticBody3D" parent="."]
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Ground"]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, -0.500000, 0.000000)
+shape = SubResource("ground_shape")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Ground"]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, -0.500000, 0.000000)
+mesh = SubResource("ground_mesh")
+
+[node name="WallNorth" type="StaticBody3D" parent="."]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, -70.500000)
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="WallNorth"]
+shape = SubResource("wall_shape")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="WallNorth"]
+mesh = SubResource("wall_mesh")
+
+[node name="WallSouth" type="StaticBody3D" parent="."]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 70.500000)
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="WallSouth"]
+shape = SubResource("wall_shape")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="WallSouth"]
+mesh = SubResource("wall_mesh")
+
+[node name="WallWest" type="StaticBody3D" parent="."]
+transform = Transform3D(0.000000, 0.000000, 1.000000, 0.000000, 1.000000, 0.000000, -1.000000, 0.000000, 0.000000, -70.500000, 0.000000, 0.000000)
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="WallWest"]
+shape = SubResource("wall_shape")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="WallWest"]
+mesh = SubResource("wall_mesh")
+
+[node name="WallEast" type="StaticBody3D" parent="."]
+transform = Transform3D(0.000000, 0.000000, 1.000000, 0.000000, 1.000000, 0.000000, -1.000000, 0.000000, 0.000000, 70.500000, 0.000000, 0.000000)
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="WallEast"]
+shape = SubResource("wall_shape")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="WallEast"]
+mesh = SubResource("wall_mesh")
+
+[node name="Ramp" type="StaticBody3D" parent="."]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 0.982004, -0.188859, 0.000000, 0.188859, 0.982004, 0.000000, 0.500000, -2.000000)
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Ramp"]
+shape = SubResource("ramp_shape")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Ramp"]
+mesh = SubResource("ramp_mesh")
+
+[node name="LandingPad" type="MeshInstance3D" parent="."]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.011000, -22.000000)
+mesh = SubResource("pad_mesh")
+
+[node name="RollerWest" type="StaticBody3D" parent="."]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -22.000000, 0.150000, 8.000000)
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="RollerWest"]
+shape = SubResource("roller_shape")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="RollerWest"]
+mesh = SubResource("roller_mesh")
+
+[node name="RollerWest2" type="StaticBody3D" parent="."]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -22.000000, 0.150000, -6.000000)
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="RollerWest2"]
+shape = SubResource("roller_shape")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="RollerWest2"]
+mesh = SubResource("roller_mesh")
+
+[node name="SpawnPoint" type="Marker3D" parent="." groups=["spawn_point"]]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.200000, 55.000000)
+
+[node name="Obstacles" type="Node3D" parent="."]
+
+[node name="Cone1" type="StaticBody3D" parent="Obstacles"]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -3.000000, 0.000000, 45.000000)
+
+[node name="Model" parent="Obstacles/Cone1" instance=ExtResource("3")]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000)
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Obstacles/Cone1"]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.277859, 0.000000)
+shape = SubResource("cone_shape")
+[node name="Cone2" type="StaticBody3D" parent="Obstacles"]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 3.000000, 0.000000, 37.000000)
+
+[node name="Model" parent="Obstacles/Cone2" instance=ExtResource("3")]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000)
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Obstacles/Cone2"]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.277859, 0.000000)
+shape = SubResource("cone_shape")
+[node name="Cone3" type="StaticBody3D" parent="Obstacles"]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -3.000000, 0.000000, 29.000000)
+
+[node name="Model" parent="Obstacles/Cone3" instance=ExtResource("3")]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000)
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Obstacles/Cone3"]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.277859, 0.000000)
+shape = SubResource("cone_shape")
+[node name="Cone4" type="StaticBody3D" parent="Obstacles"]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 3.000000, 0.000000, 21.000000)
+
+[node name="Model" parent="Obstacles/Cone4" instance=ExtResource("3")]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000)
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Obstacles/Cone4"]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.277859, 0.000000)
+shape = SubResource("cone_shape")
+[node name="Cone5" type="StaticBody3D" parent="Obstacles"]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 22.000000, 0.000000, 6.000000)
+
+[node name="Model" parent="Obstacles/Cone5" instance=ExtResource("3")]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000)
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Obstacles/Cone5"]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.277859, 0.000000)
+shape = SubResource("cone_shape")
+[node name="Cone6" type="StaticBody3D" parent="Obstacles"]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 16.000000, 0.000000, -2.000000)
+
+[node name="Model" parent="Obstacles/Cone6" instance=ExtResource("3")]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000)
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Obstacles/Cone6"]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.277859, 0.000000)
+shape = SubResource("cone_shape")
+[node name="Cone7" type="StaticBody3D" parent="Obstacles"]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 22.000000, 0.000000, -10.000000)
+
+[node name="Model" parent="Obstacles/Cone7" instance=ExtResource("3")]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000)
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Obstacles/Cone7"]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.277859, 0.000000)
+shape = SubResource("cone_shape")
+[node name="Cone8" type="StaticBody3D" parent="Obstacles"]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 16.000000, 0.000000, -18.000000)
+
+[node name="Model" parent="Obstacles/Cone8" instance=ExtResource("3")]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000)
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Obstacles/Cone8"]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.277859, 0.000000)
+shape = SubResource("cone_shape")
+[node name="Cone9" type="StaticBody3D" parent="Obstacles"]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -6.500000, 0.000000, -16.000000)
+
+[node name="Model" parent="Obstacles/Cone9" instance=ExtResource("3")]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000)
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Obstacles/Cone9"]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.277859, 0.000000)
+shape = SubResource("cone_shape")
+[node name="Cone10" type="StaticBody3D" parent="Obstacles"]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 6.500000, 0.000000, -16.000000)
+
+[node name="Model" parent="Obstacles/Cone10" instance=ExtResource("3")]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000)
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Obstacles/Cone10"]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.277859, 0.000000)
+shape = SubResource("cone_shape")
+[node name="Cone11" type="StaticBody3D" parent="Obstacles"]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 12.000000, 0.000000, -34.000000)
+
+[node name="Model" parent="Obstacles/Cone11" instance=ExtResource("3")]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000)
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Obstacles/Cone11"]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.277859, 0.000000)
+shape = SubResource("cone_shape")
+[node name="Cone12" type="StaticBody3D" parent="Obstacles"]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -14.000000, 0.000000, -38.000000)
+
+[node name="Model" parent="Obstacles/Cone12" instance=ExtResource("3")]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000)
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Obstacles/Cone12"]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.277859, 0.000000)
+shape = SubResource("cone_shape")
+[node name="Cone13" type="StaticBody3D" parent="Obstacles"]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 30.000000, 0.000000, 28.000000)
+
+[node name="Model" parent="Obstacles/Cone13" instance=ExtResource("3")]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000)
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Obstacles/Cone13"]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.277859, 0.000000)
+shape = SubResource("cone_shape")
+[node name="Cone14" type="StaticBody3D" parent="Obstacles"]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -32.000000, 0.000000, -25.000000)
+
+[node name="Model" parent="Obstacles/Cone14" instance=ExtResource("3")]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000)
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Obstacles/Cone14"]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.277859, 0.000000)
+shape = SubResource("cone_shape")
+[node name="Crate1" type="StaticBody3D" parent="Obstacles"]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -2.200000, 0.000000, 10.000000)
+
+[node name="Model" parent="Obstacles/Crate1" instance=ExtResource("4")]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000)
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Obstacles/Crate1"]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.357500, 0.000000)
+shape = SubResource("crate_shape")
+[node name="Crate2" type="StaticBody3D" parent="Obstacles"]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 2.200000, 0.000000, 10.000000)
+
+[node name="Model" parent="Obstacles/Crate2" instance=ExtResource("4")]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000)
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Obstacles/Crate2"]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.357500, 0.000000)
+shape = SubResource("crate_shape")
+[node name="Crate3" type="StaticBody3D" parent="Obstacles"]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 39.500000, 0.000000, 40.000000)
+
+[node name="Model" parent="Obstacles/Crate3" instance=ExtResource("4")]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000)
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Obstacles/Crate3"]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.357500, 0.000000)
+shape = SubResource("crate_shape")
+[node name="Crate4" type="StaticBody3D" parent="Obstacles"]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 40.500000, 0.000000, 40.000000)
+
+[node name="Model" parent="Obstacles/Crate4" instance=ExtResource("4")]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000)
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Obstacles/Crate4"]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.357500, 0.000000)
+shape = SubResource("crate_shape")
+[node name="Crate5" type="StaticBody3D" parent="Obstacles"]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 40.000000, 0.715000, 40.000000)
+
+[node name="Model" parent="Obstacles/Crate5" instance=ExtResource("4")]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000)
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Obstacles/Crate5"]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.357500, 0.000000)
+shape = SubResource("crate_shape")
+[node name="Crate6" type="StaticBody3D" parent="Obstacles"]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -42.000000, 0.000000, 28.000000)
+
+[node name="Model" parent="Obstacles/Crate6" instance=ExtResource("4")]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000)
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Obstacles/Crate6"]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.357500, 0.000000)
+shape = SubResource("crate_shape")
+[node name="Crate7" type="StaticBody3D" parent="Obstacles"]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 36.000000, 0.000000, -40.000000)
+
+[node name="Model" parent="Obstacles/Crate7" instance=ExtResource("4")]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000)
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Obstacles/Crate7"]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.357500, 0.000000)
+shape = SubResource("crate_shape")
+
+[node name="Props" type="Node3D" parent="."]
+
+[node name="DebrisTire" parent="Props" instance=ExtResource("5")]
+transform = Transform3D(0.621610, 0.000000, 0.783327, 0.000000, 1.000000, 0.000000, -0.783327, 0.000000, 0.621610, 30.000000, 0.000000, -30.000000)
+[node name="DebrisPlateA" parent="Props" instance=ExtResource("6")]
+transform = Transform3D(-0.504846, 0.000000, 0.863209, 0.000000, 1.000000, 0.000000, -0.863209, 0.000000, -0.504846, -35.000000, 0.000000, 20.000000)
+[node name="DebrisBolt" parent="Props" instance=ExtResource("7")]
+transform = Transform3D(0.921061, 0.000000, 0.389418, 0.000000, 1.000000, 0.000000, -0.389418, 0.000000, 0.921061, -15.000000, 0.000000, 45.000000)
+[node name="DebrisNut" parent="Props" instance=ExtResource("8")]
+transform = Transform3D(-0.128844, 0.000000, 0.991665, 0.000000, 1.000000, 0.000000, -0.991665, 0.000000, -0.128844, 25.000000, 0.000000, 40.000000)
+[node name="DebrisBumper" parent="Props" instance=ExtResource("9")]
+transform = Transform3D(-0.970958, 0.000000, 0.239249, 0.000000, 1.000000, 0.000000, -0.239249, 0.000000, -0.970958, -28.000000, 0.000000, -15.000000)
+
+[node name="CartPlayer" parent="." instance=ExtResource("2")]
+transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.200000, 55.000000)
+
+[node name="HUD" type="CanvasLayer" parent="."]
+
+[node name="SpeedLabel" type="Label" parent="HUD"]
+offset_left = 16.0
+offset_top = 16.0
+offset_right = 620.0
+offset_bottom = 180.0
+theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
+theme_override_constants/outline_size = 8
+theme_override_font_sizes/font_size = 18
+text = "Speed: 0 km/h"
+script = ExtResource("1")
