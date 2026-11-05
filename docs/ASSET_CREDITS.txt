@@ -1,6 +1,21 @@
 ASSET CREDITS - Cart Slop GP
 ============================
-Updated: 2026-11-05 (Meadow Loop minigame, environment assets)
+Updated: 2026-11-05 (Meadow Loop v2, realistic scenery)
+
+POLY HAVEN (Meadow Loop v2 realistic scenery)
+---------------------------------------------
+https://polyhaven.com - Creative Commons Zero 1.0 (CC0, public domain)
+https://polyhaven.com/license
+Full per-asset list: assets/models/polyhaven/CREDITS.txt
+Summary: 1k CC0 PBR sets (leafy_grass, dirt_floor, bark_brown_02, pine_bark)
+for the meadow ground, dirt track and tree trunks; leaf/fern/grass alpha
+atlases from island_tree_01, jacaranda_tree, grass_medium_01 and fern_02;
+five small scanned ground-cover glTF models (grass_medium_01/02, fern_02,
+moss_01, dead_tree_trunk_02). Photogrammetry TREE meshes are NOT shipped -
+they are 40-950 MB each. Realistic trees are built procedurally in Godot from
+the CC0 bark and leaf textures.
+Reproduce with downloads/fetch_polyhaven.py and
+tools/build_foliage_atlases.py.
 
 NATURE / ENVIRONMENT (Meadow Loop)
 ----------------------------------

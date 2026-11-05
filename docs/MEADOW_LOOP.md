@@ -2,7 +2,57 @@
 
 Status: **implemented and playable** (v0.4.2 tree, unreleased).
 
-`PLAY -> MINIGAMES -> FREE PLAY -> MEADOW LOOP -> PLAY`.
+`PLAY -> MINIGAMES -> MEADOW LOOP -> PLAY -> WAITING ROOM -> START RACE -> race`.
+
+## Visual upgrade (v2)
+
+The first version used flat-shaded Kenney low-poly trees. v2 keeps those only
+as the cheap far-field canopy and adds a much more demanding near field:
+
+- **Realistic PBR trees** - `scripts/minigames/realistic_tree.gd` builds six
+  deterministic tree variants (tapered trunk, three branch levels, ~150
+  alpha-cutout leaf cards each) using CC0 Poly Haven bark/leaf scans. ~387 of
+  them fill the 10-42 m verge. Poly Haven's scanned TREE meshes are 40-950 MB
+  each, so they are deliberately not shipped; only their 1k textures are.
+- **PBR ground and road** - `assets/materials/ground_pbr.gdshader` tiles CC0
+  diffuse/normal/roughness sets with `repeat_enable`, fake bump from the normal
+  map and wide-scale colour drift. `assets/materials/foliage_wind.gdshader`
+  adds gusting wind, two-sided cutout lighting, alpha-scissor shadows and a
+  `kart_position` uniform so ~3,000 grass cards physically bend aside.
+- **Scanned ground cover** - five lightweight Poly Haven glTF plants, merged
+  per material by `scripts/minigames/pbr_baker.gd` and instanced via MultiMesh
+  without losing their PBR textures. `max_parts=2` caps each merged model to
+  two clumps (the pack bundles a dozen LOD variants side by side).
+- **Heavier rendering** - 4x MSAA, ACES tonemapping, bloom, contrast/saturation
+  adjustment, longer shadow distance and fog. All viewport-local, so the
+  sandbox and menus keep their cheaper settings. Measured ~50-57 engine FPS at
+  1280x720 on integrated Intel Arc graphics.
+
+See `docs/ASSET_CREDITS.txt` and `assets/models/polyhaven/CREDITS.txt`.
+
+## Effects, interactions and animations
+
+`scripts/minigames/race_effects.gd` owns the GPU particle systems:
+
+- two rear-wheel **dirt dust** emitters, `amount_ratio` driven by speed, drift
+  and off-track state;
+- one-shot **boost**, **landing** and **lap confetti** bursts;
+- **ambient drifting leaves** that follow the kart;
+- boost pads (`scenes/track/boost_pad.tscn`) at four points on the loop;
+- 34 **pushable cones** on the racing line, launched by the cart's PushSensor;
+- a five-lamp **start-light gantry** driven by the countdown;
+- **checkpoint gate flashes** on every sector change;
+- rivals bank into corners, bob, pulse their name labels and kick up dust.
+
+## Waiting room
+
+`scenes/minigames/meadow_lobby.tscn` + `scripts/minigames/meadow_lobby.gd`.
+A live 3D preview (PBR ground, 30 procedural trees, orbiting camera, drifting
+leaf particles) sits behind a candy UI panel. Three ghost rivals join one by
+one with status-dot and scale animations; the player edits their name, readies
+up, and **START RACE** unlocks only when everyone is ready. A 3-2-1-GO
+countdown sends the game through `SceneLoader` into the race. The result card
+has a **BACK TO LOBBY** button as well as RACE AGAIN / MINIGAMES / MAIN MENU.
 
 A solo 3-lap race on a winding dirt loop cut through a very dense low-poly
 grassy forest. It reuses the sandbox kart, chase camera, boost/drift physics,
@@ -63,7 +113,7 @@ fixed lateral offsets. They are visual ghosts with no collision, start slightly
 ahead, and stop after three laps. They drive the HUD's position badge and the
 result card's finishing place, but they never gate the win condition.
 
-## Scenery
+## Scenery (v1 baseline, now far-field only)
 
 `assets/models/kenney_nature-kit/` holds 87 curated CC0 GLB models from Kenney
 *Nature Kit* 2.1: 38 tree variants, bushes, grass clumps, wildflowers, rocks,
@@ -80,15 +130,18 @@ Scatter is seeded (`20261105`) and deterministic. 64 % of instances land in a
 hash over the centreline rejects anything too close to the road. Small clutter
 does not cast shadows.
 
-Counts: 2,700 trees, 1,500 bushes, 4,200 grass clumps, 1,100 wildflowers,
-520 rocks, 280 woodland props, ~110 trackside markers.
+v2 counts: ~1,500 far-field trees, ~620 far bushes, ~1,500 grass clumps,
+~500 flowers, ~340 rocks, ~240 woodland props, ~110 trackside markers, plus
+387 PBR trees, ~3,000 wind grass cards and ~620 scanned plants.
 
 ## Generated assets
 
 `tools/gen_track_textures.py` writes two seamless 256 px CC0 textures:
-`assets/textures/grass_field.png` and `assets/textures/dirt_track.png`. They are
-tiled by `assets/materials/tiled_surface.gdshader`, which uses `repeat_enable`
-so wrapping does not depend on the texture importer's repeat setting.
+`assets/textures/grass_field.png` and `assets/textures/dirt_track.png` (kept as
+fallbacks). `tools/build_foliage_atlases.py` packs Poly Haven diffuse+alpha
+pairs into the RGBA cards in `assets/textures/foliage/` and generates the dust
+and drifting-leaf particle sprites. v2 uses the CC0 Poly Haven PBR sets for the
+actual ground and road instead of the generated tiles.
 
 ## UI
 

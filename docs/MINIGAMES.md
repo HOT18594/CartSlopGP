@@ -21,6 +21,8 @@ MAIN MENU
 
 MINIGAMES (tabs)
 ├── FREE PLAY          -> card list + details + options + PLAY
+│   └── MEADOW LOOP    -> WAITING ROOM (ready up + rivals joining) -> START RACE
+│                          -> 3-2-1-GO -> the race scene
 └── TOURNAMENT         -> rounds / difficulty / vehicle + START
     └── BACK -> PLAY
 ```

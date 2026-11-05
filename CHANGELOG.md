@@ -3,6 +3,44 @@
 All notable changes to Cart Slop GP. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer.
 
+## [Unreleased] - Meadow Loop v2: realistic scenery, effects and waiting room
+
+`version.txt` still stays at 0.4.2 - no new builds or GitHub release.
+
+### Added
+
+- **Waiting room** (`scenes/minigames/meadow_lobby.tscn`): live 3D preview with
+  an orbiting camera and procedural PBR trees, editable player name, READY UP,
+  three rivals joining one by one with status dots and pop animations, a status
+  ticker, drifting leaf stickers and a 3-2-1-GO start countdown.
+  `MINIGAMES -> PLAY` now goes to the lobby; the result card gained
+  **BACK TO LOBBY**.
+- **Realistic PBR scenery**: six procedurally generated tree variants built
+  from CC0 Poly Haven bark/leaf scans (~387 near-field trees), 1k PBR
+  meadow/dirt ground with normal and roughness maps, and five instanced
+  photogrammetry ground-cover models. Kenney low-poly trees remain as cheap
+  far-field canopy.
+- **CC0 Poly Haven assets**: 16 PBR/alpha textures, 5 scanned glTF models and
+  six derived RGBA foliage/particle cards. Full credits in
+  `assets/models/polyhaven/CREDITS.txt` and `docs/ASSET_CREDITS.txt`.
+- **Wind + interaction shaders**: `foliage_wind.gdshader` (gusting sway,
+  alpha-scissor shadows, grass bending away from the kart via a live
+  `kart_position` uniform) and `ground_pbr.gdshader` (repeat-enabled tiling,
+  normal-map bump, macro colour drift).
+- **Effects**: speed-scaled rear-wheel dirt dust, drift/boost/landing bursts,
+  lap confetti, ambient drifting leaves, four boost pads, 34 pushable cones,
+  a five-lamp start gantry, flashing checkpoint gates, and rivals that bank,
+  bob, pulse their name labels and kick up their own dust.
+- **Heavier rendering**: 4x MSAA, ACES tonemapping, bloom, contrast/saturation
+  and a longer shadow distance, all scoped to the race and lobby viewports.
+- `tools/build_foliage_atlases.py` and `docs` for the v2 pipeline.
+
+### Changed
+
+- `minigames_menu.gd` PLAY now loads `meadow_lobby.tscn`, not the race directly.
+- Scanned glTF models are merged per material by `scripts/minigames/pbr_baker.gd`
+  with `max_parts=2`, keeping the PBR look at a sane polygon budget.
+
 ## [Unreleased] - Meadow Loop minigame
 
 `version.txt` stays at 0.4.2 until a build is exported and a GitHub release is

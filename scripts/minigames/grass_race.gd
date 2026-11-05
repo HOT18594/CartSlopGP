@@ -14,13 +14,19 @@ extends Node3D
 
 const TrackSpline := preload("res://scripts/minigames/track_spline.gd")
 const FoliageBaker := preload("res://scripts/minigames/foliage_baker.gd")
+const RaceScenery := preload("res://scripts/minigames/race_scenery.gd")
+const RaceEffects := preload("res://scripts/minigames/race_effects.gd")
 const VehicleVisual := preload("res://scripts/vehicles/vehicle_visual.gd")
 const UiPalette := preload("res://scripts/ui/ui_palette.gd")
 
 const RACE_SCENE: String = "res://scenes/minigames/grass_race.tscn"
+const LOBBY_SCENE: String = "res://scenes/minigames/meadow_lobby.tscn"
 const MINIGAMES_MENU: String = "res://scenes/ui/minigames_menu.tscn"
 const MAIN_MENU: String = "res://scenes/ui/main_menu.tscn"
-const TILED_SHADER: String = "res://assets/materials/tiled_surface.gdshader"
+const PBR_SHADER: String = "res://assets/materials/ground_pbr.gdshader"
+const PBR_TEX: String = "res://assets/textures/polyhaven/"
+const BOOST_PAD_SCENE: String = "res://scenes/track/boost_pad.tscn"
+const CONE_MODEL: String = "res://assets/models/kenney_car-kit/Models/GLB format/cone.glb"
 const CHECKER_SHADER: String = "res://assets/materials/checker.gdshader"
 const CANDY_BUTTON: String = "res://scripts/ui/candy_button.gd"
 const CHECKER_FLAG: String = "res://scripts/ui/checker_flag.gd"
@@ -92,6 +98,13 @@ var _baked: Dictionary = {}
 var _grid: Dictionary = {}
 var _foliage_material: Material
 var _rivals: Array[Dictionary] = []
+var _scenery: RefCounted
+var _scenery_stats: Dictionary = {}
+var _effects: Node3D
+var _bend_materials: Array = []
+var _start_lights: Array[MeshInstance3D] = []
+var _gate_beams: Array[MeshInstance3D] = []
+var _last_sector: int = 0
 
 var _phase: Phase = Phase.COUNTDOWN
 var _countdown: float = 3.0
@@ -141,6 +154,7 @@ func _ready() -> void:
 	_spline = TrackSpline.new()
 	_foliage_material = FoliageBaker.make_material()
 	CursorController.set_menu_mode(false)
+	_upgrade_graphics()
 
 	_cart = get_tree().get_first_node_in_group("player") as CartPlayer
 	_hud = $HUD
@@ -153,8 +167,11 @@ func _ready() -> void:
 	_build_barriers()
 	_build_start_line()
 	_build_gates()
+	_build_start_lights()
+	_build_boost_pads()
 	_build_grid()
 	_build_scenery()
+	_build_trackside_props()
 	_build_rivals()
 	_build_overlay()
 
@@ -164,11 +181,39 @@ func _ready() -> void:
 		_cart.global_transform = spawn
 		_cart.velocity = Vector3.ZERO
 		_cart.set_physics_process(false)
+		_effects = RaceEffects.new()
+		_effects.name = "RaceEffects"
+		add_child(_effects)
+		_effects.call("setup", _cart)
 
 	_hud.call("set_lap", 1, TOTAL_LAPS)
 	_hud.call("set_race_position", 1)
 	_countdown_label.text = "3"
 	_toast("MEADOW LOOP  ·  3 LAPS", 2.2)
+
+
+func _upgrade_graphics() -> void:
+	# MEADOW LOOP is the deliberately heavy scene: 4x MSAA, filmic tonemapping,
+	# gentle bloom and contrast. Everything here is viewport-local, so the
+	# sandbox and the menus keep their cheaper settings.
+	var viewport: Viewport = get_viewport()
+	if viewport != null:
+		viewport.msaa_3d = Viewport.MSAA_4X
+	var world: WorldEnvironment = $WorldEnvironment
+	var env: Environment = world.environment
+	if env != null:
+		env.tonemap_mode = Environment.TONE_MAPPER_ACES
+		env.tonemap_exposure = 1.05
+		env.glow_enabled = true
+		env.glow_intensity = 0.35
+		env.glow_bloom = 0.12
+		env.glow_hdr_threshold = 1.05
+		env.adjustment_enabled = true
+		env.adjustment_saturation = 1.10
+		env.adjustment_contrast = 1.04
+	var sun: DirectionalLight3D = $Sun
+	sun.directional_shadow_max_distance = 165.0
+	sun.light_energy = 1.28
 
 
 func _track_transform(distance: float, lateral: float = 0.0, height: float = 0.2) -> Transform3D:
@@ -187,8 +232,9 @@ func _build_ground() -> void:
 	var mesh_instance := MeshInstance3D.new()
 	mesh_instance.name = "MeadowGround"
 	mesh_instance.mesh = plane
-	var mat := _tiled_material("res://assets/textures/grass_field.png", GROUND_X / 6.0)
-	mesh_instance.material_override = mat
+	mesh_instance.material_override = _pbr_material(
+		"grass_diff", "grass_nor", "grass_rough", GROUND_X / 7.0,
+		Color(1.06, 1.10, 0.98), 0.18, 0.075)
 	add_child(mesh_instance)
 
 	var body := StaticBody3D.new()
@@ -202,11 +248,18 @@ func _build_ground() -> void:
 	add_child(body)
 
 
-func _tiled_material(texture_path: String, uv_scale: float) -> ShaderMaterial:
+func _pbr_material(diff: String, nor: String, rough: String, uv_scale: float,
+		tint: Color, detail: float, macro: float) -> ShaderMaterial:
 	var mat := ShaderMaterial.new()
-	mat.shader = load(TILED_SHADER) as Shader
-	mat.set_shader_parameter("albedo_tex", load(texture_path))
+	mat.shader = load(PBR_SHADER) as Shader
+	mat.set_shader_parameter("albedo_tex", load(PBR_TEX + diff + ".jpg"))
+	mat.set_shader_parameter("normal_tex", load(PBR_TEX + nor + ".jpg"))
+	mat.set_shader_parameter("rough_tex", load(PBR_TEX + rough + ".jpg"))
 	mat.set_shader_parameter("uv_scale", uv_scale)
+	mat.set_shader_parameter("tint", tint)
+	mat.set_shader_parameter("detail_strength", detail)
+	mat.set_shader_parameter("macro_variation", macro)
+	mat.set_shader_parameter("roughness_min", 0.55)
 	return mat
 
 
@@ -248,7 +301,9 @@ func _build_track() -> void:
 	var road_mesh := MeshInstance3D.new()
 	road_mesh.name = "DirtTrack"
 	road_mesh.mesh = road
-	road_mesh.material_override = _tiled_material("res://assets/textures/dirt_track.png", 1.0)
+	road_mesh.material_override = _pbr_material(
+		"dirt_diff", "dirt_nor", "dirt_rough", 1.0,
+		Color(1.0, 0.96, 0.88), 0.24, 0.035)
 	add_child(road_mesh)
 
 	# Alternating red/white curbs, baked as vertex colours (one draw call).
@@ -414,6 +469,7 @@ func _build_gate(distance: float, caption: String, color: Color, finish: bool) -
 	beam.position = Vector3(0.0, post_height, 0.0)
 	beam.material_override = beam_mat
 	gate.add_child(beam)
+	_gate_beams.append(beam)
 
 	if finish:
 		# Checkered strip across the front of the finish beam.
@@ -442,6 +498,131 @@ func _build_gate(distance: float, caption: String, color: Color, finish: bool) -
 	gate.add_child(label)
 
 
+func _build_start_lights() -> void:
+	# A five-lamp gantry just ahead of the grid. The countdown drives it:
+	# red pairs light up on 3 / 2 / 1, all five snap green on GO.
+	var distance: float = START_DISTANCE + 12.0
+	var rig := Node3D.new()
+	rig.name = "StartLights"
+	rig.transform = _track_transform(distance, 0.0, 0.0)
+	add_child(rig)
+	for side in [-1.0, 1.0]:
+		var post := MeshInstance3D.new()
+		var box := BoxMesh.new()
+		box.size = Vector3(0.28, 5.8, 0.28)
+		post.mesh = box
+		post.position = Vector3(side * (ROAD_HALF + 0.8), 2.9, 0.0)
+		var dark := StandardMaterial3D.new()
+		dark.albedo_color = UiPalette.OUTLINE
+		post.material_override = dark
+		rig.add_child(post)
+	var bar := MeshInstance3D.new()
+	var bar_box := BoxMesh.new()
+	bar_box.size = Vector3(ROAD_HALF * 2.0 + 1.9, 0.62, 0.3)
+	bar.mesh = bar_box
+	bar.position = Vector3(0.0, 5.62, 0.0)
+	var bar_mat := StandardMaterial3D.new()
+	bar_mat.albedo_color = Color(0.16, 0.18, 0.29, 1)
+	bar.material_override = bar_mat
+	rig.add_child(bar)
+	for i in 5:
+		var lamp := MeshInstance3D.new()
+		var sphere := SphereMesh.new()
+		sphere.radius = 0.27
+		sphere.height = 0.54
+		lamp.mesh = sphere
+		# +Z faces the approaching grid; the lamps must be on the near side of
+		# the beam or the whole gantry reads as one blank black bar.
+		lamp.position = Vector3((float(i) - 2.0) * 0.62, 5.55, 0.24)
+		var mat := StandardMaterial3D.new()
+		mat.albedo_color = Color(0.16, 0.14, 0.22, 1)
+		mat.emission_enabled = true
+		mat.emission = Color(0.35, 0.06, 0.08, 1)
+		mat.emission_energy_multiplier = 0.35
+		lamp.material_override = mat
+		rig.add_child(lamp)
+		_start_lights.append(lamp)
+
+
+func _set_start_lights(red_count: int, green: bool) -> void:
+	for i in _start_lights.size():
+		var mat: StandardMaterial3D = _start_lights[i].material_override as StandardMaterial3D
+		if mat == null:
+			continue
+		var lit: bool = green or i < red_count
+		mat.emission = Color(0.15, 0.95, 0.32, 1) if green \
+			else (Color(1.0, 0.14, 0.16, 1) if lit else Color(0.35, 0.06, 0.08, 1))
+		mat.emission_energy_multiplier = 3.2 if lit else 0.25
+		mat.albedo_color = Color(0.1, 0.35, 0.14, 1) if green \
+			else (Color(0.5, 0.1, 0.1, 1) if lit else Color(0.16, 0.14, 0.22, 1))
+
+
+func _build_boost_pads() -> void:
+	var packed: PackedScene = load(BOOST_PAD_SCENE) as PackedScene
+	if packed == null:
+		return
+	var holder := Node3D.new()
+	holder.name = "BoostPads"
+	add_child(holder)
+	for i in 4:
+		var distance: float = _spline.total_length * (0.13 + float(i) * 0.245)
+		var lateral: float = [-2.4, 2.4, 0.0, -1.6][i]
+		var pad: Node3D = packed.instantiate() as Node3D
+		pad.transform = _track_transform(distance, lateral, 0.03)
+		holder.add_child(pad)
+
+
+func _build_trackside_props() -> void:
+	# Real interactions: cones on the racing line that the kart's PushSensor
+	# launches with p = m*v. They are in the "pushable" group so they never
+	# slow the kart down, but they do fly, spin and rattle.
+	var cone: PackedScene = load(CONE_MODEL) as PackedScene
+	if cone == null:
+		return
+	var holder := Node3D.new()
+	holder.name = "TrackCones"
+	add_child(holder)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 5511
+	for i in 34:
+		var distance: float = _spline.total_length * rng.randf()
+		if absf(fposmod(distance - START_DISTANCE, _spline.total_length)) < 26.0:
+			continue # keep the grid clear
+		var lateral: float = rng.randf_range(-3.6, 3.6)
+		var body := RigidBody3D.new()
+		body.add_to_group("pushable")
+		body.collision_layer = 4
+		body.collision_mask = 5
+		body.mass = 0.4
+		body.transform = _track_transform(distance, lateral, 0.02)
+		var model: Node3D = cone.instantiate() as Node3D
+		model.scale = Vector3.ONE * 0.72
+		body.add_child(model)
+		var shape := BoxShape3D.new()
+		shape.size = Vector3(0.45, 0.62, 0.45)
+		var collision := CollisionShape3D.new()
+		collision.shape = shape
+		collision.position = Vector3(0, 0.31, 0)
+		body.add_child(collision)
+		holder.add_child(body)
+
+
+func _flash_gate(sector: int) -> void:
+	# Sector 0 is the start gantry; sectors 1..3 are the three split gates.
+	var index: int = sector % _gate_beams.size()
+	if _gate_beams.is_empty():
+		return
+	var beam: MeshInstance3D = _gate_beams[index]
+	var mat: StandardMaterial3D = beam.material_override as StandardMaterial3D
+	if mat == null:
+		return
+	mat.emission_enabled = true
+	mat.emission = Color(1, 0.95, 0.6, 1)
+	mat.emission_energy_multiplier = 2.4
+	var tween := create_tween()
+	tween.tween_property(mat, "emission_energy_multiplier", 0.0, 0.85)
+
+
 # --------------------------------------------------------------------------
 # dense scenery
 
@@ -459,8 +640,11 @@ func _near_track(position: Vector3, radius: float) -> bool:
 	var key := Vector2i(int(floor(position.x / GRID_CELL)),
 		int(floor(position.z / GRID_CELL)))
 	var radius_sq: float = radius * radius
-	for dx in range(-1, 2):
-		for dz in range(-1, 2):
+	# Large exclusions (the far-field forest starts 34 m out) need a wider
+	# neighbourhood than the usual 3x3 used for the 7-10 m track clearance.
+	var reach: int = clampi(ceili(radius / GRID_CELL), 1, 4)
+	for dx in range(-reach, reach + 1):
+		for dz in range(-reach, reach + 1):
 			var bucket: Array = _grid.get(key + Vector2i(dx, dz), [])
 			for index: int in bucket:
 				if position.distance_squared_to(_spline.points[index]) < radius_sq:
@@ -535,13 +719,24 @@ func _foliage_tint(rng: RandomNumberGenerator) -> Color:
 func _build_scenery() -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 20261105
-	_scatter(rng, TREES, 2700, 9.5, 2.6, 5.8, true, "Forest", true)
-	_scatter(rng, BUSHES, 1500, 8.5, 1.2, 2.8, false, "Underbrush", true)
-	_scatter(rng, GRASSES, 4200, 7.4, 0.9, 2.1, false, "GrassClumps")
-	_scatter(rng, FLOWERS, 1100, 7.4, 0.8, 1.6, false, "Wildflowers")
-	_scatter(rng, ROCKS, 520, 9.0, 0.8, 2.2, true, "Rocks")
-	_scatter(rng, WOODLAND, 280, 10.0, 1.0, 2.0, false, "WoodlandProps")
+	# The flat-shaded Kenney forest now only fills the far field: realistic PBR
+	# trees own the verge (see RaceScenery), so these stay behind them for cheap
+	# depth and a solid horizon.
+	_scatter(rng, TREES, 1500, 34.0, 3.0, 6.6, false, "FarForest", true)
+	_scatter(rng, BUSHES, 620, 24.0, 1.3, 2.8, false, "FarUnderbrush", true)
+	_scatter(rng, GRASSES, 1500, 7.4, 0.9, 2.1, false, "GrassClumps")
+	_scatter(rng, FLOWERS, 500, 7.4, 0.8, 1.6, false, "Wildflowers")
+	_scatter(rng, ROCKS, 340, 9.0, 0.8, 2.2, false, "Rocks")
+	_scatter(rng, WOODLAND, 240, 10.0, 1.0, 2.0, false, "WoodlandProps")
 	_build_trackside_fences(rng)
+
+	_scenery = RaceScenery.new()
+	var data: Dictionary = _scenery.build(self, _spline, self, 9137)
+	_bend_materials = data["bend_materials"]
+	_scenery_stats = data["stats"]
+	print("MEADOW LOOP scenery: %d PBR trees, %d grass cards, %d scanned plants" % [
+		int(_scenery_stats["trees"]), int(_scenery_stats["grass_cards"]),
+		int(_scenery_stats["scanned"])])
 
 
 func _build_trackside_fences(rng: RandomNumberGenerator) -> void:
@@ -597,9 +792,41 @@ func _build_rivals() -> void:
 		label.no_depth_test = true
 		label.position = Vector3(0.0, 2.2, 0.0)
 		rival.add_child(label)
+
+		# Each rival kicks up its own small dust plume so the field feels alive.
+		var dust := GPUParticles3D.new()
+		dust.amount = 18
+		dust.lifetime = 0.8
+		dust.local_coords = false
+		dust.visibility_aabb = AABB(Vector3(-6, -2, -6), Vector3(12, 6, 12))
+		var proc := ParticleProcessMaterial.new()
+		proc.direction = Vector3(0, 1, 0.4)
+		proc.spread = 32.0
+		proc.initial_velocity_min = 0.6
+		proc.initial_velocity_max = 1.8
+		proc.gravity = Vector3(0, 0.7, 0)
+		proc.scale_min = 0.35
+		proc.scale_max = 0.9
+		proc.color = Color(0.84, 0.74, 0.58, 0.7)
+		dust.process_material = proc
+		var quad := QuadMesh.new()
+		quad.size = Vector2(0.4, 0.4)
+		var dust_mat := StandardMaterial3D.new()
+		dust_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		dust_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		dust_mat.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
+		dust_mat.albedo_texture = load("res://assets/textures/foliage/dust_puff.png")
+		quad.material = dust_mat
+		dust.draw_pass_1 = quad
+		dust.position = Vector3(0, 0.12, 0.7)
+		dust.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		rival.add_child(dust)
+
 		add_child(rival)
 		_rivals.append({
 			"node": rival,
+			"label": label,
+			"dust": dust,
 			"progress": START_DISTANCE + 6.0 + float(i) * 6.0,
 			"speed": RIVAL_SPEEDS[i],
 			"lateral": RIVAL_LATERAL[i],
@@ -612,10 +839,23 @@ func _place_rival(index: int) -> void:
 	var node: Node3D = rival["node"]
 	var progress: float = rival["progress"]
 	var frame: Dictionary = _spline.sample(progress)
+	var ahead: float = _spline.yaw_at(progress + 3.0)
+	var yaw: float = _spline.yaw_at(progress)
 	node.global_position = frame["position"] \
 		+ frame["right"] * float(rival["lateral"]) \
-		+ Vector3.UP * (0.05 + sin(_race_time * 7.0 + float(index)) * 0.02)
-	node.rotation.y = _spline.yaw_at(progress)
+		+ Vector3.UP * (0.05 + sin(_race_time * 7.0 + float(index)) * 0.025)
+	node.rotation.y = yaw
+	# Lean into the corner, with a little springy body roll.
+	var turn: float = clampf(angle_difference(yaw, ahead) * 3.2, -0.24, 0.24)
+	node.rotation.z = lerpf(node.rotation.z, turn, 0.08)
+	node.rotation.x = sin(_race_time * 9.0 + float(index) * 2.1) * 0.015
+	var label: Label3D = rival["label"]
+	var pulse: float = 1.0 + 0.06 * sin(_race_time * 3.4 + float(index))
+	label.scale = Vector3.ONE * pulse
+	var dust: GPUParticles3D = rival["dust"]
+	var stopped: bool = is_equal_approx(progress,
+		START_DISTANCE + float(TOTAL_LAPS) * _spline.total_length)
+	dust.emitting = not stopped
 
 
 func _tick_rivals(delta: float) -> void:
@@ -716,6 +956,9 @@ func _build_overlay() -> void:
 	var again: Button = _make_button("RACE AGAIN", UiPalette.YELLOW)
 	again.pressed.connect(_on_race_again)
 	body.add_child(again)
+	var lobby: Button = _make_button("BACK TO LOBBY", UiPalette.GRASS)
+	lobby.pressed.connect(_on_back_to_lobby)
+	body.add_child(lobby)
 	var hub: Button = _make_button("MINIGAMES", UiPalette.BLUE)
 	hub.pressed.connect(_on_back_to_minigames)
 	body.add_child(hub)
@@ -755,8 +998,8 @@ func _make_button(text: String, color: Color) -> Button:
 	button.set_script(load(CANDY_BUTTON))
 	button.set("fill_color", color)
 	button.text = text
-	button.custom_minimum_size = Vector2(0, 62)
-	button.add_theme_font_size_override("font_size", 24)
+	button.custom_minimum_size = Vector2(0, 52)
+	button.add_theme_font_size_override("font_size", 22)
 	return button
 
 
@@ -799,12 +1042,15 @@ func _tick_countdown(delta: float) -> void:
 			_last_count = count
 			_countdown_label.text = str(count) if count > 0 else "GO!"
 			_pop_label(_countdown_label)
+			_set_start_lights([0, 2, 4, 5][clampi(3 - count, 0, 3)], false)
 		return
 	if not _go_shown:
 		_go_shown = true
 		_countdown_label.text = "GO!"
 		_countdown_label.add_theme_color_override("font_color", UiPalette.GRASS)
 		_pop_label(_countdown_label)
+		_set_start_lights(5, true)
+		_flash_gate(0)
 	_go_time += delta
 	if _go_time >= 0.7:
 		_countdown_label.visible = false
@@ -843,11 +1089,15 @@ func _tick_race(delta: float) -> void:
 
 	var sector: int = clampi(int(s / (_spline.total_length / 4.0)), 0, 3)
 	_sector_flags |= 1 << sector
+	if sector != _last_sector:
+		_last_sector = sector
+		_flash_gate(sector)
 	if _unwrapped >= float(_lap) * _spline.total_length and _sector_flags == 0b1111:
 		_complete_lap()
 
 	# Barriers do the real work; this is a fallback for anything that slips out.
-	if distance > ROAD_HALF + 1.2:
+	var off: bool = distance > ROAD_HALF + 1.2
+	if off:
 		_off_timer += delta
 		_offtrack_label.visible = true
 		_cart.max_speed = _base_max_speed * 0.55
@@ -857,6 +1107,12 @@ func _tick_race(delta: float) -> void:
 		_off_timer = 0.0
 		_offtrack_label.visible = false
 		_cart.max_speed = _base_max_speed
+	if _effects != null:
+		_effects.set("off_track", off)
+	# Grass physically bends away from the kart: feed world position to the
+	# shared wind shaders once per frame (one uniform, all 5,000 cards).
+	for material: ShaderMaterial in _bend_materials:
+		material.set_shader_parameter("kart_position", _cart.global_position)
 
 	_tick_rivals(delta)
 	_hud.call("set_lap", mini(_lap, TOTAL_LAPS), TOTAL_LAPS)
@@ -886,6 +1142,9 @@ func _complete_lap() -> void:
 		return
 	_hud.call("set_lap", _lap, TOTAL_LAPS)
 	_toast("LAP %d / %d   ·   %s" % [_lap, TOTAL_LAPS, _format_time(lap_time)], 2.0)
+	_flash_gate(0)
+	if _effects != null:
+		_effects.call("lap_burst")
 	_play_confirm()
 
 
@@ -913,6 +1172,8 @@ func _finish() -> void:
 	_result_stats.text = "\n".join(lines)
 	_result_root.visible = true
 	_hud.call("set_lap", TOTAL_LAPS, TOTAL_LAPS)
+	if _effects != null:
+		_effects.call("lap_burst")
 	_play_confirm()
 
 
@@ -950,6 +1211,10 @@ func _ordinal(place: int) -> String:
 
 func _on_race_again() -> void:
 	SceneLoader.go_to(RACE_SCENE, "MEADOW LOOP", "GET READY")
+
+
+func _on_back_to_lobby() -> void:
+	SceneLoader.go_to(LOBBY_SCENE, "WAITING ROOM", "MEADOW LOOP")
 
 
 func _on_back_to_minigames() -> void:

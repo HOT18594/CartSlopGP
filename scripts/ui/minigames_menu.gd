@@ -9,8 +9,8 @@ const MINIGAMES: Array[Dictionary] = [
 	{
 		"id": "meadow_loop",
 		"name": "MEADOW LOOP",
-		"desc": "Three laps of a winding dirt track through a dense grassy forest. Three ghost rivals set the pace, but three laps is all it takes to win. Solo.",
-		"scene": "res://scenes/minigames/grass_race.tscn",
+		"desc": "Three laps of a winding dirt track through a dense grassy forest. Meet your rivals in the waiting room, then take the win. Solo.",
+		"scene": "res://scenes/minigames/meadow_lobby.tscn",
 		"available": true,
 	},
 	{
@@ -141,7 +141,7 @@ func _on_play() -> void:
 	if not bool(data.get("available", false)):
 		return
 	_save_options()
-	SceneLoader.go_to(str(data["scene"]), str(data["name"]), "3 LAPS TO WIN")
+	SceneLoader.go_to(str(data["scene"]), "WAITING ROOM", "3 LAPS TO WIN")
 
 
 func _show_tab(tab: int) -> void:

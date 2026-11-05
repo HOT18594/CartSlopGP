@@ -113,10 +113,23 @@ optional variants. Without the files the game runs silently — nothing breaks.
 
 **PLAY → MINIGAMES** opens the Free Play hub. **MEADOW LOOP** is the first
 playable minigame: three laps of a winding, 491 m dirt track through a dense
-low-poly grassy forest, with three ghost rivals setting the pace. Three laps is
-all it takes to win. Pick a difficulty, round count and vehicle on the hub, then
-hit PLAY. The race shows LAP / place badges on the normal HUD, a countdown, lap
-times and a result card with **RACE AGAIN**, **MINIGAMES** and **MAIN MENU**.
+grassy forest, with three ghost rivals setting the pace. Three laps is all it
+takes to win. Pick a difficulty, round count and vehicle on the hub, then hit
+PLAY.
+
+You land in a **waiting room** with a live 3D preview of the meadow: edit your
+name, watch BEEP / POPPY / TURBO join one by one, press **READY UP**, then
+**START RACE** for a 3-2-1-GO countdown. The race shows LAP / place badges on
+the normal HUD, lap times and a result card with **RACE AGAIN**,
+**BACK TO LOBBY**, **MINIGAMES** and **MAIN MENU**.
+
+The scenery is deliberately the heaviest scene in the game: procedurally built
+PBR trees with CC0 Poly Haven bark, leaf and normal-map textures; scanned
+ground-cover plants; wind-animated grass cards that bend away from the kart;
+PBR dirt and meadow ground; 4x MSAA, ACES tonemapping and bloom. The kart kicks
+up speed-scaled dust, drift/boost/landing bursts, lap confetti and drifting
+leaves. Boost pads, pushable cones, flashing checkpoint gates, a five-lamp
+start gantry and animated rivals all react as you drive.
 
 The kart, drift, boost, camera, speedometer and pause menu are the same as the
 sandbox. The loop is fenced by invisible barrier walls; if you somehow get out,
@@ -185,11 +198,12 @@ godot_project/
 live checks, download-state inspection, installer template checks). They are
 excluded from exported builds.
 
-Two Python/GDScript generators and one headless test are also there:
+Asset generators and one headless test are also there:
 
 ```bash
-python tools/gen_track_textures.py     # regenerate the grass/dirt tiles
-python tools/build_arena.py            # regenerate the sandbox arena
+python tools/gen_track_textures.py         # fallback grass/dirt tiles
+python tools/build_foliage_atlases.py      # RGBA foliage cards + particle sprites
+python tools/build_arena.py                # regenerate the sandbox arena
 godot --headless --path . --script res://tools/smoke_meadow_loop.gd
 ```
 
@@ -203,7 +217,9 @@ window; it ends with `PASS  meadow loop builds and completes 3 laps`.
 - **Engine:** Godot Engine 4.7.2 (MIT).
 - **Models:** Kenney *Car Kit* and *Nature Kit* (CC0) —
   [kenney.nl](https://kenney.nl/assets); Poly Pizza go-kart and shopping-cart
-  models (see `assets/models/poly_pizza/CREDITS.txt`).
+  models (see `assets/models/poly_pizza/CREDITS.txt`); Poly Haven CC0 nature
+  textures and scanned ground-cover models — [polyhaven.com](https://polyhaven.com)
+  (see `assets/models/polyhaven/CREDITS.txt`).
 - **Audio:** Kenney *Impact Sounds*, *Digital Audio*, *Interface Sounds* (CC0),
   plus synthesized engine/skid loops. See `docs/AUDIO_CREDITS.txt`.
 - **UI:** Kenney *Cursor Pack* (CC0), Fredoka font (SIL Open Font License 1.1).

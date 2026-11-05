@@ -1,0 +1,54 @@
+[gd_scene load_steps=6 format=3]
+
+[ext_resource type="Script" path="res://scripts/minigames/meadow_lobby.gd" id="1_lobby"]
+[ext_resource type="Theme" path="res://assets/ui/theme.tres" id="2_theme"]
+
+[sub_resource type="ProceduralSkyMaterial" id="sky_mat"]
+sky_top_color = Color(0.18, 0.62, 0.91, 1)
+sky_horizon_color = Color(0.75, 0.91, 1, 1)
+ground_bottom_color = Color(0.31, 0.44, 0.24, 1)
+ground_horizon_color = Color(0.75, 0.91, 1, 1)
+
+[sub_resource type="Sky" id="sky"]
+sky_material = SubResource("sky_mat")
+
+[sub_resource type="Environment" id="env"]
+background_mode = 2
+sky = SubResource("sky")
+fog_enabled = true
+fog_light_color = Color(0.76, 0.88, 0.94, 1)
+fog_density = 0.004
+tonemap_mode = 3
+glow_enabled = true
+glow_intensity = 0.3
+
+[node name="MeadowLobby" type="Node3D"]
+script = ExtResource("1_lobby")
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("env")
+
+[node name="Sun" type="DirectionalLight3D" parent="."]
+transform = Transform3D(0.921061, -0.279352, 0.27131, 0, 0.696707, 0.717356, -0.389418, -0.660729, 0.641709, 0, 0, 0)
+light_color = Color(1, 0.96, 0.88, 1)
+light_energy = 1.25
+shadow_enabled = true
+directional_shadow_max_distance = 90.0
+
+[node name="PreviewRoot" type="Node3D" parent="."]
+
+[node name="PreviewCamera" type="Camera3D" parent="."]
+current = true
+fov = 58.0
+
+[node name="UI" type="CanvasLayer" parent="."]
+layer = 10
+
+[node name="Root" type="Control" parent="UI"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme = ExtResource("2_theme")
