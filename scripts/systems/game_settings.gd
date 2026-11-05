@@ -32,6 +32,7 @@ const CONN_ONLINE: String = "online"
 @export var multiplayer_mode: String = GAME_SANDBOX ## GAME_SANDBOX or GAME_MINIGAMES.
 @export var connection_preference: String = CONN_ONLINE ## CONN_LAN (Wi-Fi) or CONN_ONLINE.
 @export var relay_server: String = "" ## Optional public Pi server URL/host for internet joins.
+@export var selected_minigame: String = "meadow_loop" ## Map chosen for the next race.
 @export var bots_enabled: bool = false ## OFF by default - bots are strictly opt-in.
 @export_range(0, 5) var bot_count: int = 3 ## How many AI carts to add when enabled.
 
@@ -134,6 +135,20 @@ func set_connection_preference(mode: String) -> void:
 func set_relay_server(raw: String) -> void:
 	relay_server = raw.strip_edges()
 	save_settings()
+
+
+func set_selected_minigame(id: String) -> void:
+	selected_minigame = id if id != "" else "meadow_loop"
+	save_settings()
+
+
+func minigame_name(id: String = "") -> String:
+	var key: String = id if id != "" else selected_minigame
+	match key:
+		"meadow_loop":
+			return "MEADOW LOOP"
+		_:
+			return "MEADOW LOOP"
 	session_changed.emit()
 
 
@@ -208,6 +223,7 @@ func load_settings() -> void:
 	multiplayer_mode = str(config.get_value("session", "multiplayer_mode", multiplayer_mode))
 	connection_preference = str(config.get_value("session", "connection", connection_preference))
 	relay_server = str(config.get_value("session", "relay_server", relay_server))
+	selected_minigame = str(config.get_value("session", "selected_minigame", selected_minigame))
 	bots_enabled = bool(config.get_value("session", "bots_enabled", bots_enabled))
 	bot_count = int(config.get_value("session", "bot_count", bot_count))
 
@@ -227,6 +243,7 @@ func save_settings() -> void:
 	config.set_value("session", "multiplayer_mode", multiplayer_mode)
 	config.set_value("session", "connection", connection_preference)
 	config.set_value("session", "relay_server", relay_server)
+	config.set_value("session", "selected_minigame", selected_minigame)
 	config.set_value("session", "bots_enabled", bots_enabled)
 	config.set_value("session", "bot_count", bot_count)
 	config.save(SETTINGS_PATH)

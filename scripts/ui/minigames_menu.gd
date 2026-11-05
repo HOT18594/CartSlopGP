@@ -22,7 +22,7 @@ const EVENTS: Array[Dictionary] = [
 		"tag": "3 LAPS · READY",
 		"desc": "A winding dirt circuit through a dense grassy forest. Three laps, four boost pads, three rivals and a lot of dust.",
 		"preview": "meadow_loop.png",
-		"scene": MEADOW_LOBBY,
+		"scene": "res://scenes/minigames/grass_race.tscn",
 		"available": true,
 		"accent": UiPalette.GRASS,
 	},
@@ -97,20 +97,6 @@ func _build_ui() -> void:
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	title_row.add_child(title)
 
-	var count := Label.new()
-	count.text = "%d EVENTS" % EVENTS.size()
-	count.add_theme_font_size_override("font_size", 15)
-	count.add_theme_color_override("font_color", UiPalette.BLUE_DARK)
-	count.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	title_row.add_child(count)
-
-	var subtitle := Label.new()
-	subtitle.text = "PICK AN EVENT  ·  MEADOW LOOP IS READY TO RACE"
-	subtitle.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	subtitle.add_theme_font_size_override("font_size", 14)
-	subtitle.add_theme_color_override("font_color", UiPalette.BLUE_DARK)
-	_body.add_child(subtitle)
-
 	_grid = GridContainer.new()
 	_grid.columns = 3
 	_grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -161,7 +147,7 @@ func _build_ui() -> void:
 	var vehicle_names := PackedStringArray()
 	var vehicle_ids: Array[String] = []
 	for entry: Dictionary in Catalog.all():
-		vehicle_names.append("VEHICLE: " + str(entry.get("name", "?")))
+		vehicle_names.append(str(entry.get("name", "?")))
 		vehicle_ids.append(str(entry.get("id", Catalog.DEFAULT_ID)))
 	_vehicle_button.call("configure", vehicle_names, vehicle_ids,
 		Catalog.index_of(GameSettings.minigame_vehicle))
@@ -250,7 +236,8 @@ func _select(index: int) -> void:
 	_detail_meta.text = str(data["tag"])
 	_detail_desc.text = str(data["desc"])
 	_play_button.disabled = not available
-	_play_button.text = "PLAY  ·  %s" % str(data["name"]) if available \
+	var verb: String = "SELECT" if Network.is_session_active() else "RACE"
+	_play_button.text = "%s  ·  %s" % [verb, str(data["name"])] if available \
 		else "COMING SOON"
 	_play_button.set("fill_color", UiPalette.YELLOW if available else UiPalette.TEXT_DIM)
 	for card_index in _cards.size():
@@ -277,14 +264,19 @@ func _on_play() -> void:
 	var data: Dictionary = EVENTS[_selected]
 	if not bool(data.get("available", false)):
 		return
+	GameSettings.set_selected_minigame(str(data.get("id", "meadow_loop")))
 	if Network.is_session_active():
 		if not Network.is_host:
 			return
+		GameSettings.set_multiplayer_mode(GameSettings.GAME_MINIGAMES)
 		Network.configure_session(GameSettings.GAME_MINIGAMES, GameSettings.bots_enabled,
 			GameSettings.effective_bot_count())
-		Network.start_game(Network.RACE_SCENE, GameSettings.GAME_MINIGAMES)
+		# Selecting a map must only update the lobby. The host starts the
+		# race from the lobby's START button.
+		SceneLoader.go_to(LOBBY_SCENE, "MULTIPLAYER", "Map selected")
 		return
-	SceneLoader.go_to(str(data["scene"]), "WAITING ROOM", "3 LAPS TO WIN")
+	GameSettings.set_play_mode(GameSettings.MODE_SINGLE)
+	SceneLoader.go_to(str(data["scene"]), "MEADOW LOOP", "3 LAPS TO WIN")
 
 
 func _on_back() -> void:

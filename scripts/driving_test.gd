@@ -103,6 +103,9 @@ func _setup_bots() -> void:
 		node.collision_layer = 8
 		node.collision_mask = 0
 		var entry: Dictionary = entries[(i + 1) % entries.size()]
+		node.set_meta("vehicle_mass", float(entry.get("mass", 1200.0)))
+		node.set_meta("vehicle_velocity", Vector3.ZERO)
+		node.set_meta("bump_offset", Vector3.ZERO)
 		var shape := CollisionShape3D.new()
 		var box := BoxShape3D.new()
 		box.size = Vector3(1.6, 1.3, float(entry.get("length", 2.4)))
@@ -139,9 +142,19 @@ func _update_bots(delta: float) -> void:
 		var angle: float = float(bot["angle"]) + _bot_time * float(bot["speed"])
 		var radius: float = float(bot["radius"])
 		var node: Node3D = bot["node"]
+		var before: Vector3 = node.global_position
+		var bump: Vector3 = node.get_meta("bump_velocity", Vector3.ZERO)
+		var offset: Vector3 = node.get_meta("bump_offset", Vector3.ZERO)
+		offset += bump * delta
+		offset = offset.move_toward(Vector3.ZERO, 7.0 * delta)
+		bump = bump.move_toward(Vector3.ZERO, 9.0 * delta)
+		node.set_meta("bump_offset", offset)
+		node.set_meta("bump_velocity", bump)
 		node.global_position = Vector3(cos(angle) * radius, 0.12,
-			sin(angle) * radius)
+			sin(angle) * radius) + offset
 		node.rotation.y = PI - angle
+		if delta > 0.0001:
+			node.set_meta("vehicle_velocity", (node.global_position - before) / delta)
 
 
 # --------------------------------------------------------------------------

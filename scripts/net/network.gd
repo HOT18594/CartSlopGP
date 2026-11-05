@@ -74,6 +74,7 @@ var game_scene: String = GAME_SCENE
 var session_mode: String = GameSettings.GAME_SANDBOX
 var session_bots: bool = false
 var session_bot_count: int = 0
+var session_minigame: String = "meadow_loop"
 var race_standings: Array[Dictionary] = [] ## peer id/name/time/place, filled by the race.
 
 var _peer: ENetMultiplayerPeer
@@ -720,6 +721,7 @@ func configure_session(mode: String, bots: bool, count: int) -> void:
 	session_mode = mode
 	session_bots = bots
 	session_bot_count = count
+	session_minigame = GameSettings.selected_minigame
 	rpc("_net_session_config", mode, bots, count)
 
 
@@ -756,6 +758,7 @@ func start_game(scene_path: String = "", mode: String = "") -> void:
 	session_mode = chosen_mode
 	session_bots = GameSettings.bots_enabled
 	session_bot_count = GameSettings.effective_bot_count()
+	session_minigame = GameSettings.selected_minigame
 	rpc("_net_begin_game", target, chosen_mode, session_bots, session_bot_count)
 
 

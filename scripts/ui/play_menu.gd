@@ -104,6 +104,7 @@ func _show_tab(tab: int) -> void:
 	GameSettings.set_play_mode(tab)
 	_single_box.visible = tab == GameSettings.MODE_SINGLE
 	_multi_box.visible = tab == GameSettings.MODE_MULTIPLAYER
+	_bots_pill.visible = tab == GameSettings.MODE_SINGLE
 	_single_tab.set("fill_color", UiPalette.YELLOW if tab == GameSettings.MODE_SINGLE else UiPalette.TEXT_DIM)
 	_multi_tab.set("fill_color", UiPalette.BLUE if tab == GameSettings.MODE_MULTIPLAYER else UiPalette.TEXT_DIM)
 

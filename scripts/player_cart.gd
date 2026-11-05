@@ -96,6 +96,7 @@ var slide_amount: float = 0.0 ## 0-1 sideways-slide intensity (for the skid audi
 var remote_mode: bool = false
 var net_position: Vector3 = Vector3.ZERO
 var net_yaw: float = 0.0
+var net_velocity: Vector3 = Vector3.ZERO
 
 var _boost_exhausted: bool = false
 var _profile_mass: float = REFERENCE_MASS
@@ -198,21 +199,41 @@ func setup_remote(peer_id: int) -> void:
 		_feedback.set_remote_mode(true)
 	net_position = global_position
 	net_yaw = rotation.y
+	net_velocity = Vector3.ZERO
 
 
 func _process(delta: float) -> void:
 	if not remote_mode:
 		return
+	var before: Vector3 = global_position
 	global_position = global_position.lerp(net_position, 1.0 - exp(-14.0 * delta))
 	rotation.y = lerp_angle(rotation.y, net_yaw, 1.0 - exp(-14.0 * delta))
+	if delta > 0.0001:
+		net_velocity = (global_position - before) / delta
 
 
 func set_vehicle_id(vehicle_id: String) -> void:
-	## Rebuild the visual for a remote player's chosen vehicle.
+	## Rebuild the visual for a remote player's chosen vehicle and remember its
+	## mass so car-to-car impacts use the right inertia.
 	var entry: Dictionary = VehicleCatalog.find(vehicle_id)
 	if entry.is_empty():
 		return
+	_profile_mass = maxf(float(entry.get("mass", REFERENCE_MASS)), 1.0)
 	_apply_vehicle_visual_for(entry)
+
+
+func get_mass() -> float:
+	return _profile_mass
+
+
+func get_collision_velocity() -> Vector3:
+	return net_velocity if remote_mode else velocity
+
+
+func apply_vehicle_bump(normal: Vector3, push: float) -> void:
+	if remote_mode or push <= 0.0:
+		return
+	velocity += normal * push
 
 
 func _apply_vehicle_visual() -> Dictionary:
@@ -366,18 +387,44 @@ func _process_collisions() -> void:
 		var normal: Vector3 = collision.get_normal()
 		if normal.y > 0.6:
 			continue
-		var impact_speed: float = -_prev_velocity.dot(normal)
+		var other_mass: float = 0.0
+		var other_velocity: Vector3 = Vector3.ZERO
+		var other_vehicle: bool = false
+		if hit is CartPlayer:
+			other_vehicle = true
+			other_mass = (hit as CartPlayer).get_mass()
+			other_velocity = (hit as CartPlayer).get_collision_velocity()
+		elif hit is Node and (hit as Node).has_meta("vehicle_mass"):
+			other_vehicle = true
+			other_mass = float((hit as Node).get_meta("vehicle_mass"))
+			other_velocity = (hit as Node).get_meta("vehicle_velocity", Vector3.ZERO)
+		var impact_speed: float = -(_prev_velocity - other_velocity).dot(normal)
 		if impact_speed < min_impact_speed:
 			continue
-		# p = m * v: a light cart bounces and sheds speed, a loaded truck ploughs
-		# through. Scaling is clamped so neither extreme feels broken.
-		var weight_ratio: float = clampf(_profile_mass / REFERENCE_MASS, 0.05, 3.0)
+		# Momentum exchange. For a car-to-car hit both bodies share the impulse;
+		# for a wall, the wall is effectively infinite.
+		var own_mass: float = maxf(_profile_mass, 1.0)
+		var total_mass: float = maxf(own_mass + other_mass, 1.0)
+		var own_share: float = other_mass / total_mass if other_vehicle else 0.5
+		var weight_ratio: float = clampf(own_mass / REFERENCE_MASS, 0.05, 3.0)
 		var recoil_scale: float = clampf(1.0 / sqrt(weight_ratio), 0.55, 1.8)
 		var loss_scale: float = clampf(pow(weight_ratio, -0.35), 0.50, 1.60)
+		if other_vehicle:
+			loss_scale *= clampf(pow(maxf(other_mass, 1.0) / own_mass, 0.25), 0.7, 1.5)
 		var shake_scale: float = clampf(1.0 / sqrt(weight_ratio), 0.65, 1.20)
 		var impact_factor: float = clampf(impact_speed / maxf(max_speed, 0.001), 0.0, 1.0)
-		velocity += normal * minf(impact_speed * impact_recoil * recoil_scale,
-			max_recoil_speed * maxf(recoil_scale, 1.0))
+		var recoil: float = impact_speed * impact_recoil * recoil_scale \
+			* (1.0 + own_share if other_vehicle else 1.0)
+		velocity += normal * minf(recoil, max_recoil_speed * maxf(recoil_scale, 1.0)
+			* (1.0 + own_share if other_vehicle else 1.0))
+		if other_vehicle:
+			var other_push: float = impact_speed * impact_recoil \
+				* (own_mass / total_mass) * 1.25
+			if hit is CartPlayer:
+				(hit as CartPlayer).apply_vehicle_bump(-normal, other_push)
+			elif hit is Node and (hit as Node).has_meta("bump_velocity"):
+				var bump: Vector3 = (hit as Node).get_meta("bump_velocity", Vector3.ZERO)
+				(hit as Node).set_meta("bump_velocity", bump - normal * other_push)
 		var loss: float = impact_speed * impact_speed_loss * loss_scale
 		var planar: Vector3 = Vector3(velocity.x, 0.0, velocity.z).move_toward(Vector3.ZERO, loss)
 		velocity.x = planar.x
@@ -389,7 +436,8 @@ func _process_collisions() -> void:
 		_impact_timer = impact_cooldown
 		_squash_impulse = maxf(_squash_impulse, clampf(impact_factor * 1.2, 0.3, 1.0))
 		if _camera_rig != null:
-			_camera_rig.add_shake((0.08 + 0.30 * impact_factor) * shake_scale)
+			_camera_rig.add_shake((0.08 + 0.30 * impact_factor) * shake_scale \
+				* (1.15 if other_vehicle else 1.0))
 		if _feedback != null:
 			_feedback.on_collision(impact_factor)
 		break

@@ -155,7 +155,7 @@ theme_override_constants/separation = 6
 layout_mode = 2
 theme_override_colors/font_color = Color(0.164706, 0.560784, 0.768627, 1)
 theme_override_font_sizes/font_size = 14
-text = "OR JOIN WITH A CODE"
+text = "JOIN A GAME"
 horizontal_alignment = 1
 
 [node name="ServerBox" type="HBoxContainer" parent="Center/Panel/Body/JoinBox"]
@@ -224,7 +224,7 @@ theme_override_constants/separation = 6
 layout_mode = 2
 theme_override_colors/font_color = Color(0.164706, 0.560784, 0.768627, 1)
 theme_override_font_sizes/font_size = 14
-text = "JOIN CODE"
+text = "SHARE CODE"
 horizontal_alignment = 1
 
 [node name="CodeLabel" type="Label" parent="Center/Panel/Body/HostBox"]

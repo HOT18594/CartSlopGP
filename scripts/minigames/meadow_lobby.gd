@@ -510,14 +510,9 @@ func _on_start_pressed() -> void:
 	if _start_button.disabled or _state != State.WAITING:
 		return
 	GameSettings.set_player_name(_name_edit.text)
-	_state = State.STARTING
-	_countdown = 3.6
-	_countdown_step = -1
-	_countdown_label.text = "3"
-	_countdown_label.visible = true
-	_status_label.text = "Starting race..."
-	_ready_button.disabled = true
-	_start_button.disabled = true
+	_state = State.LEAVING
+	# The race scene owns the 3-2-1 countdown, after the world has loaded.
+	SceneLoader.go_to(RACE_SCENE, "MEADOW LOOP", "3 LAPS TO WIN")
 
 
 func _tick_countdown(delta: float) -> void:

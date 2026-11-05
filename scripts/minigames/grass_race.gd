@@ -795,6 +795,8 @@ func _build_rivals() -> void:
 		var body := StaticBody3D.new()
 		body.collision_layer = 8
 		body.collision_mask = 0
+		body.set_meta("vehicle_mass", 900.0)
+		body.set_meta("bump_velocity", Vector3.ZERO)
 		var shape := CollisionShape3D.new()
 		var box := BoxShape3D.new()
 		box.size = Vector3(1.7, 1.2, 2.2)
@@ -847,11 +849,13 @@ func _build_rivals() -> void:
 		add_child(rival)
 		_rivals.append({
 			"node": rival,
+			"body": body,
 			"label": label,
 			"dust": dust,
 			"progress": START_DISTANCE + 6.0 + float(i) * 6.0,
 			"speed": RIVAL_SPEEDS[i],
 			"lateral": RIVAL_LATERAL[i],
+			"bump": Vector3.ZERO,
 		})
 		_place_rival(i)
 
@@ -865,7 +869,8 @@ func _place_rival(index: int) -> void:
 	var yaw: float = _spline.yaw_at(progress)
 	node.global_position = frame["position"] \
 		+ frame["right"] * float(rival["lateral"]) \
-		+ Vector3.UP * (0.05 + sin(_race_time * 7.0 + float(index)) * 0.025)
+		+ Vector3.UP * (0.05 + sin(_race_time * 7.0 + float(index)) * 0.025) \
+		+ (rival["bump"] as Vector3)
 	node.rotation.y = yaw
 	# Lean into the corner, with a little springy body roll.
 	var turn: float = clampf(angle_difference(yaw, ahead) * 3.2, -0.24, 0.24)
@@ -886,6 +891,14 @@ func _tick_rivals(delta: float) -> void:
 		var progress: float = minf(float(_rivals[i]["progress"])
 			+ float(_rivals[i]["speed"]) * delta, limit)
 		_rivals[i]["progress"] = progress
+		var body: StaticBody3D = _rivals[i]["body"]
+		var bump: Vector3 = body.get_meta("bump_velocity", Vector3.ZERO)
+		var offset: Vector3 = _rivals[i]["bump"]
+		offset += bump * delta
+		offset = offset.move_toward(Vector3.ZERO, 6.0 * delta)
+		bump = bump.move_toward(Vector3.ZERO, 9.0 * delta)
+		body.set_meta("bump_velocity", bump)
+		_rivals[i]["bump"] = offset
 		_place_rival(i)
 
 
@@ -990,6 +1003,7 @@ func _build_overlay() -> void:
 	body.add_child(lobby)
 	var hub: Button = _make_button("MINIGAMES", UiPalette.BLUE)
 	hub.pressed.connect(_on_back_to_minigames)
+	hub.visible = false
 	body.add_child(hub)
 	var menu: Button = _make_button("MAIN MENU", UiPalette.RED)
 	menu.pressed.connect(_on_main_menu)
@@ -999,6 +1013,8 @@ func _build_overlay() -> void:
 		again.visible = false
 		hub.visible = false
 		lobby.text = "BACK TO LOBBY"
+	else:
+		lobby.text = "BACK TO HUB"
 
 
 func _make_label(parent: Control, font_size: int, color: Color,
@@ -1407,7 +1423,7 @@ func _on_back_to_lobby() -> void:
 	if _multiplayer:
 		Network.return_to_lobby_keep_session()
 	else:
-		SceneLoader.go_to(LOBBY_SCENE, "WAITING ROOM", "MEADOW LOOP")
+		SceneLoader.go_to(MINIGAMES_MENU, "MINIGAMES", "PICK AN EVENT")
 
 
 func _on_back_to_minigames() -> void:

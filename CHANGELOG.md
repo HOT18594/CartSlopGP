@@ -3,6 +3,38 @@
 All notable changes to Cart Slop GP. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer.
 
+## [0.5.3] - 2026-11-05
+
+UI overhaul, map selection in the lobby, race-only countdown and car-to-car physics.
+
+### Added
+
+- **Car-to-car collisions** with mass-aware momentum exchange. Remote carts,
+  sandbox bots and Meadow Loop rivals now push back, recoil and bump instead of
+  acting as immovable scenery.
+- **Map choice belongs to the lobby**: choosing a minigame now selects the map
+  and returns to the lobby. The host starts the race from START.
+- **One button height and type scale across every menu** via a shared UI kit.
+  Preview cards keep their larger size; all action buttons, fields and toggles
+  line up.
+
+### Changed
+
+- Solo minigames go straight into the race; the waiting-room countdown is gone.
+  The 3-2-1-GO countdown now plays after the race scene has loaded.
+- Lobby is calmer: the public-server field moved under ADVANCED, captions were
+  shortened, redundant hints were removed and the map is a single button.
+- Race result has one back-to-hub action instead of duplicate hub buttons.
+- HUD control hint shortened.
+
+### Fixed
+
+- Selecting a minigame while hosting no longer starts the game immediately.
+- Returning from a solo race goes back to the minigame hub, not the old waiting
+  room.
+- Buttons no longer jump between 34, 44, 52, 66 and 80 px on different screens.
+- Remote carts now receive their real catalog mass before collision resolution.
+
 ## [0.5.2] - 2026-11-05
 
 Global Pi joins that survive Windows Firewall.

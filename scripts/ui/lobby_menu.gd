@@ -82,6 +82,8 @@ func _ready() -> void:
 	_name_input.text_changed.connect(_on_name_typed)
 	_public_ip_input.text_changed.connect(func(text: String) -> void: Network.set_custom_public_ip(text))
 	_server_input.text_changed.connect(func(text: String) -> void: Network.set_relay_server(text))
+	if GameSettings.relay_server.begins_with("127.0.0.1"):
+		GameSettings.set_relay_server("")
 	_server_input.text = GameSettings.relay_server
 	_join_input.text_submitted.connect(func(_t: String) -> void: _on_join_pressed())
 
@@ -115,8 +117,8 @@ func _build_session_controls() -> void:
 	_mode_pill.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_mode_pill.connect("option_changed", func(value: Variant) -> void: _set_mode(str(value)))
 	_mode_row.add_child(_mode_pill)
-	_advanced_button = _candy("ADVANCED", UiPalette.TEXT_DIM, 36, 12)
-	_advanced_button.custom_minimum_size = Vector2(126, 36)
+	_advanced_button = _candy("ADVANCED", UiPalette.TEXT_DIM, 54, 22)
+	_advanced_button.custom_minimum_size = Vector2(150, 54)
 	_advanced_button.pressed.connect(_on_advanced_pressed)
 	_mode_row.add_child(_advanced_button)
 
@@ -147,7 +149,7 @@ func _build_session_controls() -> void:
 	_bots_pill.connect("option_changed", _on_bots_changed)
 	_bots_row.add_child(_bots_pill)
 
-	_minigame_picker = _candy("CHOOSE MINIGAME", UiPalette.CYAN, 48, 20)
+	_minigame_picker = _candy("MAP: MEADOW LOOP", UiPalette.CYAN, 60, 22)
 	_minigame_picker.pressed.connect(_on_choose_minigame)
 	_game_hint = Label.new()
 	_game_hint.add_theme_font_size_override("font_size", 13)
@@ -228,13 +230,13 @@ func _set_session_state(state: String) -> void:
 	_advanced_button.visible = editing and _mode == MODE_ONLINE
 	_host_button.visible = editing
 	_join_box.visible = editing
-	_server_box.visible = editing and _mode == MODE_ONLINE
+	_server_box.visible = editing and _mode == MODE_ONLINE and _advanced_open
 	_host_box.visible = not editing
 	# Game/bot options only matter once you are hosting.
 	_game_row.visible = state == "host"
 	_bots_row.visible = state == "host"
 	_minigame_picker.visible = state == "host" and GameSettings.multiplayer_mode == GameSettings.GAME_MINIGAMES
-	_game_hint.visible = state == "host"
+	_game_hint.visible = false
 	if editing:
 		_join_status.visible = false
 	else:
@@ -265,8 +267,10 @@ func _on_bots_changed(value: Variant) -> void:
 func _on_advanced_pressed() -> void:
 	_advanced_open = not _advanced_open
 	_advanced_button.set("fill_color", UiPalette.YELLOW if _advanced_open else UiPalette.TEXT_DIM)
-	_advanced_button.text = "HIDE ADVANCED" if _advanced_open else "ADVANCED"
+	_advanced_button.text = "LESS" if _advanced_open else "ADVANCED"
 	_public_ip_row.visible = _mode == MODE_ONLINE and _advanced_open
+	_server_box.visible = _mode == MODE_ONLINE and _advanced_open \
+		and _session_state == "idle"
 
 
 func _on_choose_minigame() -> void:
@@ -287,9 +291,10 @@ func _refresh_session_controls() -> void:
 	_bots_pill.disabled = not can_edit
 	_minigame_picker.visible = _session_state == "host" and mode == GameSettings.GAME_MINIGAMES
 	_start_button.text = "START RACE" if mode == GameSettings.GAME_MINIGAMES else "START SANDBOX"
-	_game_hint.text = "Host picks the game and bots. Everyone loads the same world."
-	if not can_edit:
-		_game_hint.text = "Waiting for the host to start."
+	var map_id: String = Network.session_minigame if Network.is_session_active() \
+		else GameSettings.selected_minigame
+	_minigame_picker.text = "MAP: " + GameSettings.minigame_name(map_id)
+	_game_hint.text = ""
 
 
 func _on_name_typed(_text: String) -> void:
@@ -314,9 +319,9 @@ func _set_mode(mode: String) -> void:
 	if _advanced_button != null:
 		_advanced_button.visible = _mode == MODE_ONLINE
 	_public_ip_row.visible = _mode == MODE_ONLINE and _advanced_open
-	_server_box.visible = _mode == MODE_ONLINE
-	_mode_hint.text = "Server field is optional on your Wi-Fi; enter the public Pi address for internet friends." \
-		if _mode == MODE_ONLINE else "Same network only. No port forwarding needed."
+	_server_box.visible = _mode == MODE_ONLINE and _advanced_open
+	_mode_hint.text = "Use ADVANCED for a public Pi address. Otherwise same Wi-Fi only." \
+		if _mode == MODE_ONLINE else "Same Wi-Fi only. No port forwarding needed."
 	_refresh_session_controls()
 
 
