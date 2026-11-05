@@ -29,7 +29,8 @@ Updated: 2026-11-05
 - [x] Client names and cart positions relayed for 3+ players
 - [x] Multiplayer Meadow Loop with remote carts, names and standings
 - [x] Short room-code join + lobby BROWSE list
-- [ ] Internet short-code lookup (needs a public server URL field or tunnel)
+- [x] Internet short-code lookup (optional SERVER field) + public 14-character code
+- [x] Host TCP tunnel end-to-end: local Pi server, host ENet, client ENet join
 - [x] Host TCP tunnel (TCP 42820) around Windows Firewall inbound blocks
 - [x] UPnP + NAT-PMP automatic mapping and public reachability check
 - [ ] Full server-authoritative vehicle collisions (currently each client
@@ -60,7 +61,8 @@ Updated: 2026-11-05
 - [x] GitHub updater with progress and restart-to-install
 - [x] macOS ad-hoc re-sign after replacing the .app
 - [x] Release v0.5.2 builds for Windows/macOS/Linux/Web
-- [ ] Verify updater from v0.5.1 → v0.5.2 on each desktop platform
+- [x] Verify GitHub latest release and platform asset names (v0.5.2)
+- [ ] Verify updater download/install on each desktop platform
 - [ ] Optional Pi update mirror + release automation
 
 ## Music
