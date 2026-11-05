@@ -1,30 +1,41 @@
 extends Control
-## Minigames hub prototype: Free Play (solo cards + options) and Tournament.
-## No minigame is wired yet; every PLAY/START button is disabled on purpose.
+## Minigames hub: Free Play (solo cards + options) and Tournament.
+## Cards with `available: true` load their scene; the rest stay "COMING SOON".
 
 const Catalog := preload("res://scripts/vehicles/vehicle_catalog.gd")
 const PLAY_MENU_SCENE: String = "res://scenes/ui/play_menu.tscn"
 
 const MINIGAMES: Array[Dictionary] = [
 	{
+		"id": "meadow_loop",
+		"name": "MEADOW LOOP",
+		"desc": "Three laps of a winding dirt track through a dense grassy forest. Three ghost rivals set the pace, but three laps is all it takes to win. Solo.",
+		"scene": "res://scenes/minigames/grass_race.tscn",
+		"available": true,
+	},
+	{
 		"id": "slalom",
 		"name": "CONE SLALOM",
 		"desc": "Weave through the cone lane as fast as you can without clipping a cone. Solo.",
+		"available": false,
 	},
 	{
 		"id": "crates",
 		"name": "CRATE SMASH",
 		"desc": "Shatter the crate wall in as few hits as possible. Solo.",
+		"available": false,
 	},
 	{
 		"id": "drift",
 		"name": "DRIFT SCORE",
 		"desc": "Chain drifts around the ring and bank the highest score before time runs out. Solo.",
+		"available": false,
 	},
 	{
 		"id": "boost",
 		"name": "BOOST RUN",
 		"desc": "Hit every boost pad down the straight and finish under the target time. Solo.",
+		"available": false,
 	},
 ]
 
@@ -56,6 +67,7 @@ func _ready() -> void:
 	_free_tab.pressed.connect(_show_tab.bind(0))
 	_tour_tab.pressed.connect(_show_tab.bind(1))
 	_back_button.pressed.connect(_on_back)
+	_play_button.pressed.connect(_on_play)
 	_build_cards()
 	_build_options()
 	_select(0)
@@ -64,10 +76,12 @@ func _ready() -> void:
 
 func _build_cards() -> void:
 	for index in MINIGAMES.size():
+		var data: Dictionary = MINIGAMES[index]
 		var button := Button.new()
-		button.text = "%s      SOLO      SOON" % str(MINIGAMES[index]["name"])
-		button.custom_minimum_size = Vector2(0, 54)
-		button.add_theme_font_size_override("font_size", 20)
+		var tag: String = "READY" if bool(data.get("available", false)) else "SOON"
+		button.text = "%s      SOLO      %s" % [str(data["name"]), tag]
+		button.custom_minimum_size = Vector2(0, 44)
+		button.add_theme_font_size_override("font_size", 17)
 		button.pressed.connect(_select.bind(index))
 		var script: Script = load("res://scripts/ui/candy_button.gd")
 		button.set_script(script)
@@ -113,10 +127,21 @@ func _save_options(_index: int = 0) -> void:
 func _select(index: int) -> void:
 	_selected = index
 	var data: Dictionary = MINIGAMES[index]
+	var available: bool = bool(data.get("available", false))
 	_detail_name.text = str(data["name"])
 	_detail_desc.text = str(data["desc"])
+	_play_button.disabled = not available
+	_play_button.text = "PLAY  ·  %s" % str(data["name"]) if available else "PLAY - COMING SOON"
 	for card_index in _cards.size():
 		_cards[card_index].fill_color = Color("ffd22e") if card_index == index else Color("b9b2c9")
+
+
+func _on_play() -> void:
+	var data: Dictionary = MINIGAMES[_selected]
+	if not bool(data.get("available", false)):
+		return
+	_save_options()
+	SceneLoader.go_to(str(data["scene"]), str(data["name"]), "3 LAPS TO WIN")
 
 
 func _show_tab(tab: int) -> void:

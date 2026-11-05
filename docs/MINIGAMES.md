@@ -1,7 +1,13 @@
-# Minigames menu - prototype spec
+# Minigames menu
 
-Status: the screens and settings are implemented; the minigames themselves are
-not wired yet (every PLAY / START button is disabled with "COMING SOON").
+Status: the hub is reachable again from **PLAY -> MINIGAMES**. **MEADOW LOOP**
+is implemented and playable; the other Free Play cards and the Tournament stay
+disabled with "COMING SOON". See `docs/MEADOW_LOOP.md` for the race design.
+
+Cards carry `available: true/false` in `MINIGAMES`. Available cards enable the
+PLAY button and load their `scene` through `SceneLoader`; unavailable ones keep
+the disabled "PLAY - COMING SOON" label. New minigames only need an entry in
+that array plus their own scene.
 
 ## Flow
 
@@ -27,17 +33,18 @@ MINIGAMES (tabs)
 |--------------------------------------------------------------|
 | [ FREE PLAY ]  [ TOURNAMENT ]        <- tabs, equal width    |
 |                                                              |
-| [ CONE SLALOM   SOLO   SOON ]        <- card, full width     |
+| [ MEADOW LOOP   SOLO   READY ]       <- card, full width     |
+| [ CONE SLALOM   SOLO   SOON ]                                |
 | [ CRATE SMASH   SOLO   SOON ]                                |
 | [ DRIFT SCORE   SOLO   SOON ]                                |
 | [ BOOST RUN     SOLO   SOON ]                                |
 |                                                              |
 | +----------------------------------------------------------+ |
-| | CONE SLALOM                                              | |
+| | MEADOW LOOP                                              | |
 | | description ...                                          | |
 | | [DIFFICULTY v] [ROUNDS v] [VEHICLE v]   <- 3 equal opts  | |
 | +----------------------------------------------------------+ |
-| [ PLAY - COMING SOON ]              <- disabled, primary     |
+| [ PLAY  -  MEADOW LOOP ]            <- enabled, primary      |
 | "Every minigame is solo..."          <- rule line            |
 | [ BACK ]                             <- secondary, red       |
 +--------------------------------------------------------------+
@@ -70,9 +77,13 @@ Placement rules:
 
 ```gdscript
 const MINIGAMES = [
-  {id, name, desc}, ...   # add an entry -> a new card appears
+  {id, name, desc, scene, available}, ...   # add an entry -> a new card appears
 ]
 ```
+
+`scene` is the `res://` path loaded by `SceneLoader.go_to()`; `available`
+controls the card's READY/SOON tag and whether PLAY is enabled. Cards are
+44 px tall so five of them still fit the 720p panel.
 
 Options are persisted in `GameSettings` (`user://settings.cfg`):
 

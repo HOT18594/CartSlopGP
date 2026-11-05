@@ -3,6 +3,45 @@
 All notable changes to Cart Slop GP. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer.
 
+## [Unreleased] - Meadow Loop minigame
+
+`version.txt` stays at 0.4.2 until a build is exported and a GitHub release is
+published. Nothing here changes the in-game updater.
+
+### Added
+
+- **MEADOW LOOP** — the first playable minigame: three laps of a winding 491 m
+  dirt track through a dense grassy forest. Three ghost rivals, a 3-2-1-GO
+  countdown, LAP / place HUD badges, lap times and a candy result card with
+  RACE AGAIN / MINIGAMES / MAIN MENU. Completing three laps wins.
+- **PLAY → MINIGAMES** is back in the menu. Free Play cards now carry
+  `available` and `scene`; MEADOW LOOP is READY, the other four stay SOON.
+- **87 curated CC0 models** from Kenney *Nature Kit* 2.1 (trees, bushes, grass,
+  wildflowers, rocks, stumps, logs, mushrooms, fence). ~8,600 deterministic
+  scenery instances render in ~75 MultiMesh draw calls.
+- **Generated seamless grass/dirt ground textures** plus a tiled-surface
+  shader (`tools/gen_track_textures.py`).
+- **Invisible barrier walls** along both track edges, an off-track grass
+  slowdown and auto-respawn, and sector-gated lap counting that cannot be
+  cheesed by reversing over the finish line.
+- `docs/MEADOW_LOOP.md` and `tools/smoke_meadow_loop.gd`, a headless test that
+  builds the full scene and drives three laps.
+
+### Changed
+
+- The minigame vehicle picker now actually applies: the race temporarily swaps
+  `GameSettings.minigame_vehicle` into the kart and restores the sandbox
+  choice on exit, without writing `user://settings.cfg`.
+- `docs/MINIGAMES.md` updated from prototype spec to the live data model.
+
+### Fixed
+
+- The loading screen's rolling-hills polygon closed through `Vector2.ZERO`,
+  crossing its own wavy top edge. Godot logged "Invalid polygon data,
+  triangulation failed" on every `SceneLoader` transition (including the new
+  PLAY → MEADOW LOOP path) and skipped the hills layer. It now closes along the
+  bottom edge.
+
 ## [0.4.2] - 2026-11-05
 
 Menu polish across every screen.

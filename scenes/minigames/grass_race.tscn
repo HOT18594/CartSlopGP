@@ -1,0 +1,44 @@
+[gd_scene load_steps=9 format=3]
+
+[ext_resource type="Script" path="res://scripts/minigames/grass_race.gd" id="1_race"]
+[ext_resource type="PackedScene" path="res://scenes/player/cart_player.tscn" id="2_cart"]
+[ext_resource type="PackedScene" path="res://scenes/ui/hud.tscn" id="3_hud"]
+[ext_resource type="PackedScene" path="res://scenes/ui/pause_menu.tscn" id="4_pause"]
+
+[sub_resource type="ProceduralSkyMaterial" id="sky_mat"]
+sky_top_color = Color(0.18, 0.62, 0.91, 1)
+sky_horizon_color = Color(0.75, 0.91, 1, 1)
+ground_bottom_color = Color(0.31, 0.44, 0.24, 1)
+ground_horizon_color = Color(0.75, 0.91, 1, 1)
+
+[sub_resource type="Sky" id="sky"]
+sky_material = SubResource("sky_mat")
+
+[sub_resource type="Environment" id="env"]
+background_mode = 2
+sky = SubResource("sky")
+fog_enabled = true
+fog_light_color = Color(0.76, 0.88, 0.94, 1)
+fog_density = 0.0030
+
+[node name="GrassRace" type="Node3D"]
+script = ExtResource("1_race")
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("env")
+
+[node name="Sun" type="DirectionalLight3D" parent="."]
+transform = Transform3D(0.921061, -0.279352, 0.27131, 0, 0.696707, 0.717356, -0.389418, -0.660729, 0.641709, 0, 0, 0)
+light_color = Color(1, 0.96, 0.88, 1)
+light_energy = 1.2
+shadow_enabled = true
+directional_shadow_max_distance = 140.0
+
+[node name="CartPlayer" parent="." instance=ExtResource("2_cart")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.2, 0)
+
+[node name="HUD" parent="." instance=ExtResource("3_hud")]
+show_position_badge = true
+show_lap_badge = true
+
+[node name="PauseMenu" parent="." instance=ExtResource("4_pause")]

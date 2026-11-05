@@ -1,6 +1,28 @@
 ASSET CREDITS - Cart Slop GP
 ============================
-Updated: 2026-11-04 (v0.1.0, UI + cursor + fonts)
+Updated: 2026-11-05 (Meadow Loop minigame, environment assets)
+
+NATURE / ENVIRONMENT (Meadow Loop)
+----------------------------------
+Kenney "Nature Kit" 2.1 - https://kenney.nl/assets/nature-kit
+License: Creative Commons Zero 1.0 (CC0, public domain)
+Author: Kenney (www.kenney.nl)
+Local license copy: assets/models/kenney_nature-kit/License.txt
+Source zip kept outside the repo at CartSlopGP/downloads/kenney_nature-kit.zip
+87 selected .glb models in:
+  assets/models/kenney_nature-kit/Models/GLB format/
+Includes 38 tree variants (default/oak/cone/fat/tall/thin/simple/detailed/
+small/pine/plateau, plus dark and autumn versions), bushes, grass clumps,
+wildflowers, rocks, stones, stumps, logs, mushrooms and a wooden fence.
+The pack ships KHR_materials_unlit flat-colour materials with no external
+textures; scripts/minigames/foliage_baker.gd bakes those colours into vertex
+colours so thousands of instances render in ~75 MultiMesh draw calls.
+
+GENERATED GROUND TEXTURES (Meadow Loop)
+---------------------------------------
+assets/textures/grass_field.png and assets/textures/dirt_track.png are
+original tileable 256x256 textures generated for this project by
+tools/gen_track_textures.py. No third-party source; released CC0/public domain.
 
 UI / CURSOR
 -----------

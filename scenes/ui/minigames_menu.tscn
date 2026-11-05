@@ -115,7 +115,7 @@ layout_mode = 2
 theme_type_variation = &"TitleLabel"
 theme_override_colors/font_color = Color(0.117647, 0.105882, 0.227451, 1)
 theme_override_font_sizes/font_size = 22
-text = "CONE SLALOM"
+text = "MEADOW LOOP"
 
 [node name="DetailDesc" type="Label" parent="Center/Panel/Body/FreeBox/Details/DetailsBody"]
 unique_name_in_owner = true
@@ -123,7 +123,7 @@ custom_minimum_size = Vector2(0, 34)
 layout_mode = 2
 theme_override_colors/font_color = Color(0.117647, 0.105882, 0.227451, 1)
 theme_override_font_sizes/font_size = 14
-text = "Weave through the cone lane as fast as you can. Solo."
+text = "Three laps of a winding dirt track through a dense grassy forest. Solo."
 autowrap_mode = 2
 
 [node name="OptionsRow" type="HBoxContainer" parent="Center/Panel/Body/FreeBox/Details/DetailsBody"]
@@ -155,9 +155,8 @@ theme_override_font_sizes/font_size = 16
 unique_name_in_owner = true
 custom_minimum_size = Vector2(0, 50)
 layout_mode = 2
-disabled = true
 theme_override_font_sizes/font_size = 22
-text = "PLAY - COMING SOON"
+text = "PLAY  ·  MEADOW LOOP"
 script = ExtResource("4")
 fill_color = Color(1, 0.823529, 0.180392, 1)
 

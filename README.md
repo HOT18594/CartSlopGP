@@ -109,8 +109,20 @@ Background music is optional. Drop two MP3s into
 The folder's **README.md** contains ready-to-paste Suno prompts, loop tips and
 optional variants. Without the files the game runs silently — nothing breaks.
 
-Minigames are temporarily hidden from the menus while a scrollable
-preview-grid is designed; the sandbox is the focus of this version.
+## Minigames
+
+**PLAY → MINIGAMES** opens the Free Play hub. **MEADOW LOOP** is the first
+playable minigame: three laps of a winding, 491 m dirt track through a dense
+low-poly grassy forest, with three ghost rivals setting the pace. Three laps is
+all it takes to win. Pick a difficulty, round count and vehicle on the hub, then
+hit PLAY. The race shows LAP / place badges on the normal HUD, a countdown, lap
+times and a result card with **RACE AGAIN**, **MINIGAMES** and **MAIN MENU**.
+
+The kart, drift, boost, camera, speedometer and pause menu are the same as the
+sandbox. The loop is fenced by invisible barrier walls; if you somehow get out,
+grass slows you down and the kart respawns on the track. Full design notes:
+`docs/MEADOW_LOOP.md`. The other four cards and the Tournament tab are still
+marked COMING SOON.
 
 ---
 
@@ -149,17 +161,20 @@ Full details, signing notes and the release checklist are in
 ```
 godot_project/
   scenes/ui/          menus, HUD, pause, settings, loading overlay
+  scenes/minigames/   grass_race.tscn (Meadow Loop)
   scenes/player/      cart_player.tscn
   scenes/feedback/    smoke, wind, skid audio
   scenes/dev/         driving_test.tscn (the playable arena)
   scripts/            gameplay + UI scripts
+  scripts/minigames/  spline, foliage baker and race controller
   scripts/net/        network.gd (host / join / RPC)
   scripts/systems/    game_settings, update_checker, music_player, scene_loader
   assets/ui/          theme, fonts, cursor
-  assets/models/      Kenney Car Kit, Poly Pizza props
+  assets/models/      Kenney Car Kit, Kenney Nature Kit, Poly Pizza props
   assets/audio/       SFX + optional music drop folder
-  assets/textures/    particle sheets
-  docs/               platform, multiplayer, release and credits docs
+  assets/textures/    particle sheets + generated grass/dirt ground tiles
+  assets/materials/   checker, boost pad and tiled-surface shaders
+  docs/               platform, multiplayer, minigame, release and credits docs
   tools/              asset generators and dev probes
   version.txt         current version (updater + menu label)
 ```
@@ -170,14 +185,25 @@ godot_project/
 live checks, download-state inspection, installer template checks). They are
 excluded from exported builds.
 
+Two Python/GDScript generators and one headless test are also there:
+
+```bash
+python tools/gen_track_textures.py     # regenerate the grass/dirt tiles
+python tools/build_arena.py            # regenerate the sandbox arena
+godot --headless --path . --script res://tools/smoke_meadow_loop.gd
+```
+
+The last one builds the whole Meadow Loop scene and walks three laps without a
+window; it ends with `PASS  meadow loop builds and completes 3 laps`.
+
 ---
 
 ## Credits
 
 - **Engine:** Godot Engine 4.7.2 (MIT).
-- **Models:** Kenney *Car Kit* (CC0) — [kenney.nl](https://kenney.nl/assets/car-kit);
-  Poly Pizza go-kart and shopping-cart models (see
-  `assets/models/poly_pizza/CREDITS.txt`).
+- **Models:** Kenney *Car Kit* and *Nature Kit* (CC0) —
+  [kenney.nl](https://kenney.nl/assets); Poly Pizza go-kart and shopping-cart
+  models (see `assets/models/poly_pizza/CREDITS.txt`).
 - **Audio:** Kenney *Impact Sounds*, *Digital Audio*, *Interface Sounds* (CC0),
   plus synthesized engine/skid loops. See `docs/AUDIO_CREDITS.txt`.
 - **UI:** Kenney *Cursor Pack* (CC0), Fredoka font (SIL Open Font License 1.1).

@@ -125,7 +125,10 @@ func _draw_hills(area: Vector2) -> void:
 				- sin(t * PI * 5.0 + phase) * amp * 0.25
 			points.append(Vector2(t * area.x, y))
 		points.append(Vector2(area.x, area.y))
-		points.append(Vector2.ZERO)
+		# Close along the bottom edge. Using Vector2.ZERO here made the last
+		# edge cross the wavy top edge, so triangulation failed and Godot
+		# logged "Invalid polygon data" on every scene load.
+		points.append(Vector2(0.0, area.y))
 		draw_colored_polygon(points, color)
 	draw_rect(Rect2(0.0, area.y * 0.63, area.x, area.y * 0.37), Color(0.80, 0.75, 0.81, 0.55))
 
