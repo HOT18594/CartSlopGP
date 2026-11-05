@@ -740,6 +740,10 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"error": "not found"}, 404)
 
     def _register(self, data: dict) -> None:
+        # Wi-Fi may have come up after the server process started. Re-detect
+        # before telling the host which Pi address to use for the tunnel.
+        if refresh_lan_ip():
+            threading.Thread(target=mapping_bootstrap, daemon=True).start()
         try:
             host_port = int(data.get("local_port", 0))
         except Exception:
