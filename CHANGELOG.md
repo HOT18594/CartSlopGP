@@ -3,6 +3,21 @@
 All notable changes to Cart Slop GP. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer.
 
+## [0.4.2] - 2026-11-05
+
+Menu polish across every screen.
+
+### Changed
+
+- Main-menu buttons (PLAY / SETTINGS / CHANGELOG / QUIT) now share the same
+  80 px height, corner radius and spacing for a tidier stack.
+- Hover animation is mouse-only: buttons bob, wobble and squish under the
+  pointer, but a keyboard-focused button (including PLAY on boot) stays still.
+- Candy styling and hover effects extended to the pause menu, SETTINGS
+  (check-for-updates / back) and CHANGELOG back button; lobby, vehicle picker
+  and update dialog already inherit it.
+- Play menu hides its empty notice row, closing the awkward gap above BACK.
+
 ## [0.4.1] - 2026-11-05
 
 Every vehicle now has its own personality - and the game has a changelog.
