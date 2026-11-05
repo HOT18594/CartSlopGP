@@ -215,3 +215,25 @@ Tested: unit checks for version parsing/comparison
 - PLAY → drive; HUD speed/boost/state update; drift smoke looks like smoke
 - Esc → pause menu appears; settings sliders and toggles work; RESUME returns
 - Run `builds/v0.1.0/CartSlopGP.exe` and confirm the same
+
+
+---
+
+## 11. Follow-up pass (2026-11-04, after playtest feedback)
+
+- **Menu**: title is now one playful line (`CART SLOP GP` with per-word tilt and
+  a flag peeking out behind GP); the old subtitle/underline are gone; HOST/JOIN
+  were removed from the main menu.
+- **Play flow**: PLAY opens `scenes/ui/play_menu.tscn` - SANDBOX loads
+  `driving_test.tscn`, HOST/JOIN show a "multiplayer coming" notice, BACK returns
+  to the menu. No minigame wiring yet, as requested.
+- **HUD**: speedometer, boost meter, state pill and hint shrunk (~40% smaller
+  footprint) and the dial tilted for personality.
+- **Track**: boost pads now use `assets/materials/boost_pad.gdshader` (cyan rim,
+  scrolling yellow chevrons, pulsing glow); a checkered start line uses
+  `checker.gdshader`; lane/landing/brake/drift pads were recoloured to the menu
+  palette and the rollers are low ramps you can drive over.
+- **Props**: cones 0.35 kg, crates 0.8 kg, rammed props get a strong upward and
+  spin impulse and no longer slow the kart down.
+
+Verified with fresh 1280x720 renders (menu, play screen, HUD, pad close-up).

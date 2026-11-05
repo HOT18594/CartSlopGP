@@ -2,7 +2,7 @@ extends Control
 ## Main menu: PLAY / SETTINGS / QUIT, disabled multiplayer placeholders and the
 ## update badge fed by the UpdateChecker autoload.
 
-const GAME_SCENE: String = "res://scenes/dev/driving_test.tscn"
+const PLAY_MENU_SCENE: String = "res://scenes/ui/play_menu.tscn"
 
 @onready var _play_button: Button = %PlayButton
 @onready var _settings_button: Button = %SettingsButton
@@ -51,7 +51,7 @@ func _process(_delta: float) -> void:
 
 
 func _on_play_pressed() -> void:
-	get_tree().change_scene_to_file(GAME_SCENE)
+	get_tree().change_scene_to_file(PLAY_MENU_SCENE)
 
 
 func _on_settings_pressed() -> void:

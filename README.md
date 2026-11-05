@@ -18,7 +18,8 @@ from the prototype.
 
 1. Launch Godot 4.7.2.
 2. **Import** → select `godot_project/project.godot` → **Import & Edit**.
-3. Press **F5** to run. The project boots into the main menu.
+3. Press **F5** to run. The project boots into the main menu; **PLAY** opens the
+   mode select (SANDBOX works today, HOST/JOIN are multiplayer placeholders).
 
 The first open reimports assets into `.godot/`; that folder is git-ignored.
 

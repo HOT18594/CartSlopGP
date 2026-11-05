@@ -1,4 +1,4 @@
-[gd_scene load_steps=42 format=3]
+[gd_scene load_steps=45 format=3]
 
 [ext_resource type="Script" path="res://scripts/driving_test.gd" id="1"]
 [ext_resource type="PackedScene" path="res://scenes/player/cart_player.tscn" id="2"]
@@ -7,6 +7,7 @@
 [ext_resource type="PackedScene" path="res://scenes/track/boost_pad.tscn" id="5"]
 [ext_resource type="PackedScene" path="res://scenes/ui/hud.tscn" id="6"]
 [ext_resource type="PackedScene" path="res://scenes/ui/pause_menu.tscn" id="7"]
+[ext_resource type="Shader" path="res://assets/materials/checker.gdshader" id="8_checker"]
 
 [sub_resource type="ProceduralSkyMaterial" id="sky_mat"]
 sky_top_color = Color(0.38, 0.55, 0.85, 1)
@@ -22,28 +23,28 @@ background_mode = 2
 sky = SubResource("sky")
 
 [sub_resource type="StandardMaterial3D" id="ground_mat"]
-albedo_color = Color(0.55, 0.57, 0.55, 1)
+albedo_color = Color(0.63, 0.67, 0.74, 1)
 
 [sub_resource type="StandardMaterial3D" id="wall_mat"]
-albedo_color = Color(0.45, 0.5, 0.6, 1)
+albedo_color = Color(0.16, 0.2, 0.32, 1)
 
 [sub_resource type="StandardMaterial3D" id="ramp_mat"]
-albedo_color = Color(0.35, 0.38, 0.42, 1)
+albedo_color = Color(0.25, 0.29, 0.46, 1)
 
 [sub_resource type="StandardMaterial3D" id="lane_mat"]
-albedo_color = Color(0.5, 0.62, 0.75, 1)
+albedo_color = Color(0.56, 0.85, 0.96, 1)
 
 [sub_resource type="StandardMaterial3D" id="pad_mat"]
-albedo_color = Color(0.35, 0.6, 0.4, 1)
+albedo_color = Color(1, 0.91, 0.66, 1)
 
 [sub_resource type="StandardMaterial3D" id="ring_mat"]
-albedo_color = Color(0.75, 0.6, 0.35, 1)
+albedo_color = Color(0.95, 0.42, 0.65, 1)
 
 [sub_resource type="StandardMaterial3D" id="bowl_mat"]
-albedo_color = Color(0.65, 0.6, 0.45, 1)
+albedo_color = Color(1, 0.94, 0.78, 1)
 
 [sub_resource type="StandardMaterial3D" id="brake_mat"]
-albedo_color = Color(0.85, 0.85, 0.85, 1)
+albedo_color = Color(0.95, 0.33, 0.36, 1)
 
 [sub_resource type="PhysicsMaterial" id="prop_phys"]
 friction = 0.9
@@ -78,11 +79,11 @@ material = SubResource("wall_mat")
 size = Vector3(8, 1.2, 1)
 
 [sub_resource type="BoxShape3D" id="roller_shape"]
-size = Vector3(10, 0.5, 2.2)
+size = Vector3(10, 0.12, 2.3)
 
 [sub_resource type="BoxMesh" id="roller_mesh"]
 material = SubResource("ramp_mat")
-size = Vector3(10, 0.5, 2.2)
+size = Vector3(10, 0.12, 2.3)
 
 [sub_resource type="CylinderShape3D" id="cone_shape"]
 radius = 0.2
@@ -130,6 +131,14 @@ size = Vector3(10, 0.02, 10)
 [sub_resource type="BoxMesh" id="brake_mesh"]
 material = SubResource("brake_mat")
 size = Vector3(6, 0.02, 0.5)
+
+[sub_resource type="ShaderMaterial" id="checker_mat"]
+shader = ExtResource("8_checker")
+shader_parameter/cells = Vector2(18, 2)
+
+[sub_resource type="BoxMesh" id="start_mesh"]
+material = SubResource("checker_mat")
+size = Vector3(18, 0.02, 1.2)
 
 [node name="DrivingTest" type="Node3D"]
 script = ExtResource("1")
@@ -229,7 +238,7 @@ transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.0000
 mesh = SubResource("brake_mesh")
 
 [node name="Roller1" type="StaticBody3D" parent="."]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -20.000000, 0.150000, 20.000000)
+transform = Transform3D(1, 0, 0, 0, 0.9759, 0.2182, 0, -0.2182, 0.9759, -20, 0.19, 20)
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="Roller1"]
 shape = SubResource("roller_shape")
@@ -238,7 +247,7 @@ shape = SubResource("roller_shape")
 mesh = SubResource("roller_mesh")
 
 [node name="Roller2" type="StaticBody3D" parent="."]
-transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -20.000000, 0.150000, 6.000000)
+transform = Transform3D(1, 0, 0, 0, 0.9759, 0.2182, 0, -0.2182, 0.9759, -20, 0.19, 6)
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="Roller2"]
 shape = SubResource("roller_shape")
@@ -255,12 +264,16 @@ shape = SubResource("barrier_shape")
 [node name="MeshInstance3D" type="MeshInstance3D" parent="Barrier"]
 mesh = SubResource("barrier_mesh")
 
+[node name="StartLine" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.014, 51.5)
+mesh = SubResource("start_mesh")
+
 [node name="SpawnPoint" type="Marker3D" parent="." groups=["spawn_point"]]
 transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.200000, 55.000000)
 
 [node name="ConeLane1" type="RigidBody3D" parent="." groups=["pushable"]]
 transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -4.000000, 0.000000, 50.000000)
-mass = 1.5
+mass = 0.35
 continuous_cd = true
 can_sleep = true
 physics_material_override = SubResource("prop_phys")
@@ -273,7 +286,7 @@ shape = SubResource("cone_shape")
 
 [node name="ConeLane2" type="RigidBody3D" parent="." groups=["pushable"]]
 transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 4.000000, 0.000000, 50.000000)
-mass = 1.5
+mass = 0.35
 continuous_cd = true
 can_sleep = true
 physics_material_override = SubResource("prop_phys")
@@ -286,7 +299,7 @@ shape = SubResource("cone_shape")
 
 [node name="ConeLane3" type="RigidBody3D" parent="." groups=["pushable"]]
 transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -4.000000, 0.000000, 44.000000)
-mass = 1.5
+mass = 0.35
 continuous_cd = true
 can_sleep = true
 physics_material_override = SubResource("prop_phys")
@@ -299,7 +312,7 @@ shape = SubResource("cone_shape")
 
 [node name="ConeLane4" type="RigidBody3D" parent="." groups=["pushable"]]
 transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 4.000000, 0.000000, 44.000000)
-mass = 1.5
+mass = 0.35
 continuous_cd = true
 can_sleep = true
 physics_material_override = SubResource("prop_phys")
@@ -312,7 +325,7 @@ shape = SubResource("cone_shape")
 
 [node name="ConeLane5" type="RigidBody3D" parent="." groups=["pushable"]]
 transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -4.000000, 0.000000, 38.000000)
-mass = 1.5
+mass = 0.35
 continuous_cd = true
 can_sleep = true
 physics_material_override = SubResource("prop_phys")
@@ -325,7 +338,7 @@ shape = SubResource("cone_shape")
 
 [node name="ConeLane6" type="RigidBody3D" parent="." groups=["pushable"]]
 transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 4.000000, 0.000000, 38.000000)
-mass = 1.5
+mass = 0.35
 continuous_cd = true
 can_sleep = true
 physics_material_override = SubResource("prop_phys")
@@ -338,7 +351,7 @@ shape = SubResource("cone_shape")
 
 [node name="ConeLane7" type="RigidBody3D" parent="." groups=["pushable"]]
 transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -4.000000, 0.000000, 32.000000)
-mass = 1.5
+mass = 0.35
 continuous_cd = true
 can_sleep = true
 physics_material_override = SubResource("prop_phys")
@@ -351,7 +364,7 @@ shape = SubResource("cone_shape")
 
 [node name="ConeLane8" type="RigidBody3D" parent="." groups=["pushable"]]
 transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 4.000000, 0.000000, 32.000000)
-mass = 1.5
+mass = 0.35
 continuous_cd = true
 can_sleep = true
 physics_material_override = SubResource("prop_phys")
@@ -364,7 +377,7 @@ shape = SubResource("cone_shape")
 
 [node name="ConeSlalom1" type="RigidBody3D" parent="." groups=["pushable"]]
 transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -3.000000, 0.000000, 22.000000)
-mass = 1.5
+mass = 0.35
 continuous_cd = true
 can_sleep = true
 physics_material_override = SubResource("prop_phys")
@@ -377,7 +390,7 @@ shape = SubResource("cone_shape")
 
 [node name="ConeSlalom2" type="RigidBody3D" parent="." groups=["pushable"]]
 transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 3.000000, 0.000000, 16.000000)
-mass = 1.5
+mass = 0.35
 continuous_cd = true
 can_sleep = true
 physics_material_override = SubResource("prop_phys")
@@ -390,7 +403,7 @@ shape = SubResource("cone_shape")
 
 [node name="ConeSlalom3" type="RigidBody3D" parent="." groups=["pushable"]]
 transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -3.000000, 0.000000, 10.000000)
-mass = 1.5
+mass = 0.35
 continuous_cd = true
 can_sleep = true
 physics_material_override = SubResource("prop_phys")
@@ -403,7 +416,7 @@ shape = SubResource("cone_shape")
 
 [node name="ConeSlalom4" type="RigidBody3D" parent="." groups=["pushable"]]
 transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 3.000000, 0.000000, 4.000000)
-mass = 1.5
+mass = 0.35
 continuous_cd = true
 can_sleep = true
 physics_material_override = SubResource("prop_phys")
@@ -416,7 +429,7 @@ shape = SubResource("cone_shape")
 
 [node name="ConePad1" type="RigidBody3D" parent="." groups=["pushable"]]
 transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -6.000000, 0.000000, -19.000000)
-mass = 1.5
+mass = 0.35
 continuous_cd = true
 can_sleep = true
 physics_material_override = SubResource("prop_phys")
@@ -429,7 +442,7 @@ shape = SubResource("cone_shape")
 
 [node name="ConePad2" type="RigidBody3D" parent="." groups=["pushable"]]
 transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 6.000000, 0.000000, -19.000000)
-mass = 1.5
+mass = 0.35
 continuous_cd = true
 can_sleep = true
 physics_material_override = SubResource("prop_phys")
@@ -442,7 +455,7 @@ shape = SubResource("cone_shape")
 
 [node name="ConeRing1" type="RigidBody3D" parent="." groups=["pushable"]]
 transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 43.000000, 0.000000, 0.000000)
-mass = 1.5
+mass = 0.35
 continuous_cd = true
 can_sleep = true
 physics_material_override = SubResource("prop_phys")
@@ -455,7 +468,7 @@ shape = SubResource("cone_shape")
 
 [node name="ConeRing2" type="RigidBody3D" parent="." groups=["pushable"]]
 transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 41.472136, 0.000000, 4.702282)
-mass = 1.5
+mass = 0.35
 continuous_cd = true
 can_sleep = true
 physics_material_override = SubResource("prop_phys")
@@ -468,7 +481,7 @@ shape = SubResource("cone_shape")
 
 [node name="ConeRing3" type="RigidBody3D" parent="." groups=["pushable"]]
 transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 37.472136, 0.000000, 7.608452)
-mass = 1.5
+mass = 0.35
 continuous_cd = true
 can_sleep = true
 physics_material_override = SubResource("prop_phys")
@@ -481,7 +494,7 @@ shape = SubResource("cone_shape")
 
 [node name="ConeRing4" type="RigidBody3D" parent="." groups=["pushable"]]
 transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 32.527864, 0.000000, 7.608452)
-mass = 1.5
+mass = 0.35
 continuous_cd = true
 can_sleep = true
 physics_material_override = SubResource("prop_phys")
@@ -494,7 +507,7 @@ shape = SubResource("cone_shape")
 
 [node name="ConeRing5" type="RigidBody3D" parent="." groups=["pushable"]]
 transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 28.527864, 0.000000, 4.702282)
-mass = 1.5
+mass = 0.35
 continuous_cd = true
 can_sleep = true
 physics_material_override = SubResource("prop_phys")
@@ -507,7 +520,7 @@ shape = SubResource("cone_shape")
 
 [node name="ConeRing6" type="RigidBody3D" parent="." groups=["pushable"]]
 transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 27.000000, 0.000000, 0.000000)
-mass = 1.5
+mass = 0.35
 continuous_cd = true
 can_sleep = true
 physics_material_override = SubResource("prop_phys")
@@ -520,7 +533,7 @@ shape = SubResource("cone_shape")
 
 [node name="ConeRing7" type="RigidBody3D" parent="." groups=["pushable"]]
 transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 28.527864, 0.000000, -4.702282)
-mass = 1.5
+mass = 0.35
 continuous_cd = true
 can_sleep = true
 physics_material_override = SubResource("prop_phys")
@@ -533,7 +546,7 @@ shape = SubResource("cone_shape")
 
 [node name="ConeRing8" type="RigidBody3D" parent="." groups=["pushable"]]
 transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 32.527864, 0.000000, -7.608452)
-mass = 1.5
+mass = 0.35
 continuous_cd = true
 can_sleep = true
 physics_material_override = SubResource("prop_phys")
@@ -546,7 +559,7 @@ shape = SubResource("cone_shape")
 
 [node name="ConeRing9" type="RigidBody3D" parent="." groups=["pushable"]]
 transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 37.472136, 0.000000, -7.608452)
-mass = 1.5
+mass = 0.35
 continuous_cd = true
 can_sleep = true
 physics_material_override = SubResource("prop_phys")
@@ -559,7 +572,7 @@ shape = SubResource("cone_shape")
 
 [node name="ConeRing10" type="RigidBody3D" parent="." groups=["pushable"]]
 transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 41.472136, 0.000000, -4.702282)
-mass = 1.5
+mass = 0.35
 continuous_cd = true
 can_sleep = true
 physics_material_override = SubResource("prop_phys")
@@ -572,7 +585,7 @@ shape = SubResource("cone_shape")
 
 [node name="ConeBowl1" type="RigidBody3D" parent="." groups=["pushable"]]
 transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -35.000000, 0.000000, -2.900000)
-mass = 1.5
+mass = 0.35
 continuous_cd = true
 can_sleep = true
 physics_material_override = SubResource("prop_phys")
@@ -585,7 +598,7 @@ shape = SubResource("cone_shape")
 
 [node name="ConeBowl2" type="RigidBody3D" parent="." groups=["pushable"]]
 transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -35.450000, 0.000000, -2.000000)
-mass = 1.5
+mass = 0.35
 continuous_cd = true
 can_sleep = true
 physics_material_override = SubResource("prop_phys")
@@ -598,7 +611,7 @@ shape = SubResource("cone_shape")
 
 [node name="ConeBowl3" type="RigidBody3D" parent="." groups=["pushable"]]
 transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -34.550000, 0.000000, -2.000000)
-mass = 1.5
+mass = 0.35
 continuous_cd = true
 can_sleep = true
 physics_material_override = SubResource("prop_phys")
@@ -611,7 +624,7 @@ shape = SubResource("cone_shape")
 
 [node name="ConeBowl4" type="RigidBody3D" parent="." groups=["pushable"]]
 transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -35.900000, 0.000000, -1.100000)
-mass = 1.5
+mass = 0.35
 continuous_cd = true
 can_sleep = true
 physics_material_override = SubResource("prop_phys")
@@ -624,7 +637,7 @@ shape = SubResource("cone_shape")
 
 [node name="ConeBowl5" type="RigidBody3D" parent="." groups=["pushable"]]
 transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -35.000000, 0.000000, -1.100000)
-mass = 1.5
+mass = 0.35
 continuous_cd = true
 can_sleep = true
 physics_material_override = SubResource("prop_phys")
@@ -637,7 +650,7 @@ shape = SubResource("cone_shape")
 
 [node name="ConeBowl6" type="RigidBody3D" parent="." groups=["pushable"]]
 transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -34.100000, 0.000000, -1.100000)
-mass = 1.5
+mass = 0.35
 continuous_cd = true
 can_sleep = true
 physics_material_override = SubResource("prop_phys")
@@ -650,7 +663,7 @@ shape = SubResource("cone_shape")
 
 [node name="ConeBrake1" type="RigidBody3D" parent="." groups=["pushable"]]
 transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 27.000000, 0.000000, 35.000000)
-mass = 1.5
+mass = 0.35
 continuous_cd = true
 can_sleep = true
 physics_material_override = SubResource("prop_phys")
@@ -663,7 +676,7 @@ shape = SubResource("cone_shape")
 
 [node name="ConeBrake2" type="RigidBody3D" parent="." groups=["pushable"]]
 transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 33.000000, 0.000000, 35.000000)
-mass = 1.5
+mass = 0.35
 continuous_cd = true
 can_sleep = true
 physics_material_override = SubResource("prop_phys")
@@ -676,7 +689,7 @@ shape = SubResource("cone_shape")
 
 [node name="CrateGate1" type="RigidBody3D" parent="." groups=["pushable"]]
 transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -2.200000, 0.000000, -4.000000)
-mass = 3.0
+mass = 0.8
 continuous_cd = true
 can_sleep = true
 physics_material_override = SubResource("prop_phys")
@@ -689,7 +702,7 @@ shape = SubResource("crate_shape")
 
 [node name="CrateGate2" type="RigidBody3D" parent="." groups=["pushable"]]
 transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 2.200000, 0.000000, -4.000000)
-mass = 3.0
+mass = 0.8
 continuous_cd = true
 can_sleep = true
 physics_material_override = SubResource("prop_phys")
@@ -702,7 +715,7 @@ shape = SubResource("crate_shape")
 
 [node name="CrateWall1" type="RigidBody3D" parent="." groups=["pushable"]]
 transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -35.800000, 0.000000, -18.000000)
-mass = 3.0
+mass = 0.8
 continuous_cd = true
 can_sleep = true
 physics_material_override = SubResource("prop_phys")
@@ -715,7 +728,7 @@ shape = SubResource("crate_shape")
 
 [node name="CrateWall2" type="RigidBody3D" parent="." groups=["pushable"]]
 transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -35.000000, 0.000000, -18.000000)
-mass = 3.0
+mass = 0.8
 continuous_cd = true
 can_sleep = true
 physics_material_override = SubResource("prop_phys")
@@ -728,7 +741,7 @@ shape = SubResource("crate_shape")
 
 [node name="CrateWall3" type="RigidBody3D" parent="." groups=["pushable"]]
 transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -34.200000, 0.000000, -18.000000)
-mass = 3.0
+mass = 0.8
 continuous_cd = true
 can_sleep = true
 physics_material_override = SubResource("prop_phys")
@@ -741,7 +754,7 @@ shape = SubResource("crate_shape")
 
 [node name="CrateWall4" type="RigidBody3D" parent="." groups=["pushable"]]
 transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -35.800000, 0.710000, -18.000000)
-mass = 3.0
+mass = 0.8
 continuous_cd = true
 can_sleep = true
 physics_material_override = SubResource("prop_phys")
@@ -754,7 +767,7 @@ shape = SubResource("crate_shape")
 
 [node name="CrateWall5" type="RigidBody3D" parent="." groups=["pushable"]]
 transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -35.000000, 0.710000, -18.000000)
-mass = 3.0
+mass = 0.8
 continuous_cd = true
 can_sleep = true
 physics_material_override = SubResource("prop_phys")
@@ -767,7 +780,7 @@ shape = SubResource("crate_shape")
 
 [node name="CrateWall6" type="RigidBody3D" parent="." groups=["pushable"]]
 transform = Transform3D(1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000, -34.200000, 0.710000, -18.000000)
-mass = 3.0
+mass = 0.8
 continuous_cd = true
 can_sleep = true
 physics_material_override = SubResource("prop_phys")

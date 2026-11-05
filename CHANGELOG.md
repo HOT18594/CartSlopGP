@@ -25,6 +25,17 @@ First tagged prototype build: playable driving sandbox plus the full menu/shell 
 
 ### Changed
 
+- **Menu flow**: PLAY now opens a mode-select screen (`play_menu`) with
+  SANDBOX / HOST / JOIN / BACK. Sandbox loads the driving test; host and join
+  show a "multiplayer coming" notice. HOST/JOIN were removed from the main menu
+  and the title is a single playful `CART SLOP GP` line.
+- **HUD** made compact (about 40% smaller footprint) and tilted for personality:
+  smaller speedometer, boost meter and state pill, thinner hint text.
+- **Track dressing**: new animated chevron boost pad (shader), checkered start
+  line, palette-matched lane / landing / brake / drift pads, navy ramps.
+- **Props** are much lighter: cones 1.5 -> 0.35 kg, crates 3.0 -> 0.8 kg, they pop
+  upward and spin, and knocking them no longer slows the kart. Rollers are now
+  low ramps you can drive over.
 - **Main menu art** rebuilt to match the supplied mockup: vector SlopMart
   parking-lot backdrop (sky, clouds, store, carts, lamps, lot lines), layered
   `CART / SLOP / GP` title with paint drips and a waving checkered flag, and

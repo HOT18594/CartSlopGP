@@ -43,7 +43,9 @@ const SUSPENSION_PIVOT_HEIGHT: float = 0.32
 @export var mesh_pitch_amount: float = 0.12 ## Nose lift/dive from acceleration and braking.
 
 @export_group("Props")
-@export var push_force: float = 4.0 ## Ram strength as the velocity change (m/s) given to a rammed prop at full cart speed.
+@export var push_force: float = 5.5 ## Ram strength as the velocity change (m/s) given to a rammed prop at full cart speed.
+@export var push_lift: float = 0.85 ## Upward share of the push - how high small props pop into the air.
+@export var push_spin: float = 1.6 ## Random spin impulse applied to rammed props.
 
 @export_group("Boost")
 @export var max_boost: float = 100.0 ## Boost meter capacity.
@@ -242,6 +244,10 @@ func _process_collisions() -> void:
 		return
 	for i in get_slide_collision_count():
 		var collision: KinematicCollision3D = get_slide_collision(i)
+		# Knocking a cone or crate around should never slow the kart down.
+		var hit: Object = collision.get_collider()
+		if hit is Node and (hit as Node).is_in_group("pushable"):
+			continue
 		var normal: Vector3 = collision.get_normal()
 		if normal.y > 0.6:
 			continue
@@ -273,7 +279,7 @@ func _push_pushables() -> void:
 	if push_force <= 0.0:
 		return
 	var push_speed: float = Vector2(_prev_velocity.x, _prev_velocity.z).length()
-	var kick: float = push_force * clampf(push_speed / 8.0, 0.15, 1.0)
+	var kick: float = push_force * clampf(push_speed / 6.0, 0.2, 1.3)
 	var now_s: float = Time.get_ticks_msec() / 1000.0
 	for i in get_slide_collision_count():
 		var collision: KinematicCollision3D = get_slide_collision(i)
@@ -283,15 +289,17 @@ func _push_pushables() -> void:
 		var prop: RigidBody3D = collider as RigidBody3D
 		var id := prop.get_instance_id()
 		var last: float = float(_push_cooldowns.get(id, -10000.0))
-		if now_s - last < 0.12:
+		if now_s - last < 0.08:
 			continue
 		_push_cooldowns[id] = now_s
 		if prop.sleeping:
 			prop.sleeping = false
 		var impulse: Vector3 = -collision.get_normal() * prop.mass * kick
-		impulse.y = prop.mass * kick * 0.12
+		impulse.y = prop.mass * kick * push_lift
 		var contact_offset: Vector3 = (collision.get_position() - prop.global_position).limit_length(1.0)
-		prop.apply_impulse(impulse, contact_offset * 0.65)
+		prop.apply_impulse(impulse, contact_offset * 0.5)
+		var spin: Vector3 = Vector3(randf_range(-1.0, 1.0), randf_range(-0.5, 0.5), randf_range(-1.0, 1.0))
+		prop.apply_torque_impulse(spin * prop.mass * push_spin)
 
 
 func _update_boost(delta: float) -> void:

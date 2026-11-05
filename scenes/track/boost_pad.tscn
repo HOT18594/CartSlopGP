@@ -1,56 +1,47 @@
 [gd_scene load_steps=10 format=3]
 
 [ext_resource type="Script" path="res://scripts/track/boost_pad.gd" id="1_padscript"]
+[ext_resource type="Shader" path="res://assets/materials/boost_pad.gdshader" id="2_padshader"]
 
 [sub_resource type="BoxShape3D" id="2_shape"]
-size = Vector3(3, 0.4, 3)
+size = Vector3(3.4, 0.4, 3.4)
 
-[sub_resource type="BoxMesh" id="3_padmesh"]
-size = Vector3(3, 0.02, 3)
+[sub_resource type="PlaneMesh" id="3_padmesh"]
+size = Vector2(3.4, 3.4)
 
-[sub_resource type="StandardMaterial3D" id="4_padmat"]
-transparency = 1
-shading_mode = 0
-albedo_color = Color(0.1, 0.55, 0.75, 0.5)
-emission_enabled = true
-emission = Color(0.15, 0.75, 1, 1)
-emission_energy_multiplier = 2.0
-
-[sub_resource type="BoxMesh" id="5_chevmesh"]
-size = Vector3(1.0, 0.012, 0.09)
-
-[sub_resource type="StandardMaterial3D" id="6_chevmat"]
-transparency = 1
-shading_mode = 0
-albedo_color = Color(0.3, 0.85, 1, 0.85)
-emission_enabled = true
-emission = Color(0.2, 0.85, 1, 1)
-emission_energy_multiplier = 2.5
+[sub_resource type="ShaderMaterial" id="4_padmat"]
+shader = ExtResource("2_padshader")
+shader_parameter/plate_color = Color(0.05, 0.12, 0.28, 0.58)
+shader_parameter/rim_color = Color(0.22, 0.84, 0.94, 1)
+shader_parameter/arrow_color = Color(1, 0.82, 0.18, 1)
+shader_parameter/scroll_speed = 1.6
+shader_parameter/glow = 1.0
 
 [sub_resource type="StandardMaterial3D" id="7_puffmat"]
 transparency = 1
 shading_mode = 0
 billboard_mode = 3
-albedo_color = Color(0.6, 0.9, 1, 0.7)
+albedo_color = Color(0.55, 0.92, 1, 0.7)
 emission_enabled = true
-emission = Color(0.3, 0.8, 1, 1)
+emission = Color(0.3, 0.85, 1, 1)
 emission_energy_multiplier = 1.5
 
 [sub_resource type="QuadMesh" id="8_puffquad"]
 material = SubResource("7_puffmat")
-size = Vector2(0.35, 0.35)
+size = Vector2(0.4, 0.4)
 
 [sub_resource type="ParticleProcessMaterial" id="9_puffproc"]
 lifetime_randomness = 0.2
 emission_shape = 3
-emission_box_extents = Vector3(1.4, 0.1, 1.4)
+emission_box_extents = Vector3(1.5, 0.1, 1.5)
 direction = Vector3(0, 1, 0)
 spread = 25.0
-initial_velocity_min = 0.5
-initial_velocity_max = 1.2
+initial_velocity_min = 0.6
+initial_velocity_max = 1.4
 gravity = Vector3(0, 1.6, 0)
 scale_min = 0.6
 scale_max = 1.2
+color = Color(1, 0.86, 0.35, 1)
 
 [node name="BoostPad" type="Area3D"]
 script = ExtResource("1_padscript")
@@ -65,24 +56,12 @@ cast_shadow = 0
 mesh = SubResource("3_padmesh")
 surface_material_override/0 = SubResource("4_padmat")
 
-[node name="ArrowL" type="MeshInstance3D" parent="Visual"]
-transform = Transform3D(-0.707107, 0, 0.707107, 0, 1, 0, -0.707107, 0, -0.707107, -0.35, 0.02, -0.25)
-cast_shadow = 0
-mesh = SubResource("5_chevmesh")
-surface_material_override/0 = SubResource("6_chevmat")
-
-[node name="ArrowR" type="MeshInstance3D" parent="Visual"]
-transform = Transform3D(0.707107, 0, 0.707107, 0, 1, 0, -0.707107, 0, 0.707107, 0.35, 0.02, -0.25)
-cast_shadow = 0
-mesh = SubResource("5_chevmesh")
-surface_material_override/0 = SubResource("6_chevmat")
-
 [node name="Puff" type="GPUParticles3D" parent="."]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.3, 0)
 cast_shadow = 0
 emitting = false
-amount = 14
-lifetime = 0.5
+amount = 18
+lifetime = 0.55
 one_shot = true
 explosiveness = 1.0
 process_material = SubResource("9_puffproc")

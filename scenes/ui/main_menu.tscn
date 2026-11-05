@@ -2,7 +2,7 @@
 
 [ext_resource type="Theme" path="res://assets/ui/theme.tres" id="1"]
 [ext_resource type="Script" path="res://scripts/ui/main_menu.gd" id="2"]
-[ext_resource type="Script" path="res://scripts/ui/menu_background.gd" id="3"]
+[ext_resource type="PackedScene" path="res://scenes/ui/menu_background.tscn" id="3"]
 [ext_resource type="PackedScene" path="res://scenes/ui/settings_menu.tscn" id="4"]
 [ext_resource type="Script" path="res://scripts/ui/checker_flag.gd" id="5"]
 [ext_resource type="Script" path="res://scripts/ui/drip_label.gd" id="6"]
@@ -18,15 +18,8 @@ grow_vertical = 2
 theme = ExtResource("1")
 script = ExtResource("2")
 
-[node name="Background" type="Control" parent="."]
+[node name="Background" parent="." instance=ExtResource("3")]
 layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-mouse_filter = 2
-script = ExtResource("3")
 
 [node name="Center" type="CenterContainer" parent="."]
 layout_mode = 1
@@ -38,84 +31,81 @@ grow_vertical = 2
 
 [node name="Column" type="VBoxContainer" parent="Center"]
 layout_mode = 2
-theme_override_constants/separation = 4
+theme_override_constants/separation = 12
 alignment = 1
 
 [node name="TitleStack" type="Control" parent="Center/Column"]
-custom_minimum_size = Vector2(960, 300)
+custom_minimum_size = Vector2(1180, 250)
 layout_mode = 2
 mouse_filter = 2
 
 [node name="Flag" type="Control" parent="Center/Column/TitleStack"]
 layout_mode = 1
-anchor_left = 0.60
-anchor_top = 0.16
-anchor_right = 1.0
-anchor_bottom = 0.72
+anchor_left = 0.72
+anchor_top = -0.04
+anchor_right = 1.02
+anchor_bottom = 0.56
 grow_horizontal = 2
 grow_vertical = 2
-rotation = -0.20
+rotation = -0.22
 pivot_offset = Vector2(100.0, 80.0)
 mouse_filter = 2
 script = ExtResource("5")
 wave_amount = 9.0
 
-[node name="TitleCART" type="Label" parent="Center/Column/TitleStack"]
+[node name="TitleRow" type="HBoxContainer" parent="Center/Column/TitleStack"]
 layout_mode = 1
 anchor_right = 1.0
-offset_top = -26.0
-offset_bottom = 150.0
-rotation = -0.03
-pivot_offset = Vector2(480.0, 88.0)
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/separation = 12
+alignment = 1
+
+[node name="TitleCART" type="Label" parent="Center/Column/TitleStack/TitleRow"]
+layout_mode = 2
+size_flags_vertical = 4
+rotation = -0.055
+pivot_offset = Vector2(150.0, 78.0)
 theme_type_variation = &"TitleLabel"
 theme_override_colors/font_color = Color(1, 1, 1, 1)
 theme_override_colors/font_outline_color = Color(0.117647, 0.105882, 0.227451, 1)
 theme_override_colors/font_shadow_color = Color(0.117647, 0.105882, 0.227451, 0.45)
-theme_override_constants/outline_size = 22
+theme_override_constants/outline_size = 20
 theme_override_constants/shadow_offset_x = 0
 theme_override_constants/shadow_offset_y = 10
-theme_override_font_sizes/font_size = 132
+theme_override_font_sizes/font_size = 118
 text = "CART"
-horizontal_alignment = 1
-vertical_alignment = 1
-
-[node name="TitleRow" type="HBoxContainer" parent="Center/Column/TitleStack"]
-layout_mode = 1
-anchor_right = 1.0
-offset_top = 104.0
-offset_bottom = 296.0
-theme_override_constants/separation = 8
-alignment = 1
 
 [node name="TitleSLOP" type="Label" parent="Center/Column/TitleStack/TitleRow"]
 layout_mode = 2
 size_flags_vertical = 4
-rotation = -0.045
-pivot_offset = Vector2(170.0, 90.0)
+rotation = 0.035
+pivot_offset = Vector2(150.0, 78.0)
 theme_type_variation = &"TitleLabel"
 theme_override_colors/font_color = Color(0.94902, 0.423529, 0.654902, 1)
 theme_override_colors/font_outline_color = Color(0.117647, 0.105882, 0.227451, 1)
 theme_override_colors/font_shadow_color = Color(0.117647, 0.105882, 0.227451, 0.45)
-theme_override_constants/outline_size = 22
+theme_override_constants/outline_size = 20
 theme_override_constants/shadow_offset_x = 0
 theme_override_constants/shadow_offset_y = 10
-theme_override_font_sizes/font_size = 132
+theme_override_font_sizes/font_size = 118
 text = "SLOP"
 script = ExtResource("6")
 
 [node name="TitleGP" type="Label" parent="Center/Column/TitleStack/TitleRow"]
 layout_mode = 2
 size_flags_vertical = 4
-rotation = 0.06
-pivot_offset = Vector2(95.0, 90.0)
+rotation = -0.05
+pivot_offset = Vector2(80.0, 78.0)
 theme_type_variation = &"TitleLabel"
 theme_override_colors/font_color = Color(1, 0.823529, 0.180392, 1)
 theme_override_colors/font_outline_color = Color(0.117647, 0.105882, 0.227451, 1)
 theme_override_colors/font_shadow_color = Color(0.117647, 0.105882, 0.227451, 0.45)
-theme_override_constants/outline_size = 22
+theme_override_constants/outline_size = 20
 theme_override_constants/shadow_offset_x = 0
 theme_override_constants/shadow_offset_y = 10
-theme_override_font_sizes/font_size = 150
+theme_override_font_sizes/font_size = 132
 text = "GP"
 
 [node name="Buttons" type="VBoxContainer" parent="Center/Column"]
@@ -134,33 +124,6 @@ script = ExtResource("7")
 fill_color = Color(1, 0.823529, 0.180392, 1)
 shadow_offset = 10
 corner_radius = 34
-
-[node name="NetRow" type="HBoxContainer" parent="Center/Column/Buttons"]
-modulate = Color(1, 1, 1, 0.8)
-layout_mode = 2
-theme_override_constants/separation = 12
-
-[node name="HostButton" type="Button" parent="Center/Column/Buttons/NetRow"]
-custom_minimum_size = Vector2(0, 38)
-layout_mode = 2
-size_flags_horizontal = 3
-disabled = true
-tooltip_text = "Multiplayer is not in this build yet."
-theme_override_font_sizes/font_size = 17
-text = "HOST"
-script = ExtResource("7")
-corner_radius = 22
-
-[node name="JoinButton" type="Button" parent="Center/Column/Buttons/NetRow"]
-custom_minimum_size = Vector2(0, 38)
-layout_mode = 2
-size_flags_horizontal = 3
-disabled = true
-tooltip_text = "Multiplayer is not in this build yet."
-theme_override_font_sizes/font_size = 17
-text = "JOIN"
-script = ExtResource("7")
-corner_radius = 22
 
 [node name="SettingsButton" type="Button" parent="Center/Column/Buttons"]
 unique_name_in_owner = true
