@@ -118,41 +118,43 @@ theme_override_constants/separation = 16
 
 [node name="PlayButton" type="Button" parent="Center/Column/Buttons"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(0, 92)
+custom_minimum_size = Vector2(0, 80)
 layout_mode = 2
-theme_override_font_sizes/font_size = 46
+theme_override_font_sizes/font_size = 40
 text = "PLAY"
 script = ExtResource("7")
 fill_color = Color(1, 0.823529, 0.180392, 1)
-shadow_offset = 10
-corner_radius = 34
+corner_radius = 28
 
 [node name="SettingsButton" type="Button" parent="Center/Column/Buttons"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(0, 78)
+custom_minimum_size = Vector2(0, 80)
 layout_mode = 2
-theme_override_font_sizes/font_size = 34
+theme_override_font_sizes/font_size = 30
 text = "SETTINGS"
 script = ExtResource("7")
 fill_color = Color(0.270588, 0.713726, 0.941176, 1)
+corner_radius = 28
 
 [node name="ChangelogButton" type="Button" parent="Center/Column/Buttons"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(0, 66)
+custom_minimum_size = Vector2(0, 80)
 layout_mode = 2
-theme_override_font_sizes/font_size = 28
+theme_override_font_sizes/font_size = 30
 text = "CHANGELOG"
 script = ExtResource("7")
 fill_color = Color(0.94902, 0.423529, 0.654902, 1)
+corner_radius = 28
 
 [node name="QuitButton" type="Button" parent="Center/Column/Buttons"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(0, 78)
+custom_minimum_size = Vector2(0, 80)
 layout_mode = 2
-theme_override_font_sizes/font_size = 34
+theme_override_font_sizes/font_size = 30
 text = "QUIT"
 script = ExtResource("7")
 fill_color = Color(0.94902, 0.329412, 0.356863, 1)
+corner_radius = 28
 
 [node name="VersionLabel" type="Label" parent="."]
 unique_name_in_owner = true

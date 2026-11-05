@@ -56,26 +56,30 @@ horizontal_alignment = 1
 
 [node name="ResumeButton" type="Button" parent="Root/Center/Panel/Body"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(0, 74)
+custom_minimum_size = Vector2(0, 66)
 layout_mode = 2
-theme_override_font_sizes/font_size = 32
+theme_override_font_sizes/font_size = 30
 text = "RESUME"
 script = ExtResource("4")
 fill_color = Color(1, 0.823529, 0.180392, 1)
 
 [node name="PauseSettingsButton" type="Button" parent="Root/Center/Panel/Body"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(0, 60)
+custom_minimum_size = Vector2(0, 66)
 layout_mode = 2
-theme_override_font_sizes/font_size = 24
+theme_override_font_sizes/font_size = 26
 text = "SETTINGS"
+script = ExtResource("4")
+fill_color = Color(0.270588, 0.713726, 0.941176, 1)
 
 [node name="QuitToMenuButton" type="Button" parent="Root/Center/Panel/Body"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(0, 60)
+custom_minimum_size = Vector2(0, 66)
 layout_mode = 2
-theme_override_font_sizes/font_size = 24
+theme_override_font_sizes/font_size = 26
 text = "QUIT TO MENU"
+script = ExtResource("4")
+fill_color = Color(0.94902, 0.329412, 0.356863, 1)
 
 [node name="SettingsMenu" parent="Root" instance=ExtResource("3")]
 unique_name_in_owner = true

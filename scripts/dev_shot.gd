@@ -90,6 +90,14 @@ func _physics_process(_delta: float) -> void:
 			_shot("menu")
 			get_tree().quit()
 		return
+	if mode == "menu_hover":
+		if _frames == 15:
+			var button: Control = get_parent().get_node("Shot/Center/Column/Buttons/SettingsButton")
+			get_viewport().warp_mouse(button.get_global_rect().get_center())
+		elif _frames == 45:
+			_shot("menu_hover")
+			get_tree().quit()
+		return
 	if _frames == 4:
 		Input.action_press("accelerate")
 	elif _frames == 26:

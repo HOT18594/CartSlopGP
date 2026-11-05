@@ -1,7 +1,8 @@
-[gd_scene load_steps=3 format=3]
+[gd_scene load_steps=4 format=3]
 
 [ext_resource type="Theme" path="res://assets/ui/theme.tres" id="1"]
 [ext_resource type="Script" path="res://scripts/ui/settings_menu.gd" id="2"]
+[ext_resource type="Script" path="res://scripts/ui/candy_button.gd" id="3"]
 
 [node name="SettingsMenu" type="Control"]
 process_mode = 3
@@ -135,10 +136,15 @@ theme_override_constants/separation = 12
 
 [node name="CheckUpdatesButton" type="Button" parent="Center/Panel/Body/UpdateRow"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(0, 50)
+custom_minimum_size = Vector2(0, 56)
 layout_mode = 2
 size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 19
 text = "CHECK FOR UPDATES"
+script = ExtResource("3")
+fill_color = Color(1, 0.823529, 0.180392, 1)
+corner_radius = 22
+shadow_offset = 7
 
 [node name="UpdateStatus" type="Label" parent="Center/Panel/Body/UpdateRow"]
 unique_name_in_owner = true
@@ -151,6 +157,11 @@ vertical_alignment = 1
 
 [node name="BackButton" type="Button" parent="Center/Panel/Body"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(0, 58)
+custom_minimum_size = Vector2(0, 56)
 layout_mode = 2
+theme_override_font_sizes/font_size = 22
 text = "BACK"
+script = ExtResource("3")
+fill_color = Color(0.94902, 0.329412, 0.356863, 1)
+corner_radius = 24
+shadow_offset = 7

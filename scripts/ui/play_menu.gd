@@ -16,6 +16,7 @@ const LOBBY_SCENE: String = "res://scenes/ui/lobby_menu.tscn"
 func _ready() -> void:
 	CursorController.set_menu_mode(true)
 	_notice.text = ""
+	_notice.visible = false
 	_sandbox_button.pressed.connect(_on_sandbox)
 	_host_button.pressed.connect(_on_host)
 	_join_button.pressed.connect(_on_join)
