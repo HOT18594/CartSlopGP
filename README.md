@@ -1,7 +1,7 @@
 # Cart Slop GP
 
 A silly shopping-cart racing sandbox built in **Godot 4.7.2**.
-Current version: **0.5.1**.
+Current version: **0.5.2**.
 
 Drive a shopping cart (or a sedan, truck, van...) around a 140 × 140 m arena,
 hit boost pads, drift, smash cones and crates, then host a shared sandbox and
@@ -13,10 +13,10 @@ invite a friend with a join code.
 
 1. Open **[github.com/HOT18594/CartSlopGP/releases/latest](https://github.com/HOT18594/CartSlopGP/releases/latest)**.
 2. Download the zip for your computer:
-   - **Windows** — `CartSlopGP_v0.5.1_windows.zip`
-   - **Mac** — `CartSlopGP_v0.5.1_macos.zip`
-   - **Linux** — `CartSlopGP_v0.5.1_linux.zip`
-   - **Browser** — `CartSlopGP_v0.5.1_web.zip` (no multiplayer)
+   - **Windows** — `CartSlopGP_v0.5.2_windows.zip`
+   - **Mac** — `CartSlopGP_v0.5.2_macos.zip`
+   - **Linux** — `CartSlopGP_v0.5.2_linux.zip`
+   - **Browser** — `CartSlopGP_v0.5.2_web.zip` (no multiplayer)
 3. Unzip it, then:
    - **Windows:** double-click `CartSlopGP.exe`. If Windows SmartScreen warns,
      click **More info → Run anyway** (the build is unsigned and safe).
@@ -187,13 +187,13 @@ From `godot_project/`:
 ```bash
 GODOT="C:/Users/ethan/AppData/Local/Programs/Godot/Godot_v4.7.2-stable_win64_console.exe"
 
-"$GODOT" --headless --path . --export-release "Windows Desktop" ../builds/v0.5.1/windows/CartSlopGP.exe
-"$GODOT" --headless --path . --export-release "macOS"           ../builds/v0.5.1/mac/CartSlopGP.zip
-"$GODOT" --headless --path . --export-release "Linux"           ../builds/v0.5.1/linux/CartSlopGP.x86_64
-"$GODOT" --headless --path . --export-release "Web"             ../builds/v0.5.1/web/index.html
+"$GODOT" --headless --path . --export-release "Windows Desktop" ../builds/v0.5.2/windows/CartSlopGP.exe
+"$GODOT" --headless --path . --export-release "macOS"           ../builds/v0.5.2/mac/CartSlopGP.zip
+"$GODOT" --headless --path . --export-release "Linux"           ../builds/v0.5.2/linux/CartSlopGP.x86_64
+"$GODOT" --headless --path . --export-release "Web"             ../builds/v0.5.2/web/index.html
 ```
 
-Then zip each platform folder as `CartSlopGP_v0.5.1_<platform>.zip`.
+Then zip each platform folder as `CartSlopGP_v0.5.2_<platform>.zip`.
 Full details, signing notes and the release checklist are in
 `docs/PLATFORMS.md` and `docs/RELEASE_WORKFLOW.md`.
 
