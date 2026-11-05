@@ -237,3 +237,22 @@ Tested: unit checks for version parsing/comparison
   spin impulse and no longer slow the kart down.
 
 Verified with fresh 1280x720 renders (menu, play screen, HUD, pad close-up).
+
+
+---
+
+## 12. GitHub + live update verification (2026-11-04)
+
+- Repo created: https://github.com/HOT18594/CartSlopGP (public, `main` pushed).
+- Tag `v0.1.0` pushed; release published with `CartSlopGP_v0.1.0_windows.zip`
+  (40,930,680 bytes) attached.
+- `UpdateChecker` against the real API: `status=up_to_date`, local `0.1.0`,
+  latest `0.1.0`, asset `CartSlopGP_v0.1.0_windows.zip` resolved.
+- Tier 2 exercised for real: downloaded 40,930,680 bytes to `user://updates/`;
+  the zip lists `CartSlopGP.exe` + `CartSlopGP.pck`, which is what the installer
+  needs to find.
+- Tier 3 template printed and checked: waits on the game PID, xcopy's the staged
+  files, relaunches and self-deletes. It refuses to run from the editor
+  (`install_only_in_exported_build`), as designed.
+- Tool scripts: `tools/check_release_live.gd`, `tools/check_download_live.gd`,
+  `tools/check_installer_bat.gd` (excluded from builds via `tools/*`).
