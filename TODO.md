@@ -59,8 +59,8 @@ Updated: 2026-11-05
 
 - [x] GitHub updater with progress and restart-to-install
 - [x] macOS ad-hoc re-sign after replacing the .app
-- [ ] Release v0.5.1 builds for Windows/macOS/Linux/Web
-- [ ] Verify updater from v0.5.0 → v0.5.1 on each desktop platform
+- [x] Release v0.5.2 builds for Windows/macOS/Linux/Web
+- [ ] Verify updater from v0.5.1 → v0.5.2 on each desktop platform
 - [ ] Optional Pi update mirror + release automation
 
 ## Music
