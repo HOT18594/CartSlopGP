@@ -52,6 +52,10 @@ Updated: 2026-11-05
 - [x] Pill cyclers for BOTS (NO BOTS → 1…5), GAME and LAN/ONLINE
 - [x] Compact PLAY and lobby layouts; ADVANCED public-IP toggle
 - [x] Minigame preview grid
+- [x] Shared UI kit: one action-button height and type scale on every screen
+- [x] Lobby map selector sets the map and returns; host starts from lobby
+- [x] Solo minigames skip the waiting room; countdown runs after the race loads
+- [x] Mass-aware car-to-car collisions for remotes, bots and rivals
 - [ ] Race result leaderboard for all peers
 - [ ] In-game server status / room browser polish
 - [ ] Controller navigation audit
@@ -60,8 +64,8 @@ Updated: 2026-11-05
 
 - [x] GitHub updater with progress and restart-to-install
 - [x] macOS ad-hoc re-sign after replacing the .app
-- [x] Release v0.5.2 builds for Windows/macOS/Linux/Web
-- [x] Verify GitHub latest release and platform asset names (v0.5.2)
+- [x] Release v0.5.3 builds for Windows/macOS/Linux/Web
+- [x] Verify GitHub latest release and platform asset names (v0.5.3)
 - [ ] Verify updater download/install on each desktop platform
 - [ ] Optional Pi update mirror + release automation
 
