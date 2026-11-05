@@ -413,13 +413,17 @@ func _on_browse_pressed() -> void:
 		_browse_button.disabled = false
 		return
 	_lobby_list.visible = true
+	var shown: int = 0
 	for entry: Variant in lobbies:
+		if shown >= 3:
+			break
 		if not (entry is Dictionary):
 			continue
 		var lobby: Dictionary = entry as Dictionary
 		var code: String = str(lobby.get("room_code", ""))
 		if code == "":
 			continue
+		shown += 1
 		var label: String = "%s  ·  %d player%s  ·  %s" % [
 			str(lobby.get("name", "HOST")), int(lobby.get("players", 1)),
 			"" if int(lobby.get("players", 1)) == 1 else "s", code]
@@ -487,17 +491,17 @@ func _refresh_players() -> void:
 	for peer_id: int in multiplayer.get_peers():
 		ids.append(peer_id)
 	ids.sort()
-	var lines: PackedStringArray = []
+	var names: PackedStringArray = []
 	for peer_id: int in ids:
 		var label: String = Network.name_of(peer_id)
 		if peer_id == multiplayer.get_unique_id():
-			label += "  (YOU)"
+			label += " (YOU)"
 		if peer_id == 1:
 			label = "[HOST] " + label
 		if peer_id == 1 and Network.is_client:
-			label += "   %d ms" % Network.latency_ms
-		lines.append(label)
-	_players_label.text = "\n".join(lines)
+			label += " %dms" % Network.latency_ms
+		names.append(label)
+	_players_label.text = "  ·  ".join(names)
 
 
 func _on_back_pressed() -> void:

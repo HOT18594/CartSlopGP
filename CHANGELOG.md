@@ -3,6 +3,20 @@
 All notable changes to Cart Slop GP. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer.
 
+## [0.5.4] - 2026-11-05
+
+Small UI consistency pass on top of 0.5.3.
+
+### Changed
+
+- Player names in the lobby are one compact wrapped line instead of an
+  eight-line tower that could push the host panel off-screen.
+- Room browser shows the first three rooms, so a busy server cannot overflow
+  the join panel.
+- Join placeholder now says 5-CHAR CODE to match the Pi room codes.
+- Every candy button now uses the same 6 px shadow offset as the rest of the
+  UI, not a mix of 5/6/9.
+
 ## [0.5.3] - 2026-11-05
 
 UI overhaul, map selection in the lobby, race-only countdown and car-to-car physics.

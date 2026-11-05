@@ -189,7 +189,7 @@ unique_name_in_owner = true
 custom_minimum_size = Vector2(0, 52)
 layout_mode = 2
 size_flags_horizontal = 3
-placeholder_text = "14-CHARACTER CODE OR ip:port"
+placeholder_text = "5-CHAR CODE OR ip:port"
 alignment = 1
 max_length = 40
 
@@ -278,11 +278,12 @@ autowrap_mode = 2
 
 [node name="PlayersLabel" type="Label" parent="Center/Panel/Body/HostBox"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(0, 44)
+custom_minimum_size = Vector2(0, 40)
 layout_mode = 2
-theme_override_font_sizes/font_size = 16
+theme_override_font_sizes/font_size = 14
 text = ""
 horizontal_alignment = 1
+autowrap_mode = 2
 
 [node name="BackButton" type="Button" parent="Center/Panel/Body"]
 unique_name_in_owner = true

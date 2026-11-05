@@ -45,6 +45,8 @@ func _style_node(node: Node) -> void:
 		button.add_theme_font_size_override("font_size", BUTTON_FONT)
 		if "corner_radius" in button:
 			button.set("corner_radius", CORNER_RADIUS)
+		if "shadow_offset" in button:
+			button.set("shadow_offset", 6)
 	elif node is LineEdit:
 		var field := node as LineEdit
 		field.custom_minimum_size.y = FIELD_HEIGHT
