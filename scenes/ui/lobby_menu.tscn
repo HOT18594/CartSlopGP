@@ -158,6 +158,28 @@ theme_override_font_sizes/font_size = 14
 text = "OR JOIN WITH A CODE"
 horizontal_alignment = 1
 
+[node name="ServerBox" type="HBoxContainer" parent="Center/Panel/Body/JoinBox"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="ServerCaption" type="Label" parent="Center/Panel/Body/JoinBox/ServerBox"]
+custom_minimum_size = Vector2(72, 0)
+layout_mode = 2
+size_flags_vertical = 4
+theme_override_colors/font_color = Color(0.117647, 0.105882, 0.227451, 1)
+theme_override_font_sizes/font_size = 13
+text = "SERVER"
+
+[node name="ServerInput" type="LineEdit" parent="Center/Panel/Body/JoinBox/ServerBox"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 40)
+layout_mode = 2
+size_flags_horizontal = 3
+placeholder_text = "optional public server IP or hostname"
+max_length = 120
+alignment = 1
+
 [node name="JoinRow" type="HBoxContainer" parent="Center/Panel/Body/JoinBox"]
 layout_mode = 2
 theme_override_constants/separation = 10

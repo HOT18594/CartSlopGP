@@ -1,29 +1,32 @@
 #!/bin/bash
-# Runs once on first boot from cloud-init. Installs dependencies and starts
-# the Cart Slop GP server on every boot.
+# Install/refresh the Cart Slop GP server on Raspberry Pi OS.
+# Safe to run repeatedly; the server itself only needs the Python standard
+# library, so package failures do not stop it from starting.
 set -u
 DIR="$(cd "$(dirname "$0")" && pwd)"
 
-echo "[cartslop] installing packages"
-for attempt in 1 2 3 4 5 6 7 8 9 10; do
-  if apt-get update -y && apt-get install -y python3 avahi-daemon miniupnpc iw openssh-server; then
-    break
-  fi
-  echo "[cartslop] apt attempt $attempt failed, retrying"
-  sleep 8
-done
+echo "[cartslop] installing optional packages"
+if command -v apt-get >/dev/null 2>&1; then
+  for attempt in 1 2 3 4 5; do
+    if apt-get update -y && apt-get install -y python3 avahi-daemon miniupnpc natpmpc iw openssh-server; then
+      break
+    fi
+    echo "[cartslop] apt attempt $attempt failed, retrying"
+    sleep 10
+  done
+fi
 
 install -d -m 755 /opt/cartslop
 if [ "$DIR" != "/opt/cartslop" ]; then
   cp -a "$DIR"/. /opt/cartslop/
 fi
-chmod +x /opt/cartslop/cartslop_server.py /opt/cartslop/install.sh
+chmod +x /opt/cartslop/cartslop_server.py /opt/cartslop/install.sh 2>/dev/null
 
 cat > /etc/systemd/system/cartslop-server.service <<'UNIT'
 [Unit]
 Description=Cart Slop GP lobby and UDP relay
-After=network-online.target NetworkManager-wait-online.service
-Wants=network-online.target
+After=network.target
+Wants=network.target
 
 [Service]
 Type=simple
@@ -43,8 +46,8 @@ UNIT
 cat > /etc/systemd/system/wifi-powersave-off.service <<'UNIT'
 [Unit]
 Description=Disable Wi-Fi power saving for stable game latency
-After=network-online.target
-Wants=network-online.target
+After=network.target
+Wants=network.target
 
 [Service]
 Type=oneshot
@@ -56,7 +59,7 @@ UNIT
 
 systemctl daemon-reload
 systemctl enable --now cartslop-server.service
-systemctl enable --now avahi-daemon.service
-systemctl enable wifi-powersave-off.service
+systemctl enable --now avahi-daemon.service >/dev/null 2>&1
+systemctl enable wifi-powersave-off.service >/dev/null 2>&1
 
 echo "[cartslop] server installed; console on http://cartslop.local:42777"

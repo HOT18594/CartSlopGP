@@ -31,6 +31,7 @@ const CONN_ONLINE: String = "online"
 @export var play_mode: int = MODE_SINGLE ## MODE_SINGLE or MODE_MULTIPLAYER.
 @export var multiplayer_mode: String = GAME_SANDBOX ## GAME_SANDBOX or GAME_MINIGAMES.
 @export var connection_preference: String = CONN_ONLINE ## CONN_LAN (Wi-Fi) or CONN_ONLINE.
+@export var relay_server: String = "" ## Optional public Pi server URL/host for internet joins.
 @export var bots_enabled: bool = false ## OFF by default - bots are strictly opt-in.
 @export_range(0, 5) var bot_count: int = 3 ## How many AI carts to add when enabled.
 
@@ -128,6 +129,11 @@ func set_multiplayer_mode(mode: String) -> void:
 func set_connection_preference(mode: String) -> void:
 	connection_preference = CONN_LAN if mode == CONN_LAN else CONN_ONLINE
 	save_settings()
+
+
+func set_relay_server(raw: String) -> void:
+	relay_server = raw.strip_edges()
+	save_settings()
 	session_changed.emit()
 
 
@@ -201,6 +207,7 @@ func load_settings() -> void:
 	play_mode = int(config.get_value("session", "play_mode", play_mode))
 	multiplayer_mode = str(config.get_value("session", "multiplayer_mode", multiplayer_mode))
 	connection_preference = str(config.get_value("session", "connection", connection_preference))
+	relay_server = str(config.get_value("session", "relay_server", relay_server))
 	bots_enabled = bool(config.get_value("session", "bots_enabled", bots_enabled))
 	bot_count = int(config.get_value("session", "bot_count", bot_count))
 
@@ -219,6 +226,7 @@ func save_settings() -> void:
 	config.set_value("session", "play_mode", play_mode)
 	config.set_value("session", "multiplayer_mode", multiplayer_mode)
 	config.set_value("session", "connection", connection_preference)
+	config.set_value("session", "relay_server", relay_server)
 	config.set_value("session", "bots_enabled", bots_enabled)
 	config.set_value("session", "bot_count", bot_count)
 	config.save(SETTINGS_PATH)

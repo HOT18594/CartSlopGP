@@ -31,6 +31,7 @@ const MINIGAMES_SCENE: String = "res://scenes/ui/minigames_menu.tscn"
 const PING_INTERVAL: float = 2.0
 const RELAY_DISCOVERY_PORT: int = 42778
 const RELAY_HEARTBEAT_INTERVAL: float = 20.0
+const RelayTunnel := preload("res://scripts/net/relay_tunnel.gd")
 
 var is_host: bool = false
 var is_client: bool = false
@@ -57,6 +58,15 @@ var relay_lan_host: String = ""
 var relay_public_host: String = ""
 var relay_active: bool = false
 var relay_room_code: String = ""
+## Optional public Pi server address (hostname, IP, or URL) for internet joins.
+var relay_server_url: String = ""
+var relay_server_host: String = ""
+var relay_server_http_port: int = 42777
+var relay_base_public: bool = false
+var relay_tunnel_token: String = ""
+var relay_tunnel_port: int = 0
+var relay_tunnel_active: bool = false
+var _relay_tunnel: Node = null
 
 ## Host-chosen configuration, broadcast with _net_begin_game so every peer
 ## loads the same world with the same bots. Clients never write these locally.
@@ -80,6 +90,8 @@ var _upnp_ticket: int = 0
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
+	if GameSettings.relay_server != "":
+		set_relay_server(GameSettings.relay_server)
 	multiplayer.peer_connected.connect(_on_peer_connected)
 	multiplayer.peer_disconnected.connect(_on_peer_disconnected)
 	multiplayer.connected_to_server.connect(_on_connected_to_server)
@@ -226,15 +238,27 @@ func host_game(mode: String = "online") -> void:
 
 
 func _discover_relay() -> bool:
-	## UDP broadcast to the Pi's discovery port; no DNS/.local dependency.
+	## A manually configured public server wins; otherwise UDP broadcast to
+	## the Pi's discovery port (no DNS/.local dependency).
 	if relay_base != "":
 		return true
+	if relay_server_url != "":
+		relay_base = relay_server_url
+		relay_base_public = true
+		return true
 	var udp := PacketPeerUDP.new()
-	if udp.bind(0) != OK:
+	var lan_ip: String = _local_ip()
+	if udp.bind(0, lan_ip) != OK and udp.bind(0) != OK:
 		return false
 	udp.set_broadcast_enabled(true)
-	udp.set_dest_address("255.255.255.255", RELAY_DISCOVERY_PORT)
-	udp.put_packet("CARTSLOP_DISCOVER".to_utf8_buffer())
+	var targets: PackedStringArray = ["255.255.255.255"]
+	if _valid_ip(lan_ip):
+		var parts: PackedStringArray = lan_ip.split(".")
+		if parts.size() == 4:
+			targets.append("%s.%s.%s.255" % [parts[0], parts[1], parts[2]])
+	for target: String in targets:
+		udp.set_dest_address(target, RELAY_DISCOVERY_PORT)
+		udp.put_packet("CARTSLOP_DISCOVER".to_utf8_buffer())
 	var deadline: int = Time.get_ticks_msec() + 1200
 	while Time.get_ticks_msec() < deadline:
 		while udp.get_available_packet_count() > 0:
@@ -245,6 +269,7 @@ func _discover_relay() -> bool:
 				var http_port: int = int((parsed as Dictionary).get("http_port", 42777))
 				if relay_lan_ip != "":
 					relay_base = "http://%s:%d" % [relay_lan_ip, http_port]
+					relay_base_public = false
 					udp.close()
 					return true
 		await get_tree().process_frame
@@ -308,6 +333,8 @@ func _register_relay(local_port: int) -> bool:
 	var response: Dictionary = await _relay_post("/api/register", {
 		"name": GameSettings.player_name,
 		"local_port": local_port,
+		"local_ip": local_address,
+		"tunnel": true,
 	})
 	if response.is_empty():
 		return false
@@ -316,8 +343,38 @@ func _register_relay(local_port: int) -> bool:
 	relay_port = int(response.get("relay_port", 0))
 	relay_lan_host = str(response.get("lan_host", relay_lan_ip))
 	relay_public_host = str(response.get("public_host", ""))
+	relay_tunnel_token = str(response.get("tunnel_token", ""))
+	relay_tunnel_port = int(response.get("tunnel_port", 0))
+	if relay_base_public and relay_server_host != "":
+		# A hostname/tunnel is the address clients actually used.
+		relay_public_host = relay_server_host
 	_relay_heartbeat = 0.0
+	if relay_token != "" and relay_port > 0 and relay_tunnel_token != "" \
+			and relay_tunnel_port > 0:
+		_start_relay_tunnel()
 	return relay_token != "" and relay_port > 0
+
+
+func _start_relay_tunnel() -> void:
+	if _relay_tunnel != null:
+		return
+	var host: String = relay_lan_host
+	if host == "" and relay_base_public:
+		host = relay_server_host
+	if relay_base_public and relay_lan_host != "" and not _same_subnet_24(relay_lan_host, _local_ip()):
+		host = relay_server_host
+	if host == "":
+		host = relay_lan_ip
+	if host == "":
+		return
+	_relay_tunnel = RelayTunnel.new()
+	add_child(_relay_tunnel)
+	_relay_tunnel.configure(host, relay_tunnel_port, relay_tunnel_token, port)
+	_relay_tunnel.tunnel_ready.connect(func() -> void:
+		relay_tunnel_active = true)
+	_relay_tunnel.tunnel_lost.connect(func() -> void:
+		relay_tunnel_active = false)
+	_relay_tunnel.start()
 
 
 func _relay_heartbeat_tick(delta: float) -> void:
@@ -458,7 +515,8 @@ func _local_ip() -> String:
 		elif label.contains("ethernet") or label.contains("eth"):
 			score += 20
 		for bad: String in ["virtual", "vmware", "vbox", "hyper-v", "vethernet", "wsl",
-				"docker", "tailscale", "zerotier", "vpn", "loopback", "bluetooth"]:
+				"docker", "tailscale", "zerotier", "vpn", "warp", "cloudflare",
+				"loopback", "bluetooth"]:
 			if label.contains(bad):
 				score -= 100
 				break
@@ -515,6 +573,38 @@ func set_custom_public_ip(address: String) -> void:
 	custom_public_ip = address.strip_edges()
 
 
+func set_relay_server(raw: String) -> void:
+	## Accepts "1.2.3.4", "1.2.3.4:42777", "cartslop.example.com",
+	## or a full http(s) URL. Empty means "use LAN discovery".
+	var text: String = raw.strip_edges()
+	GameSettings.set_relay_server(text)
+	relay_server_url = ""
+	relay_server_host = ""
+	relay_server_http_port = 42777
+	var was_public: bool = relay_base_public
+	relay_base_public = false
+	if text == "":
+		if was_public:
+			relay_base = ""
+		return
+	var secure: bool = text.begins_with("https://")
+	var rest: String = text.trim_prefix("https://").trim_prefix("http://").trim_suffix("/")
+	var host: String = rest.get_slice("/", 0)
+	var http_port: int = 42777
+	if host.contains(":"):
+		var parts: PackedStringArray = host.split(":")
+		host = parts[0]
+		http_port = int(parts[1]) if parts.size() > 1 else 42777
+	if host == "":
+		return
+	relay_server_host = host
+	relay_server_http_port = http_port if http_port > 0 else 42777
+	relay_server_url = ("https://" if secure else "http://") + relay_server_host \
+		+ ":" + str(relay_server_http_port)
+	relay_base = relay_server_url
+	relay_base_public = true
+
+
 func set_local_name(raw_name: String) -> void:
 	GameSettings.set_player_name(raw_name)
 	if is_session_active():
@@ -546,15 +636,27 @@ func join_game(raw_code: String) -> void:
 			join_failed.emit("Room %s was not found. Ask the host for a fresh code." % short)
 			return
 		var host: String = str(room.get("lan_host", ""))
+		if relay_base_public:
+			# The client reached the Pi by a public address/hostname, so the
+			# relay is on that same address; public_host is only a fallback.
+			host = relay_server_host if relay_server_host != "" else str(room.get("public_host", ""))
+			if host == "":
+				host = str(room.get("lan_host", ""))
 		var relay_port: int = int(room.get("relay_port", 0))
 		if host == "" or relay_port <= 0:
 			join_failed.emit("Room %s has no relay port." % short)
 			return
 		address = {"ip": host, "port": relay_port}
 	leave()
-	join_status_changed.emit("Connecting to %s:%d..." % [address["ip"], address["port"]])
+	var connect_ip: String = str(address["ip"])
+	if not _valid_ip(connect_ip):
+		connect_ip = IP.resolve_hostname(connect_ip)
+		if connect_ip == "":
+			join_failed.emit("Could not resolve %s." % str(address["ip"]))
+			return
+	join_status_changed.emit("Connecting to %s:%d..." % [connect_ip, int(address["port"])])
 	var peer := ENetMultiplayerPeer.new()
-	var error: Error = peer.create_client(str(address["ip"]), int(address["port"]))
+	var error: Error = peer.create_client(connect_ip, int(address["port"]))
 	if error != OK:
 		join_failed.emit("Could not start the connection.")
 		return
@@ -593,6 +695,14 @@ func leave() -> void:
 	relay_public_host = ""
 	relay_room_code = ""
 	relay_base = ""
+	relay_base_public = false
+	relay_tunnel_active = false
+	relay_tunnel_token = ""
+	relay_tunnel_port = 0
+	if _relay_tunnel != null:
+		_relay_tunnel.stop()
+		_relay_tunnel.queue_free()
+		_relay_tunnel = null
 	public_address = ""
 	latency_ms = 0
 	last_error = ""
@@ -815,6 +925,12 @@ static func decode_address(raw: String) -> Dictionary:
 	if udp_port <= 0:
 		return {}
 	return {"ip": ip, "port": udp_port}
+
+
+func _same_subnet_24(left: String, right: String) -> bool:
+	if not _valid_ip(left) or not _valid_ip(right):
+		return false
+	return left.substr(0, left.rfind(".")) == right.substr(0, right.rfind("."))
 
 
 func _valid_ip(text: String) -> bool:

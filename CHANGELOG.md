@@ -3,6 +3,33 @@
 All notable changes to Cart Slop GP. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer.
 
+## [0.5.2] - 2026-11-05
+
+Global Pi joins that survive Windows Firewall.
+
+### Added
+
+- **Host TCP tunnel**: the host game opens an outbound TCP connection to the Pi
+  (TCP 42820). A local loopback proxy gives every remote client its own ENet
+  peer, so Windows Firewall no longer blocks the Pi→host leg on Public
+  networks. Friends still connect to the normal UDP relay port.
+- **Optional SERVER field** in the lobby for internet clients: enter the Pi's
+  public IP or hostname once, then use the 5-character room code. Leaving it
+  empty keeps LAN discovery.
+- **NAT-PMP fallback** beside UPnP, plus an external TCP reachability check and
+  a public 14-character code in the Pi console.
+- Public Pi console shows TCP tunnel status and both short/public codes.
+
+### Fixed
+
+- Pi relay thread crash when a lobby was unregistered while a packet was in
+  flight.
+- Pi server advertised `127.0.0.1` when it started before Wi-Fi was ready.
+- LAN discovery now binds the physical Wi-Fi/Ethernet address and sends the
+  subnet broadcast, instead of letting a VPN/WARP default route swallow it.
+- Host registration reports its real LAN address, so relay works even when a
+  VPN changes the TCP source address.
+
 ## [0.5.1] - 2026-11-05
 
 Compact pill controls and the Raspberry Pi lobby/relay backend.

@@ -12,6 +12,7 @@ import json
 import os
 import re
 import select
+import shutil
 import socket
 import subprocess
 import threading
@@ -39,8 +40,15 @@ ROOM_CODES: set[str] = set()
 STARTED = time.time()
 LAN_IP = "127.0.0.1"
 PUBLIC_IP = ""
+WAN_IP = ""
 PUBLIC_LAST = 0.0
 UPNP = {"available": False, "mapped": 0, "total": 0, "message": "checking"}
+NATPMP = {"available": False, "mapped": 0, "total": 0, "message": "checking"}
+EXTERNAL = {"checked": 0, "open": False, "message": "not checked"}
+MAPPING_BUSY = False
+MAPPING_LAST = 0.0
+HAVE_UPNPC = shutil.which("upnpc") is not None
+HAVE_NATPMPC = shutil.which("natpmpc") is not None
 
 
 def detect_lan_ip() -> str:
@@ -54,29 +62,94 @@ def detect_lan_ip() -> str:
         return "127.0.0.1"
 
 
+def refresh_lan_ip() -> bool:
+    """Re-detect the LAN address. The server may start before Wi-Fi is up."""
+    global LAN_IP
+    candidate = detect_lan_ip()
+    if candidate and candidate != "127.0.0.1" and candidate != LAN_IP:
+        LAN_IP = candidate
+        print("LAN IP -> %s" % LAN_IP, flush=True)
+        return True
+    return False
+
+
 def refresh_public_ip() -> str:
-    global PUBLIC_IP, PUBLIC_LAST
-    try:
-        with urllib.request.urlopen("https://api.ipify.org", timeout=4) as response:
-            text = response.read().decode("ascii", "ignore").strip()
-        if re.fullmatch(r"\d{1,3}(?:\.\d{1,3}){3}", text):
-            PUBLIC_IP = text
-    except Exception:
-        pass
+    global PUBLIC_IP, WAN_IP, PUBLIC_LAST
+    urls = (
+        "https://api.ipify.org",
+        "https://ifconfig.me/ip",
+        "https://icanhazip.com",
+    )
+    for url in urls:
+        try:
+            request = urllib.request.Request(
+                url, headers={"User-Agent": "CartSlopPi/" + VERSION})
+            with urllib.request.urlopen(request, timeout=4) as response:
+                text = response.read().decode("ascii", "ignore").strip()
+            if re.fullmatch(r"\d{1,3}(?:\.\d{1,3}){3}", text):
+                PUBLIC_IP = text
+                break
+        except Exception:
+            continue
+    # The router's WAN address tells us whether a mapping can actually be
+    # reached, even when the public-IP web services only see the ISP egress.
+    if HAVE_UPNPC:
+        ok, output = run_upnpc(["-s"])
+        if ok:
+            match = re.search(r"ExternalIPAddress\s*=\s*(\d{1,3}(?:\.\d{1,3}){3})", output)
+            if match:
+                WAN_IP = match.group(1)
+                if not PUBLIC_IP:
+                    PUBLIC_IP = WAN_IP
     PUBLIC_LAST = time.time()
     return PUBLIC_IP
 
 
-def run_upnpc(args: list[str], timeout: float = 6.0) -> tuple[bool, str]:
+def check_external_port() -> None:
+    """Ask a public checker whether the HTTP port is reachable."""
+    global EXTERNAL
+    if not PUBLIC_IP:
+        EXTERNAL = {"checked": int(time.time()), "open": False,
+                    "message": "public IP not detected"}
+        return
+    if _is_shared_address(PUBLIC_IP) or _is_private_address(PUBLIC_IP):
+        EXTERNAL = {"checked": int(time.time()), "open": False,
+                    "message": "carrier/private address - use a tunnel"}
+        return
+    url = ("https://api.networktools.dev/v1/port-test?port=%d&ip=%s"
+           % (HTTP_PORT, PUBLIC_IP))
     try:
-        result = subprocess.run(["upnpc", *args], capture_output=True,
-                                text=True, timeout=timeout)
+        request = urllib.request.Request(
+            url, headers={"User-Agent": "CartSlopPi/" + VERSION})
+        with urllib.request.urlopen(request, timeout=7) as response:
+            payload = json.loads(response.read().decode("utf-8", "ignore"))
+        opened = bool(payload.get("open", False))
+        EXTERNAL = {
+            "checked": int(time.time()),
+            "open": opened,
+            "message": "reachable from the internet" if opened
+            else "TCP %d is not reachable - forward the ports or use a tunnel" % HTTP_PORT,
+        }
+    except Exception as error:
+        EXTERNAL = {"checked": int(time.time()), "open": False,
+                    "message": "check failed: %s" % str(error)[:80]}
+
+
+def run_command(command: list[str], timeout: float = 6.0) -> tuple[bool, str]:
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, timeout=timeout)
         return result.returncode == 0, (result.stdout or "") + (result.stderr or "")
     except Exception as error:
         return False, str(error)
 
 
-def map_port(port: int, protocol: str) -> bool:
+def run_upnpc(args: list[str], timeout: float = 6.0) -> tuple[bool, str]:
+    if not HAVE_UPNPC:
+        return False, "upnpc not installed"
+    return run_command(["upnpc", *args], timeout)
+
+
+def map_upnp(port: int, protocol: str) -> bool:
     ok, _ = run_upnpc(["-a", LAN_IP, str(port), str(port), protocol])
     if ok:
         return True
@@ -84,20 +157,59 @@ def map_port(port: int, protocol: str) -> bool:
     return ok
 
 
+def map_natpmp(port: int, protocol: str) -> bool:
+    """NAT-PMP fallback for routers that expose it instead of UPnP."""
+    if not HAVE_NATPMPC:
+        return False
+    ok, output = run_command(
+        ["natpmpc", "-a", str(port), str(port), protocol.lower(), "3600"], timeout=5)
+    return ok and ("Mapped public port" in output or "public port" in output.lower())
+
+
+def map_port(port: int, protocol: str) -> bool:
+    if map_upnp(port, protocol):
+        return True
+    return map_natpmp(port, protocol)
+
+
+def mapping_bootstrap() -> None:
+    global UPNP, NATPMP, MAPPING_BUSY, MAPPING_LAST
+    if MAPPING_BUSY:
+        return
+    MAPPING_BUSY = True
+    try:
+        ports = [(HTTP_PORT, "TCP")] + [(RELAY_BASE + i, "UDP") for i in range(RELAY_COUNT)]
+        upnp_mapped = 0
+        natpmp_mapped = 0
+        for port, protocol in ports:
+            if map_upnp(port, protocol):
+                upnp_mapped += 1
+            elif map_natpmp(port, protocol):
+                natpmp_mapped += 1
+        UPNP = {
+            "available": upnp_mapped > 0,
+            "mapped": upnp_mapped,
+            "total": len(ports),
+            "message": "UPnP mapping complete" if upnp_mapped == len(ports)
+            else ("UPnP partial" if upnp_mapped else "UPnP unavailable"),
+        }
+        NATPMP = {
+            "available": natpmp_mapped > 0,
+            "mapped": natpmp_mapped,
+            "total": len(ports),
+            "message": "NAT-PMP mapping complete" if natpmp_mapped == len(ports)
+            else ("NAT-PMP partial" if natpmp_mapped else "NAT-PMP unavailable"),
+        }
+        MAPPING_LAST = time.time()
+        if upnp_mapped + natpmp_mapped == 0:
+            print("No automatic port mapping - forward TCP %d and UDP %d-%d"
+                  % (HTTP_PORT, RELAY_BASE, RELAY_BASE + RELAY_COUNT - 1), flush=True)
+    finally:
+        MAPPING_BUSY = False
+
+
 def upnp_bootstrap() -> None:
-    global UPNP
-    ports = [(HTTP_PORT, "TCP")] + [(RELAY_BASE + i, "UDP") for i in range(RELAY_COUNT)]
-    mapped = 0
-    for port, protocol in ports:
-        if map_port(port, protocol):
-            mapped += 1
-    UPNP = {
-        "available": mapped > 0,
-        "mapped": mapped,
-        "total": len(ports),
-        "message": "automatic port mapping" if mapped == len(ports)
-        else ("partial mapping" if mapped else "UPnP unavailable - forward ports on the router"),
-    }
+    mapping_bootstrap()
 
 
 def ensure_port_mapped(port: int, protocol: str) -> None:
@@ -204,7 +316,11 @@ class Relay:
                         self.socket.sendto(data, target)
                     except OSError:
                         pass
-                    self.clients[target]["last"] = now
+                    # stop() can clear the client table while this packet is
+                    # in flight; do not key directly into it.
+                    client = self.clients.get(target)
+                    if client is not None:
+                        client["last"] = now
             for address, client in list(self.clients.items()):
                 if now - client["last"] > CLIENT_TTL:
                     try:
@@ -217,12 +333,14 @@ class Relay:
 
     def stop(self) -> None:
         self.running = False
-        for client in list(self.clients.values()):
+        with LOCK:
+            clients = list(self.clients.values())
+            self.clients.clear()
+        for client in clients:
             try:
                 client["sock"].close()
             except OSError:
                 pass
-        self.clients.clear()
         try:
             self.socket.close()
         except OSError:
@@ -304,6 +422,28 @@ def expire_lobbies() -> None:
         lobby.stop()
 
 
+def _is_shared_address(address: str) -> bool:
+    """True for RFC 6598 carrier-grade NAT (100.64.0.0/10)."""
+    if not re.fullmatch(r"100\.(\d{1,3})\.\d{1,3}\.\d{1,3}", address or ""):
+        return False
+    return 64 <= int(address.split(".")[1]) <= 127
+
+
+def _same_subnet_24(left: str, right: str) -> bool:
+    if not re.fullmatch(r"\d{1,3}(?:\.\d{1,3}){3}", left or "") \
+            or not re.fullmatch(r"\d{1,3}(?:\.\d{1,3}){3}", right or ""):
+        return False
+    return left.rsplit(".", 1)[0] == right.rsplit(".", 1)[0]
+
+
+def _is_private_address(address: str) -> bool:
+    if not re.fullmatch(r"\d{1,3}(?:\.\d{1,3}){3}", address or ""):
+        return False
+    first, second = (int(part) for part in address.split(".")[:2])
+    return first == 10 or (first == 172 and 16 <= second <= 31) \
+        or (first == 192 and second == 168) or first == 127
+
+
 def status_snapshot() -> dict:
     with LOCK:
         lobbies = [lobby.snapshot() for lobby in LOBBIES.values()]
@@ -313,11 +453,17 @@ def status_snapshot() -> dict:
         "hostname": socket.gethostname(),
         "lan_ip": LAN_IP,
         "public_ip": PUBLIC_IP,
+        "wan_ip": WAN_IP,
         "http_port": HTTP_PORT,
         "discovery_port": DISCOVERY_PORT,
         "relay_base": RELAY_BASE,
         "relay_count": RELAY_COUNT,
         "upnp": dict(UPNP),
+        "natpmp": dict(NATPMP),
+        "external": dict(EXTERNAL),
+        "mapping_ready": bool(UPNP.get("available") or NATPMP.get("available")),
+        "cgnat": _is_shared_address(WAN_IP) or _is_shared_address(PUBLIC_IP)
+                  or _is_private_address(WAN_IP),
         "uptime": int(uptime_seconds()),
         "load": list(os.getloadavg()) if hasattr(os, "getloadavg") else [],
         "cpu_temp": read_int("/sys/class/thermal/thermal_zone0/temp") / 1000.0,
@@ -418,7 +564,23 @@ class Handler(BaseHTTPRequestHandler):
             return
         name = sanitize_name(data.get("name", ""))
         host_ip = self.client_address[0]
-        lobby = Lobby(token, room_code, name, host_ip, host_port, relay_port)
+        # VPN/Cloudflare-WARP clients can make the TCP source address look
+        # like a virtual adapter. Prefer the host's explicitly reported LAN
+        # address when it is a normal private IPv4 address.
+        reported_ip = str(data.get("local_ip", "")).strip()
+        if _is_private_address(reported_ip) and not _is_shared_address(reported_ip) \
+                and not reported_ip.startswith("127.") \
+                and _same_subnet_24(reported_ip, LAN_IP):
+            host_ip = reported_ip
+        try:
+            lobby = Lobby(token, room_code, name, host_ip, host_port, relay_port)
+        except OSError as error:
+            with LOCK:
+                USED_PORTS.discard(relay_port)
+                ROOM_CODES.discard(room_code)
+            print("relay bind failed:", error, flush=True)
+            self._json({"error": "relay port unavailable"}, 503)
+            return
         with LOCK:
             LOBBIES[token] = lobby
         ensure_port_mapped(relay_port, "UDP")
@@ -514,8 +676,16 @@ def maintenance_loop() -> None:
     while True:
         time.sleep(10)
         expire_lobbies()
+        if refresh_lan_ip():
+            # Wi-Fi/Ethernet appeared or changed after startup: refresh the
+            # advertised LAN address and redo the router mappings.
+            threading.Thread(target=mapping_bootstrap, daemon=True).start()
         if time.time() - PUBLIC_LAST > 300:
             refresh_public_ip()
+        if time.time() - int(EXTERNAL.get("checked", 0)) > 300:
+            check_external_port()
+        if MAPPING_LAST > 0 and time.time() - MAPPING_LAST > 1800:
+            threading.Thread(target=mapping_bootstrap, daemon=True).start()
 
 
 def main() -> None:

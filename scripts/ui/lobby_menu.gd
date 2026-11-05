@@ -21,6 +21,8 @@ const BOT_VALUES: Array[int] = [0, 1, 2, 3, 4, 5]
 @onready var _public_ip_input: LineEdit = %PublicIpInput
 @onready var _host_button: Button = %HostButton
 @onready var _join_box: VBoxContainer = %JoinBox
+@onready var _server_box: HBoxContainer = %ServerBox
+@onready var _server_input: LineEdit = %ServerInput
 @onready var _join_input: LineEdit = %JoinInput
 @onready var _join_button: Button = %JoinButton
 @onready var _join_status: Label = %JoinStatus
@@ -79,6 +81,8 @@ func _ready() -> void:
 	_name_input.focus_exited.connect(_commit_name)
 	_name_input.text_changed.connect(_on_name_typed)
 	_public_ip_input.text_changed.connect(func(text: String) -> void: Network.set_custom_public_ip(text))
+	_server_input.text_changed.connect(func(text: String) -> void: Network.set_relay_server(text))
+	_server_input.text = GameSettings.relay_server
 	_join_input.text_submitted.connect(func(_t: String) -> void: _on_join_pressed())
 
 	_name_input.text = GameSettings.player_name
@@ -224,6 +228,7 @@ func _set_session_state(state: String) -> void:
 	_advanced_button.visible = editing and _mode == MODE_ONLINE
 	_host_button.visible = editing
 	_join_box.visible = editing
+	_server_box.visible = editing and _mode == MODE_ONLINE
 	_host_box.visible = not editing
 	# Game/bot options only matter once you are hosting.
 	_game_row.visible = state == "host"
@@ -309,7 +314,8 @@ func _set_mode(mode: String) -> void:
 	if _advanced_button != null:
 		_advanced_button.visible = _mode == MODE_ONLINE
 	_public_ip_row.visible = _mode == MODE_ONLINE and _advanced_open
-	_mode_hint.text = "UPnP opens the port; if it fails, use the LAN code or ADVANCED." \
+	_server_box.visible = _mode == MODE_ONLINE
+	_mode_hint.text = "Server field is optional on your Wi-Fi; enter the public Pi address for internet friends." \
 		if _mode == MODE_ONLINE else "Same network only. No port forwarding needed."
 	_refresh_session_controls()
 
@@ -344,8 +350,13 @@ func _on_host_started(code: String) -> void:
 		and Network.online_code != "" and Network.lan_code != ""
 	_lan_code_label.text = "LAN: " + Network.lan_code
 	if Network.relay_active:
-		_host_status.text = "Online via the Cart Slop Pi server - share this code." \
-			if Network.online_code != "" else "Pi server found on your Wi-Fi - share the LAN code."
+		var server_host: String = Network.relay_server_host if Network.relay_base_public \
+			else (Network.relay_public_host if Network.relay_public_host != "" else Network.relay_lan_host)
+		var tunnel: String = "TCP tunnel" if Network.relay_tunnel_token != "" else "direct UDP"
+		if server_host != "":
+			_host_status.text = "Server: %s (%s) - share code %s." % [server_host, tunnel, code]
+		else:
+			_host_status.text = "Online via the Cart Slop Pi server (%s) - share code %s." % [tunnel, code]
 	elif _mode == MODE_LAN:
 		_host_status.text = "Wi-Fi / LAN - share this code with players on your network."
 	elif Network.has_online_route() and not Network.upnp_mapped:

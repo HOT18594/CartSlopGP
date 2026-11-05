@@ -11,8 +11,15 @@ Updated: 2026-11-05
 - [x] Game discovers server by UDP, registers, heartbeats, unregisters
 - [x] Relay tested end-to-end locally (host game → Pi relay → client)
 - [x] Flash SD image with first-boot provisioning (`pi_setup/`)
-- [ ] First boot on the physical Pi 4 — **waiting for SD to be inserted**
-- [ ] Verify `cartslop.local:42777` from the Windows PC
+- [x] Confirm the physical Pi booted the new image: `firstrun.log` shows
+      Debian 13 (trixie), Python 3.13.5, 2026-10-06 kernel files
+- [x] Diagnose first-boot Wi-Fi failure: old script called `nmcli` before
+      NetworkManager was running, so it never associated
+- [x] Replace one-shot firstrun with a `cartslop-connect` watchdog that starts
+      after NetworkManager, retries `blue24`/`blue21` (WPA2 + WPA3), logs to
+      the boot partition, and starts the server once an address exists
+- [x] Install a passwordless SSH key on the card (`pi_setup/pi_ssh_key`)
+- [ ] Reboot the Pi with the updated card and verify `cartslop.local:42777`
 - [ ] Verify game → Pi registration and a real second-device join
 - [ ] Verify UPnP mappings / internet join; document port-forward fallback
 - [ ] Add server-side lobby update mirror (`/updates/`) if GitHub-only is not enough
@@ -23,6 +30,8 @@ Updated: 2026-11-05
 - [x] Multiplayer Meadow Loop with remote carts, names and standings
 - [x] Short room-code join + lobby BROWSE list
 - [ ] Internet short-code lookup (needs a public server URL field or tunnel)
+- [x] Host TCP tunnel (TCP 42820) around Windows Firewall inbound blocks
+- [x] UPnP + NAT-PMP automatic mapping and public reachability check
 - [ ] Full server-authoritative vehicle collisions (currently each client
       resolves its own cart against ghost bodies; bots/remotes block locally)
 - [ ] Host migration/reconnect after a drop
