@@ -75,6 +75,14 @@ func _on_cursor_toggled(pressed: bool) -> void:
 	CursorController.set_menu_mode(CursorController.is_menu_mode())
 
 
+func _unhandled_input(event: InputEvent) -> void:
+	if not visible:
+		return
+	if event.is_action_pressed("pause") or event.is_action_pressed("ui_cancel"):
+		close()
+		get_viewport().set_input_as_handled()
+
+
 func _on_back_pressed() -> void:
 	close()
 
