@@ -1,7 +1,7 @@
 # Cart Slop GP
 
 An arcade cart-racing prototype built in **Godot 4.7.2** (GDScript, Mobile renderer).
-Current version: **0.2.1**.
+Current version: **0.3.0**.
 
 The repo is UI + tooling + the existing driving prototype: main menu, pause/settings,
 in-game HUD, custom cursor, Windows export and a free in-game update checker that uses
@@ -19,7 +19,7 @@ from the prototype.
 1. Launch Godot 4.7.2.
 2. **Import** → select `godot_project/project.godot` → **Import & Edit**.
 3. Press **F5** to run. The project boots into the main menu; **PLAY** opens the
-   mode select (SANDBOX works today, HOST/JOIN are multiplayer placeholders).
+   mode select: SANDBOX, MULTIPLAYER and MINIGAMES.
 
 The first open reimports assets into `.godot/`; that folder is git-ignored.
 
@@ -71,7 +71,8 @@ Set the owner/repo once in `scripts/systems/update_checker.gd` (currently
 
 ## Multiplayer (host / join)
 
-Play -> HOST GAME opens a lobby with a 12-character join code.
+Play -> MULTIPLAYER opens a lobby with your name, a LAN/ONLINE switch and a
+14-character join code (checksummed).
 
 - Host: opens a UDP port (8910+), asks the router for a UPnP mapping, and shows
   the code. If UPnP is unavailable the code uses the LAN address; sharing over
@@ -90,6 +91,13 @@ SANDBOX leads to a vehicle picker (`scenes/ui/vehicle_select.tscn`). The catalog
 lives in `scripts/vehicles/vehicle_catalog.gd`; add an entry there to offer a new
 model. The selection is stored in `user://settings.cfg` and swapped onto the
 player at spawn by `player_cart.gd`. The special minigame kart is not listed.
+
+## Minigames
+
+PLAY -> MINIGAMES opens the hub: Free Play (solo cards with difficulty, rounds
+and vehicle options) and a Tournament setup. The screens and settings are
+implemented; the minigames themselves are marked COMING SOON. Layout and data
+model are documented in `docs/MINIGAMES.md`.
 
 ## HUD for minigames
 

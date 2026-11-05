@@ -17,6 +17,7 @@ var _peer_vehicles: Dictionary = {} ## peer_id -> vehicle id
 var _props: Array[RigidBody3D] = []
 var _prop_targets: Dictionary = {} ## index -> [Vector3, float]
 var _host_mode: bool = false
+var _name_labels: Dictionary = {} ## peer id -> Label3D
 var _cart_sync_timer: float = 0.0
 var _prop_sync_timer: float = 0.0
 
@@ -50,6 +51,7 @@ func _setup_multiplayer() -> void:
 
 	multiplayer.peer_connected.connect(_on_peer_connected)
 	multiplayer.peer_disconnected.connect(_on_peer_disconnected)
+	Network.names_changed.connect(_refresh_name_labels)
 	# Announce our vehicle so ghosts show the right model (also covers late joiners).
 	rpc("_net_hello", GameSettings.selected_vehicle)
 
@@ -85,6 +87,7 @@ func _on_peer_disconnected(peer_id: int) -> void:
 	if cart != null:
 		cart.queue_free()
 		_remote_carts.erase(peer_id)
+	_name_labels.erase(peer_id)
 	_peer_vehicles.erase(peer_id)
 
 
@@ -98,7 +101,30 @@ func _spawn_remote(peer_id: int) -> void:
 	cart.net_position = cart.global_position
 	if _peer_vehicles.has(peer_id):
 		cart.set_vehicle_id(str(_peer_vehicles[peer_id]))
+	_add_name_label(cart, peer_id)
 	_remote_carts[peer_id] = cart
+
+
+func _add_name_label(cart: CartPlayer, peer_id: int) -> void:
+	var label := Label3D.new()
+	label.text = Network.name_of(peer_id)
+	label.font = load("res://assets/ui/fonts/LuckiestGuy-Regular.ttf")
+	label.font_size = 64
+	label.pixel_size = 0.006
+	label.outline_size = 18
+	label.outline_modulate = Color(0.118, 0.106, 0.227)
+	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	label.no_depth_test = true
+	label.position = Vector3(0, 2.5, 0)
+	cart.add_child(label)
+	_name_labels[peer_id] = label
+
+
+func _refresh_name_labels() -> void:
+	for peer_id: int in _name_labels:
+		var label: Label3D = _name_labels[peer_id]
+		if is_instance_valid(label):
+			label.text = Network.name_of(peer_id)
 
 
 # --------------------------------------------------------------------------

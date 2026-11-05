@@ -62,8 +62,8 @@ func _show_current() -> void:
 
 func _on_drive() -> void:
 	GameSettings.set_selected_vehicle(str(_entries[_current].get("id", Catalog.DEFAULT_ID)))
-	get_tree().change_scene_to_file(DRIVE_SCENE)
+	SceneLoader.go_to(DRIVE_SCENE, "LET'S DRIVE", "Warming up the engine...")
 
 
 func _on_back() -> void:
-	get_tree().change_scene_to_file(BACK_SCENE)
+	SceneLoader.go_to(BACK_SCENE, "BACK", "")

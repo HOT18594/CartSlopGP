@@ -1,0 +1,236 @@
+[gd_scene load_steps=6 format=3]
+
+[ext_resource type="Theme" path="res://assets/ui/theme.tres" id="1"]
+[ext_resource type="Script" path="res://scripts/ui/minigames_menu.gd" id="2"]
+[ext_resource type="PackedScene" path="res://scenes/ui/menu_background.tscn" id="3"]
+[ext_resource type="Script" path="res://scripts/ui/candy_button.gd" id="4"]
+
+[sub_resource type="StyleBoxFlat" id="details_panel"]
+content_margin_left = 14.0
+content_margin_top = 10.0
+content_margin_right = 14.0
+content_margin_bottom = 10.0
+bg_color = Color(0.98, 0.93, 0.82, 1)
+border_width_left = 3
+border_width_top = 3
+border_width_right = 3
+border_width_bottom = 3
+border_color = Color(0.117647, 0.105882, 0.227451, 1)
+corner_radius_top_left = 16
+corner_radius_top_right = 16
+corner_radius_bottom_right = 16
+corner_radius_bottom_left = 16
+
+[node name="MinigamesMenu" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme = ExtResource("1")
+script = ExtResource("2")
+
+[node name="Background" parent="." instance=ExtResource("3")]
+layout_mode = 1
+
+[node name="Center" type="CenterContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="Panel" type="PanelContainer" parent="Center"]
+custom_minimum_size = Vector2(860, 0)
+layout_mode = 2
+
+[node name="Body" type="VBoxContainer" parent="Center/Panel"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="Title" type="Label" parent="Center/Panel/Body"]
+layout_mode = 2
+theme_type_variation = &"TitleLabel"
+theme_override_colors/font_color = Color(0.117647, 0.105882, 0.227451, 1)
+theme_override_font_sizes/font_size = 42
+text = "MINIGAMES"
+horizontal_alignment = 1
+
+[node name="Rule" type="ColorRect" parent="Center/Panel/Body"]
+custom_minimum_size = Vector2(0, 4)
+layout_mode = 2
+color = Color(0.117647, 0.105882, 0.227451, 1)
+
+[node name="Tabs" type="HBoxContainer" parent="Center/Panel/Body"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="FreePlayTab" type="Button" parent="Center/Panel/Body/Tabs"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 44)
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 20
+text = "FREE PLAY"
+script = ExtResource("4")
+fill_color = Color(1, 0.823529, 0.180392, 1)
+corner_radius = 20
+shadow_offset = 6
+
+[node name="TournamentTab" type="Button" parent="Center/Panel/Body/Tabs"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 44)
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 20
+text = "TOURNAMENT"
+script = ExtResource("4")
+fill_color = Color(0.560784, 0.85098, 0.960784, 1)
+corner_radius = 20
+shadow_offset = 6
+
+[node name="FreeBox" type="VBoxContainer" parent="Center/Panel/Body"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="CardList" type="VBoxContainer" parent="Center/Panel/Body/FreeBox"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="Details" type="PanelContainer" parent="Center/Panel/Body/FreeBox"]
+layout_mode = 2
+theme_override_styles/panel = SubResource("details_panel")
+
+[node name="DetailsBody" type="VBoxContainer" parent="Center/Panel/Body/FreeBox/Details"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="DetailName" type="Label" parent="Center/Panel/Body/FreeBox/Details/DetailsBody"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_type_variation = &"TitleLabel"
+theme_override_colors/font_color = Color(0.117647, 0.105882, 0.227451, 1)
+theme_override_font_sizes/font_size = 22
+text = "CONE SLALOM"
+
+[node name="DetailDesc" type="Label" parent="Center/Panel/Body/FreeBox/Details/DetailsBody"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 34)
+layout_mode = 2
+theme_override_colors/font_color = Color(0.117647, 0.105882, 0.227451, 1)
+theme_override_font_sizes/font_size = 14
+text = "Weave through the cone lane as fast as you can. Solo."
+autowrap_mode = 2
+
+[node name="OptionsRow" type="HBoxContainer" parent="Center/Panel/Body/FreeBox/Details/DetailsBody"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="DifficultyOption" type="OptionButton" parent="Center/Panel/Body/FreeBox/Details/DetailsBody/OptionsRow"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 42)
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 16
+
+[node name="RoundsOption" type="OptionButton" parent="Center/Panel/Body/FreeBox/Details/DetailsBody/OptionsRow"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 42)
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 16
+
+[node name="VehicleOption" type="OptionButton" parent="Center/Panel/Body/FreeBox/Details/DetailsBody/OptionsRow"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 42)
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 16
+
+[node name="PlayButton" type="Button" parent="Center/Panel/Body/FreeBox"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 50)
+layout_mode = 2
+disabled = true
+theme_override_font_sizes/font_size = 22
+text = "PLAY - COMING SOON"
+script = ExtResource("4")
+fill_color = Color(1, 0.823529, 0.180392, 1)
+
+[node name="FreeNote" type="Label" parent="Center/Panel/Body/FreeBox"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.164706, 0.560784, 0.768627, 1)
+theme_override_font_sizes/font_size = 14
+text = "Every minigame is solo. The special multiplayer ones are wired separately."
+horizontal_alignment = 1
+
+[node name="TournamentBox" type="VBoxContainer" parent="Center/Panel/Body"]
+unique_name_in_owner = true
+visible = false
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="TourDesc" type="Label" parent="Center/Panel/Body/TournamentBox"]
+custom_minimum_size = Vector2(0, 60)
+layout_mode = 2
+theme_override_colors/font_color = Color(0.117647, 0.105882, 0.227451, 1)
+theme_override_font_sizes/font_size = 15
+text = "A solo gauntlet: every minigame back to back, points carry over, best total wins. You pick the vehicle and difficulty once."
+autowrap_mode = 2
+
+[node name="TourOptions" type="HBoxContainer" parent="Center/Panel/Body/TournamentBox"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="TourRoundsOption" type="OptionButton" parent="Center/Panel/Body/TournamentBox/TourOptions"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 42)
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 16
+
+[node name="TourDifficultyOption" type="OptionButton" parent="Center/Panel/Body/TournamentBox/TourOptions"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 42)
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 16
+
+[node name="TourVehicleOption" type="OptionButton" parent="Center/Panel/Body/TournamentBox/TourOptions"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 42)
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 16
+
+[node name="StartTournament" type="Button" parent="Center/Panel/Body/TournamentBox"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 50)
+layout_mode = 2
+disabled = true
+theme_override_font_sizes/font_size = 22
+text = "START TOURNAMENT - COMING SOON"
+script = ExtResource("4")
+fill_color = Color(1, 0.823529, 0.180392, 1)
+
+[node name="TourNote" type="Label" parent="Center/Panel/Body/TournamentBox"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.164706, 0.560784, 0.768627, 1)
+theme_override_font_sizes/font_size = 14
+text = "Solo only. A future update adds ghost times and friend leaderboards."
+horizontal_alignment = 1
+
+[node name="BackButton" type="Button" parent="Center/Panel/Body"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 46)
+layout_mode = 2
+theme_override_font_sizes/font_size = 18
+text = "BACK"
+script = ExtResource("4")
+fill_color = Color(0.94902, 0.329412, 0.356863, 1)
+corner_radius = 22
+shadow_offset = 6

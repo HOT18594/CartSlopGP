@@ -3,6 +3,28 @@
 All notable changes to Cart Slop GP. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer.
 
+## [0.3.0] - 2026-11-05
+
+Profiles, online play, loading screens and the minigames hub.
+
+### Added
+
+- **Player names**: up to 16 printable characters, sanitised on send and
+  receive, persisted, shown in the lobby and floating above remote carts.
+- **LAN / ONLINE switch** in the lobby. Online uses UPnP or a public IP with an
+  optional manual PUBLIC IP override; LAN uses the local address.
+- **Checksummed 14-character join codes** - typos are rejected before connecting.
+- **Themed loading screens** for every scene transition (cart driving along a
+  road with the real progress) plus a branded boot splash.
+- **Minigames hub** (`minigames_menu`): Free Play cards with per-game options
+  (difficulty, rounds, vehicle) and a Tournament setup prototype; options are
+  persisted. All minigames are solo and marked COMING SOON.
+- PLAY now offers SANDBOX / MULTIPLAYER / MINIGAMES.
+
+### Fixed
+
+- Join-code decoding loop included the checksum byte, rejecting valid codes.
+
 ## [0.2.1] - 2026-11-05
 
 - Auto-install is Windows-only now: macOS and Linux update badges open the

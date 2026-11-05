@@ -1,12 +1,13 @@
 extends Node
 ## Peer-to-peer session manager (ENet over UDP).
 ##
-## Hosting: opens a port, tries UPnP so the router forwards it, and builds a
-## short join code from the reachable address. Joining: the code is decoded and
-## the client connects straight to the host. No server or account is involved.
+## Hosting: opens a port, optionally asks the router (UPnP) for a mapping, and
+## builds a 14-character join code from the reachable address plus a checksum.
+## Joining: the code is validated and decoded, then the client connects
+## straight to the host. No account, no game server.
 ##
-## Join code = 12 hex chars: 4 IP octets + 2 port bytes (e.g. CB00710522CE).
-## A plain "ip:port" string is also accepted.
+## Code layout: 4 hex IP octets + 2 hex port bytes + 2 hex checksum, e.g.
+## C0A80104 22CE 1F -> 192.168.1.4:8910 with checksum 0x1F.
 
 signal host_started(code: String)
 signal host_failed(reason: String)
@@ -15,6 +16,7 @@ signal join_succeeded()
 signal join_failed(reason: String)
 signal session_ended(reason: String)
 signal peers_changed()
+signal names_changed()
 signal latency_changed(ms: int)
 signal code_updated(code: String)
 
@@ -34,6 +36,9 @@ var public_address: String = ""
 var port: int = DEFAULT_PORT
 var latency_ms: int = 0
 var last_error: String = ""
+var connection_mode: String = "online" ## "lan" or "online"
+var custom_public_ip: String = ""
+var player_names: Dictionary = {} ## peer id -> sanitized display name
 
 var _peer: ENetMultiplayerPeer
 var _upnp: UPNP
@@ -78,8 +83,9 @@ func peer_count() -> int:
 # hosting
 
 
-func host_game() -> void:
+func host_game(mode: String = "online") -> void:
 	leave()
+	connection_mode = "lan" if mode == "lan" else "online"
 	_upnp = UPNP.new()
 	local_address = _local_ip()
 	var bound_port: int = _open_server()
@@ -89,13 +95,20 @@ func host_game() -> void:
 	port = bound_port
 	is_host = true
 	in_game = false
-	join_code = encode_address(local_address, port)
 	public_address = ""
+	join_code = encode_address(local_address, port)
+	player_names[1] = GameSettings.player_name
 	host_started.emit(join_code)
 	peers_changed.emit()
-	# Router mapping and public IP are best-effort: LAN play works without them.
-	_try_upnp(port)
-	_request_public_ip()
+	if connection_mode == "online":
+		if _valid_ip(custom_public_ip):
+			public_address = custom_public_ip
+			join_code = encode_address(public_address, port)
+			code_updated.emit(join_code)
+		else:
+			# Router mapping and public IP are best-effort; LAN still works.
+			_try_upnp(port)
+			_request_public_ip()
 
 
 func _open_server() -> int:
@@ -121,7 +134,7 @@ func _local_ip() -> String:
 func _try_upnp(udp_port: int) -> void:
 	## 1.5 s worst case; turns a LAN-only host into an internet-hosted one when
 	## the router supports UPnP.
-	if _upnp == null:
+	if _upnp == null or connection_mode != "online":
 		return
 	var discover_error: Error = _upnp.discover(1500, 2, "InternetGatewayDevice")
 	if discover_error != OK:
@@ -143,7 +156,7 @@ func _try_upnp(udp_port: int) -> void:
 
 
 func _request_public_ip() -> void:
-	if _ip_request != null:
+	if _ip_request != null or connection_mode != "online" or _valid_ip(custom_public_ip):
 		return
 	_ip_request = HTTPRequest.new()
 	_ip_request.timeout = 4.0
@@ -156,9 +169,9 @@ func _request_public_ip() -> void:
 
 func _on_ip_resolved(_result: int, code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
 	var text: String = body.get_string_from_utf8().strip_edges()
-	if code == 200 and text.count(".") == 3:
+	if code == 200 and _valid_ip(text):
 		public_address = text
-		# Keep the UPnP code if it already used a public address.
+		# Keep a UPnP/public address if we already had one.
 		if join_code == encode_address(local_address, port):
 			join_code = encode_address(text, port)
 			code_updated.emit(join_code)
@@ -171,10 +184,24 @@ func _on_ip_resolved(_result: int, code: int, _headers: PackedStringArray, body:
 # joining
 
 
+func set_custom_public_ip(address: String) -> void:
+	custom_public_ip = address.strip_edges()
+
+
+func set_local_name(raw_name: String) -> void:
+	GameSettings.set_player_name(raw_name)
+	if is_session_active():
+		rpc("_net_set_name", GameSettings.player_name)
+
+
+func name_of(peer_id: int) -> String:
+	return str(player_names.get(peer_id, "PLAYER %d" % peer_id))
+
+
 func join_game(raw_code: String) -> void:
 	var address: Dictionary = decode_address(raw_code)
 	if address.is_empty():
-		join_failed.emit("That code does not look right.")
+		join_failed.emit("That code is not valid. Check all 14 characters.")
 		return
 	leave()
 	join_status_changed.emit("Connecting to %s:%d..." % [address["ip"], address["port"]])
@@ -187,6 +214,7 @@ func join_game(raw_code: String) -> void:
 	multiplayer.multiplayer_peer = peer
 	is_client = true
 	in_game = false
+	player_names.clear()
 
 
 func leave() -> void:
@@ -203,6 +231,7 @@ func leave() -> void:
 	public_address = ""
 	latency_ms = 0
 	last_error = ""
+	player_names.clear()
 
 
 # --------------------------------------------------------------------------
@@ -219,14 +248,14 @@ func start_game() -> void:
 @rpc("authority", "call_local", "reliable")
 func _net_begin_game() -> void:
 	in_game = true
-	get_tree().change_scene_to_file(GAME_SCENE)
+	SceneLoader.go_to(GAME_SCENE, "STARTING SANDBOX", "Syncing players and props...")
 
 
 func return_to_lobby(reason: String = "") -> void:
 	if is_session_active():
 		leave()
 	session_ended.emit(reason)
-	get_tree().change_scene_to_file(LOBBY_SCENE)
+	SceneLoader.go_to(LOBBY_SCENE, "MULTIPLAYER")
 
 
 # --------------------------------------------------------------------------
@@ -237,14 +266,29 @@ func _on_peer_connected(id: int) -> void:
 	peers_changed.emit()
 	if is_host and in_game:
 		rpc_id(id, "_net_begin_game")
+	if is_session_active():
+		# Re-announce our name so the newcomer (and everyone) has it.
+		rpc("_net_set_name", GameSettings.player_name)
 
 
-func _on_peer_disconnected(_id: int) -> void:
+@rpc("any_peer", "call_local", "reliable")
+func _net_set_name(raw_name: String) -> void:
+	var sender: int = multiplayer.get_remote_sender_id()
+	if sender == 0:
+		sender = multiplayer.get_unique_id()
+	player_names[sender] = GameSettings.sanitize_name(raw_name)
+	names_changed.emit()
+
+
+func _on_peer_disconnected(id: int) -> void:
+	player_names.erase(id)
 	peers_changed.emit()
+	names_changed.emit()
 
 
 func _on_connected_to_server() -> void:
 	is_client = true
+	rpc("_net_set_name", GameSettings.player_name)
 	join_status_changed.emit("Connected. Waiting for the host to start...")
 	join_succeeded.emit()
 	peers_changed.emit()
@@ -262,7 +306,7 @@ func _on_server_disconnected() -> void:
 	leave()
 	if was_client:
 		session_ended.emit("The host ended the session.")
-		get_tree().change_scene_to_file(LOBBY_SCENE)
+		SceneLoader.go_to(LOBBY_SCENE, "SESSION ENDED", "The host disconnected.")
 
 
 # --------------------------------------------------------------------------
@@ -286,14 +330,22 @@ func _net_pong(stamp: int) -> void:
 
 
 static func encode_address(ip: String, udp_port: int) -> String:
+	## 12 hex chars for ip:port plus a 2-char checksum -> 14 chars total.
 	var parts: PackedStringArray = ip.split(".")
 	if parts.size() != 4:
 		return ""
-	var out: String = ""
+	var bytes: Array[int] = []
 	for part: String in parts:
-		out += "%02X" % clampi(int(part), 0, 255)
-	out += "%04X" % clampi(udp_port, 0, 65535)
-	return out
+		bytes.append(clampi(int(part), 0, 255))
+	bytes.append((udp_port >> 8) & 0xFF)
+	bytes.append(udp_port & 0xFF)
+	var checksum: int = 0
+	for value: int in bytes:
+		checksum = (checksum + value) & 0xFF
+	var out: String = ""
+	for value: int in bytes:
+		out += "%02X" % value
+	return out + "%02X" % checksum
 
 
 static func decode_address(raw: String) -> Dictionary:
@@ -308,11 +360,16 @@ static func decode_address(raw: String) -> Dictionary:
 		if typed_port <= 0 or typed_port > 65535:
 			return {}
 		return {"ip": bits[0], "port": typed_port}
-	if text.length() != 12:
+	if text.length() != 14:
 		return {}
 	for character in text:
 		if not ("0123456789ABCDEF".contains(character)):
 			return {}
+	var checksum: int = 0
+	for index in 6:
+		checksum = (checksum + text.substr(index * 2, 2).hex_to_int()) & 0xFF
+	if checksum != text.substr(12, 2).hex_to_int():
+		return {}
 	var ip: String = "%d.%d.%d.%d" % [
 		text.substr(0, 2).hex_to_int(),
 		text.substr(2, 2).hex_to_int(),
@@ -323,6 +380,19 @@ static func decode_address(raw: String) -> Dictionary:
 	if udp_port <= 0:
 		return {}
 	return {"ip": ip, "port": udp_port}
+
+
+func _valid_ip(text: String) -> bool:
+	var parts: PackedStringArray = text.strip_edges().split(".")
+	if parts.size() != 4:
+		return false
+	for part: String in parts:
+		if part == "" or not part.is_valid_int():
+			return false
+		var value: int = int(part)
+		if value < 0 or value > 255:
+			return false
+	return true
 
 
 func participants() -> Array[int]:

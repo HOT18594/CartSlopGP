@@ -257,15 +257,17 @@ func _save_download_state() -> void:
 
 
 func install_downloaded_update(zip_path: String = "") -> bool:
-	## Tier 3: unpack next to the game, write update_install.bat, launch it and quit.
-	## Returns false when there is nothing safe to swap (e.g. running from the editor).
+	## Tier 3: stage the zip, write a small launcher script and quit. The script
+	## waits for this process to exit, swaps the files, relaunches and deletes
+	## itself. Windows uses .bat, macOS/Linux use bash.
 	if not OS.has_feature("template"):
 		last_error = "install_only_in_exported_build"
 		return false
-	if OS.get_name() != "Windows":
-		# The swap is done by a .bat shim; other platforms use the release page.
-		last_error = "install_only_on_windows"
+	var platform: String = OS.get_name()
+	if platform != "Windows" and platform != "macOS" and platform != "Linux":
+		last_error = "install_unsupported_platform"
 		return false
+
 	var source: String = zip_path if zip_path != "" else _downloaded_file
 	if source == "" or not FileAccess.file_exists(source):
 		last_error = "no_downloaded_zip"
@@ -278,26 +280,107 @@ func install_downloaded_update(zip_path: String = "") -> bool:
 		last_error = "extract_failed"
 		return false
 
-	var exe_dir: String = staging
 	var exe_path: String = OS.get_executable_path().replace("\\", "/")
+	var pid: int = OS.get_process_id()
+	if platform == "macOS":
+		return _install_macos(exe_path, staging, pid)
+
 	var exe_name: String = exe_path.get_file()
+	var exe_dir: String = staging
 	if not FileAccess.file_exists(staging + "/" + exe_name):
 		exe_dir = _find_directory_containing(staging, exe_name)
 		if exe_dir == "":
 			last_error = "exe_not_in_zip"
 			return false
-
 	var game_dir: String = exe_path.get_base_dir()
-	var stage_windows: String = ProjectSettings.globalize_path(exe_dir)
-	var bat_path: String = game_dir + "/update_install.bat"
-	if not _write_installer(bat_path, game_dir, stage_windows, exe_name):
-		last_error = "cannot_write_bat"
-		return false
-
-	var pid: int = OS.get_process_id()
-	OS.create_process("cmd.exe", ["/c", bat_path.replace("/", "\\"), str(pid)], false)
+	if platform == "Windows":
+		var bat_path: String = game_dir + "/update_install.bat"
+		if not _write_installer(bat_path, game_dir, ProjectSettings.globalize_path(exe_dir), exe_name):
+			last_error = "cannot_write_bat"
+			return false
+		OS.create_process("cmd.exe", ["/c", bat_path.replace("/", "\\"), str(pid)], false)
+	else:
+		if not _write_unix_installer(exe_dir, game_dir, exe_name, pid):
+			return false
 	get_tree().quit()
 	return true
+
+
+func _install_macos(exe_path: String, staging: String, pid: int) -> bool:
+	## An .app is a folder: swap the whole bundle from the staged zip.
+	var app_path: String = exe_path.get_base_dir().get_base_dir().get_base_dir()
+	if not app_path.ends_with(".app"):
+		last_error = "not_inside_app_bundle"
+		return false
+	var staged_app: String = _find_app_bundle(staging)
+	if staged_app == "":
+		last_error = "app_not_in_zip"
+		return false
+	var script_path: String = ProjectSettings.globalize_path(UPDATE_DIR + "/update_install.sh")
+	var lines: PackedStringArray = [
+		"#!/bin/bash",
+		"APP=\"%s\"" % ProjectSettings.globalize_path(app_path),
+		"STAGED=\"%s\"" % ProjectSettings.globalize_path(staged_app),
+		"PID=%d" % pid,
+		"while kill -0 \"$PID\" 2>/dev/null; do sleep 1; done",
+		"sleep 1",
+		"rm -rf \"$APP\"",
+		"cp -R \"$STAGED\" \"$APP\"",
+		"xattr -dr com.apple.quarantine \"$APP\" 2>/dev/null",
+		"open \"$APP\"",
+		"rm -f \"$0\"",
+	]
+	if not _write_script(script_path, lines):
+		return false
+	OS.create_process("/bin/bash", [script_path, ""], false)
+	return true
+
+
+func _write_unix_installer(stage_dir: String, game_dir: String, exe_name: String, pid: int) -> bool:
+	var script_path: String = ProjectSettings.globalize_path(UPDATE_DIR + "/update_install.sh")
+	var lines: PackedStringArray = [
+		"#!/bin/bash",
+		"stage=\"%s\"" % ProjectSettings.globalize_path(stage_dir),
+		"game=\"%s\"" % ProjectSettings.globalize_path(game_dir),
+		"exe=\"%s\"" % exe_name,
+		"PID=%d" % pid,
+		"while kill -0 \"$PID\" 2>/dev/null; do sleep 1; done",
+		"sleep 1",
+		"cp -a \"$stage\"/. \"$game\"/",
+		"chmod +x \"$game/$exe\"",
+		"\"$game/$exe\" &",
+		"rm -f \"$0\"",
+	]
+	if not _write_script(script_path, lines):
+		return false
+	OS.create_process("/bin/bash", [script_path, ""], false)
+	return true
+
+
+func _write_script(path: String, lines: PackedStringArray) -> bool:
+	var file: FileAccess = FileAccess.open(path, FileAccess.WRITE)
+	if file == null:
+		last_error = "cannot_write_script"
+		return false
+	file.store_string("\n".join(lines) + "\n")
+	file.close()
+	OS.execute("chmod", ["+x", path])
+	return true
+
+
+func _find_app_bundle(root: String) -> String:
+	var dir: DirAccess = DirAccess.open(root)
+	if dir == null:
+		return ""
+	dir.list_dir_begin()
+	var entry: String = dir.get_next()
+	while entry != "":
+		if dir.current_is_dir() and entry.ends_with(".app"):
+			dir.list_dir_end()
+			return root + "/" + entry
+		entry = dir.get_next()
+	dir.list_dir_end()
+	return ""
 
 
 func _extract_zip(zip_path: String, destination: String) -> bool:

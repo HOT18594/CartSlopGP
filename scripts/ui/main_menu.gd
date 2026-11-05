@@ -52,7 +52,7 @@ func _process(_delta: float) -> void:
 
 
 func _on_play_pressed() -> void:
-	get_tree().change_scene_to_file(PLAY_MENU_SCENE)
+	SceneLoader.go_to(PLAY_MENU_SCENE, "CART SLOP GP", "Opening the menu...")
 
 
 func _on_settings_pressed() -> void:
@@ -68,8 +68,9 @@ func _on_quit_pressed() -> void:
 
 
 func _can_auto_install() -> bool:
-	## Only the Windows build can swap its own files (via update_install.bat).
-	return OS.get_name() == "Windows"
+	## Desktop builds can swap their own files; browsers cannot.
+	var platform: String = OS.get_name()
+	return platform == "Windows" or platform == "macOS" or platform == "Linux"
 
 
 func _on_update_available(version: String, release_url: String, download_url: String) -> void:
