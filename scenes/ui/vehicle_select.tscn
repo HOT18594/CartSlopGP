@@ -1,0 +1,145 @@
+[gd_scene load_steps=8 format=3]
+
+[ext_resource type="Theme" path="res://assets/ui/theme.tres" id="1"]
+[ext_resource type="Script" path="res://scripts/ui/vehicle_select.gd" id="2"]
+[ext_resource type="PackedScene" path="res://scenes/ui/menu_background.tscn" id="3"]
+[ext_resource type="Script" path="res://scripts/ui/candy_button.gd" id="4"]
+
+[sub_resource type="CylinderMesh" id="shadow_mesh"]
+top_radius = 1.5
+bottom_radius = 1.5
+height = 0.02
+radial_segments = 32
+
+[sub_resource type="StandardMaterial3D" id="shadow_mat"]
+transparency = 1
+shading_mode = 0
+albedo_color = Color(0.12, 0.1, 0.23, 0.14)
+
+[node name="VehicleSelect" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme = ExtResource("1")
+script = ExtResource("2")
+
+[node name="Background" parent="." instance=ExtResource("3")]
+layout_mode = 1
+
+[node name="Center" type="CenterContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="Panel" type="PanelContainer" parent="Center"]
+custom_minimum_size = Vector2(640, 0)
+layout_mode = 2
+
+[node name="Body" type="VBoxContainer" parent="Center/Panel"]
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="Title" type="Label" parent="Center/Panel/Body"]
+layout_mode = 2
+theme_type_variation = &"TitleLabel"
+theme_override_colors/font_color = Color(0.117647, 0.105882, 0.227451, 1)
+theme_override_font_sizes/font_size = 50
+text = "PICK YOUR RIDE"
+horizontal_alignment = 1
+
+[node name="ViewportContainer" type="SubViewportContainer" parent="Center/Panel/Body"]
+custom_minimum_size = Vector2(560, 240)
+layout_mode = 2
+stretch = true
+
+[node name="Preview" type="SubViewport" parent="Center/Panel/Body/ViewportContainer"]
+transparent_bg = true
+handle_input_locally = false
+size = Vector2i(560, 240)
+render_target_update_mode = 4
+own_world_3d = true
+
+[node name="PreviewCamera" type="Camera3D" parent="Center/Panel/Body/ViewportContainer/Preview"]
+unique_name_in_owner = true
+fov = 34.0
+
+[node name="Sun" type="DirectionalLight3D" parent="Center/Panel/Body/ViewportContainer/Preview"]
+transform = Transform3D(0.87, -0.35, 0.35, 0, 0.7, 0.71, -0.5, -0.62, 0.61, 0, 4, 0)
+
+[node name="ModelRoot" type="Node3D" parent="Center/Panel/Body/ViewportContainer/Preview"]
+unique_name_in_owner = true
+
+[node name="Shadow" type="MeshInstance3D" parent="Center/Panel/Body/ViewportContainer/Preview"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.01, 0)
+cast_shadow = 0
+mesh = SubResource("shadow_mesh")
+surface_material_override/0 = SubResource("shadow_mat")
+
+[node name="NameRow" type="HBoxContainer" parent="Center/Panel/Body"]
+layout_mode = 2
+theme_override_constants/separation = 12
+alignment = 1
+
+[node name="PrevButton" type="Button" parent="Center/Panel/Body/NameRow"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(62, 62)
+layout_mode = 2
+theme_override_font_sizes/font_size = 34
+text = "<"
+script = ExtResource("4")
+corner_radius = 22
+shadow_offset = 6
+
+[node name="NameLabel" type="Label" parent="Center/Panel/Body/NameRow"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(360, 0)
+layout_mode = 2
+size_flags_vertical = 4
+theme_type_variation = &"TitleLabel"
+theme_override_colors/font_color = Color(0.117647, 0.105882, 0.227451, 1)
+theme_override_font_sizes/font_size = 34
+text = "SHOPPING CART"
+horizontal_alignment = 1
+
+[node name="NextButton" type="Button" parent="Center/Panel/Body/NameRow"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(62, 62)
+layout_mode = 2
+theme_override_font_sizes/font_size = 34
+text = ">"
+script = ExtResource("4")
+corner_radius = 22
+shadow_offset = 6
+
+[node name="IndexLabel" type="Label" parent="Center/Panel/Body"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_colors/font_color = Color(0.164706, 0.560784, 0.768627, 1)
+theme_override_font_sizes/font_size = 15
+text = "1 / 7"
+horizontal_alignment = 1
+
+[node name="DriveButton" type="Button" parent="Center/Panel/Body"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 74)
+layout_mode = 2
+theme_override_font_sizes/font_size = 32
+text = "LET'S DRIVE"
+script = ExtResource("4")
+fill_color = Color(1, 0.823529, 0.180392, 1)
+
+[node name="BackButton" type="Button" parent="Center/Panel/Body"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 56)
+layout_mode = 2
+theme_override_font_sizes/font_size = 22
+text = "BACK"
+script = ExtResource("4")
+fill_color = Color(0.94902, 0.329412, 0.356863, 1)
+shadow_offset = 7

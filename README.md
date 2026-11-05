@@ -69,6 +69,13 @@ When a newer tag exists, the menu shows an **UPDATE AVAILABLE vX.Y.Z** button:
 Set the owner/repo once in `scripts/systems/update_checker.gd` (currently
 `HOT18594/CartSlopGP`).
 
+## Vehicles
+
+SANDBOX leads to a vehicle picker (`scenes/ui/vehicle_select.tscn`). The catalog
+lives in `scripts/vehicles/vehicle_catalog.gd`; add an entry there to offer a new
+model. The selection is stored in `user://settings.cfg` and swapped onto the
+player at spawn by `player_cart.gd`. The special minigame kart is not listed.
+
 ## HUD for minigames
 
 The HUD ships with race position and lap pills that stay hidden in the free-drive

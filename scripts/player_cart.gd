@@ -1,6 +1,9 @@
 class_name CartPlayer
 extends CharacterBody3D
 
+const VehicleCatalog := preload("res://scripts/vehicles/vehicle_catalog.gd")
+const VehicleVisual := preload("res://scripts/vehicles/vehicle_visual.gd")
+
 enum CartState { DRIVING, AIRBORNE_TUMBLE, CRASHED, RECOVERY }
 ## Arcade cart controller with four-point terrain support, slope-aware driving,
 ## dynamic weight transfer, oriented compound collision shapes and air tumble.
@@ -142,7 +145,25 @@ func _ready() -> void:
 		_spawn_transform = spawn_point.global_transform
 	else:
 		_spawn_transform = global_transform
+	_apply_vehicle_visual()
 	call_deferred("_collect_pushables")
+
+
+func _apply_vehicle_visual() -> void:
+	## Swap the placeholder kart for the vehicle picked in the selector.
+	var entry: Dictionary = VehicleCatalog.find(GameSettings.selected_vehicle)
+	if entry.is_empty():
+		entry = VehicleCatalog.find(VehicleCatalog.DEFAULT_ID)
+	if entry.is_empty() or _mesh_root == null:
+		return
+	var existing: Node = _mesh_root.get_node_or_null("KartModel")
+	if existing != null:
+		_mesh_root.remove_child(existing)
+		existing.queue_free()
+	var holder: Node3D = VehicleVisual.build(entry)
+	holder.name = "KartModel"
+	holder.position = Vector3(0.0, -SUSPENSION_PIVOT_HEIGHT, 0.0)
+	_mesh_root.add_child(holder)
 
 
 func _collect_pushables() -> void:

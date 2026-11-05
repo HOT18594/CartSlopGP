@@ -12,6 +12,9 @@ const SFX_BUS: String = "SFX"
 @export var fullscreen: bool = false
 @export var custom_cursor: bool = true
 
+@export_group("Sandbox")
+@export var selected_vehicle: String = "shopping_cart" ## Vehicle id from the catalog.
+
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
@@ -75,6 +78,11 @@ func set_custom_cursor(value: bool) -> void:
 	changed.emit()
 
 
+func set_selected_vehicle(vehicle_id: String) -> void:
+	selected_vehicle = vehicle_id
+	save_settings()
+
+
 func load_settings() -> void:
 	var config := ConfigFile.new()
 	if config.load(SETTINGS_PATH) != OK:
@@ -83,6 +91,7 @@ func load_settings() -> void:
 	sfx_volume = float(config.get_value("audio", "sfx", sfx_volume))
 	fullscreen = bool(config.get_value("video", "fullscreen", fullscreen))
 	custom_cursor = bool(config.get_value("ui", "custom_cursor", custom_cursor))
+	selected_vehicle = str(config.get_value("gameplay", "vehicle", selected_vehicle))
 
 
 func save_settings() -> void:
@@ -91,4 +100,5 @@ func save_settings() -> void:
 	config.set_value("audio", "sfx", sfx_volume)
 	config.set_value("video", "fullscreen", fullscreen)
 	config.set_value("ui", "custom_cursor", custom_cursor)
+	config.set_value("gameplay", "vehicle", selected_vehicle)
 	config.save(SETTINGS_PATH)

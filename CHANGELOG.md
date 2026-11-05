@@ -25,6 +25,10 @@ First tagged prototype build: playable driving sandbox plus the full menu/shell 
 
 ### Changed
 
+- **Vehicle selector**: SANDBOX now opens `vehicle_select` with a spinning 3D
+  preview - shopping cart (default), sedan, sports car, taxi, van, box truck and
+  police cruiser. The choice is saved in `user://settings.cfg` and applied when
+  the sandbox cart spawns. The minigame buggy is intentionally not listed.
 - **Menu flow**: PLAY now opens a mode-select screen (`play_menu`) with
   SANDBOX / HOST / JOIN / BACK. Sandbox loads the driving test; host and join
   show a "multiplayer coming" notice. HOST/JOIN were removed from the main menu

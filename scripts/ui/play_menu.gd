@@ -2,7 +2,7 @@ extends Control
 ## Mode select shown after PLAY. Sandbox works today; HOST / JOIN are wired to
 ## the lobby placeholder and will start real sessions once multiplayer exists.
 
-const SANDBOX_SCENE: String = "res://scenes/dev/driving_test.tscn"
+const VEHICLE_SCENE: String = "res://scenes/ui/vehicle_select.tscn"
 const MAIN_MENU_SCENE: String = "res://scenes/ui/main_menu.tscn"
 
 @onready var _sandbox_button: Button = %SandboxButton
@@ -23,7 +23,7 @@ func _ready() -> void:
 
 
 func _on_sandbox() -> void:
-	get_tree().change_scene_to_file(SANDBOX_SCENE)
+	get_tree().change_scene_to_file(VEHICLE_SCENE)
 
 
 func _on_host() -> void:
