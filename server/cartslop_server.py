@@ -14,6 +14,7 @@ import re
 import select
 import shutil
 import socket
+import struct
 import subprocess
 import threading
 import time
@@ -27,6 +28,7 @@ HTTP_PORT = int(os.environ.get("CARTSLOP_HTTP_PORT", "42777"))
 DISCOVERY_PORT = int(os.environ.get("CARTSLOP_DISCOVERY_PORT", "42778"))
 RELAY_BASE = int(os.environ.get("CARTSLOP_RELAY_BASE", "42800"))
 RELAY_COUNT = int(os.environ.get("CARTSLOP_RELAY_COUNT", "20"))
+TUNNEL_PORT = int(os.environ.get("CARTSLOP_TUNNEL_PORT", "42820"))
 LOBBY_TTL = 75.0
 CLIENT_TTL = 90.0
 VERSION = "1.1.0"
@@ -45,6 +47,8 @@ PUBLIC_LAST = 0.0
 UPNP = {"available": False, "mapped": 0, "total": 0, "message": "checking"}
 NATPMP = {"available": False, "mapped": 0, "total": 0, "message": "checking"}
 EXTERNAL = {"checked": 0, "open": False, "message": "not checked"}
+TUNNELS = {"active": 0, "port": TUNNEL_PORT}
+TUNNEL_AVAILABLE = False
 MAPPING_BUSY = False
 MAPPING_LAST = 0.0
 HAVE_UPNPC = shutil.which("upnpc") is not None
@@ -178,7 +182,8 @@ def mapping_bootstrap() -> None:
         return
     MAPPING_BUSY = True
     try:
-        ports = [(HTTP_PORT, "TCP")] + [(RELAY_BASE + i, "UDP") for i in range(RELAY_COUNT)]
+        ports = [(HTTP_PORT, "TCP"), (TUNNEL_PORT, "TCP")] \
+            + [(RELAY_BASE + i, "UDP") for i in range(RELAY_COUNT)]
         upnp_mapped = 0
         natpmp_mapped = 0
         for port, protocol in ports:
@@ -202,8 +207,8 @@ def mapping_bootstrap() -> None:
         }
         MAPPING_LAST = time.time()
         if upnp_mapped + natpmp_mapped == 0:
-            print("No automatic port mapping - forward TCP %d and UDP %d-%d"
-                  % (HTTP_PORT, RELAY_BASE, RELAY_BASE + RELAY_COUNT - 1), flush=True)
+            print("No automatic port mapping - forward TCP %d, TCP %d, and UDP %d-%d"
+                  % (HTTP_PORT, TUNNEL_PORT, RELAY_BASE, RELAY_BASE + RELAY_COUNT - 1), flush=True)
     finally:
         MAPPING_BUSY = False
 
@@ -265,15 +270,35 @@ class Relay:
         self.socket.bind(("0.0.0.0", self.port))
         self.socket.setblocking(False)
         self.clients: dict[tuple[str, int], dict] = {}
+        self.address_by_id: dict[int, tuple[str, int]] = {}
+        self.next_id = 1
+        self.tunnel: "TunnelLink | None" = None
         self.running = True
         self.thread = threading.Thread(target=self._run, daemon=True)
         self.thread.start()
+
+    def _new_client(self, address: tuple[str, int], now: float) -> dict:
+        client = {
+            "last": now,
+            "id": self.next_id,
+            "queue": [],
+            "sock": None,
+        }
+        self.next_id += 1
+        with LOCK:
+            self.clients[address] = client
+            self.address_by_id[client["id"]] = address
+            self.lobby.clients = len(self.clients)
+        return client
 
     def _run(self) -> None:
         while self.running:
             with LOCK:
                 items = list(self.clients.items())
-            sockets = [self.socket] + [item[1]["sock"] for item in items]
+                tunnel = self.tunnel
+            sockets = [self.socket]
+            if tunnel is None:
+                sockets += [item[1]["sock"] for item in items if item[1].get("sock") is not None]
             try:
                 readable, _, _ = select.select(sockets, [], [], 1.0)
             except (OSError, ValueError):
@@ -287,6 +312,18 @@ class Relay:
                         continue
                     client = self.clients.get(address)
                     if client is None:
+                        client = self._new_client(address, now)
+                    client["last"] = now
+                    if self.lobby.tunnel_token:
+                        if self.tunnel is not None and self.tunnel.ready:
+                            self.tunnel.send(client["id"], data)
+                        else:
+                            queue: list[bytes] = client["queue"]
+                            if len(queue) < 256:
+                                queue.append(data)
+                        continue
+                    upstream = client.get("sock")
+                    if upstream is None:
                         upstream = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                         upstream.setblocking(False)
                         try:
@@ -294,19 +331,15 @@ class Relay:
                         except OSError:
                             upstream.close()
                             continue
-                        client = {"sock": upstream, "last": now}
-                        with LOCK:
-                            self.clients[address] = client
-                            self.lobby.clients = len(self.clients)
+                        client["sock"] = upstream
                     try:
-                        client["sock"].send(data)
+                        upstream.send(data)
                     except OSError:
                         pass
-                    client["last"] = now
                 else:
                     target = None
                     for address, client in list(self.clients.items()):
-                        if client["sock"] is sock:
+                        if client.get("sock") is sock:
                             target = address
                             break
                     if target is None:
@@ -324,37 +357,195 @@ class Relay:
             for address, client in list(self.clients.items()):
                 if now - client["last"] > CLIENT_TTL:
                     try:
-                        client["sock"].close()
+                        if client.get("sock") is not None:
+                            client["sock"].close()
                     except OSError:
                         pass
                     with LOCK:
                         self.clients.pop(address, None)
+                        self.address_by_id.pop(client.get("id", -1), None)
                         self.lobby.clients = len(self.clients)
+
+    def from_tunnel(self, client_id: int, data: bytes) -> None:
+        address = self.address_by_id.get(client_id)
+        if address is None:
+            return
+        try:
+            self.socket.sendto(data, address)
+        except OSError:
+            pass
+
+    def attach_tunnel(self, link: "TunnelLink") -> None:
+        with LOCK:
+            self.tunnel = link
+            items = list(self.clients.items())
+        link.ready = True
+        for address, client in items:
+            for packet in client.get("queue", []):
+                link.send(client["id"], packet)
+            client["queue"] = []
+
+    def detach_tunnel(self, link: "TunnelLink") -> None:
+        with LOCK:
+            if self.tunnel is link:
+                self.tunnel = None
 
     def stop(self) -> None:
         self.running = False
         with LOCK:
             clients = list(self.clients.values())
+            tunnel = self.tunnel
             self.clients.clear()
+            self.address_by_id.clear()
+            self.tunnel = None
         for client in clients:
             try:
-                client["sock"].close()
+                if client.get("sock") is not None:
+                    client["sock"].close()
             except OSError:
                 pass
+        if tunnel is not None:
+            tunnel.close()
         try:
             self.socket.close()
         except OSError:
             pass
 
 
+class TunnelLink:
+    """One TCP tunnel from a host game to the Pi.
+
+    The host opens this connection outward, so it works even when the host's
+    Windows firewall blocks inbound UDP. Client packets are framed as
+    ``[client_id u32][length u32][payload]``.
+    """
+
+    def __init__(self, sock: socket.socket, lobby: "Lobby") -> None:
+        self.sock = sock
+        self.lobby = lobby
+        self.ready = False
+        self.running = True
+        self.write_lock = threading.Lock()
+        self.thread = threading.Thread(target=self._read_loop, daemon=True)
+        self.thread.start()
+
+    def send(self, client_id: int, data: bytes) -> None:
+        if not self.running:
+            return
+        frame = struct.pack("!II", int(client_id), len(data)) + data
+        with self.write_lock:
+            try:
+                self.sock.sendall(frame)
+            except OSError:
+                self.close()
+
+    def _read_exact(self, count: int) -> bytes | None:
+        chunks = bytearray()
+        while len(chunks) < count and self.running:
+            try:
+                part = self.sock.recv(count - len(chunks))
+            except OSError:
+                return None
+            if not part:
+                return None
+            chunks.extend(part)
+        return bytes(chunks) if len(chunks) == count else None
+
+    def _read_loop(self) -> None:
+        try:
+            while self.running:
+                header = self._read_exact(8)
+                if header is None:
+                    break
+                client_id, length = struct.unpack("!II", header)
+                if length > 65535:
+                    break
+                payload = self._read_exact(length)
+                if payload is None:
+                    break
+                self.lobby.relay.from_tunnel(client_id, payload)
+        finally:
+            self.close()
+
+    def close(self) -> None:
+        if not self.running:
+            return
+        self.running = False
+        self.ready = False
+        self.lobby.relay.detach_tunnel(self)
+        try:
+            self.sock.close()
+        except OSError:
+            pass
+        with LOCK:
+            TUNNELS["active"] = max(0, int(TUNNELS.get("active", 0)) - 1)
+
+
+class TunnelServer:
+    def __init__(self) -> None:
+        global TUNNEL_AVAILABLE
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.sock.bind(("0.0.0.0", TUNNEL_PORT))
+        self.sock.listen(16)
+        TUNNEL_AVAILABLE = True
+        self.thread = threading.Thread(target=self._run, daemon=True)
+        self.thread.start()
+
+    def _run(self) -> None:
+        while True:
+            try:
+                conn, _ = self.sock.accept()
+            except OSError:
+                return
+            threading.Thread(target=self._handle, args=(conn,), daemon=True).start()
+
+    def _handle(self, conn: socket.socket) -> None:
+        lobby: Lobby | None = None
+        try:
+            conn.settimeout(6.0)
+            line = b""
+            while len(line) < 128:
+                byte = conn.recv(1)
+                if not byte:
+                    return
+                if byte == b"\n":
+                    break
+                line += byte
+            text = line.decode("ascii", "ignore").strip()
+            if not text.startswith("TOKEN "):
+                conn.sendall(b"ERR\n")
+                return
+            token = text[6:].strip()
+            with LOCK:
+                lobby = next((item for item in LOBBIES.values()
+                              if item.tunnel_token and item.tunnel_token == token), None)
+            if lobby is None:
+                conn.sendall(b"ERR\n")
+                return
+            conn.settimeout(None)
+            conn.sendall(b"OK\n")
+            link = TunnelLink(conn, lobby)
+            with LOCK:
+                TUNNELS["active"] = int(TUNNELS.get("active", 0)) + 1
+            lobby.relay.attach_tunnel(link)
+        except Exception:
+            try:
+                conn.close()
+            except OSError:
+                pass
+
+
 class Lobby:
-    def __init__(self, token: str, room_code: str, name: str, host_ip: str, host_port: int, relay_port: int) -> None:
+    def __init__(self, token: str, room_code: str, name: str, host_ip: str, host_port: int, relay_port: int,
+                 tunnel_token: str = "") -> None:
         self.token = token
         self.room_code = room_code
         self.name = name
         self.host_ip = host_ip
         self.host_port = host_port
         self.relay_port = relay_port
+        self.tunnel_token = tunnel_token
         self.created = time.time()
         self.last_seen = time.time()
         self.clients = 0
@@ -370,11 +561,15 @@ class Lobby:
             "lan_host": LAN_IP,
             "public_host": PUBLIC_IP,
             "http_port": HTTP_PORT,
+            "tunnel": bool(self.tunnel_token),
+            "tunnel_active": bool(self.relay.tunnel and self.relay.tunnel.ready),
         }
         if include_private:
             data["host_ip"] = self.host_ip
             data["host_port"] = self.host_port
             data["token"] = self.token
+            data["tunnel_token"] = self.tunnel_token
+            data["tunnel_port"] = TUNNEL_PORT
         return data
 
     def stop(self) -> None:
@@ -461,6 +656,7 @@ def status_snapshot() -> dict:
         "upnp": dict(UPNP),
         "natpmp": dict(NATPMP),
         "external": dict(EXTERNAL),
+        "tunnels": dict(TUNNELS),
         "mapping_ready": bool(UPNP.get("available") or NATPMP.get("available")),
         "cgnat": _is_shared_address(WAN_IP) or _is_shared_address(PUBLIC_IP)
                   or _is_private_address(WAN_IP),
@@ -572,8 +768,10 @@ class Handler(BaseHTTPRequestHandler):
                 and not reported_ip.startswith("127.") \
                 and _same_subnet_24(reported_ip, LAN_IP):
             host_ip = reported_ip
+        tunnel_requested = bool(data.get("tunnel", False)) and TUNNEL_AVAILABLE
+        tunnel_token = secrets.token_hex(16) if tunnel_requested else ""
         try:
-            lobby = Lobby(token, room_code, name, host_ip, host_port, relay_port)
+            lobby = Lobby(token, room_code, name, host_ip, host_port, relay_port, tunnel_token)
         except OSError as error:
             with LOCK:
                 USED_PORTS.discard(relay_port)
@@ -594,6 +792,9 @@ class Handler(BaseHTTPRequestHandler):
             "lan_host": LAN_IP,
             "public_host": PUBLIC_IP,
             "http_port": HTTP_PORT,
+            "tunnel": bool(tunnel_token),
+            "tunnel_token": tunnel_token,
+            "tunnel_port": TUNNEL_PORT,
             "expires_in": int(LOBBY_TTL),
         })
 
@@ -695,6 +896,10 @@ def main() -> None:
     print("Cart Slop server %s on %s, HTTP %d, relay %d-%d"
           % (VERSION, LAN_IP, HTTP_PORT, RELAY_BASE, RELAY_BASE + RELAY_COUNT - 1), flush=True)
     threading.Thread(target=discovery_loop, daemon=True).start()
+    try:
+        TunnelServer()
+    except OSError as error:
+        print("tunnel bind failed:", error, flush=True)
     threading.Thread(target=upnp_bootstrap, daemon=True).start()
     threading.Thread(target=maintenance_loop, daemon=True).start()
     server = ThreadingHTTPServer(("0.0.0.0", HTTP_PORT), Handler)

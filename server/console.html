@@ -61,7 +61,7 @@ footer{padding:12px 32px 28px;color:#7c84a8;font-size:12px;text-align:center}
     <div class="card"><b>1 · Start the server</b><br>The Pi starts it on boot. Open <code id="url">http://cartslop.local:42777</code> from any device on the Wi-Fi.</div>
     <div class="card"><b>2 · Host on the PC</b><br>In the game choose MULTIPLAYER → HOST. The game registers with the Pi automatically and shows a short room code.</div>
     <div class="card"><b>3 · Friends join</b><br>Paste the 5-character room code in MULTIPLAYER → JOIN, or open <b>BROWSE</b> in the lobby. Traffic goes PC → Pi → friend.</div>
-    <div class="card"><b>Router note</b><br>For internet friends the Pi's ports must be reachable. The server tries UPnP and NAT-PMP automatically; otherwise forward TCP 42777 and UDP 42800–42819 to the Pi's LAN address.</div>
+    <div class="card"><b>Router note</b><br>For internet friends the Pi's ports must be reachable. The server tries UPnP and NAT-PMP automatically; otherwise forward TCP 42777, TCP 42820 and UDP 42800–42819 to the Pi's LAN address.</div>
   </div>
 </main>
 <footer>Cart Slop GP server · <span id="version">1.0.0</span> · refresh every 2 s</footer>
@@ -85,14 +85,15 @@ function render(s){
   $("hostname").textContent=(s.hostname||"cartslop")+".local";
   $("url").textContent="http://"+(s.hostname||"cartslop")+".local:"+s.http_port;
   $("version").textContent=s.version||"1.0.0";
-  const mem=s.memory||{}; const up=s.upnp||{}; const np=s.natpmp||{}; const ext=s.external||{};
+  const mem=s.memory||{}; const up=s.upnp||{}; const np=s.natpmp||{}; const ext=s.external||{}; const tn=s.tunnels||{};
   const mapped=(up.mapped||0)+(np.mapped||0);
   $("cards").innerHTML = [
     card("LAN ADDRESS", (s.lan_ip||"?")+":"+s.http_port, true),
     card("PUBLIC ADDRESS", s.public_ip ? s.public_ip+":"+s.http_port : "not detected", true),
     card("INTERNET", ext.open ? "REACHABLE" : (ext.message||"not checked"), true),
-    card("PORT MAPPING", (mapped?"AUTO ":"MANUAL ")+mapped+"/"+(s.relay_count||20)+"+1", true),
+    card("PORT MAPPING", (mapped?"AUTO ":"MANUAL ")+mapped+"/"+((s.relay_count||20)+2), true),
     card("UPnP / NAT-PMP", (up.mapped||0)+" / "+(np.mapped||0), true),
+    card("TCP TUNNEL", (tn.active||0)+" active · port "+(tn.port||42820), true),
     card("LOBBIES", s.lobby_count||0),
     card("UPTIME", fmtUptime(s.uptime||0), true),
     card("CPU TEMP", (s.cpu_temp||0).toFixed(1)+" °C", true),
