@@ -3,6 +3,12 @@
 All notable changes to Cart Slop GP. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer.
 
+## [0.2.1] - 2026-11-05
+
+- Auto-install is Windows-only now: macOS and Linux update badges open the
+  release page instead of handing a .bat to a missing cmd.exe.
+- Multi-platform release assets (Windows, macOS, Linux, Web).
+
 ## [0.2.0] - 2026-11-05
 
 Peer-to-peer multiplayer.

@@ -34,7 +34,7 @@ func _ready() -> void:
 	UpdateChecker.download_failed.connect(_on_download_failed)
 
 	if UpdateChecker.has_update():
-		if UpdateChecker.has_downloaded_update(UpdateChecker.latest_version):
+		if _can_auto_install() and UpdateChecker.has_downloaded_update(UpdateChecker.latest_version):
 			_mark_install_ready()
 		else:
 			_on_update_available(UpdateChecker.latest_version, UpdateChecker.latest_release_url, UpdateChecker.latest_asset_url)
@@ -67,8 +67,13 @@ func _on_quit_pressed() -> void:
 	get_tree().quit()
 
 
+func _can_auto_install() -> bool:
+	## Only the Windows build can swap its own files (via update_install.bat).
+	return OS.get_name() == "Windows"
+
+
 func _on_update_available(version: String, release_url: String, download_url: String) -> void:
-	if UpdateChecker.has_downloaded_update(version):
+	if _can_auto_install() and UpdateChecker.has_downloaded_update(version):
 		_mark_install_ready()
 		return
 	_install_ready = false
@@ -85,6 +90,9 @@ func _on_update_available(version: String, release_url: String, download_url: St
 func _on_update_pressed() -> void:
 	if _install_ready:
 		_install_update()
+		return
+	if not _can_auto_install():
+		UpdateChecker.open_release_page()
 		return
 	if UpdateChecker.latest_asset_url == "":
 		UpdateChecker.open_release_page()

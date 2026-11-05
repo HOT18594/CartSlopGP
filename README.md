@@ -1,7 +1,7 @@
 # Cart Slop GP
 
 An arcade cart-racing prototype built in **Godot 4.7.2** (GDScript, Mobile renderer).
-Current version: **0.2.0**.
+Current version: **0.2.1**.
 
 The repo is UI + tooling + the existing driving prototype: main menu, pause/settings,
 in-game HUD, custom cursor, Windows export and a free in-game update checker that uses

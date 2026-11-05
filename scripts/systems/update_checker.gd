@@ -262,6 +262,10 @@ func install_downloaded_update(zip_path: String = "") -> bool:
 	if not OS.has_feature("template"):
 		last_error = "install_only_in_exported_build"
 		return false
+	if OS.get_name() != "Windows":
+		# The swap is done by a .bat shim; other platforms use the release page.
+		last_error = "install_only_on_windows"
+		return false
 	var source: String = zip_path if zip_path != "" else _downloaded_file
 	if source == "" or not FileAccess.file_exists(source):
 		last_error = "no_downloaded_zip"
