@@ -8,7 +8,8 @@ DIR="$(cd "$(dirname "$0")" && pwd)"
 echo "[cartslop] installing optional packages"
 if command -v apt-get >/dev/null 2>&1; then
   for attempt in 1 2 3 4 5; do
-    if apt-get update -y && apt-get install -y python3 avahi-daemon miniupnpc natpmpc iw openssh-server; then
+    if apt-get update -y && apt-get install -y python3 avahi-daemon miniupnpc iw openssh-server; then
+      apt-get install -y natpmpc >/dev/null 2>&1 || true
       break
     fi
     echo "[cartslop] apt attempt $attempt failed, retrying"
