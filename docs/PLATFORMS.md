@@ -8,16 +8,16 @@ installed (`%APPDATA%\Godot\export_templates\4.7.2.stable\`).
 
 ```bash
 # Windows (exe + pck)
-godot --headless --export-release "Windows Desktop" ../builds/v0.3.0/windows/CartSlopGP.exe
+godot --headless --export-release "Windows Desktop" ../builds/v0.4.0/windows/CartSlopGP.exe
 
 # macOS (universal .app, ad-hoc signed, zipped)
-godot --headless --export-release "macOS" ../builds/v0.3.0/mac/CartSlopGP.zip
+godot --headless --export-release "macOS" ../builds/v0.4.0/mac/CartSlopGP.zip
 
 # Linux (x86_64 binary + pck)
-godot --headless --export-release "Linux" ../builds/v0.3.0/linux/CartSlopGP.x86_64
+godot --headless --export-release "Linux" ../builds/v0.4.0/linux/CartSlopGP.x86_64
 
 # Web (nothreads variant)
-godot --headless --export-release "Web" ../builds/v0.3.0/web/index.html
+godot --headless --export-release "Web" ../builds/v0.4.0/web/index.html
 ```
 
 Notes:
@@ -30,10 +30,10 @@ Notes:
 
 | Platform | File | Run |
 | --- | --- | --- |
-| Windows | `CartSlopGP_v0.3.0_windows.zip` | unzip, `CartSlopGP.exe` |
-| macOS | `CartSlopGP_v0.3.0_macos.zip` | unzip, open `Cart Slop GP.app` |
-| Linux | `CartSlopGP_v0.3.0_linux.zip` | `chmod +x CartSlopGP.x86_64`, run it |
-| Web | `CartSlopGP_v0.3.0_web.zip` | serve the folder over HTTP(S), open `index.html` |
+| Windows | `CartSlopGP_v0.4.0_windows.zip` | unzip, `CartSlopGP.exe` |
+| macOS | `CartSlopGP_v0.4.0_macos.zip` | unzip, open `Cart Slop GP.app` |
+| Linux | `CartSlopGP_v0.4.0_linux.zip` | `chmod +x CartSlopGP.x86_64`, run it |
+| Web | `CartSlopGP_v0.4.0_web.zip` | serve the folder over HTTP(S), open `index.html` |
 
 ## Signing / warnings
 
@@ -54,7 +54,7 @@ Notes:
   universal Mach-O (`cafebabe` header) plus the pck and `_CodeSignature`.
 - Linux binary is ELF x86_64 with the pck next to it.
 - Web export produced `index.html`, `.js`, `.wasm`, `.pck` and icon files.
-- Every package includes `version.txt` (0.2.0), so the update checker and the
+- Every package includes `version.txt` (0.4.0), so the update checker and the
   menu label read the right version.
-- The GitHub release exposes all four zips; the updater picks the Windows one
-  (`status=up_to_date`, local 0.2.0, latest 0.2.0).
+- The GitHub release exposes all four zips; the updater picks the matching platform build
+  (`status=up_to_date`, local 0.4.0, latest 0.4.0).

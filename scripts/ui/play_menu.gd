@@ -5,12 +5,10 @@ extends Control
 const VEHICLE_SCENE: String = "res://scenes/ui/vehicle_select.tscn"
 const MAIN_MENU_SCENE: String = "res://scenes/ui/main_menu.tscn"
 const LOBBY_SCENE: String = "res://scenes/ui/lobby_menu.tscn"
-const MINIGAMES_SCENE: String = "res://scenes/ui/minigames_menu.tscn"
 
 @onready var _sandbox_button: Button = %SandboxButton
 @onready var _host_button: Button = %HostButton
 @onready var _join_button: Button = %JoinButton
-@onready var _minigames_button: Button = %MinigamesButton
 @onready var _back_button: Button = %BackButton
 @onready var _notice: Label = %NoticeLabel
 
@@ -21,29 +19,24 @@ func _ready() -> void:
 	_sandbox_button.pressed.connect(_on_sandbox)
 	_host_button.pressed.connect(_on_host)
 	_join_button.pressed.connect(_on_join)
-	_minigames_button.pressed.connect(_on_minigames)
 	_back_button.pressed.connect(_on_back)
 	_sandbox_button.grab_focus()
 
 
 func _on_sandbox() -> void:
-	SceneLoader.go_to(VEHICLE_SCENE, "PICK YOUR RIDE", "Loading the garage...")
+	get_tree().change_scene_to_file(VEHICLE_SCENE)
 
 
 func _on_host() -> void:
-	SceneLoader.go_to(LOBBY_SCENE, "MULTIPLAYER", "Opening the lobby...")
+	get_tree().change_scene_to_file(LOBBY_SCENE)
 
 
 func _on_join() -> void:
-	SceneLoader.go_to(LOBBY_SCENE, "MULTIPLAYER", "Opening the lobby...")
-
-
-func _on_minigames() -> void:
-	SceneLoader.go_to(MINIGAMES_SCENE, "MINIGAMES", "Setting up the playground...")
+	get_tree().change_scene_to_file(LOBBY_SCENE)
 
 
 func _on_back() -> void:
-	SceneLoader.go_to(MAIN_MENU_SCENE, "MAIN MENU")
+	get_tree().change_scene_to_file(MAIN_MENU_SCENE)
 
 
 func _show_notice(text: String) -> void:

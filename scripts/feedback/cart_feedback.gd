@@ -1,5 +1,7 @@
 class_name CartFeedback
 extends Node3D
+
+const SkidTrailScript := preload("res://scripts/feedback/skid_trail.gd")
 ## Modular audiovisual feedback for the cart: smoke plumes,
 ## wind streaks and audio hooks. Reads cart state; impact/landing events
 ## are pushed in by the player script.
@@ -33,6 +35,7 @@ var _dust: GPUParticles3D
 var _dust_burst: GPUParticles3D
 var _wind: GPUParticles3D
 var _camera: Camera3D
+var _skid_trails: Array[Node3D] = []
 
 @onready var _engine_audio: AudioStreamPlayer3D = $EngineAudio
 @onready var _skid_audio: AudioStreamPlayer3D = $SkidAudio
@@ -53,6 +56,17 @@ func _ready() -> void:
 	_wind = $WindStreaks as GPUParticles3D
 	_camera = get_viewport().get_camera_3d()
 	_load_audio()
+	_spawn_skid_trails()
+
+
+func _spawn_skid_trails() -> void:
+	## One ribbon per rear wheel, in world space so the marks stay put.
+	for side: float in [-1.0, 1.0]:
+		var trail: Node3D = SkidTrailScript.new()
+		trail.cart = _cart
+		trail.wheel_offset = Vector3(0.43 * side, 0.0, 0.55)
+		add_child(trail)
+		_skid_trails.append(trail)
 
 
 func _load_audio() -> void:
@@ -212,6 +226,9 @@ func reset_feedback() -> void:
 		_dust_burst.emitting = false
 	if _wind != null:
 		_wind.emitting = false
+	for trail: Node3D in _skid_trails:
+		if is_instance_valid(trail):
+			trail.call("clear_trail")
 	if _skid_audio != null:
 		_skid_audio.stream_paused = true
 	if _boost_loop_audio != null:

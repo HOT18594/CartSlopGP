@@ -11,6 +11,7 @@ const POST_LOAD_PAUSE: float = 0.15 ## Beat between 100% and the scene swap.
 @onready var _percent: Label = $UI/Percent
 
 var _busy: bool = false
+var _task_mode: bool = false
 var _path: String = ""
 
 
@@ -22,6 +23,31 @@ func _ready() -> void:
 
 func is_busy() -> bool:
 	return _busy
+
+
+func begin_task(title: String, message: String = "") -> void:
+	## Overlay without a scene load (e.g. hosting: UPnP + public IP).
+	if _busy:
+		return
+	_busy = true
+	_task_mode = true
+	_title.text = title
+	_message.text = message
+	_percent.text = "..."
+	_ui.set_indeterminate(true)
+	_ui.set_progress(0.0)
+	show()
+
+
+func task_message(message: String) -> void:
+	_message.text = message
+
+
+func end_task() -> void:
+	_task_mode = false
+	_ui.set_indeterminate(false)
+	hide()
+	_busy = false
 
 
 func go_to(path: String, title: String = "LOADING", message: String = "") -> void:

@@ -1,27 +1,44 @@
 # Cart Slop GP
 
-An arcade cart-racing prototype built in **Godot 4.7.2** (GDScript, Mobile renderer).
-Current version: **0.3.0**.
+A silly shopping-cart racing sandbox built in **Godot 4.7.2**.
+Current version: **0.4.0**.
 
-The repo is UI + tooling + the existing driving prototype: main menu, pause/settings,
-in-game HUD, custom cursor, Windows export and a free in-game update checker that uses
-GitHub Releases. Gameplay systems (handling, jumps, drift smoke, boost) are unchanged
-from the prototype.
+Drive a shopping cart (or a sedan, truck, van...) around a 140 × 140 m arena,
+hit boost pads, drift, smash cones and crates, then host a shared sandbox and
+invite a friend with a join code.
 
-## Requirements
+---
 
-- Windows 10/11
-- [Godot 4.7.2 stable](https://godotengine.org/download/windows/) (standard build, not .NET)
-- The export templates for 4.7.2 (only needed to build the .exe)
+## Play it (no coding, no Godot)
 
-## Open in Godot
+1. Open **[github.com/HOT18594/CartSlopGP/releases/latest](https://github.com/HOT18594/CartSlopGP/releases/latest)**.
+2. Download the zip for your computer:
+   - **Windows** — `CartSlopGP_v0.4.0_windows.zip`
+   - **Mac** — `CartSlopGP_v0.4.0_macos.zip`
+   - **Linux** — `CartSlopGP_v0.4.0_linux.zip`
+   - **Browser** — `CartSlopGP_v0.4.0_web.zip` (no multiplayer)
+3. Unzip it, then:
+   - **Windows:** double-click `CartSlopGP.exe`. If Windows SmartScreen warns,
+     click **More info → Run anyway** (the build is unsigned and safe).
+   - **Mac:** open `Cart Slop GP.app`. First time only: right-click the app →
+     **Open**, then confirm. (Unsigned build; Gatekeeper needs the extra click.)
+   - **Linux:** `chmod +x CartSlopGP.x86_64` then run it.
+4. That's it. The game updates itself — see below.
 
-1. Launch Godot 4.7.2.
-2. **Import** → select `godot_project/project.godot` → **Import & Edit**.
-3. Press **F5** to run. The project boots into the main menu; **PLAY** opens the
-   mode select: SANDBOX, MULTIPLAYER and MINIGAMES.
+### Updating
 
-The first open reimports assets into `.godot/`; that folder is git-ignored.
+The game checks GitHub when the main menu opens and shows an
+**UPDATE AVAILABLE** button when there is a newer version:
+
+1. Click it → **DOWNLOAD UPDATE** (a live %/MB progress bar runs in the
+   background; keep playing if you like).
+2. When it reaches 100%, the button becomes **RESTART TO INSTALL**.
+3. Click it. The game restarts into the new version by itself.
+
+You can also force a check with **SETTINGS → CHECK FOR UPDATES**.
+If the download fails, the same dialog has **OPEN RELEASE PAGE**.
+
+---
 
 ## Controls
 
@@ -35,110 +52,113 @@ The first open reimports assets into `.godot/`; that folder is git-ignored.
 | Reset cart | R |
 | Pause | Esc |
 
-In menus: mouse. The custom cursor is drawn by the game, so the OS pointer is hidden
-while a menu is open.
+Menus use the mouse. Hold a drift or the handbrake and the rear tyres leave
+classic skid marks that slowly fade away.
 
-## Build the Windows .exe
+## Multiplayer
 
-**From the editor:** Project → Export → *Windows Desktop* → *Export Project*.
-Uncheck *Export With Debug* for a release build.
+**PLAY → MULTIPLAYER** opens the lobby:
 
-**From the command line** (from `godot_project/`):
+- Type a name (up to 16 characters).
+- Choose **ONLINE** (works across the internet) or **LAN** (same Wi-Fi).
+- **HOST GAME** shows a 14-character code. Send it to your friend.
+- Your friend opens **MULTIPLAYER**, pastes the code into **JOIN**, and clicks
+  **JOIN GAME**.
+- The host clicks **START SANDBOX**. Everyone drives the same arena.
 
-```bash
-godot --headless --export-release "Windows Desktop" "../builds/v0.1.0/CartSlopGP.exe"
-```
-
-The build lands in `CartSlopGP/builds/v0.1.0/` and contains `CartSlopGP.exe` plus
-`CartSlopGP.pck`. Zip that folder to publish it. See `docs/RELEASE_WORKFLOW.md`.
-
-## Auto-updates
-
-`scripts/systems/update_checker.gd` runs as the `UpdateChecker` autoload. On the main
-menu it asks the GitHub API for the latest release (5 s timeout). Offline or rate-limited
-means the check is skipped silently — the game never blocks on the network.
-
-When a newer tag exists, the menu shows an **UPDATE AVAILABLE vX.Y.Z** button:
-
-1. opens the release page in the browser,
-2. or downloads the release zip into `user://updates/`,
-3. and can hand the swap to a generated `update_install.bat` (a running .exe cannot
-   overwrite itself on Windows, so the .bat waits for the game to exit, copies the
-   staged files over, restarts, and deletes itself).
-
-Set the owner/repo once in `scripts/systems/update_checker.gd` (currently
-`HOT18594/CartSlopGP`).
-
-## Multiplayer (host / join)
-
-Play -> MULTIPLAYER opens a lobby with your name, a LAN/ONLINE switch and a
-14-character join code (checksummed).
-
-- Host: opens a UDP port (8910+), asks the router for a UPnP mapping, and shows
-  the code. If UPnP is unavailable the code uses the LAN address; sharing over
-  the internet then needs UDP port forwarding (the port is in the code).
-- Join: paste the code (or an `ip:port` address) into the lobby.
-- Host presses START SANDBOX; late joiners drop straight in.
-
-Design: each player simulates their own cart and streams its transform at
-20 Hz; the host simulates props and broadcasts them at 10 Hz. Ping is measured
-every two seconds and shown in the lobby. All of it is free and serverless -
-ENet over UDP directly between players.
+Online hosting asks your router for a UPnP port mapping automatically. If your
+router has UPnP disabled, the code falls back to your LAN address; in that case
+forward UDP port shown in the code, or type your public IP in the **PUBLIC IP**
+field before hosting. No accounts and no game servers are involved — it is
+direct peer-to-peer ENet/UDP.
 
 ## Vehicles
 
-SANDBOX leads to a vehicle picker (`scenes/ui/vehicle_select.tscn`). The catalog
-lives in `scripts/vehicles/vehicle_catalog.gd`; add an entry there to offer a new
-model. The selection is stored in `user://settings.cfg` and swapped onto the
-player at spawn by `player_cart.gd`. The special minigame kart is not listed.
+After **PLAY → SANDBOX** you can pick a shopping cart (default), sedan, truck,
+van and more. The choice is remembered. The minigame buggy is intentionally not
+listed.
 
-## Minigames
+## Music
 
-PLAY -> MINIGAMES opens the hub: Free Play (solo cards with difficulty, rounds
-and vehicle options) and a Tournament setup. The screens and settings are
-implemented; the minigames themselves are marked COMING SOON. Layout and data
-model are documented in `docs/MINIGAMES.md`.
+Background music is optional. Drop two MP3s into
+`godot_project/assets/audio/music/`:
 
-## HUD for minigames
+- `menu_loop.mp3`
+- `sandbox_loop.mp3`
 
-The HUD ships with race position and lap pills that stay hidden in the free-drive
-prototype. For a race minigame, instance `scenes/ui/hud.tscn` and either set
-`show_position_badge` / `show_lap_badge` in the inspector or call:
+The folder's **README.md** contains ready-to-paste Suno prompts, loop tips and
+optional variants. Without the files the game runs silently — nothing breaks.
 
-```gdscript
-hud.set_race_position(1)   # 1st, 2nd, 3rd...
-hud.set_lap(2, 3)          # LAP 2 / 3
+Minigames are temporarily hidden from the menus while a scrollable
+preview-grid is designed; the sandbox is the focus of this version.
+
+---
+
+## Development
+
+### Requirements
+
+- [Godot 4.7.2 stable](https://godotengine.org/download/) (standard build, not
+  .NET) and the matching export templates (needed only for building).
+
+### Open and run
+
+1. Launch Godot 4.7.2.
+2. **Import** → select `godot_project/project.godot` → **Import & Edit**.
+3. Press **F5**.
+
+### Export
+
+From `godot_project/`:
+
+```bash
+GODOT="C:/Users/ethan/AppData/Local/Programs/Godot/Godot_v4.7.2-stable_win64_console.exe"
+
+"$GODOT" --headless --path . --export-release "Windows Desktop" ../builds/v0.4.0/windows/CartSlopGP.exe
+"$GODOT" --headless --path . --export-release "macOS"           ../builds/v0.4.0/mac/CartSlopGP.zip
+"$GODOT" --headless --path . --export-release "Linux"           ../builds/v0.4.0/linux/CartSlopGP.x86_64
+"$GODOT" --headless --path . --export-release "Web"             ../builds/v0.4.0/web/index.html
 ```
 
-## Project layout
+Then zip each platform folder as `CartSlopGP_v0.4.0_<platform>.zip`.
+Full details, signing notes and the release checklist are in
+`docs/PLATFORMS.md` and `docs/RELEASE_WORKFLOW.md`.
+
+### Project layout
 
 ```
 godot_project/
-  scenes/ui/          main menu, HUD, pause, settings
+  scenes/ui/          menus, HUD, pause, settings, loading overlay
   scenes/player/      cart_player.tscn
-  scenes/feedback/    smoke, wind, audio
-  scenes/dev/         driving_test.tscn (the playable prototype)
+  scenes/feedback/    smoke, wind, skid audio
+  scenes/dev/         driving_test.tscn (the playable arena)
   scripts/            gameplay + UI scripts
-  scripts/systems/    update_checker.gd
+  scripts/net/        network.gd (host / join / RPC)
+  scripts/systems/    game_settings, update_checker, music_player, scene_loader
   assets/ui/          theme, fonts, cursor
   assets/models/      Kenney Car Kit, Poly Pizza props
-  assets/audio/       Kenney CC0 SFX + synthesized loops
+  assets/audio/       SFX + optional music drop folder
   assets/textures/    particle sheets
-  docs/               credits, reports, release workflow
-  tools/              asset generators (smoke sheet)
-  version.txt         current version (read by the updater + menu)
+  docs/               platform, multiplayer, release and credits docs
+  tools/              asset generators and dev probes
+  version.txt         current version (updater + menu label)
 ```
+
+### Tests / probes
+
+`tools/` holds small Godot scripts used during development (update checker
+live checks, download-state inspection, installer template checks). They are
+excluded from exported builds.
+
+---
 
 ## Credits
 
 - **Engine:** Godot Engine 4.7.2 (MIT).
-- **Models:** Kenney *Car Kit* (CC0) — [kenney.nl](https://kenney.nl/assets/car-kit).
-  Poly Pizza go-kart and shopping-cart models (see `assets/models/poly_pizza/CREDITS.txt`).
-- **Audio:** Kenney *Impact Sounds*, *Digital Audio*, *Interface Sounds* (CC0), plus
-  synthesized engine/skid loops. Full table in `docs/AUDIO_CREDITS.txt`.
+- **Models:** Kenney *Car Kit* (CC0) — [kenney.nl](https://kenney.nl/assets/car-kit);
+  Poly Pizza go-kart and shopping-cart models (see
+  `assets/models/poly_pizza/CREDITS.txt`).
+- **Audio:** Kenney *Impact Sounds*, *Digital Audio*, *Interface Sounds* (CC0),
+  plus synthesized engine/skid loops. See `docs/AUDIO_CREDITS.txt`.
 - **UI:** Kenney *Cursor Pack* (CC0), Fredoka font (SIL Open Font License 1.1).
 - Full list: `docs/ASSET_CREDITS.txt`.
-
-## Repo
-
-https://github.com/HOT18594/CartSlopGP

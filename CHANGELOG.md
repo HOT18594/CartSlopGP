@@ -3,6 +3,42 @@
 All notable changes to Cart Slop GP. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer.
 
+## [0.4.0] - 2026-11-05
+
+Playtest polish: real skid marks, music, a complete update flow and a quieter
+loading policy.
+
+### Added
+
+- **Tyre skid marks** (`scripts/feedback/skid_trail.gd`): one world-space
+  ribbon per rear wheel while drifting/handbraking. Marks hug ramps via ground
+  raycasts, break on jumps, never z-fight, and fade out over 6 seconds.
+- **Music system** (`Music` autoload): crossfades a menu bed and a sandbox bed,
+  loops MP3s, and silently skips missing files. Drop-in folder
+  `assets/audio/music/` with exact filenames and Suno prompt guide.
+- **Update progress UI**: real download percentage and MB counter, plus
+  **RESTART TO INSTALL** once complete; reopening the panel while a download
+  runs shows live progress. Failed downloads now offer the release page.
+- **SETTINGS → CHECK FOR UPDATES** with online/up-to-date/offline feedback.
+- **Async hosting**: the loading overlay animates while the port and UPnP
+  mapping are prepared; the lobby no longer freezes.
+- Easy player-facing download/play instructions in `README.md`.
+
+### Changed
+
+- The loading screen is only used for long transitions (entering the 3D arena,
+  starting a network session); quick menu hops are instant again.
+- **Minigames are removed from the UI** for now; the scene is kept for the
+  future scrollable preview grid. PLAY offers SANDBOX and MULTIPLAYER only.
+- Updater now selects the release zip for the **running platform** instead of
+  always preferring the Windows build.
+
+### Fixed
+
+- Update panel could not reopen cleanly mid-download and its secondary button
+  closed the dialog after a failed download instead of opening the release page.
+- macOS/Linux clients could previously download the Windows update package.
+
 ## [0.3.0] - 2026-11-05
 
 Profiles, online play, loading screens and the minigames hub.

@@ -128,4 +128,4 @@ func _show_tab(tab: int) -> void:
 
 
 func _on_back() -> void:
-	SceneLoader.go_to(PLAY_MENU_SCENE, "PLAY MENU")
+	get_tree().change_scene_to_file(PLAY_MENU_SCENE)

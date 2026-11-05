@@ -10,7 +10,7 @@ extends Node
 
 signal update_available(version: String, release_url: String, download_url: String)
 signal check_finished(available: bool)
-signal download_progress(ratio: float)
+signal download_progress(ratio: float, received: int, total: int)
 signal download_finished(path: String)
 signal download_failed(reason: String)
 
@@ -27,7 +27,6 @@ const API_HOST: String = "https://api.github.com"
 
 @export_group("Downloads")
 @export var download_timeout: float = 120.0 ## Seconds allowed for the zip download.
-@export var require_windows_asset: bool = true ## Only offer assets whose name mentions windows.
 
 ## "idle" | "checking" | "up_to_date" | "available" | "offline" | "error"
 var status: String = "idle"
@@ -43,12 +42,30 @@ var _checking: bool = false
 var _downloading: bool = false
 var _downloaded_file: String = ""
 var _downloaded_version: String = ""
+var _progress_accum: float = 0.0
 
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	DirAccess.make_dir_recursive_absolute(UPDATE_DIR)
 	_load_download_state()
+
+
+func _process(delta: float) -> void:
+	if not _downloading or _download_request == null:
+		return
+	_progress_accum += delta
+	if _progress_accum < 0.1:
+		return
+	_progress_accum = 0.0
+	var total: int = _download_request.get_body_size()
+	var received: int = _download_request.get_downloaded_bytes()
+	var ratio: float = clampf(float(received) / float(maxi(total, 1)), 0.0, 1.0)
+	download_progress.emit(ratio, received, total)
+
+
+func is_downloading() -> bool:
+	return _downloading
 
 
 func has_update() -> bool:
@@ -127,26 +144,38 @@ func _on_check_completed(result: int, response_code: int, _headers: PackedString
 
 
 func _pick_asset(assets: Variant) -> void:
-	## Prefer the Windows zip; GitHub lists assets in upload order otherwise.
+	## Pick the zip that matches the running platform. Never offer another OS's
+	## build - installing it would break the app.
 	if not (assets is Array):
 		return
-	var fallback: Dictionary = {}
+	var keyword: String = _platform_keyword()
+	if keyword == "":
+		return
 	for entry: Variant in assets as Array:
 		if not (entry is Dictionary):
 			continue
 		var asset: Dictionary = entry as Dictionary
-		var name: String = str(asset.get("name", ""))
-		if not name.to_lower().ends_with(".zip"):
+		var name: String = str(asset.get("name", "")).to_lower()
+		if not name.ends_with(".zip"):
 			continue
-		if fallback.is_empty():
-			fallback = asset
-		if name.to_lower().contains("windows"):
-			latest_asset_name = name
-			latest_asset_url = str(asset.get("browser_download_url", ""))
-			return
-	if not require_windows_asset and not fallback.is_empty():
-		latest_asset_name = str(fallback.get("name", ""))
-		latest_asset_url = str(fallback.get("browser_download_url", ""))
+		if not name.contains(keyword):
+			continue
+		# "macos" must not also match an unrelated "mac" file; keyword is exact.
+		latest_asset_name = str(asset.get("name", ""))
+		latest_asset_url = str(asset.get("browser_download_url", ""))
+		return
+
+
+func _platform_keyword() -> String:
+	match OS.get_name():
+		"Windows":
+			return "windows"
+		"macOS":
+			return "macos"
+		"Linux":
+			return "linux"
+		_:
+			return ""
 
 
 func _finish_check(new_status: String, error_text: String) -> void:
@@ -175,6 +204,7 @@ func download_update() -> void:
 		return
 	_downloading = true
 	_downloaded_file = ""
+	_progress_accum = 0.0
 	DirAccess.make_dir_recursive_absolute(UPDATE_DIR)
 	var target_name: String = latest_asset_name if latest_asset_name != "" else "CartSlopGP_update.zip"
 	var target_path: String = "%s/%s" % [UPDATE_DIR, target_name]

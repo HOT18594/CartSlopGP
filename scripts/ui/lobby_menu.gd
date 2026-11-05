@@ -108,7 +108,12 @@ func _on_host_started(code: String) -> void:
 	_start_button.visible = true
 	_copy_button.visible = true
 	_code_label.text = code
-	_host_status.text = "Online - share this code." if _mode == MODE_ONLINE else "LAN - share this code on your Wi-Fi."
+	if _mode == MODE_LAN:
+		_host_status.text = "LAN - share this code with players on your Wi-Fi."
+	elif Network.public_address != "":
+		_host_status.text = "Online - share this code with anyone."
+	else:
+		_host_status.text = "No router mapping found. Forward UDP port %d or set PUBLIC IP, then host again." % Network.port
 	_refresh_players()
 
 
@@ -191,4 +196,4 @@ func _refresh_players() -> void:
 func _on_back_pressed() -> void:
 	if Network.is_session_active():
 		Network.leave()
-	SceneLoader.go_to(PLAY_MENU_SCENE, "MAIN MENU")
+	get_tree().change_scene_to_file(PLAY_MENU_SCENE)

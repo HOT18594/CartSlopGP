@@ -10,6 +10,8 @@ signal closed
 @onready var _fullscreen_toggle: CheckButton = %FullscreenToggle
 @onready var _cursor_toggle: CheckButton = %CursorToggle
 @onready var _offline_note: Label = %OfflineNote
+@onready var _check_button: Button = %CheckUpdatesButton
+@onready var _update_status: Label = %UpdateStatus
 @onready var _back_button: Button = %BackButton
 
 var _refreshing: bool = false
@@ -22,7 +24,10 @@ func _ready() -> void:
 	_sfx_slider.value_changed.connect(_on_sfx_changed)
 	_fullscreen_toggle.toggled.connect(_on_fullscreen_toggled)
 	_cursor_toggle.toggled.connect(_on_cursor_toggled)
+	_check_button.pressed.connect(_on_check_updates)
+	_update_status.text = ""
 	_back_button.pressed.connect(_on_back_pressed)
+	UpdateChecker.check_finished.connect(_on_check_finished)
 
 
 func open() -> void:
@@ -30,7 +35,43 @@ func open() -> void:
 	show()
 	visible = true
 	_offline_note.visible = UpdateChecker.status == "offline" or UpdateChecker.status == "error"
+	_check_button.disabled = false
+	if UpdateChecker.status == "available":
+		_update_status.text = "v%s available" % UpdateChecker.latest_version
+	elif UpdateChecker.status == "up_to_date":
+		_update_status.text = "Up to date (v%s)" % UpdateChecker.local_version()
+	else:
+		_update_status.text = ""
 	_master_slider.grab_focus()
+
+
+func _on_check_updates() -> void:
+	if UpdateChecker.is_downloading():
+		_update_status.text = "Update downloading..."
+		return
+	_check_button.disabled = true
+	_update_status.text = "Checking GitHub..."
+	UpdateChecker.check_for_updates()
+	get_tree().create_timer(8.0).timeout.connect(_re_enable_check)
+
+
+func _re_enable_check() -> void:
+	if is_instance_valid(_check_button):
+		_check_button.disabled = false
+
+
+func _on_check_finished(available: bool) -> void:
+	if not visible:
+		return
+	_check_button.disabled = false
+	if available:
+		_update_status.text = "v%s available - see the update badge on the main menu" % UpdateChecker.latest_version
+	elif UpdateChecker.status == "up_to_date":
+		_update_status.text = "Up to date (v%s)" % UpdateChecker.local_version()
+	elif UpdateChecker.status == "offline":
+		_update_status.text = "Offline - couldn't reach GitHub"
+	else:
+		_update_status.text = "Check failed - try again later"
 
 
 func _refresh() -> void:

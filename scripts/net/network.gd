@@ -43,7 +43,6 @@ var player_names: Dictionary = {} ## peer id -> sanitized display name
 var _peer: ENetMultiplayerPeer
 var _upnp: UPNP
 var _ping_timer: float = 0.0
-var _ip_request: HTTPRequest
 
 
 func _ready() -> void:
@@ -86,10 +85,13 @@ func peer_count() -> int:
 func host_game(mode: String = "online") -> void:
 	leave()
 	connection_mode = "lan" if mode == "lan" else "online"
+	SceneLoader.begin_task("HOSTING A GAME", "Opening a port...")
+	await get_tree().process_frame
 	_upnp = UPNP.new()
 	local_address = _local_ip()
 	var bound_port: int = _open_server()
 	if bound_port <= 0:
+		SceneLoader.end_task()
 		host_failed.emit("Could not open a UDP port.")
 		return
 	port = bound_port
@@ -98,17 +100,66 @@ func host_game(mode: String = "online") -> void:
 	public_address = ""
 	join_code = encode_address(local_address, port)
 	player_names[1] = GameSettings.player_name
-	host_started.emit(join_code)
-	peers_changed.emit()
+
 	if connection_mode == "online":
 		if _valid_ip(custom_public_ip):
 			public_address = custom_public_ip
-			join_code = encode_address(public_address, port)
-			code_updated.emit(join_code)
 		else:
-			# Router mapping and public IP are best-effort; LAN still works.
-			_try_upnp(port)
-			_request_public_ip()
+			SceneLoader.task_message("Asking your router for a port (UPnP)...")
+			var upnp_ip: String = await _upnp_lookup(port)
+			if upnp_ip != "":
+				public_address = upnp_ip
+			else:
+				SceneLoader.task_message("Checking your public IP...")
+				var public_ip: String = await _public_ip_lookup()
+				if public_ip != "":
+					public_address = public_ip
+		if public_address != "":
+			join_code = encode_address(public_address, port)
+
+	SceneLoader.end_task()
+	host_started.emit(join_code)
+	peers_changed.emit()
+
+
+func _upnp_lookup(udp_port: int) -> String:
+	## Runs discovery in a thread so the loading overlay keeps animating.
+	var result: Dictionary = {"ip": ""}
+	var thread := Thread.new()
+	thread.start(_upnp_worker.bind(udp_port, result))
+	while thread.is_alive():
+		await get_tree().process_frame
+	thread.wait_to_finish()
+	return str(result.get("ip", ""))
+
+
+func _upnp_worker(udp_port: int, result: Dictionary) -> void:
+	var upnp := UPNP.new()
+	if upnp.discover(1500, 2, "InternetGatewayDevice") != OK:
+		return
+	var gateway: UPNPDevice = upnp.get_gateway()
+	if gateway == null or not gateway.is_valid_gateway():
+		return
+	if upnp.add_port_mapping(udp_port, udp_port, "Cart Slop GP", "UDP", 0) != OK:
+		return
+	var external: String = upnp.get_external_ip()
+	if external != "" and external != "0.0.0.0":
+		result["ip"] = external
+
+
+func _public_ip_lookup() -> String:
+	var http := HTTPRequest.new()
+	http.timeout = 4.0
+	add_child(http)
+	if http.request("https://api.ipify.org") != OK:
+		http.queue_free()
+		return ""
+	var response: Array = await http.request_completed
+	http.queue_free()
+	if int(response[1]) != 200:
+		return ""
+	var text: String = (response[3] as PackedByteArray).get_string_from_utf8().strip_edges()
+	return text if _valid_ip(text) else ""
 
 
 func _open_server() -> int:
@@ -129,55 +180,6 @@ func _local_ip() -> String:
 		if address.begins_with("192.168.") or address.begins_with("10.") or address.begins_with("172."):
 			return address
 	return "127.0.0.1"
-
-
-func _try_upnp(udp_port: int) -> void:
-	## 1.5 s worst case; turns a LAN-only host into an internet-hosted one when
-	## the router supports UPnP.
-	if _upnp == null or connection_mode != "online":
-		return
-	var discover_error: Error = _upnp.discover(1500, 2, "InternetGatewayDevice")
-	if discover_error != OK:
-		last_error = "upnp_unavailable"
-		return
-	var gateway: UPNPDevice = _upnp.get_gateway()
-	if gateway == null or not gateway.is_valid_gateway():
-		last_error = "upnp_no_gateway"
-		return
-	var mapping_error: Error = _upnp.add_port_mapping(udp_port, udp_port, "Cart Slop GP", "UDP", 0)
-	if mapping_error != OK:
-		last_error = "upnp_mapping_failed"
-		return
-	var external: String = _upnp.get_external_ip()
-	if external != "" and external != "0.0.0.0":
-		public_address = external
-		join_code = encode_address(external, udp_port)
-		code_updated.emit(join_code)
-
-
-func _request_public_ip() -> void:
-	if _ip_request != null or connection_mode != "online" or _valid_ip(custom_public_ip):
-		return
-	_ip_request = HTTPRequest.new()
-	_ip_request.timeout = 4.0
-	add_child(_ip_request)
-	_ip_request.request_completed.connect(_on_ip_resolved, CONNECT_ONE_SHOT)
-	if _ip_request.request("https://api.ipify.org") != OK:
-		_ip_request.queue_free()
-		_ip_request = null
-
-
-func _on_ip_resolved(_result: int, code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
-	var text: String = body.get_string_from_utf8().strip_edges()
-	if code == 200 and _valid_ip(text):
-		public_address = text
-		# Keep a UPnP/public address if we already had one.
-		if join_code == encode_address(local_address, port):
-			join_code = encode_address(text, port)
-			code_updated.emit(join_code)
-	if is_instance_valid(_ip_request):
-		_ip_request.queue_free()
-		_ip_request = null
 
 
 # --------------------------------------------------------------------------

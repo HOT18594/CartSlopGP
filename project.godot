@@ -24,6 +24,7 @@ boot_splash/minimum_display_time=1200
 [autoload]
 
 GameSettings="*res://scripts/systems/game_settings.gd"
+Music="*res://scripts/systems/music_player.gd"
 UpdateChecker="*res://scripts/systems/update_checker.gd"
 CursorController="*res://scenes/ui/cursor_controller.tscn"
 Network="*res://scripts/net/network.gd"
