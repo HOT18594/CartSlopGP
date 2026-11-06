@@ -33,5 +33,9 @@ func _ready() -> void:
 	_a.velocity = Vector3(0, 0, -12.0)
 	for i in 24:
 		await get_tree().physics_frame
-	print("COLLISION_TEST velocity=", _a.velocity, " impact_timer=", _a.get("_impact_timer"))
-	get_tree().quit(0)
+	var speed_after: float = _a.velocity.length()
+	print("COLLISION_TEST velocity=", _a.velocity, " speed_after=%.2f impact_timer=" % speed_after,
+		_a.get("_impact_timer"))
+	var ok: bool = speed_after < 10.0
+	print("COLLISION_TEST: %s" % ("PASS" if ok else "FAIL"))
+	get_tree().quit(0 if ok else 1)

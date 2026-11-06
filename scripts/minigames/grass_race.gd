@@ -35,7 +35,11 @@ const CHECKER_FLAG: String = "res://scripts/ui/checker_flag.gd"
 const THEME: String = "res://assets/ui/theme.tres"
 const TITLE_FONT: String = "res://assets/ui/fonts/LuckiestGuy-Regular.ttf"
 const KART_ROOT: String = "res://assets/models/kenney_car-kit/Models/GLB format/"
-const CONFIRM_SOUND: String = "res://assets/audio/sfx/ui/ui_confirm.ogg"
+const COUNTDOWN_BEEP: AudioStream = preload("res://assets/audio/sfx/race/countdown_beep.wav")
+const COUNTDOWN_GO: AudioStream = preload("res://assets/audio/sfx/race/countdown_go.wav")
+const LAP_CHIME: AudioStream = preload("res://assets/audio/sfx/race/lap_chime.wav")
+const FINISH_FANFARE: AudioStream = preload("res://assets/audio/sfx/race/finish_fanfare.wav")
+const FOREST_AMBIENCE: AudioStream = preload("res://assets/audio/ambience/forest_ambience.mp3")
 const NET_SYNC_INTERVAL: float = 0.05
 
 const TOTAL_LAPS: int = 3
@@ -84,6 +88,11 @@ const WOODLAND: PackedStringArray = [
 	"mushroom_red", "mushroom_tan", "mushroom_redGroup",
 ]
 
+const RAMP_FRACTIONS: Array[float] = [0.30, 0.70]
+const RAMP_WIDTH: float = 6.4
+const RAMP_LENGTH: float = 6.0
+const RAMP_HEIGHT: float = 1.90
+
 const RIVAL_KARTS: PackedStringArray = ["kart-oobi", "kart-oodi", "kart-ooli"]
 const RIVAL_SPEEDS: Array[float] = [11.6, 12.4, 13.2]
 const RIVAL_LATERAL: Array[float] = [-2.6, 2.6, 0.0]
@@ -108,6 +117,7 @@ var _bend_materials: Array = []
 var _start_lights: Array[MeshInstance3D] = []
 var _gate_beams: Array[MeshInstance3D] = []
 var _last_sector: int = 0
+var _ramp_distances: Array[float] = []
 
 var _phase: Phase = Phase.COUNTDOWN
 var _countdown: float = 3.0
@@ -142,6 +152,7 @@ var _offtrack_label: Label
 var _result_root: Control
 var _result_title: Label
 var _result_stats: Label
+var _ambient_audio: AudioStreamPlayer
 
 
 # --------------------------------------------------------------------------
@@ -177,17 +188,20 @@ func _ready() -> void:
 		_last_cart_pos = _cart.global_position
 
 	_build_ground()
+	_build_hills()
 	_build_track()
 	_build_barriers()
 	_build_start_line()
 	_build_gates()
 	_build_start_lights()
 	_build_boost_pads()
+	_build_ramps()
 	_build_grid()
 	_build_scenery()
 	_build_trackside_props()
 	_build_rivals()
 	_build_overlay()
+	_start_ambience()
 
 	if _cart != null:
 		var spawn: Transform3D = _track_transform(START_DISTANCE)
@@ -262,6 +276,55 @@ func _build_ground() -> void:
 	collision.position = Vector3(0.0, -1.0, 0.0)
 	body.add_child(collision)
 	add_child(body)
+
+
+func _build_hills() -> void:
+	# The old horizon was a flat sheet of grass. A ring of soft, grassy hills
+	# gives the chase camera a layered background and hides the world edge.
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 7713
+	var mat := _pbr_material("grass_diff", "grass_nor", "grass_rough", 20.0,
+		Color(0.62, 0.78, 0.55), 0.10, 0.06)
+	for index in 18:
+		var angle: float = TAU * float(index) / 18.0 + rng.randf_range(-0.08, 0.08)
+		var radius: float = rng.randf_range(210.0, 380.0)
+		var hill_radius: float = rng.randf_range(40.0, 70.0)
+		var hill_height: float = hill_radius * rng.randf_range(1.35, 1.75)
+		var sphere := SphereMesh.new()
+		sphere.radius = hill_radius
+		sphere.height = hill_height
+		sphere.radial_segments = 24
+		sphere.rings = 12
+		var hill := MeshInstance3D.new()
+		hill.name = "Hill_%02d" % index
+		hill.mesh = sphere
+		hill.material_override = mat
+		hill.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		hill.position = Vector3(cos(angle) * radius, -hill_height * 0.18,
+			sin(angle) * radius)
+		hill.scale = Vector3(rng.randf_range(1.1, 1.3), 1.0, rng.randf_range(1.1, 1.3))
+		add_child(hill)
+	# A darker ridge behind the first ring closes the horizon.
+	var ridge_mat := StandardMaterial3D.new()
+	ridge_mat.albedo_color = Color(0.24, 0.38, 0.28)
+	ridge_mat.roughness = 1.0
+	ridge_mat.shading_mode = BaseMaterial3D.SHADING_MODE_PER_PIXEL
+	for index in 9:
+		var angle: float = TAU * float(index) / 9.0 + 0.28
+		var radius: float = rng.randf_range(430.0, 600.0)
+		var sphere := SphereMesh.new()
+		sphere.radius = rng.randf_range(70.0, 120.0)
+		sphere.height = rng.randf_range(75.0, 120.0)
+		sphere.radial_segments = 16
+		sphere.rings = 8
+		var ridge := MeshInstance3D.new()
+		ridge.mesh = sphere
+		ridge.material_override = ridge_mat
+		ridge.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		ridge.position = Vector3(cos(angle) * radius, -sphere.height * 0.18,
+			sin(angle) * radius)
+		ridge.scale = Vector3(rng.randf_range(1.4, 1.8), 1.0, rng.randf_range(1.4, 1.8))
+		add_child(ridge)
 
 
 func _pbr_material(diff: String, nor: String, rough: String, uv_scale: float,
@@ -500,18 +563,21 @@ func _build_gate(distance: float, caption: String, color: Color, finish: bool) -
 		strip.material_override = checker
 		gate.add_child(strip)
 
-	var label := Label3D.new()
-	label.text = caption
-	label.font = load(TITLE_FONT)
-	label.font_size = 64
-	label.pixel_size = 0.017
-	label.outline_size = 18
-	label.outline_modulate = UiPalette.OUTLINE
-	label.modulate = color
-	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-	label.no_depth_test = true
-	label.position = Vector3(0.0, post_height + 1.0, 0.0)
-	gate.add_child(label)
+	if finish:
+		# Sector gates are read from their colour and flash; three floating
+		# SECTOR labels were visual noise in the chase camera.
+		var label := Label3D.new()
+		label.text = caption
+		label.font = load(TITLE_FONT)
+		label.font_size = 64
+		label.pixel_size = 0.017
+		label.outline_size = 18
+		label.outline_modulate = UiPalette.OUTLINE
+		label.modulate = color
+		label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+		label.no_depth_test = true
+		label.position = Vector3(0.0, post_height + 1.0, 0.0)
+		gate.add_child(label)
 
 
 func _build_start_lights() -> void:
@@ -584,8 +650,128 @@ func _build_boost_pads() -> void:
 		var distance: float = _spline.total_length * (0.13 + float(i) * 0.245)
 		var lateral: float = [-2.4, 2.4, 0.0, -1.6][i]
 		var pad: Node3D = packed.instantiate() as Node3D
-		pad.transform = _track_transform(distance, lateral, 0.03)
+		# The road surface is at y = 0.04; a pad at 0.03 was completely hidden
+		# under the dirt. Sit it just above the surface so the glow reads.
+		pad.transform = _track_transform(distance, lateral, 0.075)
 		holder.add_child(pad)
+
+
+func _build_ramps() -> void:
+	# Two dirt kickers on the racing line. The collision is a convex wedge, so
+	# the normal physics loop handles the launch; rivals get a matching lift in
+	# _place_rival.
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(0.58, 0.38, 0.20)
+	mat.roughness = 0.92
+	mat.metallic = 0.0
+	var lip_mat := StandardMaterial3D.new()
+	lip_mat.albedo_color = Color(0.96, 0.88, 0.67)
+	lip_mat.roughness = 0.85
+	lip_mat.emission_enabled = true
+	lip_mat.emission = Color(0.55, 0.42, 0.18)
+	lip_mat.emission_energy_multiplier = 0.25
+	for fraction: float in RAMP_FRACTIONS:
+		var distance: float = _spline.total_length * fraction
+		_ramp_distances.append(distance)
+		var body := StaticBody3D.new()
+		body.name = "Ramp_%d" % int(fraction * 100.0)
+		body.transform = _track_transform(distance, 0.0, 0.045)
+		body.collision_layer = 1
+		body.collision_mask = 0
+		add_child(body)
+
+		var half_w: float = RAMP_WIDTH * 0.5
+		var half_l: float = RAMP_LENGTH * 0.5
+		var verts := PackedVector3Array()
+		var norms := PackedVector3Array()
+		var uvs := PackedVector2Array()
+		_add_tri(verts, norms, uvs,
+			Vector3(-half_w, 0.0, half_l), Vector3(half_w, 0.0, half_l),
+			Vector3(half_w, RAMP_HEIGHT, -half_l), Vector3.UP)
+		_add_tri(verts, norms, uvs,
+			Vector3(-half_w, 0.0, half_l), Vector3(half_w, RAMP_HEIGHT, -half_l),
+			Vector3(-half_w, RAMP_HEIGHT, -half_l), Vector3.UP)
+		_add_tri(verts, norms, uvs,
+			Vector3(-half_w, 0.0, half_l), Vector3(-half_w, RAMP_HEIGHT, -half_l),
+			Vector3(-half_w, 0.0, -half_l), Vector3.LEFT)
+		_add_tri(verts, norms, uvs,
+			Vector3(half_w, 0.0, half_l), Vector3(half_w, 0.0, -half_l),
+			Vector3(half_w, RAMP_HEIGHT, -half_l), Vector3.RIGHT)
+		_add_tri(verts, norms, uvs,
+			Vector3(-half_w, RAMP_HEIGHT, -half_l), Vector3(half_w, RAMP_HEIGHT, -half_l),
+			Vector3(half_w, 0.0, -half_l), Vector3.BACK)
+		_add_tri(verts, norms, uvs,
+			Vector3(-half_w, RAMP_HEIGHT, -half_l), Vector3(half_w, 0.0, -half_l),
+			Vector3(-half_w, 0.0, -half_l), Vector3.BACK)
+
+		var mesh := ArrayMesh.new()
+		mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES,
+			_make_arrays(verts, norms, uvs, PackedColorArray(), PackedInt32Array()))
+		var visual := MeshInstance3D.new()
+		visual.mesh = mesh
+		visual.material_override = mat
+		body.add_child(visual)
+
+		# A pale lip at the crest makes the kicker readable from a distance.
+		var lip := MeshInstance3D.new()
+		var lip_mesh := BoxMesh.new()
+		lip_mesh.size = Vector3(RAMP_WIDTH + 0.1, 0.16, 0.55)
+		lip.mesh = lip_mesh
+		lip.material_override = lip_mat
+		lip.position = Vector3(0.0, RAMP_HEIGHT + 0.02, -half_l + 0.32)
+		body.add_child(lip)
+
+		# Bright side rails make the kicker read as a ramp at speed.
+		var rail_mat := StandardMaterial3D.new()
+		rail_mat.albedo_color = Color(0.96, 0.82, 0.50)
+		rail_mat.roughness = 0.8
+		rail_mat.emission_enabled = true
+		rail_mat.emission = Color(0.45, 0.30, 0.10)
+		rail_mat.emission_energy_multiplier = 0.2
+		var slope_length: float = sqrt(RAMP_LENGTH * RAMP_LENGTH
+			+ RAMP_HEIGHT * RAMP_HEIGHT)
+		var slope_angle: float = atan2(RAMP_HEIGHT, RAMP_LENGTH)
+		for side: float in [-1.0, 1.0]:
+			var rail := MeshInstance3D.new()
+			var rail_mesh := BoxMesh.new()
+			rail_mesh.size = Vector3(0.18, 0.12, slope_length)
+			rail.mesh = rail_mesh
+			rail.material_override = rail_mat
+			rail.position = Vector3(side * (half_w + 0.06), RAMP_HEIGHT * 0.5 + 0.07, 0.0)
+			rail.rotation.x = slope_angle
+			body.add_child(rail)
+
+		var shape := ConvexPolygonShape3D.new()
+		shape.points = PackedVector3Array([
+			Vector3(-half_w, 0.0, half_l), Vector3(half_w, 0.0, half_l),
+			Vector3(-half_w, RAMP_HEIGHT, -half_l), Vector3(half_w, RAMP_HEIGHT, -half_l),
+			Vector3(-half_w, 0.0, -half_l), Vector3(half_w, 0.0, -half_l),
+		])
+		var collision := CollisionShape3D.new()
+		collision.shape = shape
+		body.add_child(collision)
+
+
+func _add_tri(verts: PackedVector3Array, norms: PackedVector3Array,
+		uvs: PackedVector2Array, a: Vector3, b: Vector3, c: Vector3,
+		_normal_dir: Vector3) -> void:
+	var normal: Vector3 = (b - a).cross(c - a).normalized()
+	for vertex: Vector3 in [a, b, c]:
+		verts.append(vertex)
+		norms.append(normal)
+	uvs.append(Vector2(0, 0))
+	uvs.append(Vector2(1, 0))
+	uvs.append(Vector2(0.5, 1))
+
+
+func _ramp_lift_at(progress: float) -> float:
+	var wrapped: float = fposmod(progress, _spline.total_length)
+	for distance: float in _ramp_distances:
+		var start: float = distance - RAMP_LENGTH * 0.5
+		var end: float = distance + RAMP_LENGTH * 0.5
+		if wrapped >= start and wrapped <= end:
+			return RAMP_HEIGHT * ((wrapped - start) / maxf(RAMP_LENGTH, 0.001))
+	return 0.0
 
 
 func _build_trackside_props() -> void:
@@ -735,15 +921,13 @@ func _foliage_tint(rng: RandomNumberGenerator) -> Color:
 func _build_scenery() -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 20261105
-	# The flat-shaded Kenney forest now only fills the far field: realistic PBR
-	# trees own the verge (see RaceScenery), so these stay behind them for cheap
-	# depth and a solid horizon.
-	_scatter(rng, TREES, 1500, 34.0, 3.0, 6.6, false, "FarForest", true)
-	_scatter(rng, BUSHES, 620, 24.0, 1.3, 2.8, false, "FarUnderbrush", true)
+	# No flat-shaded Kenney trees in the background: the PBR forest and the
+	# grassy hill ring own the horizon now. Small ground cover stays cheap.
+	_scatter(rng, BUSHES, 420, 22.0, 1.1, 2.4, false, "FarUnderbrush", true)
 	_scatter(rng, GRASSES, 1500, 7.4, 0.9, 2.1, false, "GrassClumps")
 	_scatter(rng, FLOWERS, 500, 7.4, 0.8, 1.6, false, "Wildflowers")
-	_scatter(rng, ROCKS, 340, 9.0, 0.8, 2.2, false, "Rocks")
-	_scatter(rng, WOODLAND, 240, 10.0, 1.0, 2.0, false, "WoodlandProps")
+	_scatter(rng, ROCKS, 300, 9.0, 0.8, 2.2, false, "Rocks")
+	_scatter(rng, WOODLAND, 200, 10.0, 1.0, 2.0, false, "WoodlandProps")
 	_build_trackside_fences(rng)
 
 	_scenery = RaceScenery.new()
@@ -873,7 +1057,8 @@ func _place_rival(index: int) -> void:
 	var yaw: float = _spline.yaw_at(progress)
 	node.global_position = frame["position"] \
 		+ frame["right"] * float(rival["lateral"]) \
-		+ Vector3.UP * (0.05 + sin(_race_time * 7.0 + float(index)) * 0.025) \
+		+ Vector3.UP * (0.05 + _ramp_lift_at(progress)
+			+ sin(_race_time * 7.0 + float(index)) * 0.025) \
 		+ (rival["bump"] as Vector3)
 	node.rotation.y = yaw
 	# Lean into the corner, with a little springy body roll.
@@ -1243,6 +1428,8 @@ func _tick_countdown(delta: float) -> void:
 			_countdown_label.text = str(count) if count > 0 else "GO!"
 			_pop_label(_countdown_label)
 			_set_start_lights([0, 2, 4, 5][clampi(3 - count, 0, 3)], false)
+			if count > 0:
+				_play_one_shot(COUNTDOWN_BEEP, -9.0, 1.0)
 		return
 	if not _go_shown:
 		_go_shown = true
@@ -1251,6 +1438,7 @@ func _tick_countdown(delta: float) -> void:
 		_pop_label(_countdown_label)
 		_set_start_lights(5, true)
 		_flash_gate(0)
+		_play_one_shot(COUNTDOWN_GO, -7.0, 1.0)
 	_go_time += delta
 	if _go_time >= 0.7:
 		_countdown_label.visible = false
@@ -1345,7 +1533,7 @@ func _complete_lap() -> void:
 	_flash_gate(0)
 	if _effects != null:
 		_effects.call("lap_burst")
-	_play_confirm()
+	_play_one_shot(LAP_CHIME, -8.0, 1.0)
 
 
 func _finish() -> void:
@@ -1382,16 +1570,31 @@ func _finish() -> void:
 	_hud.call("set_lap", TOTAL_LAPS, TOTAL_LAPS)
 	if _effects != null:
 		_effects.call("lap_burst")
-	_play_confirm()
+	_play_one_shot(FINISH_FANFARE, -6.0, 1.0)
 
 
-func _play_confirm() -> void:
-	var stream: AudioStream = load(CONFIRM_SOUND) as AudioStream
+func _start_ambience() -> void:
+	_ambient_audio = AudioStreamPlayer.new()
+	var ambience: AudioStream = FOREST_AMBIENCE
+	if ambience is AudioStreamMP3:
+		(ambience as AudioStreamMP3).loop = true
+	_ambient_audio.stream = ambience
+	_ambient_audio.bus = "SFX"
+	_ambient_audio.volume_db = -34.0
+	add_child(_ambient_audio)
+	_ambient_audio.play()
+	var tween := create_tween()
+	tween.tween_property(_ambient_audio, "volume_db", -23.0, 1.4)
+
+
+func _play_one_shot(stream: AudioStream, volume_db: float, pitch: float) -> void:
 	if stream == null:
 		return
 	var player := AudioStreamPlayer.new()
 	player.stream = stream
 	player.bus = "SFX"
+	player.volume_db = volume_db
+	player.pitch_scale = pitch
 	add_child(player)
 	player.play()
 	player.finished.connect(player.queue_free)

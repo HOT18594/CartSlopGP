@@ -2,6 +2,22 @@ class_name CartFeedback
 extends Node3D
 
 const SkidTrailScript := preload("res://scripts/feedback/skid_trail.gd")
+
+const IMPACT_LIGHT_PATHS: PackedStringArray = [
+	"res://assets/audio/sfx/impacts/metal_light_0.ogg",
+	"res://assets/audio/sfx/impacts/metal_light_1.ogg",
+	"res://assets/audio/sfx/impacts/impact_light.ogg",
+]
+const IMPACT_HEAVY_PATHS: PackedStringArray = [
+	"res://assets/audio/sfx/impacts/metal_heavy_0.ogg",
+	"res://assets/audio/sfx/impacts/metal_heavy_1.ogg",
+	"res://assets/audio/sfx/impacts/impact_heavy.ogg",
+]
+const CRASH_PATHS: PackedStringArray = [
+	"res://assets/audio/sfx/impacts/metal_crash_0.ogg",
+	"res://assets/audio/sfx/impacts/metal_crash_1.ogg",
+	"res://assets/audio/sfx/impacts/crash_flip.ogg",
+]
 ## Modular audiovisual feedback for the cart: smoke plumes,
 ## wind streaks and audio hooks. Reads cart state; impact/landing events
 ## are pushed in by the player script.
@@ -95,6 +111,7 @@ func apply_vehicle_profile(entry: Dictionary) -> void:
 	var loop_sound: String = str(entry.get("loop_sound", ""))
 	if loop_sound != "" and ResourceLoader.exists(loop_sound):
 		_set_stream(_engine_audio, loop_sound, "")
+		_loop_stream(_engine_audio.stream)
 		if not _has_engine and _engine_audio != null:
 			_engine_audio.stop()
 	var side: float = float(entry.get("skid_side", 0.43))
@@ -122,6 +139,9 @@ func _load_audio() -> void:
 	_set_stream($ThudAudio, "res://assets/audio/sfx/landing/landing_thud.ogg", "res://assets/audio/landing_thud.wav")
 	_set_stream($BoostStartAudio, "res://assets/audio/sfx/boost/boost_start.ogg", "")
 	_set_stream($BoostLoopAudio, "res://assets/audio/sfx/engine/engine_boost.wav", "")
+	_loop_stream($EngineAudio.stream)
+	_loop_stream($SkidAudio.stream)
+	_loop_stream($BoostLoopAudio.stream)
 
 
 func _set_stream(player: AudioStreamPlayer3D, primary: String, fallback: String) -> void:
@@ -134,6 +154,29 @@ func _set_stream(player: AudioStreamPlayer3D, primary: String, fallback: String)
 	else:
 		missing_audio.append(primary)
 		push_warning("Missing audio: " + primary)
+
+
+func _pick_stream(paths: PackedStringArray) -> AudioStream:
+	## Random variation stops repeated wall/car hits sounding mechanical.
+	var available: Array[String] = []
+	for path: String in paths:
+		if ResourceLoader.exists(path):
+			available.append(path)
+	if available.is_empty():
+		return null
+	return load(available[randi() % available.size()]) as AudioStream
+
+
+func _loop_stream(stream: AudioStream) -> void:
+	## WAV loop settings can be lost when a stream is imported with QOA
+	## compression; force the loop at runtime so engines and skids never stop.
+	if stream is AudioStreamWAV:
+		var wav := stream as AudioStreamWAV
+		wav.loop_mode = AudioStreamWAV.LOOP_FORWARD
+		wav.loop_begin = 0
+		# 0 can mean a zero-length loop on some imports; use the real frame
+		# count so engines and skids never stop after one pass.
+		wav.loop_end = maxi(int(wav.get_length() * wav.mix_rate), 1)
 
 
 func _physics_process(_delta: float) -> void:
@@ -230,9 +273,15 @@ func on_collision(impact_factor: float) -> void:
 	var player: AudioStreamPlayer3D = _impact_heavy_audio if impact_factor > 0.55 else _impact_light_audio
 	if player != null and player.stream == null:
 		player = _impact_audio # Legacy synthesized fallback.
-	if player != null and enable_audio and player.stream != null:
-		player.pitch_scale = randf_range(0.9, 1.1)
-		player.play()
+	if player != null and enable_audio:
+		var paths: PackedStringArray = IMPACT_HEAVY_PATHS if impact_factor > 0.55 \
+			else IMPACT_LIGHT_PATHS
+		var stream: AudioStream = _pick_stream(paths)
+		if stream != null:
+			player.stream = stream
+		if player.stream != null:
+			player.pitch_scale = randf_range(0.92, 1.08)
+			player.play()
 
 
 func on_landing(fall_speed: float) -> void:
@@ -251,10 +300,14 @@ func on_crash(intensity: float) -> void:
 	if _dust_burst != null and enable_dust:
 		_dust_burst.amount_ratio = 1.0
 		_dust_burst.restart()
-	if _crash_audio != null and enable_audio and _crash_audio.stream != null:
-		_crash_audio.volume_db = linear_to_db(crash_sound_volume)
-		_crash_audio.pitch_scale = randf_range(0.9, 1.05)
-		_crash_audio.play()
+	if _crash_audio != null and enable_audio:
+		var stream: AudioStream = _pick_stream(CRASH_PATHS)
+		if stream != null:
+			_crash_audio.stream = stream
+		if _crash_audio.stream != null:
+			_crash_audio.volume_db = linear_to_db(crash_sound_volume)
+			_crash_audio.pitch_scale = randf_range(0.9, 1.05)
+			_crash_audio.play()
 
 
 func on_boost_started() -> void:

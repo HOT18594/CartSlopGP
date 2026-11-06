@@ -132,6 +132,8 @@ func _leave_session() -> void:
 func _on_single_sandbox() -> void:
 	_leave_session()
 	GameSettings.set_play_mode(GameSettings.MODE_SINGLE)
+	GameSettings.vehicle_edit_minigame = false
+	GameSettings.vehicle_return_scene = ""
 	SceneLoader.go_to(VEHICLE_SCENE, "SANDBOX", "PICK A VEHICLE")
 
 

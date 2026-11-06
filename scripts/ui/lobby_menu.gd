@@ -4,6 +4,9 @@ extends Control
 
 const PLAY_MENU_SCENE: String = "res://scenes/ui/play_menu.tscn"
 const MINIGAMES_SCENE: String = "res://scenes/ui/minigames_menu.tscn"
+const VEHICLE_SCENE: String = "res://scenes/ui/vehicle_select.tscn"
+const LOBBY_SCENE: String = "res://scenes/ui/lobby_menu.tscn"
+const Catalog := preload("res://scripts/vehicles/vehicle_catalog.gd")
 const MODE_LAN: String = "lan"
 const MODE_ONLINE: String = "online"
 const CANDY_BUTTON: String = "res://scripts/ui/candy_button.gd"
@@ -45,6 +48,7 @@ var _advanced_button: Button
 var _game_pill: Button
 var _bots_pill: Button
 var _minigame_picker: Button
+var _vehicle_button: Button
 var _lan_row: HBoxContainer
 var _lan_code_label: Label
 var _copy_lan_button: Button
@@ -82,8 +86,10 @@ func _ready() -> void:
 	_public_ip_input.text_changed.connect(func(text: String) -> void: Network.set_custom_public_ip(text))
 	_server_input.text_changed.connect(func(text: String) -> void: Network.set_relay_server(text))
 	if GameSettings.relay_server.begins_with("127.0.0.1"):
-		GameSettings.set_relay_server("")
+		# Also clear Network's parsed URL, not just the saved string.
+		Network.set_relay_server("")
 	_server_input.text = GameSettings.relay_server
+	_server_input.placeholder_text = "default: " + Network.DEFAULT_RELAY_SERVER
 	_join_input.text_submitted.connect(func(_t: String) -> void: _on_join_pressed())
 
 	_name_input.text = GameSettings.player_name
@@ -150,6 +156,8 @@ func _build_session_controls() -> void:
 
 	_minigame_picker = _candy("MAP: MEADOW LOOP", UiPalette.CYAN, 60, 22)
 	_minigame_picker.pressed.connect(_on_choose_minigame)
+	_vehicle_button = _candy("VEHICLE: SHOPPING CART", UiPalette.BLUE, 54, 18)
+	_vehicle_button.pressed.connect(_on_change_vehicle)
 
 	# Browse public rooms advertised by the Pi server.
 	var join_row: HBoxContainer = $Center/Panel/Body/JoinBox/JoinRow
@@ -165,6 +173,7 @@ func _build_session_controls() -> void:
 	body.add_child(_game_row)
 	body.add_child(_bots_row)
 	body.add_child(_minigame_picker)
+	body.add_child(_vehicle_button)
 	body.move_child(_back_button, body.get_child_count() - 1)
 
 	# Secondary LAN code under the main code: instantly usable on the same
@@ -229,6 +238,7 @@ func _set_session_state(state: String) -> void:
 	_game_row.visible = state == "host"
 	_bots_row.visible = state == "host"
 	_minigame_picker.visible = state == "host" and GameSettings.multiplayer_mode == GameSettings.GAME_MINIGAMES
+	_vehicle_button.visible = true
 	if editing:
 		_join_status.visible = false
 	else:
@@ -286,6 +296,19 @@ func _refresh_session_controls() -> void:
 	var map_id: String = Network.session_minigame if Network.is_session_active() \
 		else GameSettings.selected_minigame
 	_minigame_picker.text = "MAP: " + GameSettings.minigame_name(map_id)
+	var vehicle_id: String = GameSettings.minigame_vehicle if mode == GameSettings.GAME_MINIGAMES \
+		else GameSettings.selected_vehicle
+	var vehicle: Dictionary = Catalog.find(vehicle_id)
+	_vehicle_button.text = "VEHICLE: " + str(vehicle.get("name", "SHOPPING CART"))
+
+
+func _on_change_vehicle() -> void:
+	GameSettings.vehicle_return_scene = LOBBY_SCENE
+	GameSettings.vehicle_return_title = "MULTIPLAYER"
+	var mode: String = Network.session_mode if Network.is_session_active() \
+		else GameSettings.multiplayer_mode
+	GameSettings.vehicle_edit_minigame = mode == GameSettings.GAME_MINIGAMES
+	SceneLoader.go_to(VEHICLE_SCENE, "VEHICLE", "Choose your ride")
 
 
 func _on_name_typed(_text: String) -> void:

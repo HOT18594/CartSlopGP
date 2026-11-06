@@ -146,14 +146,25 @@ var _pushable_spawn_transforms: Dictionary[int, Transform3D] = {}
 
 var _collision_shapes: Array[CollisionShape3D] = []
 var _collision_rest_transforms: Array[Transform3D] = []
+var _collision_base_transforms: Array[Transform3D] = []
+var _collision_base: Dictionary = {}
+var _push_shape_base: Vector3 = Vector3.ZERO
 
 
 func _ready() -> void:
 	add_to_group("player")
 	for child in get_children():
 		if child is CollisionShape3D:
-			_collision_shapes.append(child as CollisionShape3D)
-			_collision_rest_transforms.append((child as CollisionShape3D).transform)
+			var collision_shape := child as CollisionShape3D
+			_collision_shapes.append(collision_shape)
+			_collision_rest_transforms.append(collision_shape.transform)
+			_collision_base_transforms.append(collision_shape.transform)
+			if collision_shape.shape is BoxShape3D:
+				_collision_base[collision_shape.get_instance_id()] = \
+					(collision_shape.shape as BoxShape3D).size
+			elif collision_shape.shape is SphereShape3D:
+				_collision_base[collision_shape.get_instance_id()] = \
+					(collision_shape.shape as SphereShape3D).radius
 	var spawn_point: Node3D = get_tree().get_first_node_in_group("spawn_point") as Node3D
 	if spawn_point != null:
 		_spawn_transform = spawn_point.global_transform
@@ -165,6 +176,9 @@ func _ready() -> void:
 		_feedback.apply_vehicle_profile(entry)
 	if _push_sensor != null:
 		_push_sensor.body_entered.connect(_on_push_sensor_body_entered)
+		var push_collision := _push_sensor.get_node_or_null("CollisionShape3D") as CollisionShape3D
+		if push_collision != null and push_collision.shape is BoxShape3D:
+			_push_shape_base = (push_collision.shape as BoxShape3D).size
 	call_deferred("_collect_pushables")
 
 
@@ -220,6 +234,7 @@ func set_vehicle_id(vehicle_id: String) -> void:
 		return
 	_profile_mass = maxf(float(entry.get("mass", REFERENCE_MASS)), 1.0)
 	_apply_vehicle_visual_for(entry)
+	_resize_collision(entry)
 
 
 func get_mass() -> float:
@@ -266,6 +281,48 @@ func _apply_vehicle_stats(entry: Dictionary) -> void:
 	steering_speed *= float(entry.get("steering", 1.0))
 	brake_power *= clampf(pow(weight_ratio, -0.15), 0.85, 1.10)
 	_profile_push_scale = float(entry.get("push_scale", 1.0))
+	_resize_collision(entry)
+
+
+func _resize_collision(entry: Dictionary) -> void:
+	## The cart scene has one collider; scale it to the catalog length so a
+	## box truck genuinely takes up more road than a shopping cart. Width grows
+	## with the square root so heavy vehicles do not become absurdly wide.
+	if _collision_shapes.is_empty():
+		return
+	var length: float = float(entry.get("length", 2.7))
+	var z_scale: float = clampf(length / 2.7, 0.68, 1.35)
+	var x_scale: float = clampf(sqrt(z_scale), 0.82, 1.15)
+	for index in _collision_shapes.size():
+		var node: CollisionShape3D = _collision_shapes[index]
+		if node == null:
+			continue
+		var key: int = node.get_instance_id()
+		if not _collision_base.has(key):
+			continue
+		var base_value: Variant = _collision_base[key]
+		if base_value is Vector3:
+			var base_size: Vector3 = base_value as Vector3
+			var box := BoxShape3D.new()
+			box.size = Vector3(base_size.x * x_scale, base_size.y,
+				base_size.z * z_scale)
+			node.shape = box
+		else:
+			var sphere := SphereShape3D.new()
+			sphere.radius = float(base_value) * x_scale
+			node.shape = sphere
+		var rest: Transform3D = _collision_base_transforms[index]
+		rest.origin.x *= x_scale
+		rest.origin.z *= z_scale
+		_collision_rest_transforms[index] = rest
+		node.transform = rest
+	if _push_sensor != null and _push_shape_base != Vector3.ZERO:
+		var push_collision := _push_sensor.get_node_or_null("CollisionShape3D") as CollisionShape3D
+		if push_collision != null:
+			var push_box := BoxShape3D.new()
+			push_box.size = Vector3(_push_shape_base.x * x_scale, _push_shape_base.y,
+				_push_shape_base.z * z_scale)
+			push_collision.shape = push_box
 
 
 func _apply_vehicle_visual_for(entry: Dictionary) -> void:
@@ -511,7 +568,8 @@ func _update_boost(delta: float) -> void:
 		else:
 			boost_amount = minf(boost_amount + boost_regen_per_second * delta, max_boost)
 	boost_visual = lerpf(boost_visual, 1.0 if boost_active else 0.0, 1.0 - exp(-6.0 * delta))
-	if boost_active and not _was_boosting and _feedback != null:
+	# The pad has its own whoosh; don't stack the manual-boost sound on top.
+	if boost_active and not _was_boosting and _feedback != null and _pad_burst_timer <= 0.0:
 		_feedback.on_boost_started()
 	_was_boosting = boost_active
 

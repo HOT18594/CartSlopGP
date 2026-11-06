@@ -45,6 +45,26 @@ still exposes the UDP relay port to friends; the host side is outbound only.
    `public-ip:relay-port` code from the console.
 3. Friends paste the code into JOIN. The Pi relays them to the host tunnel.
 
+### Built-in public address
+
+The game includes `68.204.45.1:42777` as a fallback server. LAN discovery is
+always tried first. If no LAN Pi answers, the game probes that public address,
+so a player on school Wi-Fi can use a short room code without typing an IP.
+The same code runs on Windows, macOS and Linux.
+
+This only works while the router's public IP stays at that address and the
+router forwards **TCP 42777**, **TCP 42820** and **UDP 42800–42819** to the Pi.
+Set a DHCP reservation for the Pi in the router (for example `192.168.1.50`)
+so those forwards keep pointing at it. Most home connections are dynamic; if
+the ISP changes the address, either:
+
+- set a DHCP reservation for the Pi and use the router's DDNS hostname, then
+  put that hostname in **MULTIPLAYER → ADVANCED**, or
+- update `DEFAULT_RELAY_SERVER` in `scripts/net/network.gd`.
+
+The Pi console always shows the current public address and whether TCP 42777
+is reachable from the internet.
+
 The Pi opens its ports automatically with UPnP first and NAT-PMP second. If the
 console says **INTERNET: not reachable**, either forward TCP 42777 and UDP
 42800–42819 to the Pi's LAN address, or the ISP is using carrier-grade NAT and

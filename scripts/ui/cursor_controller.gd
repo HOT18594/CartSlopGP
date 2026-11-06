@@ -20,9 +20,11 @@ extends CanvasLayer
 
 @onready var _sprite: TextureRect = $Sprite
 @onready var _click_audio: AudioStreamPlayer = $ClickAudio
+@onready var _hover_audio: AudioStreamPlayer = $HoverAudio
 
 var _menu_mode: bool = true
 var _hovering: bool = false
+var _was_hovering: bool = false
 var _pop_tween: Tween
 
 
@@ -74,6 +76,11 @@ func _process(_delta: float) -> void:
 	if not show_custom:
 		return
 	_hovering = _is_over_button(get_viewport().gui_get_hovered_control())
+	if _hovering != _was_hovering:
+		_was_hovering = _hovering
+		if _hovering and _hover_audio != null and _hover_audio.stream != null:
+			_hover_audio.pitch_scale = randf_range(0.97, 1.03)
+			_hover_audio.play()
 	_sprite.texture = hover_texture if _hovering else normal_texture
 	var hotspot: Vector2 = hover_hotspot if _hovering else idle_hotspot
 	_sprite.position = get_viewport().get_mouse_position() - hotspot * cursor_scale

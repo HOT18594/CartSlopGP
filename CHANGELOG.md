@@ -23,6 +23,22 @@ Visual polish for the next build (not a separate release).
 - All action-button labels are explicitly horizontally centred; the candy
   styleboxes use symmetric vertical padding.
 - The checker flag now actually waves instead of being a static shape.
+- Meadow Loop now has a denser PBR forest, a ring of grassy hills and a
+  darker ridge, so the horizon is no longer an empty grass sheet. The flat
+  background trees are gone.
+- Added two wooden kicker ramps with convex collision, a visible crest lip and
+  side rails. Rival carts follow the ramp height.
+- Boost pads were buried under the road surface; they now sit above it and are
+  a simple glowing disc with a ring instead of a dark icon plate.
+- Simplified the race HUD: no DRIVING pill, no checkered badge, no sector
+  labels, a smooth boost bar instead of segments/bolt, a cleaner speedometer
+  and a control hint that disappears after 8.5 seconds.
+- Added countdown beeps, lap chime, finish fanfare, forest ambience, random
+  metal impact variants, UI click/hover sounds and a boost-pad whoosh.
+- Added a full vehicle picker with stat sheet to the multiplayer lobby and
+  minigame screen. Every car shows top speed, weight, acceleration, grip,
+  steering, smoke, skid width and push strength.
+- Added a baked public Pi fallback (`68.204.45.1:42777`) after LAN discovery.
 
 ## [0.6.0] - 2026-11-05
 

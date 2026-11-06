@@ -22,6 +22,8 @@ Updated: 2026-11-05 (v0.6.0 + unreleased art pass)
 - [ ] Reboot the Pi with the updated card and verify `cartslop.local:42777`
 - [ ] Verify game → Pi registration and a real second-device join
 - [ ] Verify UPnP mappings / internet join; document port-forward fallback
+- [x] Baked public Pi fallback (`68.204.45.1:42777`) and LAN-first discovery
+- [ ] Confirm public IP is still current / add DDNS hostname if ISP changes
 - [ ] Add server-side lobby update mirror (`/updates/`) if GitHub-only is not enough
 
 ## Multiplayer
@@ -62,6 +64,11 @@ Updated: 2026-11-05 (v0.6.0 + unreleased art pass)
 - [x] SLOP drips anchored to the actual letters
 - [x] Scene fade transitions and a fuller loading scene
 - [x] Button labels explicitly centred and vertically padded symmetrically
+- [x] Full vehicle stat sheet in solo, lobby and minigame picker
+- [x] Meadow Loop hills, denser PBR forest, kicker ramps and visible boost pads
+- [x] Race HUD simplified; sector labels and icon clutter removed
+- [x] Countdown / lap / finish / ambience / impact / UI sounds
+- [x] Baked public Pi fallback after LAN discovery
 - [ ] Race result leaderboard for all peers
 - [ ] In-game server status / room browser polish
 - [ ] Controller navigation audit

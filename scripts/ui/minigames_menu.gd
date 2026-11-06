@@ -9,8 +9,9 @@ const Catalog := preload("res://scripts/vehicles/vehicle_catalog.gd")
 
 const PLAY_MENU_SCENE: String = "res://scenes/ui/play_menu.tscn"
 const LOBBY_SCENE: String = "res://scenes/ui/lobby_menu.tscn"
+const MINIGAMES_SCENE: String = "res://scenes/ui/minigames_menu.tscn"
+const VEHICLE_SCENE: String = "res://scenes/ui/vehicle_select.tscn"
 const CANDY_BUTTON: String = "res://scripts/ui/candy_button.gd"
-const PILL_CYCLER: String = "res://scripts/ui/pill_cycler.gd"
 const PREVIEW_DIR: String = "res://assets/ui/minigames/"
 const UiPalette := preload("res://scripts/ui/ui_palette.gd")
 
@@ -111,20 +112,9 @@ func _build_ui() -> void:
 	action_row.add_theme_constant_override("separation", 10)
 	details.add_child(action_row)
 
-	_vehicle_button = Button.new()
-	_vehicle_button.set_script(load(PILL_CYCLER))
-	_vehicle_button.set("corner_radius", 24)
-	_vehicle_button.set("shadow_offset", 6)
-	_vehicle_button.custom_minimum_size = Vector2(250, 54)
-	_vehicle_button.add_theme_font_size_override("font_size", 18)
-	var vehicle_names := PackedStringArray()
-	var vehicle_ids: Array[String] = []
-	for entry: Dictionary in Catalog.all():
-		vehicle_names.append(str(entry.get("name", "?")))
-		vehicle_ids.append(str(entry.get("id", Catalog.DEFAULT_ID)))
-	_vehicle_button.call("configure", vehicle_names, vehicle_ids,
-		Catalog.index_of(GameSettings.minigame_vehicle))
-	_vehicle_button.connect("option_changed", _on_vehicle_changed)
+	_vehicle_button = _button("VEHICLE: SHOPPING CART", Color("8ed8f6"), 54, 18)
+	_vehicle_button.custom_minimum_size = Vector2(300, 54)
+	_vehicle_button.pressed.connect(_on_change_vehicle)
 	action_row.add_child(_vehicle_button)
 
 	_play_button = _button("RACE", UiPalette.YELLOW, 54, 21)
@@ -177,14 +167,15 @@ func _refresh_vehicle() -> void:
 	var entry: Dictionary = Catalog.find(GameSettings.minigame_vehicle)
 	if entry.is_empty():
 		entry = Catalog.find(Catalog.DEFAULT_ID)
-	_vehicle_button.call("set_index", Catalog.index_of(str(entry.get("id", Catalog.DEFAULT_ID))))
+	_vehicle_button.text = "VEHICLE: " + str(entry.get("name", "SHOPPING CART"))
 	_vehicle_button.set("fill_color", Color("8ed8f6"))
 
 
-func _on_vehicle_changed(vehicle_id: Variant) -> void:
-	GameSettings.set_minigame_options(GameSettings.minigame_difficulty,
-		GameSettings.minigame_rounds, str(vehicle_id))
-	_refresh_vehicle()
+func _on_change_vehicle() -> void:
+	GameSettings.vehicle_return_scene = MINIGAMES_SCENE
+	GameSettings.vehicle_return_title = "MINIGAMES"
+	GameSettings.vehicle_edit_minigame = true
+	SceneLoader.go_to(VEHICLE_SCENE, "VEHICLE", "Choose your ride")
 
 
 func _on_play() -> void:

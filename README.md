@@ -99,6 +99,13 @@ A Raspberry Pi 4 on the same network runs the lobby + UDP relay:
   sees an inbound UDP packet. Friends connect to the Pi; the host needs no port
   forwarding. The Pi attempts UPnP/NAT-PMP for its own ports and reports
   whether the internet can actually reach it.
+- The game has a built-in public fallback of **`68.204.45.1:42777`**. LAN
+  discovery wins first; outside the house the game probes that address when a
+  short room code is used. The public IP and router forwarding must stay
+  valid; the console shows the current address and reachability.
+- Vehicles can be changed from the multiplayer lobby or the minigame screen.
+  The full picker shows each car's top speed, weight, acceleration, grip,
+  steering, smoke, skid width and push strength.
 - Optional update mirror: drop zips plus `updates/manifest.json` next to the
   server. See `pi_setup/cartslop-server/updates/README.md`.
 - Server source is in `pi_setup/cartslop-server/`; setup notes are in

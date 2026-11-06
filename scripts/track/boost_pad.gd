@@ -4,9 +4,11 @@ extends Area3D
 ## drives over the pad, plus a one-shot particle puff and optional sound.
 ## All interaction with the kart is defensive (group + has_method checks).
 
+const PAD_SOUND: AudioStream = preload("res://assets/audio/sfx/boost/boost_pad.ogg")
+
 @export var cooldown_seconds: float = 1.5 ## Seconds between activations.
 @export var burst_speed: float = 8.0 ## Forward speed burst (m/s) applied to the kart.
-@export var pad_sound: AudioStream = null ## Optional one-shot; silent if null.
+@export var pad_sound: AudioStream = PAD_SOUND ## One-shot whoosh when a kart hits the pad.
 
 var _cooldown_left: float = 0.0
 var _time: float = 0.0

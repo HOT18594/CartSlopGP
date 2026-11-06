@@ -31,6 +31,10 @@ const MINIGAMES_SCENE: String = "res://scenes/ui/minigames_menu.tscn"
 const PING_INTERVAL: float = 2.0
 const RELAY_DISCOVERY_PORT: int = 42778
 const RELAY_HEARTBEAT_INTERVAL: float = 20.0
+## Built-in public fallback for players outside the LAN. The Pi still accepts
+## the LAN discovery first; this only runs when broadcast discovery finds
+## nothing. Keep the public IP in sync with the router/Pi if it changes.
+const DEFAULT_RELAY_SERVER: String = "68.204.45.1:42777"
 const RelayTunnel := preload("res://scripts/net/relay_tunnel.gd")
 
 var is_host: bool = false
@@ -275,7 +279,43 @@ func _discover_relay() -> bool:
 					return true
 		await get_tree().process_frame
 	udp.close()
+	# No LAN answer. Try the baked public Pi address once; this is what lets a
+	# player on school Wi-Fi use a short room code when the Pi is at home.
+	if _use_default_public_relay():
+		var probe: Dictionary = await _relay_get("/api/status")
+		if not probe.is_empty():
+			return true
+		_clear_default_public_relay()
 	return false
+
+
+func _use_default_public_relay() -> bool:
+	if DEFAULT_RELAY_SERVER.strip_edges() == "":
+		return false
+	var text: String = DEFAULT_RELAY_SERVER.strip_edges()
+	var secure: bool = text.to_lower().begins_with("https://")
+	var rest: String = text.trim_prefix("https://").trim_prefix("http://").trim_suffix("/")
+	var host: String = rest.get_slice("/", 0)
+	var port: int = 42777
+	if host.contains(":"):
+		var parts: PackedStringArray = host.split(":")
+		host = parts[0]
+		port = int(parts[1]) if parts.size() > 1 else 42777
+	if host == "" or port <= 0:
+		return false
+	relay_server_host = host
+	relay_server_http_port = port
+	relay_server_url = ("https://" if secure else "http://") + host + ":" + str(port)
+	relay_base = relay_server_url
+	relay_base_public = true
+	return true
+
+
+func _clear_default_public_relay() -> void:
+	relay_base = ""
+	relay_server_url = ""
+	relay_server_host = ""
+	relay_base_public = false
 
 
 func _relay_post(path: String, payload: Dictionary) -> Dictionary:

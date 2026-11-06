@@ -14,15 +14,21 @@ multiplayer over **ENet (UDP)** connects the players directly.
    code upgrades automatically. If UPnP fails, the host keeps the LAN code and
    shows the public IP plus a port-forward/CGNAT explanation instead of
    advertising an unreachable address.
-3. The lobby shows a **14-character code**: four hex IP octets + two hex port
-   bytes + a 2-hex checksum. Example: `C0A8011422CE6D` -> `192.168.1.20:8910`.
-   A mistyped code fails immediately. A second **LAN code** row appears when
+3. When a Cart Slop Pi answers, the lobby shows a **5-character room code**
+   and lists the room in BROWSE. Without a Pi it falls back to a
+   **14-character code**: four hex IP octets + two hex port bytes + a 2-hex
+   checksum. A mistyped code fails immediately. A **LAN** row appears when
    hosting online so same-network players can always join.
 4. Friends paste the code (or type `ip:port` / a tunnel hostname) into JOIN.
-   Joining times out after 12 s with an actionable message.
-5. The host chooses SANDBOX or MINIGAMES and presses START. Everyone gets the
-   themed loading screen and the same scene. Late joiners are dropped straight
-   in (the host re-sends the full session config).
+   Joining times out after 12 s with an actionable message. If LAN discovery
+   finds nothing, the client probes the baked public Pi address
+   (`68.204.45.1:42777`) before giving up.
+5. The host chooses SANDBOX or MINIGAMES, optional bots, and presses START.
+   Everyone gets the themed loading screen and the same scene. Late joiners
+   are dropped straight in (the host re-sends the full session config).
+6. The host and every client can open **VEHICLE** in the lobby (or the minigame
+   screen) to pick a car with the full stat sheet. Each peer picks their own;
+   the host relays vehicle ids so every cart looks right.
 
 Names are limited to 16 printable characters and sanitised on both the sender
 and the receiver; the host's list shows names and the client's ping. Names also
@@ -41,15 +47,23 @@ room key and only share it with people you want in the session.
 | Race progress | each peer streams unwrapped lap distance | 20 Hz |
 | Ping | client -> host -> client round trip | 2 s |
 
-Remote carts and props are visual only; the local cart is always the one you
-drive, so collisions between players are not simulated (they pass through each
-other). That keeps the session cheap: roughly 8-10 KB/s per client.
+Remote carts are interpolated ghosts; each peer owns and simulates its own
+cart. Car-to-car contacts are mass-aware: the local cart's move-and-slide sees
+remote/bot/rival bodies and exchanges momentum using each vehicle's catalog
+mass. Bots and race rivals receive a decaying bump offset. Props stay
+host-authoritative. Traffic is roughly 8-10 KB/s per client.
 
 ## NAT / internet notes
 
-- UPnP works on many home routers. If the router has it disabled, the lobby
-  keeps showing the LAN code and explains that internet play needs a **UDP
-  port forward** to the host's machine (the port is in the code).
+- A Pi server is preferred. It gives short codes, room browsing, a TCP host
+  tunnel around Windows Firewall, and UPnP/NAT-PMP on the Pi.
+- If no Pi answers, UPnP on the host router is tried. If that fails too, the
+  lobby keeps the LAN code and explains the **UDP port forward** needed to the
+  host PC (the port is in the code).
+- The baked public Pi fallback is `68.204.45.1:42777`. Forward TCP 42777,
+  TCP 42820 and UDP 42800–42819 to the Pi and keep its LAN address reserved.
+  Public IPs from home ISPs can change; use a DDNS hostname in ADVANCED if
+  that happens.
 - Carrier-grade NAT (some mobile / apartment ISPs) cannot be port-forwarded;
   the lobby detects a CGNAT external address and says so. Use Tailscale,
   ZeroTier or a UDP tunnel (playit.gg) instead, then share the LAN code or the

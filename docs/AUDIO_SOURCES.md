@@ -1,4 +1,38 @@
-# Vehicle audio
+# Audio sources
+
+## Menu, race and impact sound effects
+
+| Sound | File | Source | Licence |
+| --- | --- | --- | --- |
+| Menu click | `sfx/ui/ui_click.wav` | Kenney UI Audio (`click1`) | CC0 |
+| Menu hover | `sfx/ui/ui_hover.wav` | Kenney UI Audio (`rollover3`) | CC0 |
+| Metal hit light | `sfx/impacts/metal_light_0/1.ogg` | Kenney Impact Sounds | CC0 |
+| Metal hit heavy | `sfx/impacts/metal_heavy_0/1.ogg` | Kenney Impact Sounds | CC0 |
+| Metal crash | `sfx/impacts/metal_crash_0/1.ogg` | Kenney Impact Sounds | CC0 |
+| Forest ambience | `ambience/forest_ambience.mp3` | "Forest Ambience" by TinyWorlds | CC0 |
+| Countdown / GO | `sfx/race/countdown_*.wav` | Original synthesized beeps | CC0 |
+| Lap / finish | `sfx/race/lap_chime.wav`, `finish_fanfare.wav` | Original synthesized stings | CC0 |
+
+- Kenney UI Audio: https://kenney.nl/assets/ui-audio
+- Kenney Impact Sounds: https://kenney.nl/assets/impact-sounds
+- Forest Ambience: https://opengameart.org/content/forest-ambience
+
+Licence copies are kept beside the assets:
+`assets/audio/KENNEY_UI_LICENSE.txt` and
+`assets/audio/KENNEY_IMPACT_LICENSE.txt`.
+
+## Mix notes
+
+- Every world sound runs through the **SFX** bus; music runs through Master so
+  the two sliders stay independent.
+- Engine, skid and boost loops are imported with **Loop Forward**.
+- The race ambience fades in at −34 dB to −23 dB, under the music and engine.
+- Dynamic car-to-car and wall hits pick a random metal impact so repeated
+  collisions do not sound identical.
+- The boost pad has its own one-shot; the manual boost whoosh is suppressed on
+  the same frame so the two do not stack.
+
+## Vehicle audio
 
 Each playable vehicle has its own loop, loaded by `CartFeedback` from
 `assets/audio/sfx/engines/`:

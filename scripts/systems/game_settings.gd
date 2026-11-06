@@ -36,6 +36,12 @@ const CONN_ONLINE: String = "online"
 @export var bots_enabled: bool = false ## OFF by default - bots are strictly opt-in.
 @export_range(0, 5) var bot_count: int = 3 ## How many AI carts to add when enabled.
 
+## Set before opening the vehicle screen so its confirm/back returns to the
+## right menu (lobby, minigame picker, etc.). Memory only.
+var vehicle_return_scene: String = ""
+var vehicle_return_title: String = "PLAY"
+var vehicle_edit_minigame: bool = false
+
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS

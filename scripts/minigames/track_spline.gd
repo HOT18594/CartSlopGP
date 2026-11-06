@@ -5,11 +5,12 @@ extends RefCounted
 ## can never self-intersect. Everything downstream (road ribbon, barriers,
 ## checkpoints, rivals, scenery rejection) samples this one spline.
 
-const CONTROL_POINTS: int = 20
+const CONTROL_POINTS: int = 24
 const SAMPLES_PER_SEGMENT: int = 20
 const BASE_RADIUS: float = 64.0
-const LOBE_A: float = 0.16
-const LOBE_B: float = 0.03
+const LOBE_A: float = 0.20
+const LOBE_B: float = 0.045
+const LOBE_C: float = 0.022
 const STRETCH_X: float = 1.25
 const STRETCH_Z: float = 1.05
 
@@ -25,7 +26,8 @@ func _init() -> void:
 		var angle: float = TAU * float(i) / float(CONTROL_POINTS)
 		var radius: float = BASE_RADIUS * (1.0
 			+ LOBE_A * sin(3.0 * angle + 0.4)
-			+ LOBE_B * cos(5.0 * angle - 0.3))
+			+ LOBE_B * cos(5.0 * angle - 0.3)
+			+ LOBE_C * sin(6.0 * angle + 1.1))
 		controls.append(Vector3(
 			radius * cos(angle) * STRETCH_X, 0.0,
 			radius * sin(angle) * STRETCH_Z))

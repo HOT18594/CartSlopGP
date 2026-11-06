@@ -103,8 +103,8 @@ func _build_trees() -> void:
 	var buckets: Dictionary = {}
 	for i in RealisticTree.variant_count():
 		buckets[i] = []
-	for i in 520:
-		var position: Vector3 = _verge_point(10.5, 42.0)
+	for i in 860:
+		var position: Vector3 = _verge_point(10.5, 70.0)
 		if position == Vector3.INF or bool(_host.call("_near_track", position, 9.2)):
 			continue
 		var variant: int = _rng.randi_range(0, RealisticTree.variant_count() - 1)

@@ -15,7 +15,9 @@ const UiPalette := preload("res://scripts/ui/ui_palette.gd")
 @onready var _speed_value: Label = %SpeedValue
 @onready var _speed_gauge: Control = %SpeedGauge
 @onready var _boost_meter: Control = %BoostMeter
+@onready var _state_pill: PanelContainer = $StatePill
 @onready var _state_label: Label = %StateLabel
+@onready var _hint_label: Label = $HintLabel
 @onready var _position_badge: PanelContainer = %PositionBadge
 @onready var _place_label: Label = %PlaceLabel
 @onready var _lap_badge: PanelContainer = %LapBadge
@@ -23,6 +25,7 @@ const UiPalette := preload("res://scripts/ui/ui_palette.gd")
 @onready var _debug_label: Label = %DebugLabel
 
 var _debug_visible: bool = false
+var _hint_timer: float = 8.5
 
 
 func _ready() -> void:
@@ -30,6 +33,7 @@ func _ready() -> void:
 	_debug_label.visible = false
 	_position_badge.visible = show_position_badge
 	_lap_badge.visible = show_lap_badge
+	_state_pill.visible = false
 
 
 func set_race_position(place: int) -> void:
@@ -71,8 +75,15 @@ func _process(_delta: float) -> void:
 	_boost_meter.ratio = boost_ratio
 	_boost_meter.boosting = cart.boost_active
 
+	# Driving is the default; only interrupt the view when something happens.
+	_state_pill.visible = cart.current_state != CartPlayer.CartState.DRIVING
 	_state_label.text = _state_text(cart)
 	_state_label.add_theme_color_override("font_color", _state_color(cart))
+
+	if _hint_timer > 0.0:
+		_hint_timer -= _delta
+		if _hint_timer <= 0.0:
+			_hint_label.visible = false
 
 	if _debug_visible:
 		_update_debug(cart)

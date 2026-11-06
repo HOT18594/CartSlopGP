@@ -4,7 +4,6 @@ extends Node3D
 ## reactions. All particles are GPU-side; nothing spawns per frame.
 
 const CARD: String = "res://assets/textures/foliage/"
-const CONFIRM: String = "res://assets/audio/sfx/boost/boost_start.ogg"
 
 var cart: CartPlayer
 var off_track: bool = false
@@ -169,7 +168,6 @@ func _process(delta: float) -> void:
 
 	if cart.boost_active and not _was_boosting:
 		_puff(_boost_burst)
-		_play_boost_sound()
 	_was_boosting = cart.boost_active
 
 	if not grounded:
@@ -195,16 +193,3 @@ func _puff(particles: GPUParticles3D) -> void:
 
 func lap_burst() -> void:
 	_puff(_confetti)
-
-
-func _play_boost_sound() -> void:
-	var stream: AudioStream = load(CONFIRM) as AudioStream
-	if stream == null:
-		return
-	var player := AudioStreamPlayer.new()
-	player.stream = stream
-	player.bus = "SFX"
-	player.volume_db = -8.0
-	add_child(player)
-	player.play()
-	player.finished.connect(player.queue_free)

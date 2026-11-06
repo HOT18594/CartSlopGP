@@ -11,6 +11,7 @@ const SANDBOX_TRACK: String = "sandbox_loop"
 const RACE_TRACK: String = "race_loop"
 const POLL_INTERVAL: float = 0.5
 const FADE_TIME: float = 1.4
+const MUSIC_LEVEL_DB: float = -7.0 ## Leaves headroom above SFX and engines.
 
 var current_track: String = ""
 
@@ -98,7 +99,7 @@ func play_track(track_name: String, fade: float = FADE_TIME) -> void:
 	_tween = create_tween().set_parallel(true)
 	if old.playing:
 		_tween.tween_property(old, "volume_db", -60.0, fade)
-	_tween.tween_property(next, "volume_db", 0.0, fade)
+	_tween.tween_property(next, "volume_db", MUSIC_LEVEL_DB, fade)
 	_tween.chain().tween_callback(old.stop)
 
 
