@@ -9,6 +9,7 @@ Runs headless on a Raspberry Pi 4 (64-bit Raspberry Pi OS Lite, Trixie).
 | 42777 | TCP | HTML console + lobby/API |
 | 42778 | UDP | LAN discovery (`CARTSLOP_DISCOVER`) |
 | 42800–42819 | UDP | One relay port per active lobby |
+| 42820 | TCP | Host tunnel (the game connects outward to the Pi) |
 
 The Pi maps these with UPnP on boot. If the router blocks UPnP, forward them
 manually to the Pi's LAN address.
@@ -38,7 +39,15 @@ the host is elsewhere, use the direct host mode instead.
 - `POST /api/unregister` `{token}`
 - `GET /api/status`
 - `GET /api/lobbies`
+- `GET /api/room/<code>`
+- `GET /api/update?platform=windows|macos|linux|web` (optional mirror)
 - `GET /api/events` (SSE)
+
+## Optional update mirror
+
+Put release zips in `updates/` with a `manifest.json` (see
+`pi_setup/cartslop-server/updates/README.md`). The game checks the Pi first
+when a server is configured, then falls back to GitHub.
 
 ## Run manually
 

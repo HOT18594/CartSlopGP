@@ -45,7 +45,6 @@ var _advanced_button: Button
 var _game_pill: Button
 var _bots_pill: Button
 var _minigame_picker: Button
-var _game_hint: Label
 var _lan_row: HBoxContainer
 var _lan_code_label: Label
 var _copy_lan_button: Button
@@ -151,11 +150,6 @@ func _build_session_controls() -> void:
 
 	_minigame_picker = _candy("MAP: MEADOW LOOP", UiPalette.CYAN, 60, 22)
 	_minigame_picker.pressed.connect(_on_choose_minigame)
-	_game_hint = Label.new()
-	_game_hint.add_theme_font_size_override("font_size", 13)
-	_game_hint.add_theme_color_override("font_color", UiPalette.BLUE_DARK)
-	_game_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_game_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 
 	# Browse public rooms advertised by the Pi server.
 	var join_row: HBoxContainer = $Center/Panel/Body/JoinBox/JoinRow
@@ -171,7 +165,6 @@ func _build_session_controls() -> void:
 	body.add_child(_game_row)
 	body.add_child(_bots_row)
 	body.add_child(_minigame_picker)
-	body.add_child(_game_hint)
 	body.move_child(_back_button, body.get_child_count() - 1)
 
 	# Secondary LAN code under the main code: instantly usable on the same
@@ -236,7 +229,6 @@ func _set_session_state(state: String) -> void:
 	_game_row.visible = state == "host"
 	_bots_row.visible = state == "host"
 	_minigame_picker.visible = state == "host" and GameSettings.multiplayer_mode == GameSettings.GAME_MINIGAMES
-	_game_hint.visible = false
 	if editing:
 		_join_status.visible = false
 	else:
@@ -294,7 +286,6 @@ func _refresh_session_controls() -> void:
 	var map_id: String = Network.session_minigame if Network.is_session_active() \
 		else GameSettings.selected_minigame
 	_minigame_picker.text = "MAP: " + GameSettings.minigame_name(map_id)
-	_game_hint.text = ""
 
 
 func _on_name_typed(_text: String) -> void:
@@ -320,7 +311,7 @@ func _set_mode(mode: String) -> void:
 		_advanced_button.visible = _mode == MODE_ONLINE
 	_public_ip_row.visible = _mode == MODE_ONLINE and _advanced_open
 	_server_box.visible = _mode == MODE_ONLINE and _advanced_open
-	_mode_hint.text = "Use ADVANCED for a public Pi address. Otherwise same Wi-Fi only." \
+	_mode_hint.text = "Online play. ADVANCED sets a public Pi server." \
 		if _mode == MODE_ONLINE else "Same Wi-Fi only. No port forwarding needed."
 	_refresh_session_controls()
 

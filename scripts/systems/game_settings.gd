@@ -138,7 +138,7 @@ func set_relay_server(raw: String) -> void:
 
 
 func set_selected_minigame(id: String) -> void:
-	selected_minigame = id if id != "" else "meadow_loop"
+	selected_minigame = id if id == "meadow_loop" else "meadow_loop"
 	save_settings()
 
 
@@ -149,7 +149,6 @@ func minigame_name(id: String = "") -> String:
 			return "MEADOW LOOP"
 		_:
 			return "MEADOW LOOP"
-	session_changed.emit()
 
 
 func set_bots_enabled(enabled: bool) -> void:
@@ -224,6 +223,9 @@ func load_settings() -> void:
 	connection_preference = str(config.get_value("session", "connection", connection_preference))
 	relay_server = str(config.get_value("session", "relay_server", relay_server))
 	selected_minigame = str(config.get_value("session", "selected_minigame", selected_minigame))
+	if selected_minigame != "meadow_loop":
+		# Older builds stored invented events that never shipped.
+		selected_minigame = "meadow_loop"
 	bots_enabled = bool(config.get_value("session", "bots_enabled", bots_enabled))
 	bot_count = int(config.get_value("session", "bot_count", bot_count))
 

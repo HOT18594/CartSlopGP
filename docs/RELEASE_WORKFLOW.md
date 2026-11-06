@@ -91,17 +91,22 @@ gh release create v0.2.0 "builds/CartSlopGP_v0.2.0_windows.zip" \
 ## 7. Players get notified automatically
 
 Next time a player opens the main menu, `UpdateChecker` sees the newer tag and
-shows an **UPDATE AVAILABLE v0.2.0** button:
+shows an **UPDATE AVAILABLE** button:
 
-1. click → downloads the zip to `user://updates/` (tier 2),
-2. the button becomes **RESTART TO INSTALL**,
-3. click → the game unpacks to `user://updates/staging`, writes
-   `update_install.bat` next to the .exe, launches it and quits. The .bat waits
-   for the process to exit, copies the files over, relaunches the game and
-   deletes itself.
+1. click → **UPDATE NOW** downloads the zip to `user://updates/`,
+2. the game unpacks to `user://updates/staging`, writes `update_install.bat`
+   next to the .exe (or a bash script on macOS/Linux), launches it and quits,
+3. the script waits for the process to exit, copies the files over, relaunches
+   the game and deletes itself.
 
-If the download fails (offline, asset renamed) the button falls back to opening
-the release page.
+The player never unzips or moves files manually. If the download or the swap
+fails (offline, asset renamed, read-only folder) the dialog offers the release
+page instead.
+
+If the player has configured a Cart Slop Pi server, `UpdateChecker` asks
+`/api/update?platform=...` first. A Pi manifest newer than the local build wins;
+otherwise the check falls back to GitHub. See
+`pi_setup/cartslop-server/updates/README.md`.
 
 ---
 

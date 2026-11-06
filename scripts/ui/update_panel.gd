@@ -61,8 +61,8 @@ func open() -> void:
 	if _install_ready:
 		_show_install_state()
 	elif _desktop_updates() and UpdateChecker.latest_asset_url != "":
-		_notes_label.text = "Download the new build in the background. You can keep playing."
-		_primary_button.text = "DOWNLOAD UPDATE"
+		_notes_label.text = "Downloads, installs and restarts automatically. No unzipping."
+		_primary_button.text = "UPDATE NOW"
 		_primary_button.disabled = false
 		_secondary_button.text = "LATER"
 	else:
@@ -146,6 +146,16 @@ func _on_progress(ratio: float, received: int, total: int) -> void:
 func _on_download_finished(_path: String) -> void:
 	_busy = false
 	_show_install_state()
+	# One click should finish the job. If the player is still looking at the
+	# panel, install immediately; if they hid it, keep the ready state for the
+	# next time they open the update dialog.
+	if not visible:
+		return
+	_primary_button.disabled = true
+	_notes_label.text = "Downloaded. Installing and restarting..."
+	await get_tree().create_timer(0.7).timeout
+	if visible and _install_ready and not _busy:
+		_on_primary()
 
 
 func _on_download_failed(reason: String) -> void:

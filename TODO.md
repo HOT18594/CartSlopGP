@@ -1,6 +1,6 @@
 # Cart Slop GP TODO
 
-Updated: 2026-11-05
+Updated: 2026-11-05 (v0.6.0)
 
 ## Pi server
 
@@ -43,7 +43,7 @@ Updated: 2026-11-05
 - [x] Meadow Loop 3-lap race + waiting room
 - [x] Sandbox AI bots (moving collision bodies)
 - [x] Bots/remote carts/rivals block the local cart (layer 8)
-- [ ] More minigames (slalom, crates, drift, boost)
+- [ ] More minigames (add to the screen only when the scene is playable)
 - [ ] Better race rivals/bot AI and server-owned bot state
 - [ ] Vehicle-vs-vehicle collision feedback (sound/sparks)
 
@@ -51,11 +51,13 @@ Updated: 2026-11-05
 
 - [x] Pill cyclers for BOTS (NO BOTS → 1…5), GAME and LAN/ONLINE
 - [x] Compact PLAY and lobby layouts; ADVANCED public-IP toggle
-- [x] Minigame preview grid
+- [x] Minigame screen lists only playable events with real previews
+- [x] Removed invented COMING SOON cards and illustrated placeholders
 - [x] Shared UI kit: one action-button height and type scale on every screen
 - [x] Lobby map selector sets the map and returns; host starts from lobby
 - [x] Solo minigames skip the waiting room; countdown runs after the race loads
 - [x] Mass-aware car-to-car collisions for remotes, bots and rivals
+- [x] Multiplayer result card shows BACK TO LOBBY, not RACE AGAIN/HUB
 - [ ] Race result leaderboard for all peers
 - [ ] In-game server status / room browser polish
 - [ ] Controller navigation audit
@@ -64,10 +66,12 @@ Updated: 2026-11-05
 
 - [x] GitHub updater with progress and restart-to-install
 - [x] macOS ad-hoc re-sign after replacing the .app
-- [x] Release v0.5.4 builds for Windows/macOS/Linux/Web
-- [x] Verify GitHub latest release and platform asset names (v0.5.4)
-- [ ] Verify updater download/install on each desktop platform
-- [ ] Optional Pi update mirror + release automation
+- [x] Release v0.6.0 builds for Windows/macOS/Linux/Web
+- [x] One-click UPDATE NOW: download, unpack, install, restart
+- [x] Pi update manifest endpoint (`/api/update`) with GitHub fallback
+- [x] Verify updater zip extraction and Pi manifest lookup
+- [ ] Verify the final file swap on each desktop platform
+- [ ] Optional automated copy of release assets to the Pi mirror
 
 ## Music
 

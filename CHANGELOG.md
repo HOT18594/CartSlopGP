@@ -3,6 +3,36 @@
 All notable changes to Cart Slop GP. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer.
 
+## [0.6.0] - 2026-11-05
+
+Content honesty, one-click updates and another bug-fix pass.
+
+### Changed
+
+- The minigame screen now lists **only playable events**. MEADOW LOOP uses a
+  real in-game screenshot; the four invented "coming soon" cards and their
+  illustrated placeholders are gone. A missing preview now means no image,
+  never a made-up drawing.
+- The minigame screen is a single featured card with the real preview, event
+  stats, a vehicle cycler and one clear action.
+- **UPDATE NOW** downloads, unpacks, installs and restarts in one click. No
+  manual unzip step on Windows, macOS or Linux.
+- The updater can use a Cart Slop Pi server first (`/api/update`) and falls
+  back to GitHub when the Pi has no manifest.
+- Multiplayer lobby copy now describes the Pi room-code flow instead of the
+  old direct-code-only flow.
+
+### Fixed
+
+- Multiplayer race results showed **RACE AGAIN** (a no-op) and **BACK TO HUB**
+  because the result card was built before the session type was known. It now
+  shows **BACK TO LOBBY** correctly.
+- The race publishes a final progress packet at the finish so peer placements
+  do not use stale positions.
+- Older settings that pointed at an invented minigame are repaired to
+  MEADOW LOOP instead of silently selecting nothing.
+- The minigame name getter no longer emits a settings-changed signal.
+
 ## [0.5.4] - 2026-11-05
 
 Small UI consistency pass on top of 0.5.3.

@@ -168,6 +168,10 @@ func _ready() -> void:
 
 	_cart = get_tree().get_first_node_in_group("player") as CartPlayer
 	_hud = $HUD
+	# The result card is built below, so decide the session type first. Without
+	# this, multiplayer showed RACE AGAIN (which is a no-op) and BACK TO HUB.
+	_multiplayer = Network.is_session_active()
+	_is_host = Network.is_host
 	if _cart != null:
 		_base_max_speed = _cart.max_speed
 		_last_cart_pos = _cart.global_position
@@ -1001,17 +1005,12 @@ func _build_overlay() -> void:
 	var lobby: Button = _make_button("BACK TO LOBBY", UiPalette.GRASS)
 	lobby.pressed.connect(_on_back_to_lobby)
 	body.add_child(lobby)
-	var hub: Button = _make_button("MINIGAMES", UiPalette.BLUE)
-	hub.pressed.connect(_on_back_to_minigames)
-	hub.visible = false
-	body.add_child(hub)
 	var menu: Button = _make_button("MAIN MENU", UiPalette.RED)
 	menu.pressed.connect(_on_main_menu)
 	body.add_child(menu)
 	if _multiplayer:
 		# Restarting only one peer would desync the field.
 		again.visible = false
-		hub.visible = false
 		lobby.text = "BACK TO LOBBY"
 	else:
 		lobby.text = "BACK TO HUB"
@@ -1355,6 +1354,11 @@ func _finish() -> void:
 		_cart.set_physics_process(false)
 		_cart.velocity = Vector3.ZERO
 		_cart.max_speed = _base_max_speed
+		# Publish the final progress once so every peer's placement is correct
+		# even after this cart stops streaming state.
+		if _multiplayer and Network.is_session_active() and Network.is_connected_to_server():
+			rpc("_net_race_cart_state", multiplayer.get_unique_id(),
+				_cart.global_position, _cart.rotation.y, _unwrapped)
 	CursorController.set_menu_mode(true)
 	_offtrack_label.visible = false
 
@@ -1424,10 +1428,6 @@ func _on_back_to_lobby() -> void:
 		Network.return_to_lobby_keep_session()
 	else:
 		SceneLoader.go_to(MINIGAMES_MENU, "MINIGAMES", "PICK AN EVENT")
-
-
-func _on_back_to_minigames() -> void:
-	SceneLoader.go_to(MINIGAMES_MENU, "MINIGAMES")
 
 
 func _on_main_menu() -> void:

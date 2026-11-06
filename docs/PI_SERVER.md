@@ -38,15 +38,12 @@ still exposes the UDP relay port to friends; the host side is outbound only.
 
 ## Internet join
 
-1. Host a game on the PC. The game registers with the Pi and gets a 5-character
-   room code.
-2. Open the console on the PC (`http://cartslop.local:42777`) and use
-   **PUBLIC** in the lobby row. That copies the 14-character public code
-   (`public-ip:relay-port`).
-3. Send that public code to the friend. They paste it into JOIN. No server
-   address or account is needed.
-4. Newer builds also accept the 5-character room code after the public Pi
-   address is entered in the optional **SERVER** field.
+1. Host a game on the PC. The game registers with the Pi and gets a
+   5-character room code plus a public server address.
+2. The host can share either the 5-character code after the friend enters the
+   Pi address under **MULTIPLAYER → ADVANCED**, or the 14-character
+   `public-ip:relay-port` code from the console.
+3. Friends paste the code into JOIN. The Pi relays them to the host tunnel.
 
 The Pi opens its ports automatically with UPnP first and NAT-PMP second. If the
 console says **INTERNET: not reachable**, either forward TCP 42777 and UDP
@@ -77,7 +74,18 @@ The watchdog keeps running, so a dropped Wi-Fi link is retried automatically.
 - `POST /api/unregister` `{token}`
 - `GET /api/status`
 - `GET /api/lobbies`
+- `GET /api/room/<code>`
+- `GET /api/update?platform=windows|macos|linux|web` (optional mirror)
+- `GET /updates/<file>` (optional mirror)
 - `GET /api/events` (SSE)
+
+## Optional update mirror
+
+Put release zips in `cartslop-server/updates/` and copy
+`manifest.example.json` to `manifest.json`, then edit the version and
+filenames. The game asks the Pi first when a server is configured, and falls
+back to GitHub if this manifest is missing or older. No manifest is required;
+the folder can stay empty.
 
 ## Troubleshooting
 

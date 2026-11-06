@@ -26,7 +26,7 @@ const API_HOST: String = "https://api.github.com"
 @export var user_agent: String = "CartSlopGP-UpdateChecker"
 
 @export_group("Downloads")
-@export var download_timeout: float = 120.0 ## Seconds allowed for the zip download.
+@export var download_timeout: float = 300.0 ## Seconds allowed for the zip download.
 
 ## "idle" | "checking" | "up_to_date" | "available" | "offline" | "error"
 var status: String = "idle"
@@ -37,6 +37,7 @@ var latest_asset_name: String = ""
 var last_error: String = ""
 
 var _check_request: HTTPRequest
+var _server_request: HTTPRequest
 var _download_request: HTTPRequest
 var _checking: bool = false
 var _downloading: bool = false
@@ -101,6 +102,89 @@ func check_for_updates() -> void:
 	status = "checking"
 	last_error = ""
 
+	# A configured Pi/server is the migration path. If it has no update
+	# manifest (404) or cannot be reached, fall through to GitHub.
+	var server_base: String = _configured_server_base()
+	if server_base != "":
+		_check_server(server_base)
+	else:
+		_check_github()
+
+
+func _configured_server_base() -> String:
+	# Environment override is useful for a managed/Pi install and for tests.
+	var raw: String = OS.get_environment("CARTSLOP_UPDATE_SERVER").strip_edges()
+	if raw == "":
+		var settings: Node = get_node_or_null("/root/GameSettings")
+		if settings == null:
+			return ""
+		raw = str(settings.get("relay_server")).strip_edges()
+	if raw == "":
+		return ""
+	var secure: bool = raw.to_lower().begins_with("https://")
+	var rest: String = raw.trim_prefix("https://").trim_prefix("http://").trim_suffix("/")
+	var host: String = rest.get_slice("/", 0)
+	if host == "":
+		return ""
+	var port: int = 42777
+	if host.contains(":"):
+		var parts: PackedStringArray = host.split(":")
+		host = parts[0]
+		port = int(parts[1]) if parts.size() > 1 else 42777
+	if host == "" or port <= 0:
+		return ""
+	return ("https://" if secure else "http://") + host + ":" + str(port)
+
+
+func _check_server(base: String) -> void:
+	var platform: String = _platform_keyword()
+	if platform == "":
+		_check_github()
+		return
+	_server_request = HTTPRequest.new()
+	_server_request.timeout = mini(update_check_timeout, 4.0)
+	_server_request.use_threads = true
+	add_child(_server_request)
+	_server_request.request_completed.connect(
+		_on_server_check_completed.bind(base), CONNECT_ONE_SHOT)
+	var url: String = base + "/api/update?platform=" + platform
+	var error: Error = _server_request.request(url, ["User-Agent: " + user_agent],
+		HTTPClient.METHOD_GET)
+	if error != OK:
+		_free_server_request()
+		_check_github()
+
+
+func _on_server_check_completed(result: int, response_code: int,
+		_headers: PackedStringArray, body: PackedByteArray, base: String) -> void:
+	_free_server_request()
+	if not _checking:
+		return
+	if result == HTTPRequest.RESULT_SUCCESS and response_code == 200:
+		var parsed: Variant = JSON.parse_string(body.get_string_from_utf8())
+		if parsed is Dictionary:
+			var manifest: Dictionary = parsed as Dictionary
+			var version: String = normalize_version(str(manifest.get("version", "")))
+			if version != "":
+				if version_greater(version, local_version()):
+					latest_version = version
+					latest_release_url = str(manifest.get("release_url", ""))
+					latest_asset_name = str(manifest.get("asset_name", ""))
+					var asset_path: String = str(manifest.get("asset_path", ""))
+					if asset_path.begins_with("/"):
+						latest_asset_url = base + asset_path
+					elif latest_asset_name != "":
+						latest_asset_url = base + "/updates/" + latest_asset_name
+					status = "available"
+					update_available.emit(latest_version, latest_release_url, latest_asset_url)
+					_finish_check("available", "")
+					return
+	# Server said current/older, or has no usable manifest. GitHub stays the
+	# source of truth so a stale Pi mirror cannot hide a newer release.
+	_check_github()
+
+
+func _check_github() -> void:
 	_check_request = HTTPRequest.new()
 	_check_request.timeout = update_check_timeout
 	_check_request.use_threads = true
@@ -189,7 +273,14 @@ func _finish_check(new_status: String, error_text: String) -> void:
 	if is_instance_valid(_check_request):
 		_check_request.queue_free()
 		_check_request = null
+	_free_server_request()
 	check_finished.emit(new_status == "available")
+
+
+func _free_server_request() -> void:
+	if is_instance_valid(_server_request):
+		_server_request.queue_free()
+		_server_request = null
 
 
 func open_release_page() -> void:
