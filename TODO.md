@@ -1,6 +1,6 @@
 # Cart Slop GP TODO
 
-Updated: 2026-11-05 (v0.6.2 release)
+Updated: 2026-11-05 (v0.6.2 released; nightly Pi schedule installed)
 
 ## Pi server
 
@@ -32,6 +32,10 @@ Updated: 2026-11-05 (v0.6.2 release)
 - [ ] Confirm public IP is still current / add DDNS hostname if ISP changes
 - [x] Server-side update mirror (`/updates/`) with 0.6.1 Windows zip
 - [x] Room state in the server (`lobby` / `playing` / `finished`); pause is client-only
+- [x] Nightly service window 00:15-07:15 America/New_York with persistent timers
+- [x] Pi timezone/NTP corrected; no RTC wake, so Pi stays powered
+- [ ] Add a heatsink/fan before sustained 24/7 load
+- [ ] Optional: wire the Pi to Ethernet for lower relay jitter
 
 ## Multiplayer
 
