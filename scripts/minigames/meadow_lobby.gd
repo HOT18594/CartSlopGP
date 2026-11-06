@@ -547,4 +547,4 @@ func _animate_leaves(delta: float) -> void:
 func _on_back_pressed() -> void:
 	if _state != State.WAITING:
 		return
-	get_tree().change_scene_to_file(MINIGAMES_MENU)
+	SceneLoader.go_to(MINIGAMES_MENU, "MINIGAMES")

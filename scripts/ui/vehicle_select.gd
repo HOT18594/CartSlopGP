@@ -73,4 +73,4 @@ func _on_drive() -> void:
 
 
 func _on_back() -> void:
-	get_tree().change_scene_to_file(BACK_SCENE)
+	SceneLoader.go_to(BACK_SCENE, "PLAY")

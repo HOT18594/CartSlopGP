@@ -69,4 +69,4 @@ func _on_quit_pressed() -> void:
 	get_tree().paused = false
 	if Network.is_session_active():
 		Network.leave()
-	get_tree().change_scene_to_file(MAIN_MENU_SCENE)
+	SceneLoader.go_to(MAIN_MENU_SCENE, "MAIN MENU")

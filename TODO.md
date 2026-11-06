@@ -1,6 +1,6 @@
 # Cart Slop GP TODO
 
-Updated: 2026-11-05 (v0.6.0)
+Updated: 2026-11-05 (v0.6.0 + unreleased art pass)
 
 ## Pi server
 
@@ -58,6 +58,10 @@ Updated: 2026-11-05 (v0.6.0)
 - [x] Solo minigames skip the waiting room; countdown runs after the race loads
 - [x] Mass-aware car-to-car collisions for remotes, bots and rivals
 - [x] Multiplayer result card shows BACK TO LOBBY, not RACE AGAIN/HUB
+- [x] Shared vector cart art (menu, loading, boot splash, icon)
+- [x] SLOP drips anchored to the actual letters
+- [x] Scene fade transitions and a fuller loading scene
+- [x] Button labels explicitly centred and vertically padded symmetrically
 - [ ] Race result leaderboard for all peers
 - [ ] In-game server status / room browser polish
 - [ ] Controller navigation audit

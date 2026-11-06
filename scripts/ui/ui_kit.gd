@@ -35,6 +35,7 @@ func _style_node(node: Node) -> void:
 		var toggle := node as CheckButton
 		toggle.custom_minimum_size.y = BUTTON_HEIGHT
 		toggle.add_theme_font_size_override("font_size", 18)
+		toggle.alignment = HORIZONTAL_ALIGNMENT_CENTER
 		return
 	if node is Button:
 		var button := node as Button
@@ -43,6 +44,10 @@ func _style_node(node: Node) -> void:
 			return
 		button.custom_minimum_size.y = BUTTON_HEIGHT
 		button.add_theme_font_size_override("font_size", BUTTON_FONT)
+		# Every action label is optically centred in its pill. The styleboxes
+		# use symmetric top/bottom content margins, so vertical centring comes
+		# from Button itself; this pins the horizontal side.
+		button.alignment = HORIZONTAL_ALIGNMENT_CENTER
 		if "corner_radius" in button:
 			button.set("corner_radius", CORNER_RADIUS)
 		if "shadow_offset" in button:

@@ -31,6 +31,11 @@ func _next() -> void:
 		return
 	var node: Node = packed.instantiate()
 	add_child(node)
+	var cursor: Node = get_node_or_null("/root/CursorController")
+	if cursor != null:
+		cursor.set("enable_custom_cursor", false)
+		cursor.call("set_menu_mode", true)
+		Input.set_mouse_mode(Input.MOUSE_MODE_HIDDEN)
 	if bool(data.get("open", false)):
 		node.call("open")
 	for i in 18:

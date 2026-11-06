@@ -3,6 +3,27 @@
 All notable changes to Cart Slop GP. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer.
 
+## [Unreleased]
+
+Visual polish for the next build (not a separate release).
+
+### Changed
+
+- Rebuilt the vector shopping-cart artwork used by the menu backdrop, loading
+  screen, boot splash and window icon. The cart now has a proper sloped wire
+  basket, two handle supports, a child-seat flap, four casters and a lower rack.
+- Moved the SLOP paint drips onto real glyph positions (one under each letter),
+  gave them tapered shafts and beads, and made them follow the label rotation.
+- Added a fade-in/fade-out to every SceneLoader transition. Main Menu → Play,
+  pause → menu, vehicle → Play and all other scene changes now share it.
+- Loading screen now has a SlopMart storefront, trees, parking-bay lines and a
+  cart that sits on the progress road instead of floating over it.
+- Boot splash and window icon are generated from the same vector cart so the
+  branding matches the game.
+- All action-button labels are explicitly horizontally centred; the candy
+  styleboxes use symmetric vertical padding.
+- The checker flag now actually waves instead of being a static shape.
+
 ## [0.6.0] - 2026-11-05
 
 Content honesty, one-click updates and another bug-fix pass.

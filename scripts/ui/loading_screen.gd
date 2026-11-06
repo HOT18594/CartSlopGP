@@ -4,6 +4,8 @@ extends Control
 ## puffs and rotating tips.
 
 const UiPalette := preload("res://scripts/ui/ui_palette.gd")
+const CartDrawing := preload("res://scripts/ui/cart_drawing.gd")
+const DISPLAY_FONT := "res://assets/ui/fonts/LuckiestGuy-Regular.ttf"
 
 const TIPS: PackedStringArray = [
 	"TIP: Hold SPACE to drift around corners.",
@@ -20,9 +22,11 @@ var _time: float = 0.0
 var _tip_index: int = 0
 var _tip_timer: float = 0.0
 var _tip_label: Label
+var _display: Font
 
 
 func _ready() -> void:
+	_display = load(DISPLAY_FONT)
 	# Swallow clicks while the overlay is up: the menu underneath is about to
 	# be replaced, and a blind click must not trigger its buttons.
 	mouse_filter = Control.MOUSE_FILTER_STOP
@@ -71,6 +75,7 @@ func _draw() -> void:
 	_draw_sun(area)
 	_draw_clouds(area)
 	_draw_hills(area)
+	_draw_backdrop(area)
 	_draw_road(area)
 	_draw_checker(area)
 
@@ -112,7 +117,7 @@ func _draw_clouds(area: Vector2) -> void:
 
 
 func _draw_hills(area: Vector2) -> void:
-	var base_y: float = area.y * 0.63
+	var base_y: float = area.y * 0.58
 	for layer in 2:
 		var color := Color(0.24, 0.55, 0.34, 0.55) if layer == 0 else Color(0.19, 0.45, 0.29, 0.75)
 		var points := PackedVector2Array()
@@ -130,14 +135,71 @@ func _draw_hills(area: Vector2) -> void:
 		# logged "Invalid polygon data" on every scene load.
 		points.append(Vector2(0.0, area.y))
 		draw_colored_polygon(points, color)
-	draw_rect(Rect2(0.0, area.y * 0.63, area.x, area.y * 0.37), Color(0.80, 0.75, 0.81, 0.55))
+	draw_rect(Rect2(0.0, area.y * 0.58, area.x, area.y * 0.42), Color(0.80, 0.75, 0.81, 0.58))
+
+
+func _draw_backdrop(area: Vector2) -> void:
+	# Parking-bay lines and a small SlopMart give the lower half some depth
+	# without competing with the progress road.
+	var vanish := Vector2(area.x * 0.50, area.y * 0.60)
+	for index in range(-4, 5):
+		if index == 0:
+			continue
+		var bottom := vanish + Vector2(float(index) * area.x * 0.18, area.y * 0.42)
+		draw_line(vanish, bottom, Color(1, 1, 1, 0.20), 2.0, true)
+
+	var left: float = area.x * 0.79
+	var right: float = area.x * 0.975
+	var top: float = area.y * 0.455
+	var bottom: float = area.y * 0.605
+	draw_rect(Rect2(left, top, right - left, bottom - top), Color(0.96, 0.79, 0.76))
+	draw_rect(Rect2(left - 5.0, top, right - left + 10.0, area.y * 0.022),
+		Color(0.85, 0.50, 0.46))
+	draw_rect(Rect2(left, bottom - 4.0, right - left, 4.0), Color(0.72, 0.62, 0.68))
+	var sign_box := Rect2(left + (right - left) * 0.10, top + area.y * 0.022,
+		(right - left) * 0.80, area.y * 0.040)
+	var sign_style := StyleBoxFlat.new()
+	sign_style.bg_color = Color(0.91, 0.27, 0.24)
+	sign_style.corner_radius_top_left = 6
+	sign_style.corner_radius_top_right = 6
+	sign_style.corner_radius_bottom_left = 6
+	sign_style.corner_radius_bottom_right = 6
+	sign_style.border_width_left = 3
+	sign_style.border_width_top = 3
+	sign_style.border_width_right = 3
+	sign_style.border_width_bottom = 3
+	sign_style.border_color = Color(0.66, 0.16, 0.15)
+	draw_style_box(sign_style, sign_box)
+	if _display != null:
+		draw_string(_display, Vector2(sign_box.position.x,
+			sign_box.position.y + sign_box.size.y * 0.82), "SLOPMART",
+			HORIZONTAL_ALIGNMENT_CENTER, sign_box.size.x,
+			int(sign_box.size.y * 0.62), Color(1, 1, 1))
+	for index in 2:
+		var window := Rect2(left + (right - left) * (0.15 + float(index) * 0.46),
+			top + area.y * 0.085, (right - left) * 0.24, area.y * 0.050)
+		draw_rect(window, Color(0.72, 0.88, 0.96))
+		draw_rect(window, Color(0.90, 0.55, 0.50), false, 2.0)
+
+	# A couple of small trees anchor the left horizon.
+	_small_tree(Vector2(area.x * 0.06, area.y * 0.605), area.y * 0.030)
+	_small_tree(Vector2(area.x * 0.15, area.y * 0.600), area.y * 0.024)
+
+
+func _small_tree(base: Vector2, radius: float) -> void:
+	draw_rect(Rect2(base.x - radius * 0.10, base.y - radius * 0.7,
+		radius * 0.20, radius * 0.7), Color(0.45, 0.32, 0.25))
+	draw_circle(base + Vector2(0.0, -radius), radius, UiPalette.TREE)
+	draw_circle(base + Vector2(-radius * 0.65, -radius * 0.75), radius * 0.65,
+		UiPalette.TREE)
+	draw_circle(base + Vector2(radius * 0.65, -radius * 0.75), radius * 0.65,
+		UiPalette.TREE)
 
 
 func _draw_road(area: Vector2) -> void:
-	var width: float = area.x * 0.62
-	var height: float = area.y * 0.12
-	var origin := Vector2((area.x - width) * 0.5, area.y * 0.49)
-	var track := Rect2(origin.x, origin.y + height * 1.15, width, height)
+	var width: float = area.x * 0.66
+	var height: float = area.y * 0.10
+	var track := Rect2((area.x - width) * 0.5, area.y * 0.62, width, height)
 
 	var style := StyleBoxFlat.new()
 	style.bg_color = Color("102a4a")
@@ -158,13 +220,13 @@ func _draw_road(area: Vector2) -> void:
 	var ratio: float = _fill_ratio()
 	var fill_width: float = (track.size.x - 16.0) * ratio
 	draw_rect(Rect2(track.position.x + 8.0, track.position.y + track.size.y * 0.52,
-		fill_width, track.size.y * 0.40), Color(UiPalette.CYAN, 0.38))
+		fill_width, track.size.y * 0.40), Color(UiPalette.CYAN, 0.40))
 	if fill_width > 2.0:
 		draw_line(Vector2(track.position.x + 8.0 + fill_width, track.position.y + track.size.y * 0.52),
 			Vector2(track.position.x + 8.0 + fill_width, track.position.y + track.size.y * 0.92),
 			Color.WHITE, 3.0, true)
 
-	# finish flag at the right end
+	# Finish flag at the right end.
 	var flag_x: float = track.end.x - 26.0
 	for row in 2:
 		for column in 2:
@@ -179,11 +241,12 @@ func _draw_road(area: Vector2) -> void:
 			Color(UiPalette.YELLOW, 0.65), 4.0, true)
 		x += 64.0
 
-	var cart_x: float = track.position.x + 44.0 + (track.size.x - 100.0) * ratio
-	var cart_y: float = track.position.y + track.size.y - 8.0
-	var bounce: float = sin(_time * 14.0) * 3.0 * (0.4 + ratio * 0.6)
-	_draw_exhaust(Vector2(cart_x - 40.0, cart_y - 12.0 + bounce))
-	_draw_cart(Vector2(cart_x, cart_y + bounce), 0.9)
+	var cart_scale: float = area.y / 880.0
+	var cart_x: float = track.position.x + 46.0 + (track.size.x - 110.0) * ratio
+	var cart_y: float = track.end.y - 7.0
+	var bounce: float = sin(_time * 14.0) * 2.5 * (0.35 + ratio * 0.65)
+	_draw_exhaust(Vector2(cart_x - 78.0 * cart_scale, cart_y - 24.0 * cart_scale + bounce))
+	CartDrawing.draw_cart(self, Vector2(cart_x, cart_y + bounce), cart_scale, false)
 
 
 func _draw_exhaust(origin: Vector2) -> void:
@@ -192,32 +255,6 @@ func _draw_exhaust(origin: Vector2) -> void:
 		var alpha: float = (1.0 - age) * 0.35
 		draw_circle(origin + Vector2(-age * 46.0, -age * 16.0), 3.0 + age * 8.0,
 			Color(0.85, 0.85, 0.88, alpha))
-
-
-func _draw_cart(origin: Vector2, scale: float) -> void:
-	var ink := UiPalette.OUTLINE
-	var metal := Color(0.9, 0.92, 0.97)
-	var red := Color(0.87, 0.22, 0.25)
-	var basket := PackedVector2Array([
-		origin + Vector2(-46, -70) * scale, origin + Vector2(46, -70) * scale,
-		origin + Vector2(34, -28) * scale, origin + Vector2(-34, -28) * scale,
-	])
-	draw_colored_polygon(basket, metal)
-	draw_polyline(PackedVector2Array([basket[0], basket[1], basket[2], basket[3], basket[0]]), ink, 2.5, true)
-	for step in range(1, 4):
-		var t: float = float(step) / 4.0
-		draw_line(basket[0].lerp(basket[1], t), basket[3].lerp(basket[2], t), ink, 1.5, true)
-	for step in range(1, 3):
-		var t2: float = float(step) / 3.0
-		draw_line(basket[0].lerp(basket[3], t2), basket[1].lerp(basket[2], t2), ink, 1.5, true)
-	draw_line(origin + Vector2(-44, -68) * scale, origin + Vector2(-44, -84) * scale, red, 6.0, true)
-	for wheel: float in [-30.0, 30.0]:
-		var center := origin + Vector2(wheel, 0) * scale
-		draw_line(origin + Vector2(wheel, -28) * scale, origin + Vector2(wheel, -8) * scale, ink, 3.0, true)
-		draw_circle(center, 7.5 * scale, ink)
-		var angle: float = _time * 9.0 + wheel * 0.1
-		draw_line(center, center + Vector2(cos(angle), sin(angle)) * 5.0 * scale,
-			Color(0.85, 0.87, 0.93), 1.5, true)
 
 
 func _draw_checker(area: Vector2) -> void:

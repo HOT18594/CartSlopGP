@@ -16,6 +16,7 @@ var _path: String = ""
 var _pending_path: String = ""
 var _pending_title: String = ""
 var _pending_message: String = ""
+var _fade_tween: Tween
 
 
 func _ready() -> void:
@@ -42,7 +43,17 @@ func begin_task(title: String, message: String = "") -> void:
 	_percent.text = "..."
 	_ui.set_indeterminate(true)
 	_ui.set_progress(0.0)
+	_show_overlay()
+
+
+func _show_overlay() -> void:
+	# A short fade keeps the hard cut from feeling like a crash.
+	if _fade_tween != null and _fade_tween.is_valid():
+		_fade_tween.kill()
+	_ui.modulate = Color(1, 1, 1, 0)
 	show()
+	_fade_tween = create_tween()
+	_fade_tween.tween_property(_ui, "modulate:a", 1.0, 0.16)
 
 
 func task_message(message: String) -> void:
@@ -76,7 +87,7 @@ func go_to(path: String, title: String = "LOADING", message: String = "") -> voi
 	_message.text = message
 	_percent.text = "0%"
 	_ui.set_progress(0.0)
-	show()
+	_show_overlay()
 
 	var started: float = Time.get_ticks_msec() / 1000.0
 	if not ResourceLoader.exists(path):
@@ -125,7 +136,14 @@ func _finish(started: float) -> void:
 	var elapsed: float = Time.get_ticks_msec() / 1000.0 - started
 	if elapsed < MIN_SHOW:
 		await get_tree().create_timer(MIN_SHOW - elapsed).timeout
+	# Fade the overlay away after the new scene is already underneath it.
+	if _fade_tween != null and _fade_tween.is_valid():
+		_fade_tween.kill()
+	_fade_tween = create_tween()
+	_fade_tween.tween_property(_ui, "modulate:a", 0.0, 0.16)
+	await _fade_tween.finished
 	hide()
+	_ui.modulate = Color.WHITE
 	_ui.set_progress(0.0)
 	_busy = false
 	call_deferred("_run_pending")

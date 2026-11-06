@@ -8,10 +8,17 @@ extends Control
 @export var dark: Color = Color("1e1b3a")
 @export var light: Color = Color("ffffff")
 
+var _time: float = 0.0
+
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	resized.connect(queue_redraw)
+
+
+func _process(delta: float) -> void:
+	_time += delta
+	queue_redraw()
 
 
 func _draw() -> void:
@@ -51,4 +58,4 @@ func _cell(row: int, column: int, cell_width: float, cell_height: float) -> Pack
 
 
 func _wave(x: float) -> float:
-	return sin(x * wave_frequency) * wave_amount
+	return sin(x * wave_frequency + _time * 2.4) * wave_amount

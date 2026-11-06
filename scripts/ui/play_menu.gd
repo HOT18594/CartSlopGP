@@ -149,4 +149,4 @@ func _on_multi(mode: String) -> void:
 
 
 func _on_back() -> void:
-	get_tree().change_scene_to_file(MAIN_MENU_SCENE)
+	SceneLoader.go_to(MAIN_MENU_SCENE, "MAIN MENU")

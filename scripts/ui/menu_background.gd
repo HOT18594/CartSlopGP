@@ -1,6 +1,7 @@
 extends Control
 
 const UiPalette := preload("res://scripts/ui/ui_palette.gd")
+const CartDrawing := preload("res://scripts/ui/cart_drawing.gd")
 ## Vector menu backdrop: bright sky over the SlopMart parking lot, drawn with
 ## CanvasItem primitives so it stays crisp at any window size.
 
@@ -182,60 +183,12 @@ func _lamp(base: Vector2, height: float) -> void:
 
 
 func _draw_carts(area: Vector2) -> void:
-	_cart(Vector2(area.x * 0.145, area.y * 0.95), area.y * 0.0026, false)
-	_cart(Vector2(area.x * 0.30, area.y * 0.76), area.y * 0.0015, false)
-	_cart(Vector2(area.x * 0.855, area.y * 0.87), area.y * 0.0020, true)
-
-
-func _cart(origin: Vector2, scale: float, flip: bool) -> void:
-	var flip_x: float = -1.0 if flip else 1.0
-	var dark := Color(0.12, 0.11, 0.23)
-	var metal := Color(0.85, 0.87, 0.93)
-	var red := Color(0.87, 0.22, 0.25)
-
-	var top_left := Vector2(-52.0, -62.0)
-	var top_right := Vector2(52.0, -62.0)
-	var bottom_right := Vector2(38.0, -10.0)
-	var bottom_left := Vector2(-38.0, -10.0)
-	# Ground shadow.
-	draw_set_transform(origin + Vector2(0.0, 22.0 * scale), 0.0, Vector2(1.0, 0.32))
-	draw_circle(Vector2.ZERO, 58.0 * scale, Color(0.2, 0.15, 0.3, 0.16))
-	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
-
-	var basket := PackedVector2Array([
-		origin + Vector2(top_left.x * flip_x, top_left.y) * scale,
-		origin + Vector2(top_right.x * flip_x, top_right.y) * scale,
-		origin + Vector2(bottom_right.x * flip_x, bottom_right.y) * scale,
-		origin + Vector2(bottom_left.x * flip_x, bottom_left.y) * scale,
-	])
-	draw_colored_polygon(basket, metal)
-	draw_polyline(PackedVector2Array([basket[0], basket[1], basket[2], basket[3], basket[0]]), dark,
-		maxf(3.0 * scale, 2.0), true)
-
-	for step in range(1, 4):
-		var t: float = float(step) / 4.0
-		var top: Vector2 = basket[0].lerp(basket[1], t)
-		var bottom: Vector2 = basket[3].lerp(basket[2], t)
-		draw_line(top, bottom, dark, maxf(1.8 * scale, 1.0), true)
-	for step in range(1, 3):
-		var t2: float = float(step) / 3.0
-		var left: Vector2 = basket[0].lerp(basket[3], t2)
-		var right: Vector2 = basket[1].lerp(basket[2], t2)
-		draw_line(left, right, dark, maxf(1.8 * scale, 1.0), true)
-
-	var handle_top: Vector2 = origin + Vector2(-50.0 * flip_x, -74.0) * scale
-	var handle_bottom: Vector2 = origin + Vector2(-50.0 * flip_x, -60.0) * scale
-	draw_line(handle_bottom, handle_top, red, maxf(9.0 * scale, 3.0), true)
-	draw_line(handle_bottom, origin + Vector2(-52.0 * flip_x, -62.0) * scale, dark, maxf(3.0 * scale, 1.5), true)
-
-	var wheel_y: float = 26.0
-	for x: float in [-34.0, 34.0]:
-		var leg_top: Vector2 = origin + Vector2(x * flip_x, -10.0) * scale
-		var leg_bottom: Vector2 = origin + Vector2(x * flip_x, wheel_y - 6.0) * scale
-		draw_line(leg_top, leg_bottom, metal, maxf(6.0 * scale, 2.0), true)
-		draw_line(leg_top, leg_bottom, dark, maxf(2.0 * scale, 1.0), true)
-		draw_circle(origin + Vector2(x * flip_x, wheel_y) * scale, maxf(8.0 * scale, 3.0), dark)
-		draw_circle(origin + Vector2(x * flip_x, wheel_y) * scale, maxf(3.5 * scale, 1.5), Color(0.7, 0.72, 0.8))
+	# Two foreground carts frame the menu. A third cart used to peek out from
+	# behind the buttons; that read as clutter, so it is gone.
+	CartDrawing.draw_cart(self, Vector2(area.x * 0.115, area.y * 0.945),
+		area.y * 0.00195, false)
+	CartDrawing.draw_cart(self, Vector2(area.x * 0.885, area.y * 0.88),
+		area.y * 0.00170, true)
 
 
 func _draw_speed_marks(area: Vector2) -> void:
