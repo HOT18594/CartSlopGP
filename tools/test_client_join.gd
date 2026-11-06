@@ -17,7 +17,8 @@ func _ready() -> void:
 	if code == "":
 		get_tree().quit(1)
 		return
-	Network.set_relay_server("127.0.0.1:42777")
+	var relay := OS.get_environment("CARTSLOP_RELAY")
+	Network.set_relay_server(relay if relay != "" else "127.0.0.1:42777")
 	Network.join_succeeded.connect(func() -> void:
 		print("CLIENT_JOIN_SUCCEEDED")
 		get_tree().quit(0))

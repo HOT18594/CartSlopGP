@@ -1,6 +1,6 @@
 # Cart Slop GP TODO
 
-Updated: 2026-11-05 (v0.6.0 + unreleased art pass)
+Updated: 2026-11-05 (v0.6.1 release)
 
 ## Pi server
 
@@ -19,9 +19,15 @@ Updated: 2026-11-05 (v0.6.0 + unreleased art pass)
       after NetworkManager, retries `blue24`/`blue21` (WPA2 + WPA3), logs to
       the boot partition, and starts the server once an address exists
 - [x] Install a passwordless SSH key on the card (`pi_setup/pi_ssh_key`)
-- [ ] Reboot the Pi with the updated card and verify `cartslop.local:42777`
-- [ ] Verify game → Pi registration and a real second-device join
-- [ ] Verify UPnP mappings / internet join; document port-forward fallback
+- [x] Boot the Pi with the updated card and verify `cartslop.local:42777`
+      (live at 192.168.1.22; server + Wi-Fi watchdog enabled)
+- [x] Verify game → Pi registration and a join through the Pi
+      (host/client + Meadow Loop race, LAN and public relay)
+- [ ] Verify a real second physical device (school/Mac/Linux) joins
+- [x] Verify UPnP mappings / internet join; document port-forward fallback
+      (22/22 ports mapped, external check OPEN)
+- [x] Fixed LAN address `192.168.1.22` with DHCP fallback
+- [ ] Add a router DHCP reservation for the Pi's MAC
 - [x] Baked public Pi fallback (`68.204.45.1:42777`) and LAN-first discovery
 - [ ] Confirm public IP is still current / add DDNS hostname if ISP changes
 - [ ] Add server-side lobby update mirror (`/updates/`) if GitHub-only is not enough

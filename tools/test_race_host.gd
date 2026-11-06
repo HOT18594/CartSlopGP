@@ -2,6 +2,9 @@ extends Node
 ## Dev-only: host a Meadow Loop race through the Pi and wait for a peer.
 
 func _ready() -> void:
+	var relay := OS.get_environment("CARTSLOP_RELAY")
+	if relay != "":
+		Network.set_relay_server(relay)
 	Network.host_started.connect(_on_host)
 	Network.host_failed.connect(func(reason: String) -> void:
 		print("RACE_HOST_FAILED=", reason)

@@ -3,9 +3,9 @@
 All notable changes to Cart Slop GP. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer.
 
-## [Unreleased]
+## [0.6.1] - 2026-11-05
 
-Visual polish for the next build (not a separate release).
+Polish, audio, vehicle and Pi-connectivity update.
 
 ### Changed
 
@@ -39,6 +39,10 @@ Visual polish for the next build (not a separate release).
   minigame screen. Every car shows top speed, weight, acceleration, grip,
   steering, smoke, skid width and push strength.
 - Added a baked public Pi fallback (`68.204.45.1:42777`) after LAN discovery.
+- Pi dashboard: dark, grouped status layout; correct internet-reachability
+  reporting; 22/22 UPnP ports verified.
+- Pi networking: fixed LAN address with a DHCP fallback, and verified host,
+  client and Meadow Loop races through the Pi on both LAN and public relay.
 
 ## [0.6.0] - 2026-11-05
 

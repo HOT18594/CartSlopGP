@@ -3,6 +3,10 @@ extends Node
 
 
 func _ready() -> void:
+	# Optional: point the test at a remote Pi instead of a local server.
+	var relay := OS.get_environment("CARTSLOP_RELAY")
+	if relay != "":
+		Network.set_relay_server(relay)
 	Network.host_started.connect(func(code: String) -> void:
 		var file := FileAccess.open("user://host_code.txt", FileAccess.WRITE)
 		if file != null:
