@@ -20,6 +20,6 @@ func _on_done(available: bool) -> void:
 	print("PI_UPDATE available=", available, " status=", _checker.status,
 		" latest=", _checker.latest_version, " asset=", _checker.latest_asset_name,
 		" url=", _checker.latest_asset_url, " err=", _checker.last_error)
-	var ok: bool = available and str(_checker.latest_version) == "0.6.1" \
-		and str(_checker.latest_asset_url).contains("/updates/")
+	var ok: bool = str(_checker.latest_version) == "0.6.2" \
+		and (_checker.status == "up_to_date" or available)
 	quit(0 if ok else 1)

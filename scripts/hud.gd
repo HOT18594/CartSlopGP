@@ -26,10 +26,28 @@ const UiPalette := preload("res://scripts/ui/ui_palette.gd")
 
 var _debug_visible: bool = false
 var _hint_timer: float = 8.5
+var _net_label: Label
+var _net_timer: float = 0.0
 
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
+	if Network.is_session_active():
+		_net_label = Label.new()
+		_net_label.name = "NetStats"
+		_net_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_net_label.anchor_left = 1.0
+		_net_label.anchor_right = 1.0
+		_net_label.offset_left = -270.0
+		_net_label.offset_top = 14.0
+		_net_label.offset_right = -16.0
+		_net_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		_net_label.custom_minimum_size = Vector2(250, 0)
+		_net_label.add_theme_font_size_override("font_size", 13)
+		_net_label.add_theme_color_override("font_color", Color(1, 1, 1, 0.86))
+		_net_label.add_theme_color_override("font_outline_color", Color(0.10, 0.08, 0.18, 0.9))
+		_net_label.add_theme_constant_override("outline_size", 4)
+		add_child(_net_label)
 	_debug_label.visible = false
 	_position_badge.visible = show_position_badge
 	_lap_badge.visible = show_lap_badge
@@ -58,7 +76,12 @@ func set_lap(current: int, total: int) -> void:
 	_lap_value.text = "%d / %d" % [current, total]
 
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
+	if _net_label != null:
+		_net_timer += delta
+		if _net_timer >= 0.25:
+			_net_timer = 0.0
+			_update_net_stats()
 	var cart := get_tree().get_first_node_in_group("player") as CartPlayer
 	if cart == null:
 		return
@@ -81,12 +104,20 @@ func _process(_delta: float) -> void:
 	_state_label.add_theme_color_override("font_color", _state_color(cart))
 
 	if _hint_timer > 0.0:
-		_hint_timer -= _delta
+		_hint_timer -= delta
 		if _hint_timer <= 0.0:
 			_hint_label.visible = false
 
 	if _debug_visible:
 		_update_debug(cart)
+
+
+func _update_net_stats() -> void:
+	if not is_instance_valid(_net_label):
+		return
+	var ping: String = "HOST" if Network.is_host else "%d ms" % Network.latency_ms
+	_net_label.text = "%d FPS   PING %s   %d/%d" % [
+		Engine.get_frames_per_second(), ping, Network.peer_count(), Network.MAX_PLAYERS]
 
 
 func _state_text(cart: CartPlayer) -> String:

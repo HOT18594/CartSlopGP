@@ -3,6 +3,61 @@
 All notable changes to Cart Slop GP. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer.
 
+## [0.6.2] - 2026-11-05
+
+Multiplayer reliability, compact UI, richer collisions and release hygiene.
+
+### Changed
+
+- Multiplayer now starts only two ways: **HOST LAN** (this PC is the server,
+  nearby players find it automatically) or **HOST ONLINE** (the Cart Slop Pi
+  returns a 5-letter room code). Direct IP, port, hostname, UPnP and
+  hand-built address codes are gone from the UI and the join path.
+- The lobby is a Fall Guys-style screen: two big host cards, a 5-letter join
+  box, automatic LAN room discovery, online room browsing and a live room
+  panel with a player list.
+- Online controls show **PI SERVER ONLINE/OFFLINE** and disable themselves
+  when no server can be reached. LAN hosting still works without internet.
+- Rooms carry a server-side state: `lobby`, `playing` or `finished`. Joining a
+  room that has already started is rejected.
+- Added a scene-readiness handshake between peers. Gameplay state is only sent
+  to peers that have loaded the world, and the host retries the scene start
+  until they confirm. This fixes the repeating Godot `Node not found:
+  "DrivingTest"` / `Invalid packet received` errors when a peer was still in
+  the lobby or loading the map. The readiness signal uses the existing scene
+  RPCs, so older builds can still join the same room.
+- Esc in multiplayer shows the menu but keeps the world running (Minecraft
+  style). Single-player still pauses. Opening the menu never changes the
+  server room state or pauses the Pi.
+- Updates check automatically, surface the update dialog, download in the
+  background, and then ask for **RESTART & UPDATE**. Windows, macOS and Linux
+  install and relaunch themselves; no manual unzip.
+- The updater asks the Pi mirror first, then GitHub.
+- Fixed the online room browser clipping: the lobby is now inside a bounded
+  scroll area, so room cards and BACK stay reachable.
+- Added two-body, host-authoritative car collisions in sandbox and race:
+  mass-weighted normal impulse, restitution and Coulomb friction, sent as a
+  delta-v to both owners. No more one-sided ghost hits.
+- Meadow Loop starts its countdown only after every peer has loaded the race,
+  and clients receive the synchronized countdown. Threaded scene loads have a
+  12-second fallback so "Syncing players..." cannot hang forever.
+- Fixed the Meadow Loop kicker ramps rendering as invisible floors: the wedge
+  material is double-sided and a solid top slab is drawn over the collision.
+- Added a small multiplayer HUD readout: FPS, ping and player count.
+- Compacted the main menu, pause menu, play screen and vehicle picker: related
+  actions now share rows instead of every button being full-width.
+- Added a blinking TYPING indicator to the multiplayer name field.
+- Stabilized the chase camera at high steering angles and airborne moments:
+  softer banking, speed-scaled steering look-ahead and tighter shake limits.
+- Restored a proper sweeping speedometer needle with a hub instead of a lone
+  circular knob.
+- Brightened the vehicle preview with ambient fill and a camera-side fill
+  light, so the dark side of every car is readable.
+- Faster server discovery and shorter HTTP timeouts, with a second room
+  registration attempt. The server pill is clickable to re-check the Pi.
+- The changelog is now paged two releases at a time with PREV/NEXT and a page
+  counter, instead of one endless scroll.
+
 ## [0.6.1] - 2026-11-05
 
 Polish, audio, vehicle and Pi-connectivity update.

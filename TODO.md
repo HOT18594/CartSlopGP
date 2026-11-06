@@ -1,6 +1,6 @@
 # Cart Slop GP TODO
 
-Updated: 2026-11-05 (v0.6.1 release)
+Updated: 2026-11-05 (v0.6.2 release)
 
 ## Pi server
 
@@ -30,17 +30,19 @@ Updated: 2026-11-05 (v0.6.1 release)
 - [ ] Add a router DHCP reservation for the Pi's MAC
 - [x] Baked public Pi fallback (`68.204.45.1:42777`) and LAN-first discovery
 - [ ] Confirm public IP is still current / add DDNS hostname if ISP changes
-- [ ] Add server-side lobby update mirror (`/updates/`) if GitHub-only is not enough
+- [x] Server-side update mirror (`/updates/`) with 0.6.1 Windows zip
+- [x] Room state in the server (`lobby` / `playing` / `finished`); pause is client-only
 
 ## Multiplayer
 
 - [x] Client names and cart positions relayed for 3+ players
 - [x] Multiplayer Meadow Loop with remote carts, names and standings
 - [x] Short room-code join + lobby BROWSE list
-- [x] Internet short-code lookup (optional SERVER field) + public 14-character code
+- [x] Short-code-only join through the Pi (no IP, port, hostname or 14-character code)
 - [x] Host TCP tunnel end-to-end: local Pi server, host ENet, client ENet join
 - [x] Host TCP tunnel (TCP 42820) around Windows Firewall inbound blocks
 - [x] UPnP + NAT-PMP automatic mapping and public reachability check
+- [x] LAN host advertises itself; nearby clients see a room card, no IP
 - [ ] Full server-authoritative vehicle collisions (currently each client
       resolves its own cart against ghost bodies; bots/remotes block locally)
 - [ ] Host migration/reconnect after a drop
@@ -58,7 +60,8 @@ Updated: 2026-11-05 (v0.6.1 release)
 ## UI
 
 - [x] Pill cyclers for BOTS (NO BOTS → 1…5), GAME and LAN/ONLINE
-- [x] Compact PLAY and lobby layouts; ADVANCED public-IP toggle
+- [x] Compact PLAY menu; one MULTIPLAYER LOBBY entry
+- [x] Fall Guys-style lobby: LAN/Pi host cards, 5-letter code, room lists
 - [x] Minigame screen lists only playable events with real previews
 - [x] Removed invented COMING SOON cards and illustrated placeholders
 - [x] Shared UI kit: one action-button height and type scale on every screen
@@ -76,7 +79,8 @@ Updated: 2026-11-05 (v0.6.1 release)
 - [x] Countdown / lap / finish / ambience / impact / UI sounds
 - [x] Baked public Pi fallback after LAN discovery
 - [ ] Race result leaderboard for all peers
-- [ ] In-game server status / room browser polish
+- [x] Server online/offline pill gate; LAN and online room lists
+- [x] Multiplayer Esc menu keeps the world running; single-player pauses
 - [ ] Controller navigation audit
 
 ## Updates / builds
@@ -84,7 +88,8 @@ Updated: 2026-11-05 (v0.6.1 release)
 - [x] GitHub updater with progress and restart-to-install
 - [x] macOS ad-hoc re-sign after replacing the .app
 - [x] Release v0.6.0 builds for Windows/macOS/Linux/Web
-- [x] One-click UPDATE NOW: download, unpack, install, restart
+- [x] Auto-check, auto-surface, auto-download update
+- [x] RESTART & UPDATE prompt; install and relaunch without unzipping
 - [x] Pi update manifest endpoint (`/api/update`) with GitHub fallback
 - [x] Verify updater zip extraction and Pi manifest lookup
 - [ ] Verify the final file swap on each desktop platform

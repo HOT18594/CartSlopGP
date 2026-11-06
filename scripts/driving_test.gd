@@ -27,6 +27,12 @@ var _bots: Array[Dictionary] = []
 var _bot_time: float = 0.0
 
 
+
+func _rpc_sender() -> int:
+	## RPCs can still be queued when a peer is tearing down; never dereference
+	## a null multiplayer peer.
+	return multiplayer.get_remote_sender_id() if multiplayer.multiplayer_peer != null else 0
+
 func _ready() -> void:
 	CursorController.set_menu_mode(false)
 	_local_cart = get_tree().get_first_node_in_group("player") as CartPlayer
@@ -62,21 +68,31 @@ func _setup_multiplayer() -> void:
 	# Vehicle models are exchanged through the scene, not the lobby: tell the
 	# host we are ready, or broadcast ours to everyone if we are the host.
 	_peer_vehicles[multiplayer.get_unique_id()] = GameSettings.selected_vehicle
+	Network.notify_scene_ready()
+	if OS.get_environment("CART_DEBUG_NET") == "1":
+		print("SANDBOX_NET ready id=", multiplayer.get_unique_id(),
+			" host=", _host_mode, " peers=", multiplayer.get_peers())
 	if _host_mode:
-		rpc("_net_peer_vehicle", multiplayer.get_unique_id(), GameSettings.selected_vehicle)
+		_broadcast_vehicle(multiplayer.get_unique_id(), GameSettings.selected_vehicle)
 	else:
-		rpc("_net_client_ready", GameSettings.selected_vehicle)
+		rpc_id(1, "_net_client_ready", GameSettings.selected_vehicle)
 
 
 func _physics_process(delta: float) -> void:
 	_update_bots(delta)
 	if not Network.is_session_active():
 		return
+	if _host_mode and _local_cart != null:
+		Network.resolve_car_collisions(_local_cart, _remote_carts)
 	_cart_sync_timer += delta
 	if _cart_sync_timer >= CART_SYNC_INTERVAL and _local_cart != null:
 		_cart_sync_timer = 0.0
-		rpc("_net_cart_state", multiplayer.get_unique_id(),
-			_local_cart.global_position, _local_cart.rotation.y)
+		if _host_mode:
+			_broadcast_cart_state(multiplayer.get_unique_id(),
+				_local_cart.global_position, _local_cart.rotation.y)
+		elif Network.is_scene_ready(1):
+			rpc_id(1, "_net_cart_state", multiplayer.get_unique_id(),
+				_local_cart.global_position, _local_cart.rotation.y)
 
 	if _host_mode:
 		_prop_sync_timer += delta
@@ -222,7 +238,7 @@ func _refresh_name_labels() -> void:
 
 @rpc("any_peer", "unreliable")
 func _net_cart_state(peer_id: int, position: Vector3, yaw: float) -> void:
-	var sender: int = multiplayer.get_remote_sender_id()
+	var sender: int = _rpc_sender()
 	# A client may only speak for itself; the host relays it to everyone else.
 	if sender != 1 and peer_id != sender:
 		return
@@ -231,7 +247,7 @@ func _net_cart_state(peer_id: int, position: Vector3, yaw: float) -> void:
 		cart.net_position = position
 		cart.net_yaw = yaw
 	if _host_mode and sender != 1:
-		rpc("_net_cart_state", peer_id, position, yaw)
+		_broadcast_cart_state(peer_id, position, yaw)
 
 
 @rpc("any_peer", "reliable")
@@ -239,13 +255,14 @@ func _net_client_ready(vehicle_id: String) -> void:
 	## A peer has entered the sandbox. The host stores its vehicle and replies
 	## with the whole map, covering late joins and clients that missed an
 	## earlier hello while they were still in the lobby.
-	var sender: int = multiplayer.get_remote_sender_id()
+	var sender: int = _rpc_sender()
 	if sender <= 1 or sender == multiplayer.get_unique_id():
 		return
+	Network.mark_peer_scene_ready(sender)
 	_store_peer_vehicle(sender, vehicle_id)
 	if not _host_mode:
 		return
-	rpc("_net_peer_vehicle", sender, vehicle_id)
+	_broadcast_vehicle(sender, vehicle_id)
 	for peer_id: Variant in _peer_vehicles.keys():
 		rpc_id(sender, "_net_peer_vehicle", int(peer_id), str(_peer_vehicles[peer_id]))
 
@@ -290,6 +307,18 @@ func _net_request_push(index: int, direction: Vector3, kick: float) -> void:
 # props
 
 
+func _broadcast_cart_state(peer_id: int, position: Vector3, yaw: float) -> void:
+	for target: int in multiplayer.get_peers():
+		if Network.is_scene_ready(target):
+			rpc_id(target, "_net_cart_state", peer_id, position, yaw)
+
+
+func _broadcast_vehicle(peer_id: int, vehicle_id: String) -> void:
+	for target: int in multiplayer.get_peers():
+		if Network.is_scene_ready(target):
+			rpc_id(target, "_net_peer_vehicle", peer_id, vehicle_id)
+
+
 func _broadcast_props() -> void:
 	if _props.is_empty():
 		return
@@ -298,7 +327,9 @@ func _broadcast_props() -> void:
 	for prop: RigidBody3D in _props:
 		positions.append(prop.global_position)
 		rotations.append(prop.global_rotation)
-	rpc("_net_props", positions, rotations)
+	for target: int in multiplayer.get_peers():
+		if Network.is_scene_ready(target):
+			rpc_id(target, "_net_props", positions, rotations)
 
 
 func _apply_prop_targets(delta: float) -> void:

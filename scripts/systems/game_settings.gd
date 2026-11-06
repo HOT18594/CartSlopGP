@@ -13,7 +13,9 @@ const MODE_MULTIPLAYER: int = 1
 const GAME_SANDBOX: String = "sandbox"
 const GAME_MINIGAMES: String = "minigames"
 const CONN_LAN: String = "lan"
-const CONN_ONLINE: String = "online"
+const CONN_PI: String = "pi"
+## Kept as an alias for older saved settings and scripts.
+const CONN_ONLINE: String = CONN_PI
 
 @export_range(0.0, 1.0, 0.01) var master_volume: float = 0.8
 @export_range(0.0, 1.0, 0.01) var sfx_volume: float = 0.85
@@ -30,7 +32,7 @@ const CONN_ONLINE: String = "online"
 @export_group("Session")
 @export var play_mode: int = MODE_SINGLE ## MODE_SINGLE or MODE_MULTIPLAYER.
 @export var multiplayer_mode: String = GAME_SANDBOX ## GAME_SANDBOX or GAME_MINIGAMES.
-@export var connection_preference: String = CONN_ONLINE ## CONN_LAN (Wi-Fi) or CONN_ONLINE.
+@export var connection_preference: String = CONN_PI ## CONN_LAN (this PC) or CONN_PI.
 @export var relay_server: String = "" ## Optional public Pi server URL/host for internet joins.
 @export var selected_minigame: String = "meadow_loop" ## Map chosen for the next race.
 @export var bots_enabled: bool = false ## OFF by default - bots are strictly opt-in.
@@ -134,7 +136,7 @@ func set_multiplayer_mode(mode: String) -> void:
 
 
 func set_connection_preference(mode: String) -> void:
-	connection_preference = CONN_LAN if mode == CONN_LAN else CONN_ONLINE
+	connection_preference = CONN_LAN if mode == CONN_LAN else CONN_PI
 	save_settings()
 
 
@@ -227,6 +229,10 @@ func load_settings() -> void:
 	play_mode = int(config.get_value("session", "play_mode", play_mode))
 	multiplayer_mode = str(config.get_value("session", "multiplayer_mode", multiplayer_mode))
 	connection_preference = str(config.get_value("session", "connection", connection_preference))
+	if connection_preference == "online":
+		connection_preference = CONN_PI
+	if connection_preference != CONN_LAN and connection_preference != CONN_PI:
+		connection_preference = CONN_PI
 	relay_server = str(config.get_value("session", "relay_server", relay_server))
 	selected_minigame = str(config.get_value("session", "selected_minigame", selected_minigame))
 	if selected_minigame != "meadow_loop":

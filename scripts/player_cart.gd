@@ -94,6 +94,7 @@ var slide_amount: float = 0.0 ## 0-1 sideways-slide intensity (for the skid audi
 
 ## Multiplayer ghost state (set by the sandbox when this cart is another peer).
 var remote_mode: bool = false
+var remote_peer_id: int = 0
 var net_position: Vector3 = Vector3.ZERO
 var net_yaw: float = 0.0
 var net_velocity: Vector3 = Vector3.ZERO
@@ -190,6 +191,7 @@ func set_spawn_transform(spawn_transform: Transform3D) -> void:
 func setup_remote(peer_id: int) -> void:
 	## Turn this cart into an interpolated ghost for another player.
 	remote_mode = true
+	remote_peer_id = peer_id
 	name = "Remote_%d" % peer_id
 	remove_from_group("player")
 	add_to_group("remote_player")
@@ -249,6 +251,34 @@ func apply_vehicle_bump(normal: Vector3, push: float) -> void:
 	if remote_mode or push <= 0.0:
 		return
 	velocity += normal * push
+	# Also nudge the visible pose so the hit reads immediately.
+	_susp_vel += minf(push * 0.035, 0.35)
+
+
+func apply_vehicle_impulse(impulse: Vector3) -> void:
+	## Host-resolved momentum impulse for a two-body car collision.
+	if remote_mode or impulse.length() < 0.01:
+		return
+	velocity += impulse
+	_susp_vel += minf(impulse.length() * 0.03, 0.30)
+	if _feedback != null:
+		_feedback.on_collision(clampf(impulse.length() / maxf(max_speed, 1.0), 0.15, 0.85))
+
+
+@rpc("authority", "reliable")
+func _net_apply_car_impulse(impulse: Vector3) -> void:
+	## Sent from the host's local cart; its path matches every client's local
+	## cart, so the correction lands on the cart that actually owns the physics.
+	if remote_mode:
+		return
+	apply_vehicle_impulse(impulse)
+
+
+@rpc("authority", "reliable")
+func _net_apply_car_bump(normal: Vector3, push: float) -> void:
+	if remote_mode:
+		return
+	apply_vehicle_bump(normal, push)
 
 
 func _apply_vehicle_visual() -> Dictionary:

@@ -66,22 +66,31 @@ func _build_ui() -> void:
 	_single_box = VBoxContainer.new()
 	_single_box.add_theme_constant_override("separation", 8)
 	_body.add_child(_single_box)
-	var sandbox := _button("SANDBOX", UiPalette.YELLOW, 56, 26)
+	var single_row := HBoxContainer.new()
+	single_row.add_theme_constant_override("separation", 8)
+	_single_box.add_child(single_row)
+	var sandbox := _button("SANDBOX", UiPalette.YELLOW, 54, 24)
+	sandbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	sandbox.pressed.connect(_on_single_sandbox)
-	_single_box.add_child(sandbox)
-	var minigames := _button("MINIGAMES", UiPalette.GRASS, 56, 26)
+	single_row.add_child(sandbox)
+	var minigames := _button("MINIGAMES", UiPalette.GRASS, 54, 24)
+	minigames.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	minigames.pressed.connect(_on_single_minigames)
-	_single_box.add_child(minigames)
+	single_row.add_child(minigames)
 
 	_multi_box = VBoxContainer.new()
 	_multi_box.add_theme_constant_override("separation", 8)
 	_body.add_child(_multi_box)
-	var mp_sandbox := _button("SANDBOX SESSION", UiPalette.BLUE, 52, 22)
-	mp_sandbox.pressed.connect(_on_multi.bind(GameSettings.GAME_SANDBOX))
-	_multi_box.add_child(mp_sandbox)
-	var mp_minigames := _button("MINIGAME SESSION", UiPalette.CYAN, 52, 22)
-	mp_minigames.pressed.connect(_on_multi.bind(GameSettings.GAME_MINIGAMES))
-	_multi_box.add_child(mp_minigames)
+	var multiplayer := _button("MULTIPLAYER LOBBY", UiPalette.BLUE, 56, 24)
+	multiplayer.pressed.connect(_on_multi)
+	_multi_box.add_child(multiplayer)
+	var multiplayer_hint := Label.new()
+	multiplayer_hint.text = "Host on your Wi-Fi, or join with a 5-letter room code."
+	multiplayer_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	multiplayer_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	multiplayer_hint.add_theme_font_size_override("font_size", 14)
+	multiplayer_hint.add_theme_color_override("font_color", UiPalette.BLUE_DARK)
+	_multi_box.add_child(multiplayer_hint)
 
 	var back := _button("BACK", UiPalette.RED, 48, 20)
 	back.pressed.connect(_on_back)
@@ -143,11 +152,10 @@ func _on_single_minigames() -> void:
 	SceneLoader.go_to(MINIGAMES_SCENE, "MINIGAMES")
 
 
-func _on_multi(mode: String) -> void:
+func _on_multi() -> void:
 	GameSettings.set_play_mode(GameSettings.MODE_MULTIPLAYER)
-	GameSettings.set_multiplayer_mode(mode)
 	SceneLoader.go_to(LOBBY_SCENE, "MULTIPLAYER",
-		"Wi-Fi (LAN) or Online - host picks the mode")
+		"Host on Wi-Fi or create a room on the Cart Slop server")
 
 
 func _on_back() -> void:

@@ -105,6 +105,7 @@ func go_to(path: String, title: String = "LOADING", message: String = "") -> voi
 
 func _poll(started: float) -> void:
 	var progress: Array = [0.0]
+	var deadline: int = Time.get_ticks_msec() + 12000
 	while true:
 		var status: int = ResourceLoader.load_threaded_get_status(_path, progress)
 		_ui.set_progress(progress[0])
@@ -113,6 +114,13 @@ func _poll(started: float) -> void:
 		if status == ResourceLoader.THREAD_LOAD_LOADED:
 			break
 		if status == ResourceLoader.THREAD_LOAD_FAILED or status == ResourceLoader.THREAD_LOAD_INVALID_RESOURCE:
+			get_tree().change_scene_to_file(_path)
+			_finish(started)
+			return
+		if Time.get_ticks_msec() > deadline:
+			# A threaded load can stall on some drivers/filesystems. Never
+			# leave multiplayer peers stuck on "Syncing players..."
+			push_warning("Threaded scene load timed out; falling back: " + _path)
 			get_tree().change_scene_to_file(_path)
 			_finish(started)
 			return

@@ -8,7 +8,7 @@ func _ready() -> void:
 	var packed: PackedScene = load("res://scenes/ui/pause_menu.tscn") as PackedScene
 	var node: Node = packed.instantiate()
 	add_child(node)
-	node.call("open")
+	node.get_node("Root").call("open")
 	get_tree().paused = false
 	for i in 26:
 		await get_tree().process_frame

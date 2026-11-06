@@ -1,7 +1,7 @@
 extends Node
-## Free, optional update check against GitHub Releases.
+## Update check against the Cart Slop Pi mirror, then GitHub Releases.
 ##
-## The check is silent and short: if there is no internet (or GitHub rate-limits
+## The check runs automatically. If there is no internet (or GitHub rate-limits
 ## us) the game simply carries on. Three tiers are supported:
 ##   1. open the release page in the browser,
 ##   2. download the release zip into user://updates/,
@@ -35,6 +35,9 @@ var latest_release_url: String = ""
 var latest_asset_url: String = ""
 var latest_asset_name: String = ""
 var last_error: String = ""
+## True once the shell has auto-opened the update dialog this run. Returning
+## to the main menu should not pop the same dialog repeatedly.
+var auto_prompted: bool = false
 
 var _check_request: HTTPRequest
 var _server_request: HTTPRequest
@@ -115,10 +118,12 @@ func _configured_server_base() -> String:
 	# Environment override is useful for a managed/Pi install and for tests.
 	var raw: String = OS.get_environment("CARTSLOP_UPDATE_SERVER").strip_edges()
 	if raw == "":
-		var settings: Node = get_node_or_null("/root/GameSettings")
-		if settings == null:
-			return ""
-		raw = str(settings.get("relay_server")).strip_edges()
+		# Prefer the Cart Slop Pi mirror, then fall back to GitHub. This is the
+		# same server the multiplayer lobby uses; no address is shown in the UI.
+		var net: Node = get_node_or_null("/root/Network") if is_inside_tree() else null
+		if net != null and net.get_script() != null:
+			var constants: Dictionary = net.get_script().get_script_constant_map()
+			raw = str(constants.get("DEFAULT_RELAY_SERVER", "")).strip_edges()
 	if raw == "":
 		return ""
 	var secure: bool = raw.to_lower().begins_with("https://")
@@ -460,6 +465,7 @@ func _install_macos(exe_path: String, staging: String, pid: int) -> bool:
 	var script_path: String = ProjectSettings.globalize_path(UPDATE_DIR + "/update_install.sh")
 	var lines: PackedStringArray = [
 		"#!/bin/bash",
+		"trap '' HUP",
 		"APP=\"%s\"" % ProjectSettings.globalize_path(app_path),
 		"STAGED=\"%s\"" % ProjectSettings.globalize_path(staged_app),
 		"PID=%d" % pid,
@@ -482,6 +488,7 @@ func _write_unix_installer(stage_dir: String, game_dir: String, exe_name: String
 	var script_path: String = ProjectSettings.globalize_path(UPDATE_DIR + "/update_install.sh")
 	var lines: PackedStringArray = [
 		"#!/bin/bash",
+		"trap '' HUP",
 		"stage=\"%s\"" % ProjectSettings.globalize_path(stage_dir),
 		"game=\"%s\"" % ProjectSettings.globalize_path(game_dir),
 		"exe=\"%s\"" % exe_name,
@@ -490,7 +497,9 @@ func _write_unix_installer(stage_dir: String, game_dir: String, exe_name: String
 		"sleep 1",
 		"cp -a \"$stage\"/. \"$game\"/",
 		"chmod +x \"$game/$exe\"",
-		"\"$game/$exe\" &",
+		"cd \"$game\"",
+		"nohup \"$game/$exe\" >/dev/null 2>&1 &",
+		"disown",
 		"rm -f \"$0\"",
 	]
 	if not _write_script(script_path, lines):
@@ -618,7 +627,7 @@ func _write_installer(bat_path: String, game_dir: String, stage_dir: String, exe
 		"echo Installing update...",
 		"xcopy \"%STAGE%\\*\" \"%GAME_DIR%\\\" /E /I /Y /Q >nul",
 		"if errorlevel 1 goto failed",
-		"start \"\" \"%GAME_DIR%\\%EXE_NAME%\"",
+		"start \"\" /D \"%GAME_DIR%\" \"%GAME_DIR%\\%EXE_NAME%\"",
 		"timeout /t 2 /nobreak >nul",
 		"(goto) 2>nul & del \"%~f0\"",
 		"exit /b 0",

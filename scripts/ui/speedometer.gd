@@ -46,11 +46,17 @@ func _draw() -> void:
 			_sweep_color(t0), radius * 0.11, true)
 
 	var ratio: float = clampf(speed_kmh / maxf(max_speed_kmh, 1.0), 0.0, 1.0)
-	var dot_angle: float = start + (end - start) * ratio
-	var dot: Vector2 = center + Vector2(cos(dot_angle), sin(dot_angle)) * radius * 0.73
-	draw_circle(dot, radius * 0.095, Color(0.97, 0.98, 1, 1))
-	draw_circle(dot, radius * 0.060, INK)
-	draw_circle(center, radius * 0.035, Color(0.35, 0.78, 0.94, 0.85))
+	var needle_angle: float = start + (end - start) * ratio
+	var direction := Vector2(cos(needle_angle), sin(needle_angle))
+	var tip: Vector2 = center + direction * radius * 0.68
+	var tail: Vector2 = center - direction * radius * 0.12
+	# Proper sweeping arm, not just a floating dot.
+	draw_line(tail, tip, INK, maxf(4.0, radius * 0.045), true)
+	draw_line(tail, tip, Color("ffd22e"), maxf(2.0, radius * 0.026), true)
+	draw_circle(center, radius * 0.095, INK)
+	draw_circle(center, radius * 0.062, Color("38d6f0"))
+	draw_circle(center - Vector2(radius * 0.018, radius * 0.018), radius * 0.022,
+		Color(1, 1, 1, 0.45))
 
 
 func _sweep_color(t: float) -> Color:

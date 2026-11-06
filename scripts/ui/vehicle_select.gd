@@ -44,11 +44,44 @@ func _ready() -> void:
 		else GameSettings.selected_vehicle
 	_current = clampi(Catalog.index_of(current_id), 0, _entries.size() - 1)
 	_camera.look_at_from_position(Vector3(2.4, 1.6, -3.3), Vector3(0.0, 0.55, 0.0), Vector3.UP)
+	_light_preview()
 	_prev_button.pressed.connect(_step.bind(-1))
 	_next_button.pressed.connect(_step.bind(1))
 	_drive_button.pressed.connect(_on_drive)
 	_show_current()
 	_drive_button.grab_focus()
+
+
+func _light_preview() -> void:
+	## The single sun left the camera-facing side of the car almost black.
+	## Add a soft sky fill and a shadowless key from the camera side.
+	var preview: Node = _camera.get_parent()
+	if preview == null:
+		return
+	if preview.get_node_or_null("PreviewEnvironment") == null:
+		var world := WorldEnvironment.new()
+		world.name = "PreviewEnvironment"
+		var env := Environment.new()
+		# Keep the SubViewport transparent; only add ambient fill.
+		env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+		env.ambient_light_color = Color(0.72, 0.80, 0.92)
+		env.ambient_light_energy = 0.55
+		env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
+		world.environment = env
+		preview.add_child(world)
+	if preview.get_node_or_null("PreviewFill") == null:
+		var fill := DirectionalLight3D.new()
+		fill.name = "PreviewFill"
+		fill.rotation_degrees = Vector3(-28.0, -145.0, 0.0)
+		fill.light_energy = 0.85
+		fill.light_color = Color(0.86, 0.92, 1.0)
+		fill.shadow_enabled = false
+		preview.add_child(fill)
+	var sun := preview.get_node_or_null("Sun") as DirectionalLight3D
+	if sun != null:
+		sun.light_energy = 1.05
+		sun.shadow_enabled = true
+		sun.directional_shadow_max_distance = 12.0
 
 
 func _process(delta: float) -> void:

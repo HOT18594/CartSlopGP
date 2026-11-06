@@ -1,6 +1,6 @@
 extends Control
 ## Update dialog: check result, download with a real progress bar, then
-## "RESTART TO INSTALL" (desktop builds only - Web opens the release page).
+## "RESTART & UPDATE" (desktop builds install and relaunch in place).
 
 signal closed
 
@@ -14,6 +14,7 @@ signal closed
 var _install_ready: bool = false
 var _busy: bool = false
 var _secondary_opens_page: bool = false
+var _auto_started_version: String = ""
 
 
 func _ready() -> void:
@@ -61,7 +62,7 @@ func open() -> void:
 	if _install_ready:
 		_show_install_state()
 	elif _desktop_updates() and UpdateChecker.latest_asset_url != "":
-		_notes_label.text = "Downloads, installs and restarts automatically. No unzipping."
+		_notes_label.text = "Downloading automatically. Press RESTART when it is ready; no unzipping."
 		_primary_button.text = "UPDATE NOW"
 		_primary_button.disabled = false
 		_secondary_button.text = "LATER"
@@ -75,14 +76,22 @@ func open() -> void:
 		_secondary_button.text = "LATER"
 	show()
 	_primary_button.grab_focus()
+	# Start the download as soon as the update surfaces. The player can hide
+	# this panel or keep playing while it runs; the actual swap waits for the
+	# explicit RESTART & UPDATE press.
+	if (_desktop_updates() and not _install_ready
+			and UpdateChecker.latest_asset_url != ""
+			and _auto_started_version != UpdateChecker.latest_version):
+		_auto_started_version = UpdateChecker.latest_version
+		_on_primary()
 
 
 func _show_install_state() -> void:
 	_install_ready = true
 	_busy = false
 	_secondary_opens_page = true
-	_notes_label.text = "The update is downloaded. Restart the game to install it."
-	_primary_button.text = "RESTART TO INSTALL"
+	_notes_label.text = "Update downloaded. Press RESTART & UPDATE; the game will close, install it and reopen itself."
+	_primary_button.text = "RESTART & UPDATE"
 	_primary_button.disabled = false
 	_secondary_button.text = "RELEASE NOTES"
 	_progress_bar.visible = true
@@ -145,17 +154,12 @@ func _on_progress(ratio: float, received: int, total: int) -> void:
 
 func _on_download_finished(_path: String) -> void:
 	_busy = false
+	# Ask before closing the game. The installer waits for this process to
+	# exit, swaps the files and relaunches the new build.
 	_show_install_state()
-	# One click should finish the job. If the player is still looking at the
-	# panel, install immediately; if they hid it, keep the ready state for the
-	# next time they open the update dialog.
 	if not visible:
-		return
-	_primary_button.disabled = true
-	_notes_label.text = "Downloaded. Installing and restarting..."
-	await get_tree().create_timer(0.7).timeout
-	if visible and _install_ready and not _busy:
-		_on_primary()
+		show()
+		_primary_button.grab_focus()
 
 
 func _on_download_failed(reason: String) -> void:

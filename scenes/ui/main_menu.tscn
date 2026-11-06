@@ -111,36 +111,42 @@ theme_override_font_sizes/font_size = 132
 text = "GP"
 
 [node name="Buttons" type="VBoxContainer" parent="Center/Column"]
-custom_minimum_size = Vector2(470, 0)
+custom_minimum_size = Vector2(560, 0)
 layout_mode = 2
 size_flags_horizontal = 4
-theme_override_constants/separation = 16
+theme_override_constants/separation = 12
 
 [node name="PlayButton" type="Button" parent="Center/Column/Buttons"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(0, 80)
+custom_minimum_size = Vector2(0, 78)
 layout_mode = 2
-theme_override_font_sizes/font_size = 40
+theme_override_font_sizes/font_size = 38
 text = "PLAY"
 script = ExtResource("7")
 fill_color = Color(1, 0.823529, 0.180392, 1)
 corner_radius = 28
 
-[node name="SettingsButton" type="Button" parent="Center/Column/Buttons"]
-unique_name_in_owner = true
-custom_minimum_size = Vector2(0, 80)
+[node name="MenuRow" type="HBoxContainer" parent="Center/Column/Buttons"]
 layout_mode = 2
-theme_override_font_sizes/font_size = 30
+theme_override_constants/separation = 12
+
+[node name="SettingsButton" type="Button" parent="Center/Column/Buttons/MenuRow"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 60)
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 26
 text = "SETTINGS"
 script = ExtResource("7")
 fill_color = Color(0.270588, 0.713726, 0.941176, 1)
 corner_radius = 28
 
-[node name="ChangelogButton" type="Button" parent="Center/Column/Buttons"]
+[node name="ChangelogButton" type="Button" parent="Center/Column/Buttons/MenuRow"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(0, 80)
+custom_minimum_size = Vector2(0, 60)
 layout_mode = 2
-theme_override_font_sizes/font_size = 30
+size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 26
 text = "CHANGELOG"
 script = ExtResource("7")
 fill_color = Color(0.94902, 0.423529, 0.654902, 1)
@@ -148,9 +154,9 @@ corner_radius = 28
 
 [node name="QuitButton" type="Button" parent="Center/Column/Buttons"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(0, 80)
+custom_minimum_size = Vector2(0, 54)
 layout_mode = 2
-theme_override_font_sizes/font_size = 30
+theme_override_font_sizes/font_size = 24
 text = "QUIT"
 script = ExtResource("7")
 fill_color = Color(0.94902, 0.329412, 0.356863, 1)

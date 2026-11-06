@@ -1,34 +1,29 @@
 # Multiplayer
 
-Peer-to-peer, free, no account and no game server. Godot's high-level
-multiplayer over **ENet (UDP)** connects the players directly.
+Two ways to start a world, and no other:
 
-## Flow
+1. **HOST LAN ROOM** - this PC is the ENet server. It advertises a room on
+   UDP 42779. Players on the same Wi-Fi press **FIND LAN ROOMS** and pick the
+   card. No internet, no Pi and no code.
+2. **HOST ONLINE** - the Cart Slop Pi allocates a **5-letter room code** and
+   relays the session through its TCP tunnel. Friends type that code under
+   **JOIN A ROOM**. The Pi is the only online room service.
 
-1. PLAY -> MULTIPLAYER. Set your name, pick LAN or ONLINE, then HOST A GAME.
-2. **LAN**: the code uses the best physical network adapter and works on the
-   same Wi-Fi (VPN/Hyper-V/WSL adapters are skipped).
-   **ONLINE**: the host opens the first free UDP port in `8910..8949` and asks
-   the router for a **UPnP** mapping. Discovery gets a hard **6 s** budget so a
-   silent router can never hang the lobby; if the mapping arrives later the
-   code upgrades automatically. If UPnP fails, the host keeps the LAN code and
-   shows the public IP plus a port-forward/CGNAT explanation instead of
-   advertising an unreachable address.
-3. When a Cart Slop Pi answers, the lobby shows a **5-character room code**
-   and lists the room in BROWSE. Without a Pi it falls back to a
-   **14-character code**: four hex IP octets + two hex port bytes + a 2-hex
-   checksum. A mistyped code fails immediately. A **LAN** row appears when
-   hosting online so same-network players can always join.
-4. Friends paste the code (or type `ip:port` / a tunnel hostname) into JOIN.
-   Joining times out after 12 s with an actionable message. If LAN discovery
-   finds nothing, the client probes the baked public Pi address
-   (`68.204.45.1:42777`) before giving up.
-5. The host chooses SANDBOX or MINIGAMES, optional bots, and presses START.
-   Everyone gets the themed loading screen and the same scene. Late joiners
-   are dropped straight in (the host re-sends the full session config).
-6. The host and every client can open **VEHICLE** in the lobby (or the minigame
-   screen) to pick a car with the full stat sheet. Each peer picks their own;
-   the host relays vehicle ids so every cart looks right.
+The lobby shows **PI SERVER ONLINE/OFFLINE** and disables online controls when
+the server cannot be reached. There is no IP address, port, hostname, UPnP or
+hand-built address code in the join path; a 14-character code is rejected.
+
+The host chooses SANDBOX or MINIGAMES, optional bots, and presses START.
+Everyone gets the themed loading screen and the same scene. Late joiners are
+dropped straight in (the host re-sends the full session config), unless the
+room state is already `playing` or `finished`.
+
+The host and every client can open **VEHICLE** in the lobby (or the minigame
+screen) to pick a car with the full stat sheet. Each peer picks their own;
+the host relays vehicle ids so every cart looks right.
+
+Pausing in multiplayer opens the menu but does **not** pause the tree or the
+server; the world keeps running. Single-player still pauses.
 
 Names are limited to 16 printable characters and sanitised on both the sender
 and the receiver; the host's list shows names and the client's ping. Names also
@@ -45,6 +40,8 @@ room key and only share it with people you want in the session.
 | Pushes from clients | client asks host, host applies the impulse | on contact |
 | Vehicle choice | each peer announces its model id | on join / peer change |
 | Race progress | each peer streams unwrapped lap distance | 20 Hz |
+| Car-to-car collisions | host resolves and sends impulses to both owners | on contact |
+| Race countdown | host starts after every peer confirms the scene | once |
 | Ping | client -> host -> client round trip | 2 s |
 
 Remote carts are interpolated ghosts; each peer owns and simulates its own
@@ -55,23 +52,17 @@ host-authoritative. Traffic is roughly 8-10 KB/s per client.
 
 ## NAT / internet notes
 
-- A Pi server is preferred. It gives short codes, room browsing, a TCP host
-  tunnel around Windows Firewall, and UPnP/NAT-PMP on the Pi.
-- If no Pi answers, UPnP on the host router is tried. If that fails too, the
-  lobby keeps the LAN code and explains the **UDP port forward** needed to the
-  host PC (the port is in the code).
-- The baked public Pi fallback is `68.204.45.1:42777`. Forward TCP 42777,
-  TCP 42820 and UDP 42800–42819 to the Pi and keep its LAN address reserved.
-  Public IPs from home ISPs can change; use a DDNS hostname in ADVANCED if
-  that happens.
-- Carrier-grade NAT (some mobile / apartment ISPs) cannot be port-forwarded;
-  the lobby detects a CGNAT external address and says so. Use Tailscale,
-  ZeroTier or a UDP tunnel (playit.gg) instead, then share the LAN code or the
-  tunnel `host:port`.
-- Windows Firewall may ask to allow the game the first time you host: allow it
-  for private networks (and public if you play over the internet).
-- The host's public IP alone is never advertised as ready until a mapping or a
-  manual PUBLIC IP was supplied.
+- Online rooms always go through the Pi. It provides short codes, room
+  browsing, the TCP host tunnel around Windows Firewall, and UPnP/NAT-PMP on
+  the Pi itself.
+- The baked Pi address is `68.204.45.1:42777`. Forward TCP 42777, TCP 42820
+  and UDP 42800-42819 to the Pi and keep its LAN address reserved.
+- Public IPs from home ISPs can change. Update `DEFAULT_RELAY_SERVER` in
+  `scripts/net/network.gd` if that happens; no address is entered in the UI.
+- School networks that block outbound UDP can load the HTTP console but cannot
+  relay a race.
+- LAN hosting needs no router configuration. Windows Firewall may ask to allow
+  the game on private networks the first time you host.
 
 ## Limits
 

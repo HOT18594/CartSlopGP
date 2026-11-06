@@ -53,7 +53,7 @@ func _on_check_updates() -> void:
 		_update_status.text = "Update downloading..."
 		return
 	_check_button.disabled = true
-	_update_status.text = "Checking GitHub..."
+	_update_status.text = "Checking for updates..."
 	UpdateChecker.check_for_updates()
 	get_tree().create_timer(8.0).timeout.connect(_re_enable_check)
 
@@ -68,11 +68,11 @@ func _on_check_finished(available: bool) -> void:
 		return
 	_check_button.disabled = false
 	if available:
-		_update_status.text = "v%s available - see the update badge on the main menu" % UpdateChecker.latest_version
+		_update_status.text = "v%s available - open it from the main menu" % UpdateChecker.latest_version
 	elif UpdateChecker.status == "up_to_date":
 		_update_status.text = "Up to date (v%s)" % UpdateChecker.local_version()
 	elif UpdateChecker.status == "offline":
-		_update_status.text = "Offline - couldn't reach GitHub"
+		_update_status.text = "Offline - couldn't reach the update server"
 	else:
 		_update_status.text = "Check failed - try again later"
 

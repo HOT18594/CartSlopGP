@@ -38,12 +38,12 @@ still exposes the UDP relay port to friends; the host side is outbound only.
 
 ## Internet join
 
-1. Host a game on the PC. The game registers with the Pi and gets a
-   5-character room code plus a public server address.
-2. The host can share either the 5-character code after the friend enters the
-   Pi address under **MULTIPLAYER → ADVANCED**, or the 14-character
-   `public-ip:relay-port` code from the console.
-3. Friends paste the code into JOIN. The Pi relays them to the host tunnel.
+1. Host an online game on the PC. The game registers with the Pi and gets a
+   5-character room code.
+2. Share that code. There is no server address field and no 14-character
+   code; joining always goes through the Pi.
+3. Friends type the code into **JOIN A ROOM**. The Pi relays them to the host
+   tunnel.
 
 ### Built-in public address
 
@@ -58,8 +58,8 @@ Set a DHCP reservation for the Pi in the router (for example `192.168.1.50`)
 so those forwards keep pointing at it. Most home connections are dynamic; if
 the ISP changes the address, either:
 
-- set a DHCP reservation for the Pi and use the router's DDNS hostname, then
-  put that hostname in **MULTIPLAYER → ADVANCED**, or
+- set a DHCP reservation for the Pi and use the router's DDNS hostname where
+  `DEFAULT_RELAY_SERVER` is defined, or
 - update `DEFAULT_RELAY_SERVER` in `scripts/net/network.gd`.
 
 The Pi console always shows the current public address and whether TCP 42777
@@ -115,7 +115,7 @@ the folder can stay empty.
   must not be blocked by a firewall.
 - **Internet friends cannot join:** check the console's UPnP status. Forward
   TCP 42777, TCP 42820 and UDP 42800–42819, or use a VPN/tunnel and share the
-  LAN code. The console's INTERNET card tests TCP 42777 from outside.
+  LAN room on the same Wi-Fi. The console's INTERNET card tests TCP 42777 from outside.
 - **Wi-Fi drops:** use Ethernet or disable power saving (the installer adds
   `wifi-powersave-off.service`).
 - **Pi never appears:** put the SD card back in the PC and read

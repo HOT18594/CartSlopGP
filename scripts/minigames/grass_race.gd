@@ -123,6 +123,8 @@ var _phase: Phase = Phase.COUNTDOWN
 var _countdown: float = 3.0
 var _go_time: float = 0.0
 var _last_count: int = 0
+var _waiting_for_peers: bool = false
+var _wait_elapsed: float = 0.0
 var _go_shown: bool = false
 var _race_time: float = 0.0
 var _lap: int = 1
@@ -158,6 +160,12 @@ var _ambient_audio: AudioStreamPlayer
 # --------------------------------------------------------------------------
 # lifecycle
 
+
+
+func _rpc_sender() -> int:
+	## RPCs can still be queued when a peer is tearing down; never dereference
+	## a null multiplayer peer.
+	return multiplayer.get_remote_sender_id() if multiplayer.multiplayer_peer != null else 0
 
 func _enter_tree() -> void:
 	# CartPlayer reads GameSettings.selected_vehicle in its own _ready, which
@@ -215,6 +223,9 @@ func _ready() -> void:
 		_effects.call("setup", _cart)
 		if Network.is_session_active():
 			_setup_multiplayer()
+			_waiting_for_peers = true
+			_wait_elapsed = 0.0
+			_countdown_label.text = "WAITING"
 
 	_hud.call("set_lap", 1, TOTAL_LAPS)
 	_hud.call("set_race_position", 1)
@@ -664,6 +675,9 @@ func _build_ramps() -> void:
 	mat.albedo_color = Color(0.58, 0.38, 0.20)
 	mat.roughness = 0.92
 	mat.metallic = 0.0
+	# The hand-built wedge winding faces down on some drivers; keep both faces
+	# visible so the ramp never looks like an invisible floor.
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 	var lip_mat := StandardMaterial3D.new()
 	lip_mat.albedo_color = Color(0.96, 0.88, 0.67)
 	lip_mat.roughness = 0.85
@@ -731,6 +745,16 @@ func _build_ramps() -> void:
 		var slope_length: float = sqrt(RAMP_LENGTH * RAMP_LENGTH
 			+ RAMP_HEIGHT * RAMP_HEIGHT)
 		var slope_angle: float = atan2(RAMP_HEIGHT, RAMP_LENGTH)
+
+		# A thin solid top slab guarantees a visible driving surface.
+		var top := MeshInstance3D.new()
+		var top_mesh := BoxMesh.new()
+		top_mesh.size = Vector3(RAMP_WIDTH, 0.07, slope_length)
+		top.mesh = top_mesh
+		top.material_override = mat
+		top.position = Vector3(0.0, RAMP_HEIGHT * 0.5 + 0.035, 0.0)
+		top.rotation.x = slope_angle
+		body.add_child(top)
 		for side: float in [-1.0, 1.0]:
 			var rail := MeshInstance3D.new()
 			var rail_mesh := BoxMesh.new()
@@ -1266,10 +1290,11 @@ func _setup_multiplayer() -> void:
 	multiplayer.peer_connected.connect(_on_net_peer_connected)
 	multiplayer.peer_disconnected.connect(_on_net_peer_disconnected)
 	Network.names_changed.connect(_refresh_net_names)
+	Network.notify_scene_ready()
 	if _is_host:
-		rpc("_net_race_vehicle", multiplayer.get_unique_id(), GameSettings.minigame_vehicle)
+		_broadcast_race_vehicle(multiplayer.get_unique_id(), GameSettings.minigame_vehicle)
 	else:
-		rpc("_net_race_ready", GameSettings.minigame_vehicle)
+		rpc_id(1, "_net_race_ready", GameSettings.minigame_vehicle)
 
 
 func _place_local_on_grid() -> void:
@@ -1348,17 +1373,32 @@ func _refresh_net_names() -> void:
 			label.text = Network.name_of(peer_id)
 
 
+func _broadcast_race_state(peer_id: int, position: Vector3, yaw: float, progress: float) -> void:
+	for target: int in multiplayer.get_peers():
+		if Network.is_scene_ready(target):
+			rpc_id(target, "_net_race_cart_state", peer_id, position, yaw, progress)
+
+
+func _broadcast_race_vehicle(peer_id: int, vehicle_id: String) -> void:
+	for target: int in multiplayer.get_peers():
+		if Network.is_scene_ready(target):
+			rpc_id(target, "_net_race_vehicle", peer_id, vehicle_id)
+
+
 @rpc("any_peer", "reliable")
 func _net_race_ready(vehicle_id: String) -> void:
-	var sender: int = multiplayer.get_remote_sender_id()
+	var sender: int = _rpc_sender()
 	if OS.get_environment("CART_DEBUG_NET") == "1":
 		print("RACE_NET ready from=", sender, " vehicle=", vehicle_id)
 	if sender <= 1 or sender == multiplayer.get_unique_id():
 		return
+	Network.mark_peer_scene_ready(sender)
 	_store_net_vehicle(sender, vehicle_id)
+	if _is_host and not _waiting_for_peers and _phase == Phase.COUNTDOWN:
+		rpc_id(sender, "_net_race_countdown", maxf(_countdown, 0.1))
 	if not _is_host:
 		return
-	rpc("_net_race_vehicle", sender, vehicle_id)
+	_broadcast_race_vehicle(sender, vehicle_id)
 	for peer_id: Variant in _peer_vehicles.keys():
 		rpc_id(sender, "_net_race_vehicle", int(peer_id), str(_peer_vehicles[peer_id]))
 
@@ -1381,7 +1421,7 @@ func _store_net_vehicle(peer_id: int, vehicle_id: String) -> void:
 
 @rpc("any_peer", "unreliable")
 func _net_race_cart_state(peer_id: int, position: Vector3, yaw: float, progress: float) -> void:
-	var sender: int = multiplayer.get_remote_sender_id()
+	var sender: int = _rpc_sender()
 	if sender != 1 and peer_id != sender:
 		return
 	var cart: CartPlayer = _remote_carts.get(peer_id)
@@ -1391,7 +1431,7 @@ func _net_race_cart_state(peer_id: int, position: Vector3, yaw: float, progress:
 		_remote_progress[peer_id] = clampf(progress, 0.0,
 			float(TOTAL_LAPS + 1) * _spline.total_length)
 	if _is_host and sender != 1:
-		rpc("_net_race_cart_state", peer_id, position, yaw, progress)
+		_broadcast_race_state(peer_id, position, yaw, progress)
 
 
 # --------------------------------------------------------------------------
@@ -1399,6 +1439,19 @@ func _net_race_cart_state(peer_id: int, position: Vector3, yaw: float, progress:
 
 
 func _process(delta: float) -> void:
+	if _multiplayer and _is_host and _cart != null:
+		Network.resolve_car_collisions(_cart, _remote_carts)
+	if _waiting_for_peers:
+		_wait_elapsed += delta
+		if _is_host:
+			var all_ready: bool = true
+			for peer_id: int in multiplayer.get_peers():
+				if not Network.is_scene_ready(peer_id):
+					all_ready = false
+					break
+			if all_ready or _wait_elapsed >= 8.0:
+				_begin_race_countdown()
+		return
 	if _toast_timer > 0.0:
 		_toast_timer -= delta
 		if _toast_timer <= 0.0:
@@ -1408,8 +1461,12 @@ func _process(delta: float) -> void:
 		_net_sync_timer += delta
 		if _net_sync_timer >= NET_SYNC_INTERVAL:
 			_net_sync_timer = 0.0
-			rpc("_net_race_cart_state", multiplayer.get_unique_id(),
-				_cart.global_position, _cart.rotation.y, _unwrapped)
+			if _is_host:
+				_broadcast_race_state(multiplayer.get_unique_id(),
+					_cart.global_position, _cart.rotation.y, _unwrapped)
+			elif Network.is_scene_ready(1):
+				rpc_id(1, "_net_race_cart_state", multiplayer.get_unique_id(),
+					_cart.global_position, _cart.rotation.y, _unwrapped)
 	match _phase:
 		Phase.COUNTDOWN:
 			_tick_countdown(delta)
@@ -1417,6 +1474,34 @@ func _process(delta: float) -> void:
 			_tick_race(delta)
 		Phase.FINISHED:
 			pass
+
+
+func _begin_race_countdown() -> void:
+	if not _is_host:
+		return
+	_waiting_for_peers = false
+	_countdown = 3.0
+	_last_count = 0
+	_go_shown = false
+	_phase = Phase.COUNTDOWN
+	_countdown_label.visible = true
+	_countdown_label.text = "3"
+	if OS.get_environment("CART_DEBUG_NET") == "1":
+		print("RACE_COUNTDOWN_START host peers=", multiplayer.get_peers())
+	rpc("_net_race_countdown", 3.0)
+
+
+@rpc("authority", "call_local", "reliable")
+func _net_race_countdown(seconds: float) -> void:
+	_waiting_for_peers = false
+	_countdown = maxf(seconds, 0.1)
+	_last_count = 0
+	_go_shown = false
+	_phase = Phase.COUNTDOWN
+	_countdown_label.visible = true
+	_countdown_label.text = str(int(ceil(_countdown)))
+	if OS.get_environment("CART_DEBUG_NET") == "1":
+		print("RACE_COUNTDOWN_RECV seconds=", _countdown, " host=", _is_host)
 
 
 func _tick_countdown(delta: float) -> void:
@@ -1538,6 +1623,8 @@ func _complete_lap() -> void:
 
 func _finish() -> void:
 	_phase = Phase.FINISHED
+	if Network.is_host:
+		Network.set_room_state("finished")
 	if _cart != null:
 		_cart.set_physics_process(false)
 		_cart.velocity = Vector3.ZERO
@@ -1545,8 +1632,12 @@ func _finish() -> void:
 		# Publish the final progress once so every peer's placement is correct
 		# even after this cart stops streaming state.
 		if _multiplayer and Network.is_session_active() and Network.is_connected_to_server():
-			rpc("_net_race_cart_state", multiplayer.get_unique_id(),
-				_cart.global_position, _cart.rotation.y, _unwrapped)
+			if _is_host:
+				_broadcast_race_state(multiplayer.get_unique_id(),
+					_cart.global_position, _cart.rotation.y, _unwrapped)
+			else:
+				rpc_id(1, "_net_race_cart_state", multiplayer.get_unique_id(),
+					_cart.global_position, _cart.rotation.y, _unwrapped)
 	CursorController.set_menu_mode(true)
 	_offtrack_label.visible = false
 

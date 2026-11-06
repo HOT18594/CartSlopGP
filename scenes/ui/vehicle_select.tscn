@@ -125,21 +125,31 @@ theme_override_font_sizes/font_size = 16
 text = "1 / 7"
 horizontal_alignment = 1
 
-[node name="DriveButton" type="Button" parent="Center/Panel/Body"]
-unique_name_in_owner = true
-custom_minimum_size = Vector2(0, 74)
+[node name="ActionRow" type="HBoxContainer" parent="Center/Panel/Body"]
 layout_mode = 2
-theme_override_font_sizes/font_size = 32
+theme_override_constants/separation = 10
+
+[node name="DriveButton" type="Button" parent="Center/Panel/Body/ActionRow"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 58)
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 24
 text = "LET'S DRIVE"
 script = ExtResource("4")
 fill_color = Color(1, 0.823529, 0.180392, 1)
+corner_radius = 22
+shadow_offset = 6
 
-[node name="BackButton" type="Button" parent="Center/Panel/Body"]
+[node name="BackButton" type="Button" parent="Center/Panel/Body/ActionRow"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(0, 60)
+custom_minimum_size = Vector2(0, 58)
 layout_mode = 2
-theme_override_font_sizes/font_size = 24
+size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 22
 text = "BACK"
 script = ExtResource("4")
 fill_color = Color(0.94902, 0.329412, 0.356863, 1)
-shadow_offset = 7
+corner_radius = 22
+shadow_offset = 6
+

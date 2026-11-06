@@ -1,13 +1,13 @@
 extends Node
-## Peer-to-peer session manager (ENet over UDP).
+## Multiplayer session manager.
 ##
-## Hosting: opens a port, optionally asks the router (UPnP) for a mapping, and
-## builds a 14-character join code from the reachable address plus a checksum.
-## Joining: the code is validated and decoded, then the client connects
-## straight to the host. No account, no game server.
-##
-## Code layout: 4 hex IP octets + 2 hex port bytes + 2 hex checksum, e.g.
-## C0A80104 22CE 1F -> 192.168.1.4:8910 with checksum 0x1F.
+## There are exactly two ways to start a multiplayer world:
+##   1. HOST LAN  - this PC is the server; players on the same Wi-Fi find it.
+##   2. HOST PI   - this PC registers with the Cart Slop Pi, which returns a
+##                  5-letter room code. Clients join with that code only.
+## Joining never accepts an IP address or a hand-built address code. A room
+## join always goes through the Pi server (or the LAN host that advertises
+## itself as a server).
 
 signal host_started(code: String)
 signal host_failed(reason: String)
@@ -20,6 +20,7 @@ signal names_changed()
 signal latency_changed(ms: int)
 signal code_updated(code: String)
 signal session_config_changed()
+signal server_status_changed(online: bool, detail: String)
 
 const DEFAULT_PORT: int = 8910
 const PORT_RANGE: int = 40
@@ -30,11 +31,14 @@ const LOBBY_SCENE: String = "res://scenes/ui/lobby_menu.tscn"
 const MINIGAMES_SCENE: String = "res://scenes/ui/minigames_menu.tscn"
 const PING_INTERVAL: float = 2.0
 const RELAY_DISCOVERY_PORT: int = 42778
+const LAN_ROOM_PORT: int = 42779
 const RELAY_HEARTBEAT_INTERVAL: float = 20.0
-## Built-in public fallback for players outside the LAN. The Pi still accepts
-## the LAN discovery first; this only runs when broadcast discovery finds
-## nothing. Keep the public IP in sync with the router/Pi if it changes.
+const DISCOVERY_TIMEOUT_MS: int = 1200
+const RELAY_HTTP_TIMEOUT: float = 4.0
+## Built-in Pi address, used only for discovery when broadcast finds nothing.
+## It is never shown to the player and never typed into a field.
 const DEFAULT_RELAY_SERVER: String = "68.204.45.1:42777"
+const ROOM_CODE_ALPHABET: String = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 const RelayTunnel := preload("res://scripts/net/relay_tunnel.gd")
 
 var is_host: bool = false
@@ -46,14 +50,18 @@ var public_address: String = ""
 var port: int = DEFAULT_PORT
 var latency_ms: int = 0
 var last_error: String = ""
-var connection_mode: String = "online" ## "lan" or "online"
-var custom_public_ip: String = ""
+var connection_mode: String = "pi" ## "lan" (this PC) or "pi" (room service).
 var player_names: Dictionary = {} ## peer id -> sanitized display name
-var lan_code: String = "" ## Always-valid code for players on the same network.
-var online_code: String = "" ## Public code, only when a route actually exists.
-var upnp_mapped: bool = false ## True when the router accepted a port mapping.
-var behind_cgnat: bool = false ## Router reports a carrier-shared address.
 var join_pending: bool = false
+var room_state: String = "lobby" ## "lobby" | "playing" | "finished"
+var server_online: bool = false
+var server_detail: String = "checking"
+## Peers that have loaded the current gameplay scene. Gameplay RPCs are only
+## sent to these peers; otherwise a peer still in the lobby makes Godot log
+## "Node not found: DrivingTest" for every 20 Hz state packet.
+var scene_ready_peers: Dictionary = {}
+var _scene_sync_timer: float = 0.0
+var _scene_load_path: String = ""
 var relay_base: String = ""
 var relay_lan_ip: String = ""
 var relay_token: String = ""
@@ -71,6 +79,8 @@ var relay_tunnel_token: String = ""
 var relay_tunnel_port: int = 0
 var relay_tunnel_active: bool = false
 var _relay_tunnel: Node = null
+var _lan_listener: PacketPeerUDP = null
+var _relay_forced: bool = false
 
 ## Host-chosen configuration, broadcast with _net_begin_game so every peer
 ## loads the same world with the same bots. Clients never write these locally.
@@ -82,21 +92,23 @@ var session_minigame: String = "meadow_loop"
 var race_standings: Array[Dictionary] = [] ## peer id/name/time/place, filled by the race.
 
 var _peer: ENetMultiplayerPeer
-var _upnp: UPNP
 var _host_ticket: int = 0
 var _ping_timer: float = 0.0
 var _join_started_ms: int = 0
 var _relay_heartbeat: float = 0.0
 var _relay_busy: bool = false
-var _upnp_thread: Thread
-var _upnp_result: Dictionary = {}
-var _upnp_ticket: int = 0
 
+
+
+func _rpc_sender() -> int:
+	## RPCs can still be queued when a peer is tearing down; never dereference
+	## a null multiplayer peer.
+	return multiplayer.get_remote_sender_id() if multiplayer.multiplayer_peer != null else 0
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
-	if GameSettings.relay_server != "":
-		set_relay_server(GameSettings.relay_server)
+	# There is no user-configurable server address. Tests may call
+	# set_relay_server() explicitly, but saved legacy values are ignored.
 	multiplayer.peer_connected.connect(_on_peer_connected)
 	multiplayer.peer_disconnected.connect(_on_peer_disconnected)
 	multiplayer.connected_to_server.connect(_on_connected_to_server)
@@ -105,15 +117,24 @@ func _ready() -> void:
 
 
 func _process(delta: float) -> void:
-	_poll_upnp_thread()
+	_poll_lan_listener()
 	_relay_heartbeat_tick(delta)
 	if join_pending and Time.get_ticks_msec() - _join_started_ms > 12000:
 		join_pending = false
 		leave()
-		join_failed.emit("Connection timed out. The host's port may be blocked, or the code is stale.")
+		join_failed.emit("Connection timed out. The room may have closed, or the server is unreachable.")
 		return
 	if not is_session_active() or not is_connected_to_server():
 		return
+	_scene_sync_timer += delta
+	if is_host and in_game and _scene_sync_timer >= 5.0:
+		_scene_sync_timer = 0.0
+		# Reliable scene-start messages can land before the client finished
+		# changing scenes. Retry for any peer that has not announced ready.
+		for peer_id: int in multiplayer.get_peers():
+			if not scene_ready_peers.has(peer_id):
+				rpc_id(peer_id, "_net_begin_game", game_scene, session_mode,
+					session_bots, session_bot_count)
 	_ping_timer += delta
 	if _ping_timer >= PING_INTERVAL and not is_host:
 		_ping_timer = 0.0
@@ -122,6 +143,124 @@ func _process(delta: float) -> void:
 
 func is_session_active() -> bool:
 	return is_host or is_client
+
+
+func clear_scene_ready() -> void:
+	scene_ready_peers.clear()
+	_scene_load_path = ""
+	if is_host:
+		scene_ready_peers[1] = true
+
+
+func is_scene_ready(peer_id: int) -> bool:
+	return scene_ready_peers.has(peer_id)
+
+
+func mark_peer_scene_ready(peer_id: int) -> void:
+	if is_host and peer_id > 0:
+		scene_ready_peers[peer_id] = true
+
+
+var _car_hit_cooldowns: Dictionary = {}
+
+
+func resolve_car_collisions(local_cart: Node, remotes: Dictionary) -> void:
+	## Host-authoritative car-to-car impulses. Clients still drive their own
+	## carts, but the host decides when two carts actually hit so both machines
+	## get the same correction instead of one-sided ghost collisions.
+	if not is_host or local_cart == null:
+		return
+	var now: float = Time.get_ticks_msec() / 1000.0
+	var pairs: Array = []
+	if remotes.size() > 0:
+		for peer_id: Variant in remotes.keys():
+			pairs.append([multiplayer.get_unique_id(), local_cart, int(peer_id), remotes[peer_id]])
+	var ids: Array = remotes.keys()
+	ids.sort()
+	for i in ids.size():
+		for j in range(i + 1, ids.size()):
+			pairs.append([int(ids[i]), remotes[ids[i]], int(ids[j]), remotes[ids[j]]])
+	for pair: Array in pairs:
+		var id_a: int = int(pair[0])
+		var cart_a: Node = pair[1]
+		var id_b: int = int(pair[2])
+		var cart_b: Node = pair[3]
+		if cart_a == null or cart_b == null:
+			continue
+		if id_a != multiplayer.get_unique_id() and not is_scene_ready(id_a):
+			continue
+		if id_b != multiplayer.get_unique_id() and not is_scene_ready(id_b):
+			continue
+		var key: String = "%d:%d" % [mini(id_a, id_b), maxi(id_a, id_b)]
+		if now - float(_car_hit_cooldowns.get(key, -100.0)) < 0.35:
+			continue
+		var pos_a: Vector3 = cart_a.global_position
+		var pos_b: Vector3 = cart_b.global_position
+		var delta: Vector3 = pos_b - pos_a
+		delta.y = 0.0
+		var distance: float = delta.length()
+		if distance > 2.35 or distance < 0.001:
+			continue
+		var normal: Vector3 = delta / distance
+		var vel_a: Vector3 = cart_a.call("get_collision_velocity")
+		var vel_b: Vector3 = cart_b.call("get_collision_velocity")
+		var relative: Vector3 = vel_a - vel_b
+		var impact: float = relative.dot(normal)
+		if impact < 1.0:
+			continue
+		_car_hit_cooldowns[key] = now
+		var mass_a: float = maxf(float(cart_a.call("get_mass")), 1.0)
+		var mass_b: float = maxf(float(cart_b.call("get_mass")), 1.0)
+		var inv_a: float = 1.0 / mass_a
+		var inv_b: float = 1.0 / mass_b
+		# Restitution + Coulomb friction impulse. This is a proper two-body
+		# collision, not a one-sided nudge.
+		var restitution: float = 0.22
+		var normal_impulse: float = (1.0 + restitution) * impact / (inv_a + inv_b)
+		var impulse_a: Vector3 = -normal * normal_impulse
+		var impulse_b: Vector3 = normal * normal_impulse
+		var tangent: Vector3 = relative - normal * impact
+		var tangent_speed: float = tangent.length()
+		if tangent_speed > 0.02:
+			var tangent_dir: Vector3 = tangent / tangent_speed
+			var friction_limit: float = 0.38 * normal_impulse
+			var tangent_impulse: float = minf(tangent_speed / (inv_a + inv_b),
+				friction_limit)
+			impulse_a -= tangent_dir * tangent_impulse
+			impulse_b += tangent_dir * tangent_impulse
+		# Convert momentum to a delta-v so every cart applies the same velocity
+		# change without needing to know its own mass twice.
+		var delta_a: Vector3 = impulse_a / mass_a * 0.62
+		var delta_b: Vector3 = impulse_b / mass_b * 0.62
+		if delta_a.length() > 6.5:
+			delta_a = delta_a.normalized() * 6.5
+		if delta_b.length() > 6.5:
+			delta_b = delta_b.normalized() * 6.5
+		if id_a == multiplayer.get_unique_id():
+			cart_a.call("apply_vehicle_impulse", delta_a)
+		else:
+			local_cart.rpc_id(id_a, "_net_apply_car_impulse", delta_a)
+		if id_b == multiplayer.get_unique_id():
+			cart_b.call("apply_vehicle_impulse", delta_b)
+		else:
+			local_cart.rpc_id(id_b, "_net_apply_car_impulse", delta_b)
+
+
+func notify_scene_ready() -> void:
+	## Called by every gameplay scene after its networking setup.
+	if not is_session_active() or multiplayer.multiplayer_peer == null:
+		return
+	if is_host:
+		scene_ready_peers[1] = true
+	else:
+		# The host is by definition in the gameplay scene that just loaded.
+		# Readiness is announced with the scene's existing reliable ready RPC
+		# (`_net_client_ready` / `_net_race_ready`) so older clients and hosts
+		# remain compatible.
+		scene_ready_peers[1] = true
+	_scene_load_path = ""
+
+
 
 
 func is_connected_to_server() -> bool:
@@ -139,107 +278,79 @@ func peer_count() -> int:
 # hosting
 
 
-func host_game(mode: String = "online") -> void:
+func host_game(mode: String = "pi") -> void:
 	leave()
 	_host_ticket += 1
 	var ticket: int = _host_ticket
-	connection_mode = "lan" if mode == "lan" else "online"
-	GameSettings.connection_preference = connection_mode
-	SceneLoader.begin_task("HOSTING A GAME", "Opening a port...")
+	connection_mode = "lan" if mode == "lan" else "pi"
+	GameSettings.set_connection_preference(connection_mode)
+	SceneLoader.begin_task("OPENING A ROOM", "Starting the server...")
 	await get_tree().process_frame
 	if ticket != _host_ticket:
 		SceneLoader.end_task()
 		return
-	_upnp = UPNP.new()
 	local_address = _local_ip()
 	var bound_port: int = _open_server()
 	if bound_port <= 0:
 		SceneLoader.end_task()
-		host_failed.emit("Could not open a UDP port.")
+		host_failed.emit("Could not open a game port. Close any other copy and try again.")
 		return
 	port = bound_port
 	is_host = true
 	in_game = false
+	room_state = "lobby"
+	join_code = ""
 	public_address = ""
-	upnp_mapped = false
-	behind_cgnat = false
 	session_mode = GameSettings.multiplayer_mode
 	session_bots = GameSettings.bots_enabled
 	session_bot_count = GameSettings.effective_bot_count()
-	lan_code = encode_address(local_address, port)
-	online_code = ""
-	join_code = lan_code
 	player_names[1] = GameSettings.player_name
 
-	if connection_mode == "online":
-		SceneLoader.task_message("Looking for the Cart Slop server...")
-		var found: bool = await _discover_relay()
-		if ticket != _host_ticket:
-			SceneLoader.end_task()
+	if connection_mode == "lan":
+		# The host PC is the server. No internet, no Pi, no code to type.
+		_start_lan_listener()
+		if _lan_listener == null:
+			_abort_host("Could not start LAN discovery. Close another copy and try again.")
 			return
-		if found:
-			SceneLoader.task_message("Registering with the Cart Slop server...")
-			if await _register_relay(port):
-				relay_active = true
-				lan_code = encode_address(relay_lan_host, relay_port)
-				if relay_public_host != "":
-					online_code = encode_address(relay_public_host, relay_port)
-				if relay_room_code != "":
-					join_code = relay_room_code
-				else:
-					join_code = online_code if online_code != "" else lan_code
-				public_address = relay_public_host if relay_public_host != "" else relay_lan_host
-		if not relay_active:
-			if _valid_ip(custom_public_ip):
-				# The player says they forwarded the port (or uses a VPN address).
-				public_address = custom_public_ip
-				online_code = encode_address(public_address, port)
-				join_code = online_code
-			else:
-				SceneLoader.task_message("Asking your router for a port (UPnP)...")
-				var upnp_result: Dictionary = await _upnp_lookup(port)
-				if ticket != _host_ticket:
-					SceneLoader.end_task()
-					leave()
-					return
-				behind_cgnat = bool(upnp_result.get("cgnet", false))
-				var upnp_ip: String = str(upnp_result.get("ip", ""))
-				if upnp_ip != "":
-					upnp_mapped = true
-					public_address = upnp_ip
-					online_code = encode_address(public_address, port)
-					join_code = online_code
-				elif bool(upnp_result.get("mapped", false)) and not bool(upnp_result.get("cgnet", false)):
-					# The router accepted the mapping but would not report its
-					# external address; ask the public-IP service instead.
-					var mapped_ip: String = await _public_ip_lookup()
-					if mapped_ip != "":
-						upnp_mapped = true
-						public_address = mapped_ip
-						online_code = encode_address(public_address, port)
-						join_code = online_code
-					else:
-						public_address = ""
-						join_code = lan_code
-				else:
-					# Mapping failed. A public IP alone is NOT reachable, so keep the
-					# LAN code and show the public IP as a diagnostic only.
-					SceneLoader.task_message("Router mapping failed - checking your public IP...")
-					var public_ip: String = await _public_ip_lookup()
-					if ticket != _host_ticket:
-						SceneLoader.end_task()
-						leave()
-						return
-					public_address = public_ip
-					join_code = lan_code
+		SceneLoader.end_task()
+		host_started.emit("")
+		peers_changed.emit()
+		return
 
+	# Pi mode: the server allocates the short room code. There is no direct
+	# public-IP / UPnP fallback any more.
+	SceneLoader.task_message("Connecting to the Cart Slop server...")
+	var found: bool = await _discover_relay()
 	if ticket != _host_ticket:
 		SceneLoader.end_task()
-		leave()
+		return
+	if not found:
+		_abort_host("Cart Slop server is offline. Check the internet, or host a LAN room.")
+		return
+	SceneLoader.task_message("Creating your room...")
+	var registered: bool = false
+	for attempt in 2:
+		if await _register_relay(port):
+			registered = true
+			break
+		await get_tree().create_timer(0.6).timeout
+	if not registered:
+		_abort_host("The server could not create a room. Try again in a moment.")
+		return
+	relay_active = true
+	join_code = relay_room_code
+	if join_code == "":
+		_abort_host("The server did not return a room code.")
 		return
 	SceneLoader.end_task()
 	host_started.emit(join_code)
 	peers_changed.emit()
+
+
+func _abort_host(reason: String) -> void:
+	leave()
+	SceneLoader.end_task()
+	host_failed.emit(reason)
 
 
 func _discover_relay() -> bool:
@@ -264,7 +375,7 @@ func _discover_relay() -> bool:
 	for target: String in targets:
 		udp.set_dest_address(target, RELAY_DISCOVERY_PORT)
 		udp.put_packet("CARTSLOP_DISCOVER".to_utf8_buffer())
-	var deadline: int = Time.get_ticks_msec() + 1200
+	var deadline: int = Time.get_ticks_msec() + DISCOVERY_TIMEOUT_MS
 	while Time.get_ticks_msec() < deadline:
 		while udp.get_available_packet_count() > 0:
 			var text: String = udp.get_packet().get_string_from_utf8()
@@ -282,7 +393,7 @@ func _discover_relay() -> bool:
 	# No LAN answer. Try the baked public Pi address once; this is what lets a
 	# player on school Wi-Fi use a short room code when the Pi is at home.
 	if _use_default_public_relay():
-		var probe: Dictionary = await _relay_get("/api/status")
+		var probe: Dictionary = await _relay_get("/api/status", 3.0)
 		if not probe.is_empty():
 			return true
 		_clear_default_public_relay()
@@ -313,9 +424,129 @@ func _use_default_public_relay() -> bool:
 
 func _clear_default_public_relay() -> void:
 	relay_base = ""
-	relay_server_url = ""
-	relay_server_host = ""
+	if not _relay_forced:
+		relay_server_url = ""
+		relay_server_host = ""
 	relay_base_public = false
+
+
+# --------------------------------------------------------------------------
+# LAN room discovery (host advertises itself; no typed IP, no Pi required)
+
+
+func _start_lan_listener() -> void:
+	_stop_lan_listener()
+	var udp := PacketPeerUDP.new()
+	if udp.bind(LAN_ROOM_PORT) != OK:
+		last_error = "lan_discovery_unavailable"
+		return
+	udp.set_broadcast_enabled(true)
+	_lan_listener = udp
+
+
+func _stop_lan_listener() -> void:
+	if _lan_listener != null:
+		_lan_listener.close()
+		_lan_listener = null
+
+
+func _poll_lan_listener() -> void:
+	if _lan_listener == null:
+		return
+	while _lan_listener.get_available_packet_count() > 0:
+		var packet: PackedByteArray = _lan_listener.get_packet()
+		var sender: String = _lan_listener.get_packet_ip()
+		var sender_port: int = _lan_listener.get_packet_port()
+		var parsed: Variant = JSON.parse_string(packet.get_string_from_utf8())
+		if not (parsed is Dictionary):
+			continue
+		var request: Dictionary = parsed as Dictionary
+		if str(request.get("service", "")) != "cartslop-lan" \
+				or str(request.get("want", "")) != "rooms":
+			continue
+		if sender == "" or sender_port <= 0:
+			continue
+		var reply: Dictionary = {
+			"service": "cartslop-lan",
+			"name": GameSettings.player_name,
+			# The joining client must connect back to THIS host, not to itself.
+			"host": local_address if _valid_ip(local_address) else _local_ip(),
+			"port": port,
+			"players": peer_count(),
+			"mode": session_mode,
+			"state": room_state,
+			"version": str(ProjectSettings.get_setting("application/config/version", "")),
+		}
+		_lan_listener.set_dest_address(sender, sender_port)
+		_lan_listener.put_packet(JSON.stringify(reply).to_utf8_buffer())
+
+
+func scan_lan_rooms(timeout: float = 1.4) -> Array:
+	## Broadcast a request and collect host replies. Returns rooms discovered
+	## on the local network. Nothing here is typed by the player.
+	var udp := PacketPeerUDP.new()
+	if udp.bind(0) != OK:
+		return []
+	udp.set_broadcast_enabled(true)
+	var targets: PackedStringArray = ["255.255.255.255"]
+	var lan_ip: String = _local_ip()
+	if _valid_ip(lan_ip):
+		var parts: PackedStringArray = lan_ip.split(".")
+		if parts.size() == 4:
+			targets.append("%s.%s.%s.255" % [parts[0], parts[1], parts[2]])
+	var request: PackedByteArray = JSON.stringify({
+		"service": "cartslop-lan",
+		"want": "rooms",
+	}).to_utf8_buffer()
+	for target: String in targets:
+		udp.set_dest_address(target, LAN_ROOM_PORT)
+		udp.put_packet(request)
+	var found: Dictionary = {}
+	var deadline: int = Time.get_ticks_msec() + int(maxf(timeout, 0.4) * 1000.0)
+	var next_nudge: int = 0
+	while Time.get_ticks_msec() < deadline:
+		while udp.get_available_packet_count() > 0:
+			var packet: PackedByteArray = udp.get_packet()
+			var parsed: Variant = JSON.parse_string(packet.get_string_from_utf8())
+			if not (parsed is Dictionary):
+				continue
+			var room: Dictionary = parsed as Dictionary
+			if str(room.get("service", "")) != "cartslop-lan":
+				continue
+			var host: String = str(room.get("host", ""))
+			var open_port: int = int(room.get("port", 0))
+			if not _is_private_ipv4(host) or open_port <= 0:
+				continue
+			found["%s:%d" % [host, open_port]] = {
+				"name": GameSettings.sanitize_name(str(room.get("name", "HOST"))),
+				"host": host,
+				"port": open_port,
+				"players": maxi(int(room.get("players", 1)), 1),
+				"mode": str(room.get("mode", GameSettings.GAME_SANDBOX)),
+				"state": str(room.get("state", "lobby")),
+			}
+		var now: int = Time.get_ticks_msec()
+		if now >= next_nudge:
+			next_nudge = now + 450
+			for target: String in targets:
+				udp.set_dest_address(target, LAN_ROOM_PORT)
+				udp.put_packet(request)
+		await get_tree().process_frame
+	udp.close()
+	return found.values()
+
+
+func join_lan_room(room: Dictionary) -> void:
+	var host: String = str(room.get("host", "")).strip_edges()
+	var open_port: int = int(room.get("port", 0))
+	if not _is_private_ipv4(host) or open_port <= 0:
+		join_failed.emit("That LAN room is no longer available. Scan again.")
+		return
+	if str(room.get("state", "lobby")) != "lobby":
+		join_failed.emit("That LAN room has already started.")
+		return
+	join_status_changed.emit("Joining the LAN room...")
+	_connect_to(host, open_port, "lan")
 
 
 func _relay_post(path: String, payload: Dictionary) -> Dictionary:
@@ -340,11 +571,11 @@ func _relay_post(path: String, payload: Dictionary) -> Dictionary:
 	return {}
 
 
-func _relay_get(path: String) -> Dictionary:
+func _relay_get(path: String, timeout: float = RELAY_HTTP_TIMEOUT) -> Dictionary:
 	if relay_base == "":
 		return {}
 	var http := HTTPRequest.new()
-	http.timeout = 6.0
+	http.timeout = timeout
 	add_child(http)
 	var error: Error = http.request(relay_base + path, [], HTTPClient.METHOD_GET)
 	if error != OK:
@@ -362,12 +593,20 @@ func _relay_get(path: String) -> Dictionary:
 
 func fetch_lobbies() -> Array:
 	if not await _discover_relay():
+		server_online = false
+		server_status_changed.emit(false, "offline")
 		return []
-	var response: Dictionary = await _relay_get("/api/lobbies")
+	var response: Dictionary = await _relay_get("/api/lobbies", 4.0)
+	server_online = not response.is_empty()
+	server_status_changed.emit(server_online, "online" if server_online else "offline")
 	var lobbies: Variant = response.get("lobbies", [])
-	if lobbies is Array:
-		return lobbies as Array
-	return []
+	if not (lobbies is Array):
+		return []
+	var open: Array = []
+	for entry: Variant in lobbies as Array:
+		if entry is Dictionary and str((entry as Dictionary).get("state", "lobby")) == "lobby":
+			open.append(entry)
+	return open
 
 
 func _register_relay(local_port: int) -> bool:
@@ -426,8 +665,40 @@ func _relay_heartbeat_tick(delta: float) -> void:
 		return
 	_relay_heartbeat = 0.0
 	_relay_busy = true
-	await _relay_post("/api/heartbeat", {"token": relay_token})
+	await _relay_post("/api/heartbeat", {
+		"token": relay_token,
+		"state": room_state,
+		"players": peer_count(),
+	})
 	_relay_busy = false
+
+
+func set_room_state(state: String) -> void:
+	var next: String = state if state in ["lobby", "playing", "finished"] else "lobby"
+	if next == room_state:
+		return
+	room_state = next
+	_push_room_state()
+
+
+func _push_room_state() -> void:
+	## Host -> Pi only. Pause never calls this: the room keeps its current
+	## server state while a client or host is looking at a menu.
+	if not is_host or not relay_active or relay_token == "" or relay_base == "":
+		return
+	var base: String = relay_base
+	var body: Dictionary = {
+		"token": relay_token,
+		"state": room_state,
+		"players": peer_count(),
+	}
+	var http := HTTPRequest.new()
+	http.timeout = 3.0
+	add_child(http)
+	http.request_completed.connect(func(_r: int, _c: int, _h: PackedStringArray,
+			_b: PackedByteArray) -> void: http.queue_free())
+	http.request(base + "/api/heartbeat", ["Content-Type: application/json"],
+		HTTPClient.METHOD_POST, JSON.stringify(body))
 
 
 func _relay_unregister_async(token: String, base: String) -> void:
@@ -441,93 +712,6 @@ func _relay_unregister_async(token: String, base: String) -> void:
 	var headers: PackedStringArray = ["Content-Type: application/json"]
 	http.request(base + "/api/unregister", headers, HTTPClient.METHOD_POST,
 		JSON.stringify({"token": token}))
-
-
-func _upnp_lookup(udp_port: int) -> Dictionary:
-	## Runs discovery in a thread so the loading overlay keeps animating. Some
-	## routers never answer, so the UI waits at most 6 seconds and keeps the
-	## thread alive in the background; if it answers later we upgrade the code.
-	var result: Dictionary = {"ip": "", "external": "", "cgnet": false, "mapped": false}
-	var thread := Thread.new()
-	if thread.start(_upnp_worker.bind(udp_port, result)) != OK:
-		return result
-	var deadline: int = Time.get_ticks_msec() + 6000
-	while thread.is_alive() and Time.get_ticks_msec() < deadline:
-		await get_tree().process_frame
-	if thread.is_alive():
-		_upnp_thread = thread
-		_upnp_result = result
-		_upnp_ticket = _host_ticket
-		return result
-	thread.wait_to_finish()
-	return result
-
-
-func _poll_upnp_thread() -> void:
-	if _upnp_thread == null or _upnp_thread.is_alive():
-		return
-	_upnp_thread.wait_to_finish()
-	_upnp_thread = null
-	var result: Dictionary = _upnp_result
-	_upnp_result = {}
-	if _upnp_ticket != _host_ticket or not is_host:
-		return
-	behind_cgnat = bool(result.get("cgnet", false))
-	var ip: String = str(result.get("ip", ""))
-	if ip == "" or online_code != "":
-		return
-	# The router finally answered after the overlay was dismissed.
-	upnp_mapped = true
-	public_address = ip
-	online_code = encode_address(ip, port)
-	join_code = online_code
-	code_updated.emit(online_code)
-
-
-func _upnp_worker(udp_port: int, result: Dictionary) -> void:
-	var upnp := UPNP.new()
-	var found: Error = upnp.discover(2000, 2, "InternetGatewayDevice")
-	if found != OK:
-		# Some IGDv2 routers only answer an unfiltered search.
-		upnp = UPNP.new()
-		found = upnp.discover(2000, 2, "")
-	if found != OK:
-		return
-	var gateway: UPNPDevice = upnp.get_gateway()
-	if gateway == null or not gateway.is_valid_gateway():
-		return
-	# Try a one-hour lease first, then permanent for routers that reject leases.
-	var mapped: bool = false
-	for duration: int in [3600, 0]:
-		if upnp.add_port_mapping(udp_port, udp_port, "Cart Slop GP", "UDP", duration) == OK:
-			mapped = true
-			break
-	if not mapped:
-		return
-	result["mapped"] = true
-	var external: String = upnp.get_external_ip()
-	result["external"] = external
-	if external == "" or external == "0.0.0.0":
-		return
-	if _is_public_ipv4(external):
-		result["ip"] = external
-	elif _is_cgnat_ipv4(external):
-		result["cgnet"] = true
-
-
-func _public_ip_lookup() -> String:
-	var http := HTTPRequest.new()
-	http.timeout = 4.0
-	add_child(http)
-	if http.request("https://api.ipify.org") != OK:
-		http.queue_free()
-		return ""
-	var response: Array = await http.request_completed
-	http.queue_free()
-	if int(response[1]) != 200:
-		return ""
-	var text: String = (response[3] as PackedByteArray).get_string_from_utf8().strip_edges()
-	return text if _valid_ip(text) else ""
 
 
 func _open_server() -> int:
@@ -578,10 +762,6 @@ func _local_ip() -> String:
 	return "127.0.0.1"
 
 
-func has_online_route() -> bool:
-	return online_code != ""
-
-
 func _is_public_ipv4(text: String) -> bool:
 	if not _valid_ip(text):
 		return false
@@ -610,14 +790,11 @@ func _is_cgnat_ipv4(text: String) -> bool:
 # joining
 
 
-func set_custom_public_ip(address: String) -> void:
-	custom_public_ip = address.strip_edges()
-
-
 func set_relay_server(raw: String) -> void:
 	## Accepts "1.2.3.4", "1.2.3.4:42777", "cartslop.example.com",
 	## or a full http(s) URL. Empty means "use LAN discovery".
 	var text: String = raw.strip_edges()
+	_relay_forced = text != ""
 	GameSettings.set_relay_server(text)
 	relay_server_url = ""
 	relay_server_host = ""
@@ -657,54 +834,60 @@ func name_of(peer_id: int) -> String:
 
 
 func join_game(raw_code: String) -> void:
-	var text: String = raw_code.strip_edges()
-	var address: Dictionary = decode_address(text)
-	if address.is_empty():
-		var short: String = text.to_upper().replace(" ", "")
-		if short.length() < 4 or short.length() > 6:
-			join_failed.emit("That code is not valid. Use a 5-character room code or an address.")
-			return
-		for character: String in short:
-			if not "ABCDEFGHJKLMNPQRSTUVWXYZ23456789".contains(character):
-				join_failed.emit("Room codes use letters and numbers only.")
-				return
-		join_status_changed.emit("Looking up room %s..." % short)
-		if not await _discover_relay():
-			join_failed.emit("Lobby server not found. Use the full code or connect to the same Wi-Fi.")
-			return
-		var room: Dictionary = await _relay_get("/api/room/" + short)
-		if room.is_empty():
-			join_failed.emit("Room %s was not found. Ask the host for a fresh code." % short)
-			return
-		var host: String = str(room.get("lan_host", ""))
-		if relay_base_public:
-			# The client reached the Pi by a public address/hostname, so the
-			# relay is on that same address; public_host is only a fallback.
-			host = relay_server_host if relay_server_host != "" else str(room.get("public_host", ""))
-			if host == "":
-				host = str(room.get("lan_host", ""))
-		var relay_port: int = int(room.get("relay_port", 0))
-		if host == "" or relay_port <= 0:
-			join_failed.emit("Room %s has no relay port." % short)
-			return
-		address = {"ip": host, "port": relay_port}
+	## Only a 5-letter room code from the Pi is accepted. Never an IP address,
+	## hostname, port, or hand-built 14-character address code.
+	var text: String = raw_code.strip_edges().to_upper().replace(" ", "").replace("-", "")
+	if not _valid_room_code(text):
+		join_failed.emit("Enter the 5-letter room code from the host. IP addresses are not used.")
+		return
+	join_status_changed.emit("Connecting to the Cart Slop server...")
+	if not await _discover_relay():
+		join_failed.emit("The Cart Slop server is offline. Check the internet, or join a LAN room.")
+		return
+	join_status_changed.emit("Finding room %s..." % text)
+	var room: Dictionary = await _relay_get("/api/room/" + text, 4.0)
+	if room.is_empty():
+		join_failed.emit("Room %s was not found. Ask the host for a fresh code." % text)
+		return
+	var state: String = str(room.get("state", "lobby")).to_lower()
+	if state != "lobby":
+		join_failed.emit("That room has already started. Ask the host to return to the lobby.")
+		return
+	var host: String = str(room.get("lan_host", ""))
+	if relay_base_public:
+		# The client reached the Pi at its public address; the relay lives there.
+		host = relay_server_host if relay_server_host != "" else str(room.get("public_host", ""))
+		if host == "":
+			host = str(room.get("lan_host", ""))
+	var relay_port: int = int(room.get("relay_port", 0))
+	if host == "" or relay_port <= 0:
+		join_failed.emit("That room is not accepting players yet. Try again.")
+		return
+	_connect_to(host, relay_port, "pi")
+
+
+func _connect_to(connect_ip: String, connect_port: int, mode: String) -> void:
 	leave()
-	var connect_ip: String = str(address["ip"])
 	if not _valid_ip(connect_ip):
 		connect_ip = IP.resolve_hostname(connect_ip)
 		if connect_ip == "":
-			join_failed.emit("Could not resolve %s." % str(address["ip"]))
+			join_failed.emit("Could not find that room.")
 			return
-	join_status_changed.emit("Connecting to %s:%d..." % [connect_ip, int(address["port"])])
+	if connect_port <= 0 or connect_port > 65535:
+		join_failed.emit("That room is not accepting players yet.")
+		return
+	join_status_changed.emit("Connecting to the room...")
 	var peer := ENetMultiplayerPeer.new()
-	var error: Error = peer.create_client(connect_ip, int(address["port"]))
+	var error: Error = peer.create_client(connect_ip, connect_port)
 	if error != OK:
-		join_failed.emit("Could not start the connection.")
+		join_failed.emit("Could not start the connection. Try again.")
 		return
 	_peer = peer
 	multiplayer.multiplayer_peer = peer
+	connection_mode = "lan" if mode == "lan" else "pi"
 	is_client = true
 	in_game = false
+	room_state = "lobby"
 	join_pending = true
 	_join_started_ms = Time.get_ticks_msec()
 	player_names.clear()
@@ -712,6 +895,9 @@ func join_game(raw_code: String) -> void:
 
 func leave() -> void:
 	_host_ticket += 1 ## Cancels an in-flight host_game() await chain.
+	_stop_lan_listener()
+	clear_scene_ready()
+	room_state = "lobby"
 	if relay_active and relay_token != "":
 		_relay_unregister_async(relay_token, relay_base)
 	if _peer != null:
@@ -725,10 +911,6 @@ func leave() -> void:
 	in_game = false
 	join_pending = false
 	join_code = ""
-	lan_code = ""
-	online_code = ""
-	upnp_mapped = false
-	behind_cgnat = false
 	relay_active = false
 	relay_token = ""
 	relay_port = 0
@@ -736,6 +918,9 @@ func leave() -> void:
 	relay_public_host = ""
 	relay_room_code = ""
 	relay_base = ""
+	if not _relay_forced:
+		relay_server_url = ""
+		relay_server_host = ""
 	relay_base_public = false
 	relay_tunnel_active = false
 	relay_tunnel_token = ""
@@ -799,11 +984,23 @@ func start_game(scene_path: String = "", mode: String = "") -> void:
 	session_bots = GameSettings.bots_enabled
 	session_bot_count = GameSettings.effective_bot_count()
 	session_minigame = GameSettings.selected_minigame
+	clear_scene_ready()
+	set_room_state("playing")
 	rpc("_net_begin_game", target, chosen_mode, session_bots, session_bot_count)
 
 
 @rpc("authority", "call_local", "reliable")
 func _net_begin_game(scene_path: String, mode: String, bots: bool, count: int) -> void:
+	var current: Node = get_tree().current_scene
+	if current != null and current.scene_file_path == scene_path and in_game:
+		# A retry arrived after the scene was already showing.
+		notify_scene_ready()
+		return
+	if _scene_load_path == scene_path:
+		# A previous retry already asked SceneLoader for this scene. It may
+		# still be streaming; queueing it again would load the scene twice.
+		return
+	_scene_load_path = scene_path
 	in_game = true
 	game_scene = scene_path
 	session_mode = mode
@@ -825,11 +1022,13 @@ func return_to_lobby(reason: String = "") -> void:
 func return_to_lobby_keep_session() -> void:
 	## Used after a race result. The host brings everyone back to the lobby;
 	## a client waits in its own lobby while the connection stays open.
+	clear_scene_ready()
 	if not is_session_active():
 		SceneLoader.go_to(LOBBY_SCENE, "MULTIPLAYER")
 		return
 	if is_host:
 		in_game = false
+		set_room_state("lobby")
 		rpc("_net_return_lobby")
 	else:
 		SceneLoader.go_to(LOBBY_SCENE, "MULTIPLAYER")
@@ -847,6 +1046,7 @@ func _net_return_lobby() -> void:
 
 func _on_peer_connected(id: int) -> void:
 	peers_changed.emit()
+	_push_room_state()
 	if is_host and in_game:
 		rpc_id(id, "_net_begin_game", game_scene, session_mode,
 			session_bots, session_bot_count)
@@ -857,7 +1057,7 @@ func _on_peer_connected(id: int) -> void:
 
 @rpc("any_peer", "call_local", "reliable")
 func _net_set_name(peer_id: int, raw_name: String) -> void:
-	var sender: int = multiplayer.get_remote_sender_id()
+	var sender: int = _rpc_sender()
 	# Host relays client names so every client sees the whole player list.
 	if sender != 0 and sender != 1 and peer_id != sender:
 		return
@@ -868,14 +1068,17 @@ func _net_set_name(peer_id: int, raw_name: String) -> void:
 
 
 func _on_peer_disconnected(id: int) -> void:
+	scene_ready_peers.erase(id)
 	player_names.erase(id)
 	peers_changed.emit()
 	names_changed.emit()
+	_push_room_state()
 
 
 func _on_connected_to_server() -> void:
 	is_client = true
 	join_pending = false
+	clear_scene_ready()
 	rpc("_net_set_name", multiplayer.get_unique_id(), GameSettings.player_name)
 	join_status_changed.emit("Connected. Waiting for the host to start...")
 	join_succeeded.emit()
@@ -904,7 +1107,7 @@ func _on_server_disconnected() -> void:
 @rpc("any_peer", "unreliable")
 func _net_ping(stamp: int) -> void:
 	if multiplayer.is_server():
-		rpc_id(multiplayer.get_remote_sender_id(), "_net_pong", stamp)
+		rpc_id(_rpc_sender(), "_net_pong", stamp)
 
 
 @rpc("authority", "unreliable")
@@ -987,6 +1190,48 @@ func _valid_ip(text: String) -> bool:
 		if value < 0 or value > 255:
 			return false
 	return true
+
+
+func _valid_room_code(text: String) -> bool:
+	if text.length() != 5:
+		return false
+	for character: String in text:
+		if not ROOM_CODE_ALPHABET.contains(character):
+			return false
+	return true
+
+
+func _is_private_ipv4(text: String) -> bool:
+	if not _valid_ip(text):
+		return false
+	if text.begins_with("10.") or text.begins_with("192.168.") or text.begins_with("127."):
+		return true
+	if text.begins_with("172."):
+		var second: int = int(text.split(".")[1])
+		return second >= 16 and second <= 31
+	return false
+
+
+func probe_server() -> bool:
+	## Used by the lobby to show PI SERVER ONLINE/OFFLINE and to disable room
+	## hosting/joining when there is nothing to connect to.
+	var found: bool = await _discover_relay()
+	if not found:
+		server_online = false
+		server_detail = "offline"
+		server_status_changed.emit(false, "offline")
+		return false
+	var status: Dictionary = await _relay_get("/api/status", 3.0)
+	server_online = not status.is_empty()
+	server_detail = "online" if server_online else "offline"
+	if not server_online:
+		# Force the next attempt to rediscover instead of reusing a dead route.
+		relay_base = ""
+		relay_server_url = ""
+		relay_server_host = ""
+		relay_base_public = false
+	server_status_changed.emit(server_online, server_detail)
+	return server_online
 
 
 func participants() -> Array[int]:

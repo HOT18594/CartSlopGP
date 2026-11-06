@@ -14,6 +14,8 @@ const PLAY_MENU_SCENE: String = "res://scenes/ui/play_menu.tscn"
 @onready var _update_panel: Control = %UpdatePanel
 @onready var _changelog_panel: Control = %ChangelogPanel
 
+var _update_auto_opened: bool = false
+
 
 func _ready() -> void:
 	CursorController.set_menu_mode(true)
@@ -69,6 +71,18 @@ func _on_update_available(version: String) -> void:
 	_update_button.tooltip_text = "Download and install v%s" % version
 	_update_button.visible = true
 	_status_label.text = "New version %s is out" % version
+	# Surface the update automatically instead of waiting for the player to
+	# notice the badge. Only once per launch; LATER keeps it as a badge.
+	if not _update_auto_opened and not UpdateChecker.auto_prompted and not _update_panel.visible:
+		_update_auto_opened = true
+		UpdateChecker.auto_prompted = true
+		_open_update_soon()
+
+
+func _open_update_soon() -> void:
+	await get_tree().create_timer(0.45).timeout
+	if is_inside_tree() and _update_panel != null and not _update_panel.visible:
+		_update_panel.open()
 
 
 func _on_update_pressed() -> void:

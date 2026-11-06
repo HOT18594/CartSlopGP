@@ -1,7 +1,7 @@
 # Cart Slop GP
 
 A silly shopping-cart racing sandbox built in **Godot 4.7.2**.
-Current version: **0.6.1**.
+Current version: **0.6.2**.
 
 Drive a shopping cart (or a sedan, truck, van...) around a 140 × 140 m arena,
 hit boost pads, drift, smash cones and crates, then host a shared sandbox and
@@ -13,10 +13,10 @@ invite a friend with a join code.
 
 1. Open **[github.com/HOT18594/CartSlopGP/releases/latest](https://github.com/HOT18594/CartSlopGP/releases/latest)**.
 2. Download the zip for your computer:
-   - **Windows** — `CartSlopGP_v0.6.1_windows.zip`
-   - **Mac** — `CartSlopGP_v0.6.1_macos.zip`
-   - **Linux** — `CartSlopGP_v0.6.1_linux.zip`
-   - **Browser** — `CartSlopGP_v0.6.1_web.zip` (no multiplayer)
+   - **Windows** — `CartSlopGP_v0.6.2_windows.zip`
+   - **Mac** — `CartSlopGP_v0.6.2_macos.zip`
+   - **Linux** — `CartSlopGP_v0.6.2_linux.zip`
+   - **Browser** — `CartSlopGP_v0.6.2_web.zip` (no multiplayer)
 3. Unzip it, then:
    - **Windows:** double-click `CartSlopGP.exe`. If Windows SmartScreen warns,
      click **More info → Run anyway** (the build is unsigned and safe).
@@ -27,19 +27,18 @@ invite a friend with a join code.
 
 ### Updating
 
-The game checks for updates when the main menu opens and shows an
-**UPDATE AVAILABLE** button when there is a newer version:
+The game checks for updates when the main menu opens. If a newer build
+exists, the update dialog appears automatically and starts downloading:
 
-1. Click it → **UPDATE NOW**. The game downloads the zip, unpacks it, swaps
-   the files and restarts itself. There is no separate unzip step and no
-   manual file copying.
-2. A live %/MB progress bar runs during the download. **LATER** hides it.
+1. A live %/MB progress bar runs while the update downloads. **LATER** hides
+   the dialog; the download continues.
+2. When it finishes, press **RESTART & UPDATE**. The game closes, swaps the
+   files, installs and reopens itself. There is no unzip step and no manual
+   file copying on Windows, macOS or Linux.
 3. If the automatic swap is blocked (for example, the game is inside a
    read-only folder), the dialog offers **OPEN RELEASE PAGE** instead.
 
-The check uses GitHub Releases by default. If a Cart Slop Pi server is set
-under **MULTIPLAYER → ADVANCED**, the game asks that Pi first and falls back
-to GitHub when the Pi has no update mirror.
+The game asks the Cart Slop Pi mirror first and falls back to GitHub.
 
 You can also force a check with **SETTINGS → CHECK FOR UPDATES**.
 
@@ -62,31 +61,23 @@ classic skid marks that slowly fade away.
 
 ## Multiplayer
 
-**PLAY → MULTIPLAYER** opens the lobby:
+**PLAY → MULTIPLAYER** opens the lobby. There are exactly two ways to start
+a world:
 
-- Type a name (up to 16 characters).
-- Choose **ONLINE** (across the internet) or **WI-FI / LAN** (same network).
-- **HOST A GAME** shows a 5-character room code when the Pi lobby server is
-  found, or a 14-character direct address code otherwise.
-- Your friend opens **MULTIPLAYER**, pastes the code into **JOIN**, and clicks
-  **JOIN**. **BROWSE** lists open rooms from the Pi.
-- The host picks SANDBOX or MINIGAMES, optional AI bots, and clicks
-  **START SANDBOX / START RACE**. Changing the map only updates the lobby;
-  START launches it.
+- **HOST LAN ROOM** - this PC is the server. Anyone on the same Wi-Fi presses
+  **FIND LAN ROOMS** and picks it. No internet, code or IP needed.
+- **HOST ONLINE** - the Cart Slop Pi creates a 5-letter room code. Friends
+  type that code under **JOIN A ROOM**. The Pi relays the session.
 
-Online hosting first looks for a Cart Slop Pi server. The Pi hands out a room
-code and relays the session, so the host PC needs **no port forwarding** and
-Windows Firewall does not block inbound UDP. Without a Pi, the game asks the
-router for a UPnP mapping and falls back to a LAN code if that fails.
+The lobby shows **PI SERVER ONLINE/OFFLINE**; online buttons disable
+themselves when the server cannot be reached. There is no IP address, port,
+hostname or advanced server field anywhere.
 
-**If online join fails:** many routers block UPnP or sit behind carrier-grade
-NAT. Three options that work reliably:
+The host picks SANDBOX or MINIGAMES, optional AI bots, and clicks **START**.
+Changing the map only updates the lobby; START launches it.
 
-1. **Same Wi-Fi:** share the LAN code.
-2. **Port forward:** forward the UDP port shown in the code to the host PC, put
-   your public IP in **ADVANCED**, then host again.
-3. **No router access:** run the Pi server, or use Tailscale/ZeroTier on both
-   PCs and join the same virtual network with the LAN code.
+In a multiplayer race, **Esc** opens the menu but the world keeps running
+(Minecraft-style). Single-player Esc still pauses.
 
 ### Cart Slop Pi server
 
@@ -203,13 +194,13 @@ From `godot_project/`:
 ```bash
 GODOT="C:/Users/ethan/AppData/Local/Programs/Godot/Godot_v4.7.2-stable_win64_console.exe"
 
-"$GODOT" --headless --path . --export-release "Windows Desktop" ../builds/v0.6.1/windows/CartSlopGP.exe
-"$GODOT" --headless --path . --export-release "macOS"           ../builds/v0.6.1/mac/CartSlopGP.zip
-"$GODOT" --headless --path . --export-release "Linux"           ../builds/v0.6.1/linux/CartSlopGP.x86_64
-"$GODOT" --headless --path . --export-release "Web"             ../builds/v0.6.1/web/index.html
+"$GODOT" --headless --path . --export-release "Windows Desktop" ../builds/v0.6.2/windows/CartSlopGP.exe
+"$GODOT" --headless --path . --export-release "macOS"           ../builds/v0.6.2/mac/CartSlopGP.zip
+"$GODOT" --headless --path . --export-release "Linux"           ../builds/v0.6.2/linux/CartSlopGP.x86_64
+"$GODOT" --headless --path . --export-release "Web"             ../builds/v0.6.2/web/index.html
 ```
 
-Then zip each platform folder as `CartSlopGP_v0.6.1_<platform>.zip`.
+Then zip each platform folder as `CartSlopGP_v0.6.2_<platform>.zip`.
 Full details, signing notes and the release checklist are in
 `docs/PLATFORMS.md` and `docs/RELEASE_WORKFLOW.md`.
 

@@ -38,11 +38,9 @@ func _ready() -> void:
 
 func _on_host_started(code: String) -> void:
 	print("PROBE host_started code=", code,
-		" lan=", Network.lan_code,
-		" online=", Network.online_code,
-		" upnp=", Network.upnp_mapped,
-		" cgnat=", Network.behind_cgnat,
-		" public=", Network.public_address)
+		" mode=", Network.connection_mode,
+		" state=", Network.room_state,
+		" relay=", Network.relay_active)
 	var file: FileAccess = FileAccess.open("user://join_code.txt", FileAccess.WRITE)
 	file.store_string(code)
 	file.close()
