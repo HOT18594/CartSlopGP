@@ -18,7 +18,9 @@ to the Pi's LAN address.
 ## Access
 
 - Console: `http://cartslop.local:42777` (mDNS via Avahi), or
-  `http://<pi-lan-ip>:42777`.
+  `http://<pi-lan-ip>:42777`. The console requires the password and creates a
+  session cookie. Game APIs remain unauthenticated so clients can discover and
+  join rooms.
 - SSH: `pi@cartslop.local` (password set during imaging).
 - Server logs: `journalctl -u cartslop-server -f`.
 
