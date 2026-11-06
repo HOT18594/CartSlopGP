@@ -1,6 +1,6 @@
 # Cart Slop GP TODO
 
-Updated: 2026-11-05 (v0.6.2 released; nightly Pi schedule installed)
+Updated: 2026-11-06 (v0.7.0 prepared locally; NOT released yet)
 
 ## Pi server
 
@@ -47,8 +47,14 @@ Updated: 2026-11-05 (v0.6.2 released; nightly Pi schedule installed)
 - [x] Host TCP tunnel (TCP 42820) around Windows Firewall inbound blocks
 - [x] UPnP + NAT-PMP automatic mapping and public reachability check
 - [x] LAN host advertises itself; nearby clients see a room card, no IP
-- [ ] Full server-authoritative vehicle collisions (currently each client
-      resolves its own cart against ghost bodies; bots/remotes block locally)
+- [x] Race car chosen by the host for everyone; only name tags differ
+- [x] Name tag colours (lobby swatches, synced, on carts/lists/Tab panel)
+- [x] Hold-Tab Minecraft-style player list with per-player ping
+- [x] Ghost carts and bots spawn snapped to the ground (no more hovering)
+- [x] Host-authoritative two-body car collisions in sandbox and race (mass,
+      restitution, friction, delta-v to both owners)
+- [ ] Full server-authoritative vehicle physics (impulses are host-side;
+      each peer still simulates its own cart)
 - [ ] Host migration/reconnect after a drop
 
 ## Gameplay / content
@@ -57,6 +63,7 @@ Updated: 2026-11-05 (v0.6.2 released; nightly Pi schedule installed)
 - [x] Meadow Loop 3-lap race + waiting room
 - [x] Sandbox AI bots (moving collision bodies)
 - [x] Bots/remote carts/rivals block the local cart (layer 8)
+- [x] Skid marks visible on the Meadow Loop dirt road (road collision added)
 - [ ] More minigames (add to the screen only when the scene is playable)
 - [ ] Better race rivals/bot AI and server-owned bot state
 - [ ] Vehicle-vs-vehicle collision feedback (sound/sparks)
@@ -96,6 +103,8 @@ Updated: 2026-11-05 (v0.6.2 released; nightly Pi schedule installed)
 - [x] RESTART & UPDATE prompt; install and relaunch without unzipping
 - [x] Pi update manifest endpoint (`/api/update`) with GitHub fallback
 - [x] Verify updater zip extraction and Pi manifest lookup
+- [x] Stall watchdog + self-healing update dialog (v0.7.0); verified with a
+      mock mirror (happy path + stalled connection)
 - [ ] Verify the final file swap on each desktop platform
 - [ ] Optional automated copy of release assets to the Pi mirror
 

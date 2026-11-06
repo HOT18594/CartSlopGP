@@ -28,6 +28,11 @@ var _debug_visible: bool = false
 var _hint_timer: float = 8.5
 var _net_label: Label
 var _net_timer: float = 0.0
+var _scoreboard: PanelContainer
+var _scoreboard_rows: VBoxContainer
+var _scoreboard_count: Label
+var _scoreboard_visible: bool = false
+var _scoreboard_refresh: float = 0.0
 
 
 func _ready() -> void:
@@ -48,6 +53,7 @@ func _ready() -> void:
 		_net_label.add_theme_color_override("font_outline_color", Color(0.10, 0.08, 0.18, 0.9))
 		_net_label.add_theme_constant_override("outline_size", 4)
 		add_child(_net_label)
+		_build_scoreboard()
 	_debug_label.visible = false
 	_position_badge.visible = show_position_badge
 	_lap_badge.visible = show_lap_badge
@@ -82,6 +88,11 @@ func _process(delta: float) -> void:
 		if _net_timer >= 0.25:
 			_net_timer = 0.0
 			_update_net_stats()
+	if _scoreboard_visible and _scoreboard != null:
+		_scoreboard_refresh += delta
+		if _scoreboard_refresh >= 0.3:
+			_scoreboard_refresh = 0.0
+			_update_scoreboard()
 	var cart := get_tree().get_first_node_in_group("player") as CartPlayer
 	if cart == null:
 		return
@@ -115,9 +126,98 @@ func _process(delta: float) -> void:
 func _update_net_stats() -> void:
 	if not is_instance_valid(_net_label):
 		return
-	var ping: String = "HOST" if Network.is_host else "%d ms" % Network.latency_ms
+	# The host IS the server, so its round trip is 0 ms; clients show real ms.
+	var ping: String = "0 ms (host)" if Network.is_host else "%d ms" % maxi(Network.latency_ms, 0)
 	_net_label.text = "%d FPS   PING %s   %d/%d" % [
 		Engine.get_frames_per_second(), ping, Network.peer_count(), Network.MAX_PLAYERS]
+
+
+# --------------------------------------------------------------------------
+# hold-Tab player list (Minecraft style)
+
+
+func _build_scoreboard() -> void:
+	_scoreboard = PanelContainer.new()
+	_scoreboard.name = "Scoreboard"
+	_scoreboard.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.06, 0.07, 0.15, 0.84)
+	style.border_color = Color(0.12, 0.10, 0.23, 0.9)
+	style.set_border_width_all(3)
+	style.set_corner_radius_all(14)
+	style.content_margin_left = 18.0
+	style.content_margin_right = 18.0
+	style.content_margin_top = 10.0
+	style.content_margin_bottom = 12.0
+	_scoreboard.add_theme_stylebox_override("panel", style)
+	_scoreboard.anchor_left = 0.5
+	_scoreboard.anchor_right = 0.5
+	_scoreboard.offset_left = -190.0
+	_scoreboard.offset_right = 190.0
+	_scoreboard.offset_top = 52.0
+	_scoreboard.visible = false
+	var column := VBoxContainer.new()
+	column.add_theme_constant_override("separation", 6)
+	_scoreboard.add_child(column)
+	_scoreboard_count = Label.new()
+	_scoreboard_count.text = "PLAYERS"
+	_scoreboard_count.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_scoreboard_count.add_theme_font_size_override("font_size", 15)
+	_scoreboard_count.add_theme_color_override("font_color", Color(1, 1, 1, 0.66))
+	column.add_child(_scoreboard_count)
+	_scoreboard_rows = VBoxContainer.new()
+	_scoreboard_rows.add_theme_constant_override("separation", 4)
+	column.add_child(_scoreboard_rows)
+	add_child(_scoreboard)
+
+
+func _ping_color(ms: int) -> Color:
+	if ms < 60:
+		return Color(0.45, 0.95, 0.55)
+	if ms < 120:
+		return Color(1.0, 0.82, 0.35)
+	return Color(1.0, 0.45, 0.42)
+
+
+func _update_scoreboard() -> void:
+	if _scoreboard_rows == null:
+		return
+	for child: Node in _scoreboard_rows.get_children():
+		child.queue_free()
+	var ids: Array[int] = [multiplayer.get_unique_id()]
+	for peer_id: int in multiplayer.get_peers():
+		ids.append(peer_id)
+	ids.sort()
+	_scoreboard_count.text = "PLAYERS  ·  %d/%d" % [ids.size(), Network.MAX_PLAYERS]
+	for peer_id: int in ids:
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 9)
+		var dot := ColorRect.new()
+		dot.custom_minimum_size = Vector2(12, 12)
+		dot.color = Network.color_of(peer_id)
+		dot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		row.add_child(dot)
+		var name_label := Label.new()
+		var text: String = Network.name_of(peer_id)
+		if peer_id == multiplayer.get_unique_id():
+			text += "  (YOU)"
+		if peer_id == 1:
+			text = "[HOST]  " + text
+		name_label.text = text
+		name_label.add_theme_font_size_override("font_size", 17)
+		name_label.add_theme_color_override("font_color", Color(1, 1, 1, 0.95))
+		name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		name_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		row.add_child(name_label)
+		var ms: int = int(Network.ping_table.get(peer_id, 0))
+		if ms <= 0 and not Network.is_host and peer_id == multiplayer.get_unique_id():
+			ms = maxi(Network.latency_ms, 0)
+		var ping_label := Label.new()
+		ping_label.text = "%d ms" % ms
+		ping_label.add_theme_font_size_override("font_size", 15)
+		ping_label.add_theme_color_override("font_color", _ping_color(ms))
+		row.add_child(ping_label)
+		_scoreboard_rows.add_child(row)
 
 
 func _state_text(cart: CartPlayer) -> String:
@@ -148,7 +248,18 @@ func _state_color(cart: CartPlayer) -> Color:
 
 func _unhandled_input(event: InputEvent) -> void:
 	var key := event as InputEventKey
-	if key != null and key.pressed and not key.echo and key.keycode == KEY_F3:
+	if key == null:
+		return
+	if key.keycode == KEY_TAB and _scoreboard != null:
+		# Minecraft-style: hold Tab to see who is in the room and their ping.
+		if not key.echo:
+			_scoreboard_visible = key.pressed
+			_scoreboard.visible = _scoreboard_visible
+			if _scoreboard_visible:
+				_update_scoreboard()
+			get_viewport().set_input_as_handled()
+		return
+	if key.pressed and not key.echo and key.keycode == KEY_F3:
 		_debug_visible = not _debug_visible
 		_debug_label.visible = _debug_visible
 		get_viewport().set_input_as_handled()

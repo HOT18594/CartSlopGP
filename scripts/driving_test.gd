@@ -65,6 +65,7 @@ func _setup_multiplayer() -> void:
 	multiplayer.peer_connected.connect(_on_peer_connected)
 	multiplayer.peer_disconnected.connect(_on_peer_disconnected)
 	Network.names_changed.connect(_refresh_name_labels)
+	Network.tag_colors_changed.connect(_refresh_name_labels)
 	# Vehicle models are exchanged through the scene, not the lobby: tell the
 	# host we are ready, or broadcast ours to everyone if we are the host.
 	_peer_vehicles[multiplayer.get_unique_id()] = GameSettings.selected_vehicle
@@ -166,7 +167,7 @@ func _update_bots(delta: float) -> void:
 		bump = bump.move_toward(Vector3.ZERO, 9.0 * delta)
 		node.set_meta("bump_offset", offset)
 		node.set_meta("bump_velocity", bump)
-		node.global_position = Vector3(cos(angle) * radius, 0.12,
+		node.global_position = Vector3(cos(angle) * radius, 0.02,
 			sin(angle) * radius) + offset
 		node.rotation.y = PI - angle
 		if delta > 0.0001:
@@ -203,6 +204,9 @@ func _spawn_remote(peer_id: int) -> void:
 		if local_camera != null:
 			local_camera.current = true
 	cart.global_position = Network.spawn_position(peer_id)
+	# Ghosts never run physics, so they would hover at the spawn height (a
+	# quarter metre up) until the first sync packet. Sit them on the floor.
+	cart.global_position.y = _ground_height(cart.global_position)
 	cart.net_position = cart.global_position
 	if _peer_vehicles.has(peer_id):
 		cart.set_vehicle_id(str(_peer_vehicles[peer_id]))
@@ -218,6 +222,7 @@ func _add_name_label(cart: CartPlayer, peer_id: int) -> void:
 	label.pixel_size = 0.006
 	label.outline_size = 18
 	label.outline_modulate = Color(0.118, 0.106, 0.227)
+	label.modulate = Network.color_of(peer_id)
 	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 	label.no_depth_test = true
 	label.position = Vector3(0, 2.5, 0)
@@ -230,6 +235,7 @@ func _refresh_name_labels() -> void:
 		var label: Label3D = _name_labels[peer_id]
 		if is_instance_valid(label):
 			label.text = Network.name_of(peer_id)
+			label.modulate = Network.color_of(peer_id)
 
 
 # --------------------------------------------------------------------------
@@ -355,3 +361,14 @@ func _on_local_push_requested(prop: Node, direction: Vector3, kick: float) -> vo
 	var index: int = _props.find(prop as RigidBody3D)
 	if index >= 0:
 		rpc_id(1, "_net_request_push", index, direction, kick)
+
+
+func _ground_height(at: Vector3) -> float:
+	## Floor height under a point, for placing physics-free ghost carts.
+	var space: PhysicsDirectSpaceState3D = get_world_3d().direct_space_state
+	var query := PhysicsRayQueryParameters3D.create(
+		at + Vector3.UP * 1.5, at + Vector3.DOWN * 4.0, 1)
+	var hit: Dictionary = space.intersect_ray(query)
+	if hit.is_empty():
+		return 0.0
+	return (hit["position"] as Vector3).y + 0.001

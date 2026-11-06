@@ -15,6 +15,7 @@ var _install_ready: bool = false
 var _busy: bool = false
 var _secondary_opens_page: bool = false
 var _auto_started_version: String = ""
+var _heal_timer: float = 0.0
 
 
 func _ready() -> void:
@@ -30,6 +31,27 @@ func _ready() -> void:
 	_primary_button.focus_previous = _primary_button.get_path_to(_secondary_button)
 	_secondary_button.focus_next = _secondary_button.get_path_to(_primary_button)
 	_secondary_button.focus_previous = _secondary_button.get_path_to(_primary_button)
+
+
+func _process(delta: float) -> void:
+	# Self-healing: if the download finished while this panel was hidden,
+	# freed by a scene change, or its finished signal was otherwise missed,
+	# the RESTART & UPDATE button used to stay greyed out forever. Whenever
+	# the zip for the advertised version is actually on disk, promote the
+	# dialog to the ready-to-install state no matter what happened before.
+	if _install_ready or _busy:
+		return
+	_heal_timer += delta
+	if _heal_timer < 0.5:
+		return
+	_heal_timer = 0.0
+	if UpdateChecker.latest_version == "":
+		return
+	if not UpdateChecker.has_downloaded_update(UpdateChecker.latest_version):
+		return
+	_show_install_state()
+	if visible:
+		_primary_button.grab_focus()
 
 
 func _desktop_updates() -> bool:
@@ -168,7 +190,10 @@ func _on_download_failed(reason: String) -> void:
 	_primary_button.disabled = false
 	_primary_button.text = "TRY AGAIN"
 	_secondary_button.text = "OPEN RELEASE PAGE"
-	_notes_label.text = "Download failed (%s). You can retry or use the release page." % reason
+	if reason == "stalled_connection":
+		_notes_label.text = "The download stalled. Press TRY AGAIN to retry, or use the release page."
+	else:
+		_notes_label.text = "Download failed (%s). You can retry or use the release page." % reason
 
 
 func close() -> void:

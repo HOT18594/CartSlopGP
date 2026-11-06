@@ -21,6 +21,8 @@ signal latency_changed(ms: int)
 signal code_updated(code: String)
 signal session_config_changed()
 signal server_status_changed(online: bool, detail: String)
+signal tag_colors_changed()
+signal ping_table_changed()
 
 const DEFAULT_PORT: int = 8910
 const PORT_RANGE: int = 40
@@ -52,6 +54,8 @@ var latency_ms: int = 0
 var last_error: String = ""
 var connection_mode: String = "pi" ## "lan" (this PC) or "pi" (room service).
 var player_names: Dictionary = {} ## peer id -> sanitized display name
+var player_colors: Dictionary = {} ## peer id -> name tag Color
+var ping_table: Dictionary = {} ## peer id -> that peer's ping to the server (ms)
 var join_pending: bool = false
 var room_state: String = "lobby" ## "lobby" | "playing" | "finished"
 var server_online: bool = false
@@ -305,6 +309,8 @@ func host_game(mode: String = "pi") -> void:
 	session_bots = GameSettings.bots_enabled
 	session_bot_count = GameSettings.effective_bot_count()
 	player_names[1] = GameSettings.player_name
+	player_colors[1] = GameSettings.tag_color()
+	ping_table[1] = 0
 
 	if connection_mode == "lan":
 		# The host PC is the server. No internet, no Pi, no code to type.
@@ -833,6 +839,19 @@ func name_of(peer_id: int) -> String:
 	return str(player_names.get(peer_id, "PLAYER %d" % peer_id))
 
 
+func color_of(peer_id: int) -> Color:
+	## A peer's chosen name tag colour; white when unknown (e.g. solo rivals).
+	return player_colors.get(peer_id, Color.WHITE)
+
+
+func set_local_tag_color(hex: String) -> void:
+	## Persist locally, then announce to the session so every label updates.
+	GameSettings.set_player_tag_color(hex)
+	if is_session_active():
+		rpc("_net_set_tag_color", multiplayer.get_unique_id(), GameSettings.player_tag_color)
+	tag_colors_changed.emit()
+
+
 func join_game(raw_code: String) -> void:
 	## Only a 5-letter room code from the Pi is accepted. Never an IP address,
 	## hostname, port, or hand-built 14-character address code.
@@ -933,6 +952,8 @@ func leave() -> void:
 	latency_ms = 0
 	last_error = ""
 	player_names.clear()
+	player_colors.clear()
+	ping_table.clear()
 	race_standings.clear()
 
 
@@ -1067,12 +1088,36 @@ func _net_set_name(peer_id: int, raw_name: String) -> void:
 		rpc("_net_set_name", peer_id, raw_name)
 
 
+@rpc("any_peer", "call_local", "reliable")
+func _net_set_tag_color(peer_id: int, raw_hex: String) -> void:
+	## Same relay pattern as names: a peer speaks for itself, host relays.
+	var sender: int = _rpc_sender()
+	if sender != 0 and sender != 1 and peer_id != sender:
+		return
+	var clean: String = str(raw_hex).strip_edges().trim_prefix("#").to_lower()
+	if clean.length() != 6:
+		return
+	for character: String in clean:
+		if not ("0123456789abcdef".contains(character)):
+			return
+	player_colors[peer_id] = Color(clean)
+	tag_colors_changed.emit()
+	if is_host and sender != 0 and sender != 1:
+		rpc("_net_set_tag_color", peer_id, clean)
+
+
 func _on_peer_disconnected(id: int) -> void:
 	scene_ready_peers.erase(id)
 	player_names.erase(id)
+	player_colors.erase(id)
+	ping_table.erase(id)
 	peers_changed.emit()
 	names_changed.emit()
+	tag_colors_changed.emit()
+	ping_table_changed.emit()
 	_push_room_state()
+	if is_host and is_session_active():
+		_broadcast_ping_table()
 
 
 func _on_connected_to_server() -> void:
@@ -1080,6 +1125,7 @@ func _on_connected_to_server() -> void:
 	join_pending = false
 	clear_scene_ready()
 	rpc("_net_set_name", multiplayer.get_unique_id(), GameSettings.player_name)
+	rpc("_net_set_tag_color", multiplayer.get_unique_id(), GameSettings.player_tag_color)
 	join_status_changed.emit("Connected. Waiting for the host to start...")
 	join_succeeded.emit()
 	peers_changed.emit()
@@ -1114,6 +1160,36 @@ func _net_ping(stamp: int) -> void:
 func _net_pong(stamp: int) -> void:
 	latency_ms = Time.get_ticks_msec() - stamp
 	latency_changed.emit(latency_ms)
+	# Publish our own RTT so the host can build the Minecraft-style ping table
+	# every player sees when holding Tab.
+	ping_table[multiplayer.get_unique_id()] = latency_ms
+	ping_table_changed.emit()
+	rpc_id(1, "_net_report_ping", latency_ms)
+
+
+@rpc("any_peer", "unreliable")
+func _net_report_ping(ms: int) -> void:
+	if not multiplayer.is_server():
+		return
+	var sender: int = _rpc_sender()
+	if sender <= 1:
+		return
+	ping_table[sender] = clampi(ms, 0, 5000)
+	_broadcast_ping_table()
+
+
+func _broadcast_ping_table() -> void:
+	## Host-only: relay everyone's reported ping so clients can show it too.
+	if not is_host or not is_session_active():
+		return
+	ping_table[1] = 0
+	rpc("_net_ping_table", ping_table)
+
+
+@rpc("authority", "reliable")
+func _net_ping_table(table: Dictionary) -> void:
+	ping_table = table
+	ping_table_changed.emit()
 
 
 # --------------------------------------------------------------------------

@@ -1,7 +1,7 @@
 # Cart Slop GP
 
 A silly shopping-cart racing sandbox built in **Godot 4.7.2**.
-Current version: **0.6.2**.
+Current version: **0.7.0**.
 
 Drive a shopping cart (or a sedan, truck, van...) around a 140 × 140 m arena,
 hit boost pads, drift, smash cones and crates, then host a shared sandbox and
@@ -13,10 +13,10 @@ invite a friend with a join code.
 
 1. Open **[github.com/HOT18594/CartSlopGP/releases/latest](https://github.com/HOT18594/CartSlopGP/releases/latest)**.
 2. Download the zip for your computer:
-   - **Windows** — `CartSlopGP_v0.6.2_windows.zip`
-   - **Mac** — `CartSlopGP_v0.6.2_macos.zip`
-   - **Linux** — `CartSlopGP_v0.6.2_linux.zip`
-   - **Browser** — `CartSlopGP_v0.6.2_web.zip` (no multiplayer)
+   - **Windows** — `CartSlopGP_v0.7.0_windows.zip`
+   - **Mac** — `CartSlopGP_v0.7.0_macos.zip`
+   - **Linux** — `CartSlopGP_v0.7.0_linux.zip`
+   - **Browser** — `CartSlopGP_v0.7.0_web.zip` (no multiplayer)
 3. Unzip it, then:
    - **Windows:** double-click `CartSlopGP.exe`. If Windows SmartScreen warns,
      click **More info → Run anyway** (the build is unsigned and safe).
@@ -54,10 +54,12 @@ You can also force a check with **SETTINGS → CHECK FOR UPDATES**.
 | Handbrake (drift) | Space |
 | Boost | Shift or Left Mouse |
 | Reset cart | R |
+| Player list (multiplayer) | hold Tab |
 | Pause | Esc |
 
 Menus use the mouse. Hold a drift or the handbrake and the rear tyres leave
-classic skid marks that slowly fade away.
+classic skid marks that slowly fade away - in the sandbox and on the dirt
+track of Meadow Loop alike.
 
 ## Multiplayer
 
@@ -77,7 +79,14 @@ The host picks SANDBOX or MINIGAMES, optional AI bots, and clicks **START**.
 Changing the map only updates the lobby; START launches it.
 
 In a multiplayer race, **Esc** opens the menu but the world keeps running
-(Minecraft-style). Single-player Esc still pauses.
+(Minecraft-style). Single-player Esc still pauses. Holding **Tab** shows the
+player list<arg_value><b88a6f17>player list with every player's tag colour and ping.
+
+Races use the **host's vehicle for everyone** - one car, one field; only the
+name tags differ. Every player picks a name tag colour in the lobby (the
+swatches under YOUR NAME), and it colours their floating name above the cart
+and their row in the lobby and Tab lists. Sandbox sessions keep per-player
+vehicle choices.
 
 ### Cart Slop Pi server
 
@@ -194,13 +203,13 @@ From `godot_project/`:
 ```bash
 GODOT="C:/Users/ethan/AppData/Local/Programs/Godot/Godot_v4.7.2-stable_win64_console.exe"
 
-"$GODOT" --headless --path . --export-release "Windows Desktop" ../builds/v0.6.2/windows/CartSlopGP.exe
-"$GODOT" --headless --path . --export-release "macOS"           ../builds/v0.6.2/mac/CartSlopGP.zip
-"$GODOT" --headless --path . --export-release "Linux"           ../builds/v0.6.2/linux/CartSlopGP.x86_64
-"$GODOT" --headless --path . --export-release "Web"             ../builds/v0.6.2/web/index.html
+"$GODOT" --headless --path . --export-release "Windows Desktop" ../builds/v0.7.0/windows/CartSlopGP.exe
+"$GODOT" --headless --path . --export-release "macOS"           ../builds/v0.7.0/mac/CartSlopGP.zip
+"$GODOT" --headless --path . --export-release "Linux"           ../builds/v0.7.0/linux/CartSlopGP.x86_64
+"$GODOT" --headless --path . --export-release "Web"             ../builds/v0.7.0/web/index.html
 ```
 
-Then zip each platform folder as `CartSlopGP_v0.6.2_<platform>.zip`.
+Then zip each platform folder as `CartSlopGP_v0.7.0_<platform>.zip`.
 Full details, signing notes and the release checklist are in
 `docs/PLATFORMS.md` and `docs/RELEASE_WORKFLOW.md`.
 

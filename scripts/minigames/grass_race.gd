@@ -143,6 +143,7 @@ var _multiplayer: bool = false
 var _is_host: bool = false
 var _remote_carts: Dictionary = {}
 var _peer_vehicles: Dictionary = {}
+var _race_vehicle: String = "" ## The host's car - everyone drives it in a race.
 var _name_labels: Dictionary = {}
 var _remote_progress: Dictionary = {}
 var _net_sync_timer: float = 0.0
@@ -361,6 +362,7 @@ func _build_track() -> void:
 	var norms := PackedVector3Array()
 	var uvs := PackedVector2Array()
 	var indices := PackedInt32Array()
+	var road_faces := PackedVector3Array()
 	for i in steps + 1:
 		var s: float = float(i) / float(steps) * _spline.total_length
 		var frame: Dictionary = _spline.sample(s)
@@ -384,6 +386,13 @@ func _build_track() -> void:
 		indices.append(a + 1)
 		indices.append(a + 2)
 		indices.append(a + 3)
+		# The same triangles double as the road's physical surface so the wheels
+		# rest on the visible dirt (not 4 cm lower on the ground box) and the
+		# skid-mark raycasts land on the road instead of under it.
+		road_faces.append_array([
+			verts[a], verts[a + 2], verts[a + 1],
+			verts[a + 1], verts[a + 2], verts[a + 3],
+		])
 
 	var road := ArrayMesh.new()
 	road.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES,
@@ -395,6 +404,20 @@ func _build_track() -> void:
 		"dirt_diff", "dirt_nor", "dirt_rough", 1.0,
 		Color(1.0, 0.96, 0.88), 0.24, 0.035)
 	add_child(road_mesh)
+
+	# Physical road surface: the kart drives on the dirt it sees. Without this
+	# body the wheels rest on the ground box 4 cm lower and every skid mark is
+	# painted underneath the road texture where nobody can see it.
+	var road_body := StaticBody3D.new()
+	road_body.name = "RoadCollision"
+	road_body.collision_layer = 1
+	road_body.collision_mask = 0
+	var road_shape := ConcavePolygonShape3D.new()
+	road_shape.set_faces(road_faces)
+	var road_collision := CollisionShape3D.new()
+	road_collision.shape = road_shape
+	road_body.add_child(road_collision)
+	add_child(road_body)
 
 	# Alternating red/white curbs, baked as vertex colours (one draw call).
 	var curb_verts := PackedVector3Array()
@@ -1283,16 +1306,25 @@ func _setup_multiplayer() -> void:
 	_is_host = Network.is_host
 	if OS.get_environment("CART_DEBUG_NET") == "1":
 		print("RACE_NET setup peers=", multiplayer.get_peers(), " host=", _is_host)
-	_peer_vehicles[multiplayer.get_unique_id()] = GameSettings.minigame_vehicle
+	if _is_host:
+		# Race rule: the host picks ONE car for the whole field. Only the name
+		# tag (and its colour) tells players apart.
+		_race_vehicle = GameSettings.minigame_vehicle
+	_peer_vehicles[multiplayer.get_unique_id()] = \
+		_race_vehicle if _is_host else GameSettings.minigame_vehicle
 	_place_local_on_grid()
 	for peer_id: int in multiplayer.get_peers():
 		_spawn_remote(peer_id)
 	multiplayer.peer_connected.connect(_on_net_peer_connected)
 	multiplayer.peer_disconnected.connect(_on_net_peer_disconnected)
 	Network.names_changed.connect(_refresh_net_names)
+	Network.tag_colors_changed.connect(_refresh_net_names)
 	Network.notify_scene_ready()
 	if _is_host:
-		_broadcast_race_vehicle(multiplayer.get_unique_id(), GameSettings.minigame_vehicle)
+		# Push the forced car to every peer. Peers that have not loaded the
+		# scene yet receive it again in _net_race_ready.
+		rpc("_net_force_race_vehicle", _race_vehicle)
+		_broadcast_race_vehicle(multiplayer.get_unique_id(), _race_vehicle)
 	else:
 		rpc_id(1, "_net_race_ready", GameSettings.minigame_vehicle)
 
@@ -1338,8 +1370,10 @@ func _spawn_remote(peer_id: int) -> void:
 	var index: int = maxi(ids.find(peer_id), 0)
 	var row: int = index / 2
 	var column: int = index % 2
+	# 0.05 sits the ghost ON the dirt road (top at 0.04): ghosts run no physics,
+	# so anything higher leaves them hovering in the air until the first sync.
 	cart.global_transform = _track_transform(START_DISTANCE - float(row) * 4.5,
-		-2.6 + float(column) * 5.2)
+		-2.6 + float(column) * 5.2, 0.05)
 	cart.net_position = cart.global_position
 	cart.net_yaw = cart.rotation.y
 	if _peer_vehicles.has(peer_id):
@@ -1351,6 +1385,7 @@ func _spawn_remote(peer_id: int) -> void:
 	label.pixel_size = 0.011
 	label.outline_size = 16
 	label.outline_modulate = UiPalette.OUTLINE
+	label.modulate = Network.color_of(peer_id)
 	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 	label.no_depth_test = true
 	label.position = Vector3(0.0, 2.2, 0.0)
@@ -1371,6 +1406,7 @@ func _refresh_net_names() -> void:
 		var label: Label3D = _name_labels[peer_id]
 		if is_instance_valid(label):
 			label.text = Network.name_of(peer_id)
+			label.modulate = Network.color_of(peer_id)
 
 
 func _broadcast_race_state(peer_id: int, position: Vector3, yaw: float, progress: float) -> void:
@@ -1393,12 +1429,16 @@ func _net_race_ready(vehicle_id: String) -> void:
 	if sender <= 1 or sender == multiplayer.get_unique_id():
 		return
 	Network.mark_peer_scene_ready(sender)
-	_store_net_vehicle(sender, vehicle_id)
+	# The host's car is everyone's car, so the client's own pick is ignored in
+	# a race (the sandbox keeps per-peer choices).
+	_store_net_vehicle(sender, _race_vehicle if _is_host else vehicle_id)
 	if _is_host and not _waiting_for_peers and _phase == Phase.COUNTDOWN:
 		rpc_id(sender, "_net_race_countdown", maxf(_countdown, 0.1))
 	if not _is_host:
 		return
-	_broadcast_race_vehicle(sender, vehicle_id)
+	# Re-send the forced car in case the broadcast landed before this peer's
+	# scene existed, then reply with the whole vehicle map.
+	rpc_id(sender, "_net_force_race_vehicle", _race_vehicle)
 	for peer_id: Variant in _peer_vehicles.keys():
 		rpc_id(sender, "_net_race_vehicle", int(peer_id), str(_peer_vehicles[peer_id]))
 
@@ -1413,10 +1453,36 @@ func _store_net_vehicle(peer_id: int, vehicle_id: String) -> void:
 		print("RACE_NET store peer=", peer_id, " vehicle=", vehicle_id)
 	if VehicleCatalog.find(vehicle_id).is_empty():
 		return
+	if peer_id == 1 and not _is_host:
+		# The host's car is the car everyone drives.
+		_apply_forced_vehicle(vehicle_id)
+		return
 	_peer_vehicles[peer_id] = vehicle_id
 	var cart: CartPlayer = _remote_carts.get(peer_id)
 	if cart != null:
 		cart.set_vehicle_id(vehicle_id)
+
+
+func _apply_forced_vehicle(vehicle_id: String) -> void:
+	## Client side: switch the LOCAL race cart to the host's car.
+	if _race_vehicle == vehicle_id \
+			and str(_peer_vehicles.get(multiplayer.get_unique_id(), "")) == vehicle_id:
+		return
+	_race_vehicle = vehicle_id
+	_peer_vehicles[multiplayer.get_unique_id()] = vehicle_id
+	if _cart != null:
+		_cart.reapply_vehicle(vehicle_id)
+		# The off-track slowdown resets max_speed to _base_max_speed every
+		# frame; re-capture it or the forced car silently reverts to the old
+		# stats one frame after the swap.
+		_base_max_speed = _cart.max_speed
+
+
+@rpc("authority", "call_local", "reliable")
+func _net_force_race_vehicle(vehicle_id: String) -> void:
+	if _is_host:
+		return
+	_apply_forced_vehicle(vehicle_id)
 
 
 @rpc("any_peer", "unreliable")

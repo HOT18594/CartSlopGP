@@ -102,6 +102,7 @@ var net_velocity: Vector3 = Vector3.ZERO
 var _boost_exhausted: bool = false
 var _profile_mass: float = REFERENCE_MASS
 var _profile_push_scale: float = 1.0
+var _base_stats: Dictionary = {} ## Pristine export values for vehicle re-application.
 
 var _boost_regen_timer: float = 0.0
 var _pad_burst_timer: float = 0.0
@@ -171,6 +172,7 @@ func _ready() -> void:
 		_spawn_transform = spawn_point.global_transform
 	else:
 		_spawn_transform = global_transform
+	_capture_base_stats()
 	var entry: Dictionary = _apply_vehicle_visual()
 	_apply_vehicle_stats(entry)
 	if _feedback != null:
@@ -186,6 +188,19 @@ func _ready() -> void:
 func set_spawn_transform(spawn_transform: Transform3D) -> void:
 	## Multiplayer spawns carts on a grid, not on the single-player marker.
 	_spawn_transform = spawn_transform
+
+
+func _capture_base_stats() -> void:
+	## Keep the pristine export values so another vehicle can be applied later
+	## without compounding the per-vehicle multipliers.
+	_base_stats = {
+		"max_speed": max_speed,
+		"acceleration": acceleration,
+		"lateral_grip": lateral_grip,
+		"drift_grip": drift_grip,
+		"steering_speed": steering_speed,
+		"brake_power": brake_power,
+	}
 
 
 func setup_remote(peer_id: int) -> void:
@@ -237,6 +252,19 @@ func set_vehicle_id(vehicle_id: String) -> void:
 	_profile_mass = maxf(float(entry.get("mass", REFERENCE_MASS)), 1.0)
 	_apply_vehicle_visual_for(entry)
 	_resize_collision(entry)
+
+
+func reapply_vehicle(vehicle_id: String) -> void:
+	## Switch this LOCAL cart to another catalog vehicle at runtime. Used when
+	## the race host assigns one car to everyone. Rebuilds visuals, collider,
+	## derived stats and feedback (audio/skid width) from pristine values.
+	var entry: Dictionary = VehicleCatalog.find(vehicle_id)
+	if entry.is_empty():
+		return
+	_apply_vehicle_stats(entry)
+	_apply_vehicle_visual_for(entry)
+	if _feedback != null:
+		_feedback.apply_vehicle_profile(entry)
 
 
 func get_mass() -> float:
@@ -295,9 +323,18 @@ func _apply_vehicle_visual() -> Dictionary:
 func _apply_vehicle_stats(entry: Dictionary) -> void:
 	## Mass, top speed and engine power all come from the catalog. Engine cars
 	## are quoted at REFERENCE_MASS, so a 3.2 t truck gets a much gentler launch
-	## than the 1.15 t sports car despite a bigger engine.
+	## than the 1.15 t sports car despite a bigger engine. Restores the pristine
+	## values first, so calling this twice never stacks multipliers.
 	if entry.is_empty():
 		return
+	if _base_stats.is_empty():
+		_capture_base_stats()
+	max_speed = float(_base_stats["max_speed"])
+	acceleration = float(_base_stats["acceleration"])
+	lateral_grip = float(_base_stats["lateral_grip"])
+	drift_grip = float(_base_stats["drift_grip"])
+	steering_speed = float(_base_stats["steering_speed"])
+	brake_power = float(_base_stats["brake_power"])
 	_profile_mass = maxf(float(entry.get("mass", REFERENCE_MASS)), 1.0)
 	max_speed = float(entry.get("max_speed", max_speed))
 	var engine_power: float = float(entry.get("engine_power", 0.0))

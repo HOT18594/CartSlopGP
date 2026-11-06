@@ -18,6 +18,16 @@ const PILL_CYCLER: String = "res://scripts/ui/pill_cycler.gd"
 
 const BOT_LABELS: PackedStringArray = ["NO BOTS", "1 BOT", "2 BOTS", "3 BOTS", "4 BOTS", "5 BOTS"]
 const BOT_VALUES: Array[int] = [0, 1, 2, 3, 4, 5]
+const TAG_COLORS: Array[Dictionary] = [
+	{"name": "YELLOW", "hex": "ffd22e"},
+	{"name": "CREAM", "hex": "fff6e3"},
+	{"name": "CYAN", "hex": "45b6f0"},
+	{"name": "GREEN", "hex": "4cd964"},
+	{"name": "PINK", "hex": "f26ca7"},
+	{"name": "RED", "hex": "ff4d4d"},
+	{"name": "ORANGE", "hex": "ff9f43"},
+	{"name": "PURPLE", "hex": "a06cff"},
+]
 
 @onready var _body: VBoxContainer = $Center/Scroll/Panel/Body
 
@@ -49,6 +59,7 @@ var _game_pill: Button
 var _bots_pill: Button
 var _map_button: Button
 var _vehicle_button: Button
+var _tag_swatch_buttons: Dictionary = {} ## hex -> Button
 var _state: String = "idle"
 var _scanning: bool = false
 var _browsing: bool = false
@@ -64,6 +75,8 @@ func _ready() -> void:
 	Network.join_status_changed.connect(_on_join_status)
 	Network.peers_changed.connect(_refresh_players)
 	Network.names_changed.connect(_refresh_players)
+	Network.tag_colors_changed.connect(_refresh_players)
+	Network.ping_table_changed.connect(_refresh_players)
 	Network.latency_changed.connect(func(_ms: int) -> void: _refresh_players())
 	Network.session_ended.connect(_on_session_ended)
 	Network.session_config_changed.connect(_refresh_config)
@@ -136,6 +149,31 @@ func _build_ui() -> void:
 	_typing_label.add_theme_font_size_override("font_size", 12)
 	_typing_label.add_theme_color_override("font_color", UiPalette.GRASS)
 	profile.add_child(_typing_label)
+
+	var tag_row := HBoxContainer.new()
+	tag_row.add_theme_constant_override("separation", 7)
+	_body.add_child(tag_row)
+	tag_row.add_child(_caption("TAG COLOR", 90))
+	for swatch: Dictionary in TAG_COLORS:
+		var hex: String = str(swatch["hex"])
+		var swatch_button := Button.new()
+		swatch_button.custom_minimum_size = Vector2(38, 32)
+		swatch_button.tooltip_text = "%s NAME TAG" % str(swatch["name"])
+		swatch_button.focus_mode = Control.FOCUS_NONE
+		var swatch_style := StyleBoxFlat.new()
+		swatch_style.bg_color = Color(hex)
+		swatch_style.set_corner_radius_all(9)
+		swatch_style.set_border_width_all(3)
+		swatch_style.border_color = UiPalette.INK
+		swatch_button.add_theme_stylebox_override("normal", swatch_style)
+		var hover_style: StyleBoxFlat = swatch_style.duplicate()
+		hover_style.bg_color = Color(hex).lightened(0.12)
+		swatch_button.add_theme_stylebox_override("hover", hover_style)
+		swatch_button.add_theme_stylebox_override("pressed", hover_style)
+		swatch_button.pressed.connect(_on_tag_color.bind(hex))
+		tag_row.add_child(swatch_button)
+		_tag_swatch_buttons[hex] = swatch_button
+	_refresh_tag_swatches()
 
 	var intro := Label.new()
 	intro.text = "Host a world on your Wi-Fi, or let the Cart Slop server hand out a tiny room code."
@@ -469,7 +507,11 @@ func _refresh_config() -> void:
 	var vehicle_id: String = GameSettings.minigame_vehicle if mode == GameSettings.GAME_MINIGAMES \
 		else GameSettings.selected_vehicle
 	var vehicle: Dictionary = Catalog.find(vehicle_id)
-	_vehicle_button.text = "VEHICLE: " + str(vehicle.get("name", "SHOPPING CART"))
+	if mode == GameSettings.GAME_MINIGAMES and Network.is_host:
+		# One car for the whole field in races; only the name tags differ.
+		_vehicle_button.text = "RACE CAR: %s  (ALL PLAYERS)" % str(vehicle.get("name", "SHOPPING CART"))
+	else:
+		_vehicle_button.text = "VEHICLE: " + str(vehicle.get("name", "SHOPPING CART"))
 	_start_button.text = "START RACE" if mode == GameSettings.GAME_MINIGAMES else "START SANDBOX"
 
 
@@ -481,6 +523,22 @@ func _commit_name() -> void:
 	var clean: String = GameSettings.sanitize_name(_name_input.text)
 	_name_input.text = clean
 	Network.set_local_name(clean)
+
+
+func _on_tag_color(hex: String) -> void:
+	## Pick a name tag colour; saved locally and announced to the session.
+	Network.set_local_tag_color(hex)
+	_refresh_tag_swatches()
+
+
+func _refresh_tag_swatches() -> void:
+	var selected: String = GameSettings.player_tag_color
+	for hex: String in _tag_swatch_buttons:
+		var button: Button = _tag_swatch_buttons[hex]
+		var style: StyleBoxFlat = button.get_theme_stylebox("normal") as StyleBoxFlat
+		if style != null:
+			style.set_border_width_all(6 if hex == selected else 3)
+		button.scale = Vector2.ONE * (1.12 if hex == selected else 1.0)
 
 
 func _on_code_typed(text: String) -> void:
@@ -737,16 +795,34 @@ func _refresh_players() -> void:
 		ids.append(peer_id)
 	ids.sort()
 	for peer_id: int in ids:
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 7)
+		var dot := ColorRect.new()
+		dot.custom_minimum_size = Vector2(13, 13)
+		dot.color = Network.color_of(peer_id) if Network.player_colors.has(peer_id) \
+			else UiPalette.YELLOW
+		dot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		row.add_child(dot)
 		var label_text: String = Network.name_of(peer_id)
 		if peer_id == multiplayer.get_unique_id():
 			label_text += "  (YOU)"
 		if peer_id == 1:
 			label_text = "[HOST]  " + label_text
-		var row := Label.new()
-		row.text = label_text
-		row.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		row.add_theme_font_size_override("font_size", 16)
-		row.add_theme_color_override("font_color", UiPalette.INK)
+		var name_label := Label.new()
+		name_label.text = label_text
+		name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		name_label.add_theme_font_size_override("font_size", 16)
+		name_label.add_theme_color_override("font_color", UiPalette.INK)
+		row.add_child(name_label)
+		if Network.is_session_active() and Network.is_connected_to_server():
+			var ms: int = int(Network.ping_table.get(peer_id, 0))
+			if ms <= 0 and not Network.is_host and peer_id == multiplayer.get_unique_id():
+				ms = maxi(Network.latency_ms, 0)
+			var ping_label := Label.new()
+			ping_label.text = "%d ms" % ms
+			ping_label.add_theme_font_size_override("font_size", 13)
+			ping_label.add_theme_color_override("font_color", UiPalette.BLUE_DARK)
+			row.add_child(ping_label)
 		_players_box.add_child(row)
 
 

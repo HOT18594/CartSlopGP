@@ -3,6 +3,62 @@
 All notable changes to Cart Slop GP. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer.
 
+## [0.7.0] - 2026-11-06
+
+Race identity, skid marks, player list and an update-system rescue.
+
+### Added
+
+- **Skid marks in Meadow Loop.** The dirt road now has a real collision
+  surface, so drifting in the race leaves the same fading tyre ribbons the
+  sandbox has - painted ON the road instead of hidden underneath it.
+- **Hold Tab for a Minecraft-style player list** in every multiplayer scene:
+  tag-colour dot, name (with [HOST] / (YOU) markers) and each player's ping,
+  colour-coded green / amber / red.
+- **Name tag colours.** Eight colour swatches in the multiplayer lobby save a
+  personal tag colour; it syncs to everyone and colours the floating name
+  above your cart in the sandbox and races, the lobby player list and the
+  Tab list.
+- **The host picks one car for the whole race.** In MINIGAMES sessions every
+  cart is the host's chosen vehicle - only name tags (and their colours)
+  tell players apart. Sandbox keeps per-player vehicle choices.
+- **Per-player ping everywhere.** Clients report their round trip to the
+  host, the host relays the table, and the lobby player list shows it next
+  to every name.
+- **Update-system test harness:** a local mock update mirror plus headless
+  dialog tests for the happy path and a mid-download stall.
+
+### Changed
+
+- The HUD network line always shows ping in milliseconds (`PING 42 ms`); the
+  host reads `0 ms (host)` because it is the server.
+- Update downloads get a 10-minute budget, a **20-second stall watchdog**
+  (a dead connection now flips the dialog to TRY AGAIN instead of sitting on
+  DOWNLOADING... forever), partial-file cleanup on failure, and a
+  self-healing dialog: RESTART & UPDATE enables as soon as the zip for the
+  advertised version is on disk, even if the finish notification was missed
+  while the panel was hidden or the scene changed.
+- Update dialogs no longer tear down in-flight HTTP requests directly, which
+  could block the main loop; a stalled request is detached and freed when its
+  own transfer ends.
+
+### Fixed
+
+- **Meadow Loop's road had no collision.** Wheels rested on the ground box
+  four centimetres below the visible dirt, and every skid mark was painted
+  underneath the road texture where nobody could see it. The road is now
+  solid: wheels sit on the dirt and marks render on top of it.
+- **Remote carts and sandbox bots hovered in the air.** Ghosts run no
+  physics, so they stayed at their spawn height (20-25 cm up) until the
+  first sync packet; bots floated 12 cm permanently. Both now spawn snapped
+  to the ground.
+- Switching a client's race cart to the host's car reverted one frame later:
+  the off-track speed logic reset `max_speed` from a captured pre-switch
+  value. The base speed is re-captured after the swap.
+- The car-collision dev test crashed a moving cart into a ghost that was
+  frozen mid-air, measuring a free fall instead of the impact; the ghost now
+  rests on the floor and the test passes deterministically.
+
 ## [0.6.2] - 2026-11-05
 
 Multiplayer reliability, compact UI, richer collisions and release hygiene.

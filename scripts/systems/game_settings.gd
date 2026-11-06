@@ -28,6 +28,7 @@ const CONN_ONLINE: String = CONN_PI
 @export_range(0, 2) var minigame_difficulty: int = 1
 @export_range(3, 7, 2) var minigame_rounds: int = 3
 @export var minigame_vehicle: String = "shopping_cart"
+@export var player_tag_color: String = "ffd22e" ## Name tag colour, RRGGBB hex.
 
 @export_group("Session")
 @export var play_mode: int = MODE_SINGLE ## MODE_SINGLE or MODE_MULTIPLAYER.
@@ -110,6 +111,24 @@ func set_custom_cursor(value: bool) -> void:
 func set_player_name(raw_name: String) -> void:
 	player_name = sanitize_name(raw_name)
 	save_settings()
+
+
+func set_player_tag_color(hex: String) -> void:
+	## Accepts "RRGGBB" (or "#RRGGBB"); anything else keeps the old colour.
+	var clean: String = hex.strip_edges().trim_prefix("#").to_lower()
+	if clean.length() != 6:
+		return
+	for character: String in clean:
+		if not ("0123456789abcdef".contains(character)):
+			return
+	player_tag_color = clean
+	save_settings()
+
+
+func tag_color() -> Color:
+	## The local player's tag colour as a Color; falls back to yellow.
+	var color: Color = Color.from_string(player_tag_color, Color("ffd22e"))
+	return color if color.a > 0.0 and player_tag_color.length() == 6 else Color("ffd22e")
 
 
 func set_minigame_options(difficulty: int, rounds: int, vehicle_id: String) -> void:
@@ -226,6 +245,7 @@ func load_settings() -> void:
 	minigame_difficulty = int(config.get_value("gameplay", "minigame_difficulty", minigame_difficulty))
 	minigame_rounds = int(config.get_value("gameplay", "minigame_rounds", minigame_rounds))
 	minigame_vehicle = str(config.get_value("gameplay", "minigame_vehicle", minigame_vehicle))
+	player_tag_color = str(config.get_value("gameplay", "tag_color", player_tag_color)).to_lower()
 	play_mode = int(config.get_value("session", "play_mode", play_mode))
 	multiplayer_mode = str(config.get_value("session", "multiplayer_mode", multiplayer_mode))
 	connection_preference = str(config.get_value("session", "connection", connection_preference))
@@ -253,6 +273,7 @@ func save_settings() -> void:
 	config.set_value("gameplay", "minigame_difficulty", minigame_difficulty)
 	config.set_value("gameplay", "minigame_rounds", minigame_rounds)
 	config.set_value("gameplay", "minigame_vehicle", minigame_vehicle)
+	config.set_value("gameplay", "tag_color", player_tag_color)
 	config.set_value("session", "play_mode", play_mode)
 	config.set_value("session", "multiplayer_mode", multiplayer_mode)
 	config.set_value("session", "connection", connection_preference)

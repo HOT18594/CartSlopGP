@@ -25,10 +25,13 @@ func _ready() -> void:
 	add_child(_b)
 	_b.setup_remote(2)
 	_b.set_vehicle_id("sedan")
-	_b.global_position = Vector3(0, 0.6, -2.0)
+	# Ghosts have physics disabled, so B never falls to the floor by itself:
+	# rest it ON the floor, or a still-airborne A crashes into a floating body
+	# and the measurement catches a free fall instead of the impact.
+	_b.global_position = Vector3(0, 0.001, -2.0)
 	_b.net_position = _b.global_position
 
-	for i in 4:
+	for i in 24:
 		await get_tree().physics_frame
 	_a.velocity = Vector3(0, 0, -12.0)
 	for i in 24:

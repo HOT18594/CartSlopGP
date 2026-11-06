@@ -17,6 +17,10 @@ signal download_failed(reason: String)
 const UPDATE_DIR: String = "user://updates"
 const DOWNLOAD_STATE_PATH: String = "user://updates/download.cfg"
 const API_HOST: String = "https://api.github.com"
+## A healthy download moves bytes constantly; if nothing arrives for this
+## long the connection is treated as dead instead of hanging the dialog on
+## DOWNLOADING... forever.
+const DOWNLOAD_STALL_SECONDS: float = 20.0
 
 @export_group("Update Checks")
 @export var enable_update_checks: bool = true ## Master switch for the silent menu check.
@@ -26,7 +30,7 @@ const API_HOST: String = "https://api.github.com"
 @export var user_agent: String = "CartSlopGP-UpdateChecker"
 
 @export_group("Downloads")
-@export var download_timeout: float = 300.0 ## Seconds allowed for the zip download.
+@export var download_timeout: float = 600.0 ## Seconds allowed for the zip download.
 
 ## "idle" | "checking" | "up_to_date" | "available" | "offline" | "error"
 var status: String = "idle"
@@ -46,7 +50,10 @@ var _checking: bool = false
 var _downloading: bool = false
 var _downloaded_file: String = ""
 var _downloaded_version: String = ""
+var _download_target: String = "" ## Absolute user:// path chosen at download start.
 var _progress_accum: float = 0.0
+var _stall_timer: float = 0.0
+var _last_progress_bytes: int = -1
 
 
 func _ready() -> void:
@@ -58,12 +65,23 @@ func _ready() -> void:
 func _process(delta: float) -> void:
 	if not _downloading or _download_request == null:
 		return
+	var received: int = _download_request.get_downloaded_bytes()
+	if received != _last_progress_bytes:
+		_last_progress_bytes = received
+		_stall_timer = 0.0
+	else:
+		_stall_timer += delta
+	if _stall_timer >= DOWNLOAD_STALL_SECONDS:
+		# The connection stopped delivering bytes. Tear the request down so
+		# the dialog offers TRY AGAIN instead of sitting greyed out on
+		# DOWNLOADING... forever.
+		_abort_download("stalled_connection")
+		return
 	_progress_accum += delta
 	if _progress_accum < 0.1:
 		return
 	_progress_accum = 0.0
 	var total: int = _download_request.get_body_size()
-	var received: int = _download_request.get_downloaded_bytes()
 	if total <= 0:
 		# No Content-Length from the CDN: don't fake 100% while bytes still
 		# arrive; the final download_finished signal is authoritative.
@@ -300,19 +318,24 @@ func open_download_in_browser() -> void:
 
 func download_update() -> void:
 	## Tier 2: pull the release zip into user://updates/.
-	if _downloading or latest_asset_url == "":
+	if _downloading:
+		return
+	if latest_asset_url == "":
+		download_failed.emit("no_asset")
 		return
 	_downloading = true
 	_downloaded_file = ""
 	_progress_accum = 0.0
+	_stall_timer = 0.0
+	_last_progress_bytes = -1
 	DirAccess.make_dir_recursive_absolute(UPDATE_DIR)
 	var target_name: String = latest_asset_name if latest_asset_name != "" else "CartSlopGP_update.zip"
-	var target_path: String = "%s/%s" % [UPDATE_DIR, target_name]
+	_download_target = "%s/%s" % [UPDATE_DIR, target_name]
 
 	_download_request = HTTPRequest.new()
 	_download_request.timeout = download_timeout
 	_download_request.use_threads = true
-	_download_request.download_file = target_path
+	_download_request.download_file = _download_target
 	add_child(_download_request)
 	_download_request.request_completed.connect(_on_download_completed, CONNECT_ONE_SHOT)
 
@@ -326,11 +349,34 @@ func download_update() -> void:
 		download_failed.emit("request_error_%d" % error)
 
 
+func _abort_download(reason: String) -> void:
+	## HTTPRequest has no cancel() in Godot 4.7, and freeing a request while
+	## its threaded download is still running can block the main loop on the
+	## thread join. Instead: detach our handler, shorten the request's own
+	## timeout so the engine ends the transfer, and free the node when it
+	## reports back (safe once the transfer is finished).
+	print("UPDATE_ABORT stall fired, detaching request")
+	_downloading = false
+	_stall_timer = 0.0
+	_last_progress_bytes = -1
+	var request: HTTPRequest = _download_request
+	_download_request = null
+	if is_instance_valid(request):
+		if request.request_completed.is_connected(_on_download_completed):
+			request.request_completed.disconnect(_on_download_completed)
+		request.timeout = 5.0
+		request.request_completed.connect(func(_r: int, _c: int,
+				_h: PackedStringArray, _b: PackedByteArray) -> void:
+			request.queue_free(), CONNECT_ONE_SHOT)
+	_delete_file(_download_target)
+	download_failed.emit(reason)
+
+
 func _on_download_completed(result: int, response_code: int, _headers: PackedStringArray, _body: PackedByteArray) -> void:
 	_downloading = false
-	var target_name: String = latest_asset_name if latest_asset_name != "" else "CartSlopGP_update.zip"
-	var target_path: String = "%s/%s" % [UPDATE_DIR, target_name]
+	var target_path: String = _download_target
 	if result != HTTPRequest.RESULT_SUCCESS or response_code != 200:
+		_delete_file(target_path)
 		download_failed.emit("download_failed")
 	elif not FileAccess.file_exists(target_path):
 		download_failed.emit("missing_file")
@@ -340,9 +386,17 @@ func _on_download_completed(result: int, response_code: int, _headers: PackedStr
 		_save_download_state()
 		_prune_old_downloads(target_path)
 		download_finished.emit(target_path)
+	_stall_timer = 0.0
+	_last_progress_bytes = -1
 	if is_instance_valid(_download_request):
 		_download_request.queue_free()
 		_download_request = null
+
+
+func _delete_file(path: String) -> void:
+	## Partial zips are useless; never leave one behind for the next check.
+	if path != "" and FileAccess.file_exists(path):
+		DirAccess.remove_absolute(path)
 
 
 func _prune_old_downloads(keep_path: String) -> void:

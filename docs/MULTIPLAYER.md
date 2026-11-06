@@ -18,6 +18,20 @@ Everyone gets the themed loading screen and the same scene. Late joiners are
 dropped straight in (the host re-sends the full session config), unless the
 room state is already `playing` or `finished`.
 
+**Races use one car for everyone.** The host's chosen vehicle is forced onto
+every peer's local cart (and every ghost), so the whole field drives the same
+model with the same stats. Only name tags tell players apart - and each
+player picks a **tag colour** from the swatches in the lobby. The colour is
+saved locally, relayed through the host, and used on the floating name above
+carts, the lobby player list and the hold-Tab player list. Sandbox sessions
+keep per-player vehicle choices as before.
+
+Holding **Tab** in any multiplayer scene shows a Minecraft-style player list
+with every player's tag colour, name and ping. Clients measure their own
+round trip, report it to the host every 2 s, and the host relays the full
+table so everyone sees the same numbers. The HUD network line shows the
+local ping in milliseconds (`0 ms (host)` on the host).
+
 The host and every client can open **VEHICLE** in the lobby (or the minigame
 screen) to pick a car with the full stat sheet. Each peer picks their own;
 the host relays vehicle ids so every cart looks right.
@@ -39,6 +53,9 @@ room key and only share it with people you want in the session.
 | Props (cones, crates) | host simulates, broadcasts snapshots | 10 Hz, unreliable |
 | Pushes from clients | client asks host, host applies the impulse | on contact |
 | Vehicle choice | each peer announces its model id | on join / peer change |
+| Forced race car | host assigns its vehicle to every peer | on race start |
+| Tag colours | each peer announces its colour; host relays | on join / change |
+| Ping table | clients report RTT, host broadcasts the table | every 2 s |
 | Race progress | each peer streams unwrapped lap distance | 20 Hz |
 | Car-to-car collisions | host resolves and sends impulses to both owners | on contact |
 | Race countdown | host starts after every peer confirms the scene | once |
