@@ -45,6 +45,7 @@ var auto_prompted: bool = false
 
 var _check_request: HTTPRequest
 var _server_request: HTTPRequest
+var _server_candidate: Dictionary = {}
 var _download_request: HTTPRequest
 var _checking: bool = false
 var _downloading: bool = false
@@ -122,6 +123,7 @@ func check_for_updates() -> void:
 	_checking = true
 	status = "checking"
 	last_error = ""
+	_server_candidate.clear()
 
 	# A configured Pi/server is the migration path. If it has no update
 	# manifest (404) or cannot be reached, fall through to GitHub.
@@ -189,21 +191,12 @@ func _on_server_check_completed(result: int, response_code: int,
 			var manifest: Dictionary = parsed as Dictionary
 			var version: String = normalize_version(str(manifest.get("version", "")))
 			if version != "":
-				if version_greater(version, local_version()):
-					latest_version = version
-					latest_release_url = str(manifest.get("release_url", ""))
-					latest_asset_name = str(manifest.get("asset_name", ""))
-					var asset_path: String = str(manifest.get("asset_path", ""))
-					if asset_path.begins_with("/"):
-						latest_asset_url = base + asset_path
-					elif latest_asset_name != "":
-						latest_asset_url = base + "/updates/" + latest_asset_name
-					status = "available"
-					update_available.emit(latest_version, latest_release_url, latest_asset_url)
-					_finish_check("available", "")
-					return
-	# Server said current/older, or has no usable manifest. GitHub stays the
-	# source of truth so a stale Pi mirror cannot hide a newer release.
+				# Keep the mirror as a CANDIDATE only. A stale but still newer
+				# mirror must never hide a newer GitHub release.
+				_server_candidate = manifest.duplicate()
+				_server_candidate["version"] = version
+				_server_candidate["base"] = base
+	# Always ask GitHub too, then pick whichever version is actually newest.
 	_check_github()
 
 
@@ -225,17 +218,18 @@ func _check_github() -> void:
 
 
 func _on_check_completed(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
-	if result != HTTPRequest.RESULT_SUCCESS:
-		_finish_check("offline", "no_connection")
-		return
-	if response_code != 200:
-		# 404 = no releases yet, 403 = rate limited. Neither is worth showing.
-		_finish_check("offline" if response_code == 403 else "error", "http_%d" % response_code)
+	if result != HTTPRequest.RESULT_SUCCESS or response_code != 200 			or not (JSON.parse_string(body.get_string_from_utf8()) is Dictionary):
+		# GitHub is unreachable/rate-limited/broken. The Pi mirror can still
+		# offer a valid update instead of leaving the player on an old build.
+		if _apply_server_candidate():
+			return
+		if result != HTTPRequest.RESULT_SUCCESS:
+			_finish_check("offline", "no_connection")
+		else:
+			_finish_check("offline" if response_code == 403 else "error",
+				"http_%d" % response_code if response_code != 200 else "bad_json")
 		return
 	var parsed: Variant = JSON.parse_string(body.get_string_from_utf8())
-	if not (parsed is Dictionary):
-		_finish_check("error", "bad_json")
-		return
 	var release: Dictionary = parsed as Dictionary
 	var tag: String = str(release.get("tag_name", "")).strip_edges()
 	latest_version = normalize_version(tag)
@@ -244,8 +238,23 @@ func _on_check_completed(result: int, response_code: int, _headers: PackedString
 	latest_asset_name = ""
 	_pick_asset(release.get("assets", []))
 	if latest_version == "":
+		if _apply_server_candidate():
+			return
 		_finish_check("error", "missing_tag")
 		return
+	# Prefer the mirror only when it is genuinely newer than GitHub.
+	if not _server_candidate.is_empty():
+		var mirror_version: String = str(_server_candidate.get("version", ""))
+		if version_greater(mirror_version, latest_version):
+			latest_version = mirror_version
+			latest_release_url = str(_server_candidate.get("release_url", ""))
+			latest_asset_name = str(_server_candidate.get("asset_name", ""))
+			var asset_path: String = str(_server_candidate.get("asset_path", ""))
+			var base: String = str(_server_candidate.get("base", ""))
+			if asset_path.begins_with("/"):
+				latest_asset_url = base + asset_path
+			elif latest_asset_name != "":
+				latest_asset_url = base + "/updates/" + latest_asset_name
 	if version_greater(latest_version, local_version()):
 		status = "available"
 		update_available.emit(latest_version, latest_release_url, latest_asset_url)
@@ -287,6 +296,32 @@ func _platform_keyword() -> String:
 			return "linux"
 		_:
 			return ""
+
+
+
+func _apply_server_candidate() -> bool:
+	## Fallback path: GitHub failed, but the Pi mirror had a usable manifest.
+	if _server_candidate.is_empty():
+		return false
+	var version: String = str(_server_candidate.get("version", ""))
+	if version == "" or not version_greater(version, local_version()):
+		return false
+	latest_version = version
+	latest_release_url = str(_server_candidate.get("release_url", ""))
+	latest_asset_name = str(_server_candidate.get("asset_name", ""))
+	var asset_path: String = str(_server_candidate.get("asset_path", ""))
+	var base: String = str(_server_candidate.get("base", ""))
+	latest_asset_url = ""
+	if asset_path.begins_with("/"):
+		latest_asset_url = base + asset_path
+	elif latest_asset_name != "":
+		latest_asset_url = base + "/updates/" + latest_asset_name
+	if latest_asset_url == "":
+		return false
+	status = "available"
+	update_available.emit(latest_version, latest_release_url, latest_asset_url)
+	_finish_check("available", "")
+	return true
 
 
 func _finish_check(new_status: String, error_text: String) -> void:
