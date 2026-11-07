@@ -9,9 +9,15 @@ Two ways to start a world, and no other:
    relays the session through its TCP tunnel. Friends type that code under
    **JOIN A ROOM**. The Pi is the only online room service.
 
-The lobby shows **PI SERVER ONLINE/OFFLINE** and disables online controls when
-the server cannot be reached. There is no IP address, port, hostname, UPnP or
-hand-built address code in the join path; a 14-character code is rejected.
+The lobby is one column: profile row, **1 HOST A ROOM**, **2 JOIN A ROOM**, the
+room card, host settings, START and LEAVE ROOM. There is no server status
+light; when everything works nothing is shown. If the Pi cannot be reached at
+all, one plain line appears: `Game server is down. Try again later.` Both
+**FIND LAN ROOMS** and **BROWSE ONLINE ROOMS** open the same searchable room
+popup (filter by host name or room code, REFRESH, click to join).
+
+There is no IP address, port, hostname, UPnP or hand-built address code in the
+join path; a 14-character code is rejected.
 
 The host chooses SANDBOX or MINIGAMES, optional bots, and presses START.
 Everyone gets the themed loading screen and the same scene. Late joiners are
@@ -32,9 +38,10 @@ round trip, report it to the host every 2 s, and the host relays the full
 table so everyone sees the same numbers. The HUD network line shows the
 local ping in milliseconds (`0 ms (host)` on the host).
 
-The host and every client can open **VEHICLE** in the lobby (or the minigame
-screen) to pick a car with the full stat sheet. Each peer picks their own;
-the host relays vehicle ids so every cart looks right.
+The host and every client can open **VEHICLE** in the lobby to pick a car with
+the full stat sheet; each peer picks their own and the host relays vehicle ids.
+Once a session is active the minigame screen becomes a map picker only (the
+VEHICLE button is hidden), and a race still forces the host's car on everyone.
 
 Pausing in multiplayer opens the menu but does **not** pause the tree or the
 server; the world keeps running. Single-player still pauses.

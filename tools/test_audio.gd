@@ -48,8 +48,61 @@ func _ready() -> void:
 		var stream: AudioStream = load(path) as AudioStream
 		_expect(stream != null and stream.get_length() > 0.0, path + " loads")
 
+	await _check_music()
+
 	print("AUDIO TESTS: %s" % ("all passed" if _failures == 0 else "%d failure(s)" % _failures))
 	get_tree().quit(0 if _failures == 0 else 1)
+
+
+func _check_music() -> void:
+	print("[music]")
+	var music: Node = Music
+	_expect(music != null, "Music autoload exists")
+	if music == null:
+		return
+	# Stop the autoload from switching tracks to match this test scene.
+	music.set_process(false)
+
+	var constants: Dictionary = music.get_script().get_script_constant_map()
+	var level: float = float(constants.get("MUSIC_LEVEL_DB", 0.0))
+	_expect(level < 0.0 and level > -20.0,
+		"music sits below full volume (%.1f dB)" % level)
+
+	for track in ["menu_loop", "sandbox_loop", "race_loop"]:
+		var stream: AudioStream = music.call("_load_stream", track) as AudioStream
+		_expect(stream != null and stream.get_length() > 5.0,
+			track + " imports with real audio")
+		_expect(stream != null and _is_looped(stream), track + " is looped")
+
+	var expected: Dictionary = {
+		"res://scenes/ui/main_menu.tscn": "menu_loop",
+		"res://scenes/ui/settings_menu.tscn": "menu_loop",
+		"res://scenes/minigames/grass_race.tscn": "race_loop",
+		"res://scenes/minigames/meadow_lobby.tscn": "race_loop",
+		"res://scenes/dev/driving_test.tscn": "sandbox_loop",
+		"res://scenes/dev/something_else.tscn": "",
+	}
+	for path: String in expected:
+		var got: String = str(music.call("track_for_path", path))
+		_expect(got == str(expected[path]),
+			"%s -> %s (got %s)" % [path.get_file(), str(expected[path]), got])
+
+	# Playback: the active player must fade up to the music level, not 0 dB.
+	music.call("play_track", "race_loop")
+	# Headless frames run far faster than real time, so wait on the clock, not
+	# on a frame count, for the 1.4 s crossfade to finish.
+	await get_tree().create_timer(1.9).timeout
+	var players: Array = music.get("_players")
+	var active: int = int(music.get("_active"))
+	var player: AudioStreamPlayer = players[active] as AudioStreamPlayer
+	_expect(player.playing, "race_loop is playing")
+	_expect(absf(player.volume_db - level) < 1.0,
+		"race_loop faded to %.1f dB (got %.1f)" % [level, player.volume_db])
+	_expect(_is_looped(player.stream), "playing stream is looped")
+	music.call("stop_music", 0.05)
+	for i in 10:
+		await get_tree().process_frame
+	_expect(not player.playing, "stop_music stops the player")
 
 
 func _is_looped(stream: AudioStream) -> bool:

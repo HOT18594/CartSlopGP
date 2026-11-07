@@ -66,7 +66,9 @@ Updated: 2026-11-06 (v0.6.3 RELEASED to GitHub)
 - [x] Bots/remote carts/rivals block the local cart (layer 8)
 - [x] Skid marks visible on the Meadow Loop dirt road (road collision added)
 - [ ] More minigames (add to the screen only when the scene is playable)
-- [ ] Wire more of the 5 AI images into result/transition screens
+- [x] Wire more of the 5 AI images into result/transition screens
+      (finish art behind the Meadow Loop result card)
+- [ ] Use the remaining art on any other result/transition screen that needs it
 - [ ] Better race rivals/bot AI and server-owned bot state
 - [ ] Vehicle-vs-vehicle collision feedback (sound/sparks)
 
@@ -133,11 +135,15 @@ Updated: 2026-11-06 (v0.6.3 RELEASED to GitHub)
 ## Music
 
 - [x] `menu_loop.mp3`, `sandbox_loop.mp3`, `race_loop.mp3` moved into the project
-- [ ] Import MP3s in Godot and verify loops/volume in each state
+- [x] Import MP3s in Godot and verify loops/volume in each state
+      (`tools/test_audio.tscn` checks all three tracks, the loop flag,
+      per-screen mapping and the -7 dB crossfade)
 
 ## Housekeeping
 
 - [ ] Remove dev-only screenshot/probe scenes from exported builds (optional)
-- [ ] Update `docs/MULTIPLAYER.md` and `docs/PI_SERVER.md` after live Pi test
+- [x] Update `docs/MULTIPLAYER.md` and `docs/PI_SERVER.md` for the 0.6.3 UI
+      and the nightly service window
 - [x] Keep README current version and setup docs in sync
-- [ ] Refresh the stale v0.6.2 handoff in docs/HANDOFF_2026-11-05.md
+- [x] Refresh the stale v0.6.2 handoff in docs/HANDOFF_2026-11-05.md
+      (superseded banner added; v0.6.3 handoff is authoritative)

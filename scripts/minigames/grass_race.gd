@@ -20,6 +20,7 @@ const RaceScenery := preload("res://scripts/minigames/race_scenery.gd")
 const RaceEffects := preload("res://scripts/minigames/race_effects.gd")
 const VehicleVisual := preload("res://scripts/vehicles/vehicle_visual.gd")
 const UiPalette := preload("res://scripts/ui/ui_palette.gd")
+const ART_BACKDROP := preload("res://scripts/ui/art_backdrop.gd")
 
 const RACE_SCENE: String = "res://scenes/minigames/grass_race.tscn"
 const LOBBY_SCENE: String = "res://scenes/minigames/meadow_lobby.tscn"
@@ -1192,9 +1193,16 @@ func _build_overlay() -> void:
 	_result_root.visible = false
 	root.add_child(_result_root)
 
+	# Finish-line artwork behind the card, matching the menu art set. The plain
+	# scrim on top keeps the card readable and still lets the art show through.
+	var art: Control = ART_BACKDROP.new()
+	art.set("texture_names", PackedStringArray(["scene_finish.png"]))
+	art.set("dim", 0.10)
+	_result_root.add_child(art)
+
 	var dim := ColorRect.new()
 	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
-	dim.color = Color(0.06, 0.09, 0.19, 0.62)
+	dim.color = Color(0.06, 0.09, 0.19, 0.42)
 	_result_root.add_child(dim)
 
 	var center := CenterContainer.new()

@@ -46,7 +46,11 @@ func _track_for_current_scene() -> String:
 	var scene: Node = get_tree().current_scene
 	if scene == null:
 		return ""
-	var path: String = scene.scene_file_path
+	return track_for_path(scene.scene_file_path)
+
+
+## Pure scene-path mapping, kept separate so tests can check every screen.
+func track_for_path(path: String) -> String:
 	if path.ends_with("driving_test.tscn"):
 		return SANDBOX_TRACK
 	if path.ends_with("grass_race.tscn") or path.ends_with("meadow_lobby.tscn"):

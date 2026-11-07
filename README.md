@@ -151,8 +151,10 @@ The start gantry is two rows of five lamps, like a real Formula 1 start. One
 column (two lamps) lights per countdown beat, so two dots coming on together is
 intentional. All ten go green on GO. See `docs/MEADOW_LOOP.md`.
 
-Optional music: drop `menu_loop.mp3`, `sandbox_loop.mp3` and `race_loop.mp3`
-into `assets/audio/music/` before exporting. Missing tracks simply play no
+Music ships with the game: `menu_loop.mp3`, `sandbox_loop.mp3` and
+`race_loop.mp3` in `assets/audio/music/`, all looped and mixed 7 dB under the
+SFX bus. `scripts/systems/music_player.gd` swaps tracks per screen with a 1.4 s
+crossfade (menus, sandbox, race and race lobby). Missing tracks simply play no
 music. See that folder's README and `docs/AUDIO_SOURCES.md`.
 
 ---
@@ -167,7 +169,7 @@ Five illustrated backgrounds ship in `assets/ui/art/`:
 | `scene_track_aerial.png` | Game selector, aerial dirt track |
 | `scene_road.png` | Game selector, winding country road |
 | `scene_arena.png` | Game selector, stunt arena |
-| `scene_finish.png` | Game selector, finish line |
+| `scene_finish.png` | Game selector, plus the finish backdrop on the race result card |
 
 The game selector crossfades through the four scene images every 4.5 seconds.
 Everything is drawn by `scripts/ui/art_backdrop.gd`. If any image is missing,

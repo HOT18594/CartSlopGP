@@ -24,6 +24,14 @@ to the Pi's LAN address.
 - SSH: `pi@cartslop.local` (password set during imaging).
 - Server logs: `journalctl -u cartslop-server -f`.
 
+## Service window
+
+The Pi stays powered but takes a nightly maintenance break from **00:15 to
+07:15 America/New_York** (`cartslop-night-stop.timer` /
+`cartslop-night-start.timer` in `pi_setup/`). Online rooms and the relay are
+unavailable during that window; LAN hosting and the GitHub update path are not
+affected. Run live multiplayer tests outside it.
+
 ## Relay model
 
 The host PC runs a normal ENet server on the LAN. When hosting, the game
@@ -105,9 +113,17 @@ The watchdog keeps running, so a dropped Wi-Fi link is retried automatically.
 
 Put release zips in `cartslop-server/updates/` and copy
 `manifest.example.json` to `manifest.json`, then edit the version and
-filenames. The game asks the Pi first when a server is configured, and falls
-back to GitHub if this manifest is missing or older. No manifest is required;
-the folder can stay empty.
+filenames. The game always checks GitHub as well and uses whichever version is
+genuinely newer, so a stale mirror can never hide a newer release; if GitHub is
+unreachable the mirror is still used. No manifest is required; the folder can
+stay empty.
+
+As of 2026-11-06 the live Pi mirrors **0.6.2** (`CartSlopGP_v0.6.2_windows.zip`).
+Upload the 0.6.3 Windows zip and bump the manifest when convenient; every other
+platform and every newer version already comes from GitHub.
+
+`/opt/cartslop/updates/` is root-owned, so `pi` needs `sudo` to write there.
+Upload to `/tmp` first, then move the files into place with `sudo`.
 
 ## Troubleshooting
 
