@@ -225,9 +225,20 @@ only happens when verification actually fails. Test updated accordingly.
   on those), no missing UiAnim preloads, no TODO/FIXME left in scripts.
 - Ran the whole offline headless battery plus windowed UI renders. All green.
 
-## Release checklist (when the owner says go)
+## Release checklist (DONE 2026-11-06)
 1. Commit + tag `v0.6.3`, push.
 2. Export all four platforms into `builds/v0.6.3/`, zip, `gh release create`.
 3. Upload the Windows zip to the Pi mirror + bump
    `pi_setup/cartslop-server/updates/manifest.json` (version 0.6.3).
 4. Old build should offer the update automatically.
+
+## Shipped
+
+- Commits `f03f444` (release) and `89893d9` (updater arbitration), pushed to
+  `origin/main`. Tag `v0.6.3` force-moved onto `89893d9` after the last fix.
+- GitHub release: https://github.com/HOT18594/CartSlopGP/releases/tag/v0.6.3
+  with all four zips. Assets rebuilt and re-uploaded after the final updater
+  change so binaries match HEAD.
+- Live check: `LIVE status=up_to_date local=0.6.3 latest=0.6.3
+  asset=CartSlopGP_v0.6.3_windows.zip asset_url=true`.
+- Working tree clean at handoff time.

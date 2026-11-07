@@ -364,6 +364,8 @@ godot_project/
 
 ### More docs
 
+- `docs/HANDOFF_2026-11-06.md` - **START HERE**: current state, runbooks,
+  gotchas and open work for the next agent
 - `docs/MULTIPLAYER.md` - networking architecture
 - `docs/PI_SERVER.md` - Pi provisioning and the console
 - `docs/MEADOW_LOOP.md` - race design and start lights

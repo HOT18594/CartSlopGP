@@ -1,6 +1,6 @@
 # Cart Slop GP TODO
 
-Updated: 2026-11-06 (v0.6.3 prepared locally; NOT released yet)
+Updated: 2026-11-06 (v0.6.3 RELEASED to GitHub)
 
 ## Pi server
 
@@ -24,6 +24,7 @@ Updated: 2026-11-06 (v0.6.3 prepared locally; NOT released yet)
 - [x] Verify game → Pi registration and a join through the Pi
       (host/client + Meadow Loop race, LAN and public relay)
 - [ ] Verify a real second physical device (school/Mac/Linux) joins
+      (macOS friend on v0.6.3 still pending)
 - [x] Verify UPnP mappings / internet join; document port-forward fallback
       (22/22 ports mapped, external check OPEN)
 - [x] Fixed LAN address `192.168.1.22` with DHCP fallback
@@ -65,6 +66,7 @@ Updated: 2026-11-06 (v0.6.3 prepared locally; NOT released yet)
 - [x] Bots/remote carts/rivals block the local cart (layer 8)
 - [x] Skid marks visible on the Meadow Loop dirt road (road collision added)
 - [ ] More minigames (add to the screen only when the scene is playable)
+- [ ] Wire more of the 5 AI images into result/transition screens
 - [ ] Better race rivals/bot AI and server-owned bot state
 - [ ] Vehicle-vs-vehicle collision feedback (sound/sparks)
 
@@ -84,20 +86,39 @@ Updated: 2026-11-06 (v0.6.3 prepared locally; NOT released yet)
 - [x] SLOP drips anchored to the actual letters
 - [x] Scene fade transitions and a fuller loading scene
 - [x] Button labels explicitly centred and vertically padded symmetrically
-- [x] Full vehicle stat sheet in solo, lobby and minigame picker
+- [x] Vehicle stats are 10-block garage comparison bars (no raw numbers)
 - [x] Meadow Loop hills, denser PBR forest, kicker ramps and visible boost pads
 - [x] Race HUD simplified; sector labels and icon clutter removed
 - [x] Countdown / lap / finish / ambience / impact / UI sounds
 - [x] Baked public Pi fallback after LAN discovery
 - [ ] Race result leaderboard for all peers
-- [x] Server online/offline pill gate; LAN and online room lists
+- [x] Searchable room-browser popup; server status pill removed,
+      one plain "Game server is down" error when offline
 - [x] Multiplayer Esc menu keeps the world running; single-player pauses
-- [ ] Controller navigation audit
+- [ ] Controller navigation audit (MenuNav now owns d-pad focus;
+      verify on a real gamepad)
+
+## UI (v0.6.3 pass)
+
+- [x] Shared UiAnim motion layer (fades, pops, damping, cursor smoothing)
+- [x] MenuNav autoload: arrows/WASD/d-pad/Tab focus, inward chevrons, focus ring
+- [x] PLAY: two large icon cards; MULTIPLAYER goes straight to the lobby
+- [x] Lobby: one clean column, compact buttons, two-column room card, LEAVE ROOM
+- [x] Room browser popup with local search filtering and REFRESH
+- [x] Map picker no longer duplicates vehicle selection
+- [x] No coloured accent bars, filler cards, permanent hints or server status light
+- [x] Loading screen: no card, damped 10-section bar, fixed percentage
+- [x] Changelog: short casual player notes, single page, no dev detail
+- [x] All panels shrunk; buttons no longer stretch edge to edge
+- [x] 5 AI images imported; menu/loading art + 4-image game-selector slideshow
+- [x] F1 two-row ten-lamp race start gantry
+- [x] Full GitHub setup README and curated AI image prompt pack
 
 ## Updates / builds
 
 - [x] GitHub updater with progress and restart-to-install
-- [x] macOS ad-hoc re-sign after replacing the .app
+- [x] macOS ad-hoc re-sign after replacing the .app (only when the
+      signature is actually broken; no blanket chmod, no manual re-sign)
 - [x] Release v0.6.0 builds for Windows/macOS/Linux/Web
 - [x] Auto-check, auto-surface, auto-download update
 - [x] RESTART & UPDATE prompt; install and relaunch without unzipping
@@ -105,7 +126,8 @@ Updated: 2026-11-06 (v0.6.3 prepared locally; NOT released yet)
 - [x] Verify updater zip extraction and Pi manifest lookup
 - [x] Stall watchdog + self-healing update dialog (v0.6.3); verified with a
       mock mirror (happy path + stalled connection)
-- [ ] Verify the final file swap on each desktop platform
+- [ ] Verify the final file swap on each desktop platform on real
+      hardware (script logic and live release lookup are verified headlessly)
 - [ ] Optional automated copy of release assets to the Pi mirror
 
 ## Music
@@ -117,4 +139,5 @@ Updated: 2026-11-06 (v0.6.3 prepared locally; NOT released yet)
 
 - [ ] Remove dev-only screenshot/probe scenes from exported builds (optional)
 - [ ] Update `docs/MULTIPLAYER.md` and `docs/PI_SERVER.md` after live Pi test
-- [ ] Keep README screenshots/current version in sync
+- [x] Keep README current version and setup docs in sync
+- [ ] Refresh the stale v0.6.2 handoff in docs/HANDOFF_2026-11-05.md
