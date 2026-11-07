@@ -1,20 +1,26 @@
 extends Control
-## Multiplayer lobby, Fall Guys-style.
+const UiAnim := preload("res://scripts/ui/ui_anim.gd")
+## Multiplayer lobby. One clean column, no decoration, no filler.
 ##
-## Two ways to start a world:
-##   HOST ON THIS WI-FI  - this PC is the server; nearby players see the room.
-##   HOST ONLINE         - the Cart Slop Pi returns a 5-letter room code.
-## Joining is code-only for online rooms and room-card-only for LAN rooms.
-## There is no IP address, port, hostname or advanced server field anywhere.
+##   header: title / back
+##   profile row: name + tag colour
+##   idle: 1 HOST A ROOM (two buttons), 2 JOIN A ROOM (code + two browse buttons)
+##   room: one room card, host settings, START, LEAVE ROOM
+##
+## Room lists no longer dump into the page. Both FIND LAN ROOMS and BROWSE
+## ONLINE ROOMS open the searchable RoomBrowser popup instead.
 
 const PLAY_MENU_SCENE: String = "res://scenes/ui/play_menu.tscn"
 const MINIGAMES_SCENE: String = "res://scenes/ui/minigames_menu.tscn"
 const VEHICLE_SCENE: String = "res://scenes/ui/vehicle_select.tscn"
 const LOBBY_SCENE: String = "res://scenes/ui/lobby_menu.tscn"
+const ROOM_BROWSER_SCENE: String = "res://scenes/ui/room_browser.tscn"
 const Catalog := preload("res://scripts/vehicles/vehicle_catalog.gd")
 const UiPalette := preload("res://scripts/ui/ui_palette.gd")
 const CANDY_BUTTON: String = "res://scripts/ui/candy_button.gd"
 const PILL_CYCLER: String = "res://scripts/ui/pill_cycler.gd"
+
+const SERVER_DOWN: String = "Game server is down. Try again later."
 
 const BOT_LABELS: PackedStringArray = ["NO BOTS", "1 BOT", "2 BOTS", "3 BOTS", "4 BOTS", "5 BOTS"]
 const BOT_VALUES: Array[int] = [0, 1, 2, 3, 4, 5]
@@ -29,40 +35,40 @@ const TAG_COLORS: Array[Dictionary] = [
 	{"name": "PURPLE", "hex": "a06cff"},
 ]
 
-@onready var _body: VBoxContainer = $Center/Scroll/Panel/Body
+@onready var _profile_row: HBoxContainer = $Frame/Panel/Shell/ProfileRow
+@onready var _body: VBoxContainer = $Frame/Panel/Shell/Content/Body
+@onready var _status: Label = %StatusLabel
+@onready var _back_button: Button = %BackButton
 
 var _name_input: LineEdit
 var _typing_label: Label
 var _typing_blink: float = 0.0
-var _server_pill: Label
-var _status: Label
-var _profile_row: HBoxContainer
-var _intro: Label
-var _mode_row: HBoxContainer
-var _join_card: VBoxContainer
+var _idle_box: VBoxContainer
+var _room_box: VBoxContainer
 var _join_input: LineEdit
 var _join_button: Button
 var _lan_scan_button: Button
 var _browse_button: Button
 var _host_pi_button: Button
-var _lan_box: VBoxContainer
 var _host_card: VBoxContainer
 var _code_caption: Label
 var _code_label: Label
 var _copy_button: Button
+var _leave_button: Button
 var _host_hint: Label
 var _players_box: VBoxContainer
+var _players_header: Label
 var _config_box: VBoxContainer
 var _start_button: Button
-var _back_button: Button
 var _game_pill: Button
 var _bots_pill: Button
 var _map_button: Button
 var _vehicle_button: Button
+var _browser: Control
+var _browser_mode: String = "online"
 var _tag_swatch_buttons: Dictionary = {} ## hex -> Button
 var _state: String = "idle"
-var _scanning: bool = false
-var _browsing: bool = false
+var _server_checked: bool = false
 
 
 func _ready() -> void:
@@ -90,230 +96,16 @@ func _ready() -> void:
 		_on_host_started(Network.join_code)
 	elif Network.is_client and Network.is_connected_to_server():
 		_on_join_succeeded()
+	call_deferred("_enter")
+
+
+func _enter() -> void:
+	UiAnim.pop($Frame/Panel)
+	MenuNav.refresh()
 
 
 # --------------------------------------------------------------------------
-# layout
-
-
-func _build_ui() -> void:
-	_body.add_theme_constant_override("separation", 8)
-
-	var header := HBoxContainer.new()
-	header.add_theme_constant_override("separation", 12)
-	_body.add_child(header)
-	var title := Label.new()
-	title.theme_type_variation = &"TitleLabel"
-	title.text = "MULTIPLAYER"
-	title.add_theme_font_size_override("font_size", 46)
-	title.add_theme_color_override("font_color", UiPalette.INK)
-	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	header.add_child(title)
-	_server_pill = Label.new()
-	_server_pill.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_server_pill.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	_server_pill.custom_minimum_size = Vector2(230, 42)
-	_server_pill.add_theme_font_size_override("font_size", 14)
-	_server_pill.mouse_filter = Control.MOUSE_FILTER_STOP
-	_server_pill.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
-	_server_pill.tooltip_text = "Check the Cart Slop server again"
-	_server_pill.gui_input.connect(_on_server_pill_input)
-	header.add_child(_server_pill)
-
-	var rule := ColorRect.new()
-	rule.custom_minimum_size = Vector2(0, 4)
-	rule.color = UiPalette.INK
-	_body.add_child(rule)
-
-	var profile := HBoxContainer.new()
-	profile.add_theme_constant_override("separation", 10)
-	_body.add_child(profile)
-	_profile_row = profile
-	var name_caption := _caption("YOUR NAME", 90)
-	profile.add_child(name_caption)
-	_name_input = LineEdit.new()
-	_name_input.placeholder_text = "YOUR NAME"
-	_name_input.max_length = 16
-	_name_input.alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_name_input.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_name_input.text_submitted.connect(func(_t: String) -> void: _commit_name())
-	_name_input.focus_exited.connect(_commit_name)
-	_name_input.focus_entered.connect(_on_name_focus.bind(true))
-	_name_input.focus_exited.connect(_on_name_focus.bind(false))
-	profile.add_child(_name_input)
-	_typing_label = Label.new()
-	_typing_label.text = "TYPING"
-	_typing_label.visible = false
-	_typing_label.custom_minimum_size = Vector2(74, 0)
-	_typing_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	_typing_label.add_theme_font_size_override("font_size", 12)
-	_typing_label.add_theme_color_override("font_color", UiPalette.GRASS)
-	profile.add_child(_typing_label)
-
-	var tag_row := HBoxContainer.new()
-	tag_row.add_theme_constant_override("separation", 7)
-	_body.add_child(tag_row)
-	tag_row.add_child(_caption("TAG COLOR", 90))
-	for swatch: Dictionary in TAG_COLORS:
-		var hex: String = str(swatch["hex"])
-		var swatch_button := Button.new()
-		swatch_button.custom_minimum_size = Vector2(38, 32)
-		swatch_button.tooltip_text = "%s NAME TAG" % str(swatch["name"])
-		swatch_button.focus_mode = Control.FOCUS_NONE
-		var swatch_style := StyleBoxFlat.new()
-		swatch_style.bg_color = Color(hex)
-		swatch_style.set_corner_radius_all(9)
-		swatch_style.set_border_width_all(3)
-		swatch_style.border_color = UiPalette.INK
-		swatch_button.add_theme_stylebox_override("normal", swatch_style)
-		var hover_style: StyleBoxFlat = swatch_style.duplicate()
-		hover_style.bg_color = Color(hex).lightened(0.12)
-		swatch_button.add_theme_stylebox_override("hover", hover_style)
-		swatch_button.add_theme_stylebox_override("pressed", hover_style)
-		swatch_button.pressed.connect(_on_tag_color.bind(hex))
-		tag_row.add_child(swatch_button)
-		_tag_swatch_buttons[hex] = swatch_button
-	_refresh_tag_swatches()
-
-	var intro := Label.new()
-	intro.text = "Host a world on your Wi-Fi, or let the Cart Slop server hand out a tiny room code."
-	intro.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	intro.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	intro.add_theme_font_size_override("font_size", 15)
-	intro.add_theme_color_override("font_color", UiPalette.BLUE_DARK)
-	_body.add_child(intro)
-	_intro = intro
-
-	# Two big host cards -----------------------------------------------------
-	_mode_row = HBoxContainer.new()
-	_mode_row.add_theme_constant_override("separation", 12)
-	_body.add_child(_mode_row)
-
-	var lan_card := _card(UiPalette.GRASS)
-	var lan_title := _card_title("HOST ON THIS WI-FI")
-	lan_card.add_child(lan_title)
-	var lan_desc := _card_desc("No internet needed. Players on your Wi-Fi see the room appear.")
-	lan_card.add_child(lan_desc)
-	var lan_button := _candy("HOST LAN ROOM", UiPalette.GRASS, 54, 20)
-	lan_button.pressed.connect(_on_host_lan)
-	lan_card.add_child(lan_button)
-
-	var pi_card := _card(UiPalette.BLUE)
-	var pi_title := _card_title("HOST ONLINE")
-	pi_card.add_child(pi_title)
-	var pi_desc := _card_desc("The Cart Slop server gives you a 5-letter code. Works anywhere.")
-	pi_card.add_child(pi_desc)
-	var pi_button := _candy("CREATE ONLINE ROOM", UiPalette.BLUE, 54, 20)
-	pi_button.pressed.connect(_on_host_pi)
-	pi_card.add_child(pi_button)
-	_host_pi_button = pi_button
-	_attach_card(_mode_row, lan_card)
-	_attach_card(_mode_row, pi_card)
-
-	# Join card --------------------------------------------------------------
-	_join_card = _card(UiPalette.YELLOW)
-	_attach_card(_body, _join_card)
-	var join_title := _card_title("JOIN A ROOM")
-	_join_card.add_child(join_title)
-	var join_hint := _card_desc("Type the 5-letter code from the host. No IP addresses, ever.")
-	_join_card.add_child(join_hint)
-	var join_row := HBoxContainer.new()
-	join_row.add_theme_constant_override("separation", 8)
-	_join_card.add_child(join_row)
-	_join_input = LineEdit.new()
-	_join_input.placeholder_text = "5-LETTER CODE"
-	_join_input.max_length = 5
-	_join_input.alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_join_input.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_join_input.add_theme_font_size_override("font_size", 24)
-	_join_input.text_changed.connect(_on_code_typed)
-	_join_input.text_submitted.connect(func(_t: String) -> void: _on_join_pressed())
-	join_row.add_child(_join_input)
-	_join_button = _candy("JOIN", UiPalette.YELLOW, 54, 22)
-	_join_button.custom_minimum_size = Vector2(160, 54)
-	_join_button.pressed.connect(_on_join_pressed)
-	join_row.add_child(_join_button)
-
-	var lan_row := HBoxContainer.new()
-	lan_row.add_theme_constant_override("separation", 8)
-	_join_card.add_child(lan_row)
-	_lan_scan_button = _candy("FIND LAN ROOMS", UiPalette.CYAN, 46, 17)
-	_lan_scan_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_lan_scan_button.pressed.connect(_scan_lan_rooms)
-	lan_row.add_child(_lan_scan_button)
-	_browse_button = _candy("BROWSE ONLINE ROOMS", UiPalette.BLUE, 46, 17)
-	_browse_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_browse_button.pressed.connect(_browse_pi_rooms)
-	lan_row.add_child(_browse_button)
-
-	_lan_box = VBoxContainer.new()
-	_lan_box.add_theme_constant_override("separation", 4)
-	_join_card.add_child(_lan_box)
-
-	# Live host / client card ------------------------------------------------
-	_host_card = _card(UiPalette.CREAM)
-	_attach_card(_body, _host_card)
-	_code_caption = _caption("ROOM CODE", 0)
-	_code_caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_code_caption.add_theme_font_size_override("font_size", 14)
-	_code_caption.add_theme_color_override("font_color", UiPalette.BLUE_DARK)
-	_host_card.add_child(_code_caption)
-	_code_label = Label.new()
-	_code_label.text = "-----"
-	_code_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_code_label.add_theme_font_size_override("font_size", 40)
-	_code_label.add_theme_color_override("font_color", UiPalette.INK)
-	_host_card.add_child(_code_label)
-	_copy_button = _candy("COPY CODE", UiPalette.CYAN, 44, 18)
-	_copy_button.pressed.connect(_on_copy_code)
-	_host_card.add_child(_copy_button)
-	_players_box = VBoxContainer.new()
-	_players_box.add_theme_constant_override("separation", 3)
-	_host_card.add_child(_players_box)
-	_host_hint = _card_desc("")
-	_host_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_host_card.add_child(_host_hint)
-
-	_config_box = VBoxContainer.new()
-	_config_box.add_theme_constant_override("separation", 6)
-	_host_card.add_child(_config_box)
-	var config_top := HBoxContainer.new()
-	config_top.add_theme_constant_override("separation", 8)
-	_config_box.add_child(config_top)
-	_game_pill = _pill(PackedStringArray(["SANDBOX", "MINIGAMES"]),
-		[GameSettings.GAME_SANDBOX, GameSettings.GAME_MINIGAMES], 0)
-	_game_pill.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_game_pill.connect("option_changed", func(value: Variant) -> void: _on_game_mode(str(value)))
-	config_top.add_child(_game_pill)
-	_bots_pill = _pill(BOT_LABELS, BOT_VALUES, GameSettings.effective_bot_count())
-	_bots_pill.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_bots_pill.connect("option_changed", _on_bots_changed)
-	config_top.add_child(_bots_pill)
-	var config_map := HBoxContainer.new()
-	config_map.add_theme_constant_override("separation", 8)
-	_config_box.add_child(config_map)
-	_map_button = _candy("MAP: MEADOW LOOP", UiPalette.CYAN, 46, 16)
-	_map_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_map_button.pressed.connect(_on_choose_map)
-	config_map.add_child(_map_button)
-	_vehicle_button = _candy("VEHICLE: SHOPPING CART", UiPalette.BLUE, 46, 16)
-	_vehicle_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_vehicle_button.pressed.connect(_on_change_vehicle)
-	config_map.add_child(_vehicle_button)
-	_start_button = _candy("START", UiPalette.YELLOW, 54, 24)
-	_start_button.pressed.connect(_on_start_pressed)
-	_host_card.add_child(_start_button)
-
-	_status = Label.new()
-	_status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_status.add_theme_font_size_override("font_size", 15)
-	_status.add_theme_color_override("font_color", UiPalette.RED)
-	_body.add_child(_status)
-
-	_back_button = _candy("BACK", UiPalette.RED, 46, 20)
-	_back_button.pressed.connect(_on_back_pressed)
-	_body.add_child(_back_button)
+# small builders
 
 
 func _candy(text: String, color: Color, height: int, font_size: int) -> Button:
@@ -332,84 +124,291 @@ func _pill(labels: PackedStringArray, values: Array, start_index: int) -> Button
 	button.set_script(load(PILL_CYCLER))
 	button.set("corner_radius", 22)
 	button.set("shadow_offset", 5)
-	button.custom_minimum_size = Vector2(0, 44)
+	button.custom_minimum_size = Vector2(0, 46)
 	button.add_theme_font_size_override("font_size", 17)
 	button.call("configure", labels, values, start_index)
 	return button
 
 
-func _caption(text: String, width: int) -> Label:
+func _caption(text: String) -> Label:
 	var label := Label.new()
 	label.text = text
-	label.custom_minimum_size = Vector2(width, 0)
 	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	label.add_theme_font_size_override("font_size", 15)
 	label.add_theme_color_override("font_color", UiPalette.INK)
 	return label
 
 
-func _card(accent: Color) -> VBoxContainer:
-	## A chunky Fall Guys-style card. Returns the inner column; use
-	## `_attach_card(parent, column)` to place the panel in the layout.
-	var panel := PanelContainer.new()
-	var style := StyleBoxFlat.new()
-	style.bg_color = UiPalette.CREAM
-	style.corner_radius_top_left = 22
-	style.corner_radius_top_right = 22
-	style.corner_radius_bottom_left = 22
-	style.corner_radius_bottom_right = 22
-	style.border_width_left = 5
-	style.border_width_top = 5
-	style.border_width_right = 5
-	style.border_width_bottom = 5
-	style.border_color = UiPalette.INK
-	style.shadow_color = Color(0.12, 0.1, 0.23, 0.35)
-	style.shadow_offset = Vector2(0, 7)
-	style.content_margin_left = 16
-	style.content_margin_right = 16
-	style.content_margin_top = 12
-	style.content_margin_bottom = 12
-	panel.add_theme_stylebox_override("panel", style)
-	var column := VBoxContainer.new()
-	column.add_theme_constant_override("separation", 7)
-	panel.add_child(column)
-	var bar := ColorRect.new()
-	bar.custom_minimum_size = Vector2(0, 5)
-	bar.color = accent
-	column.add_child(bar)
-	column.set_meta("panel", panel)
-	return column
-
-
-func _attach_card(parent: Node, column: VBoxContainer) -> void:
-	var panel: PanelContainer = column.get_meta("panel")
-	parent.add_child(panel)
-
-
-func _show_card(column: VBoxContainer, value: bool) -> void:
-	column.visible = value
-	var panel: Variant = column.get_meta("panel", null)
-	if panel is CanvasItem:
-		(panel as CanvasItem).visible = value
-
-
-func _card_title(text: String) -> Label:
+func _section(text: String) -> Label:
 	var label := Label.new()
 	label.text = text
-	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	label.add_theme_font_size_override("font_size", 20)
 	label.add_theme_color_override("font_color", UiPalette.INK)
 	return label
 
 
-func _card_desc(text: String) -> Label:
+func _hint(text: String) -> Label:
 	var label := Label.new()
 	label.text = text
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	label.add_theme_font_size_override("font_size", 14)
+	label.add_theme_font_size_override("font_size", 13)
 	label.add_theme_color_override("font_color", UiPalette.BLUE_DARK)
 	return label
+
+
+func _card(parent: Node) -> VBoxContainer:
+	## Plain rounded panel. No coloured top bar - it carried no information.
+	var panel := PanelContainer.new()
+	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var style := StyleBoxFlat.new()
+	style.bg_color = UiPalette.CREAM
+	style.set_corner_radius_all(20)
+	style.set_border_width_all(4)
+	style.border_color = UiPalette.INK
+	style.content_margin_left = 16
+	style.content_margin_right = 16
+	style.content_margin_top = 8
+	style.content_margin_bottom = 8
+	panel.add_theme_stylebox_override("panel", style)
+	parent.add_child(panel)
+	var column := VBoxContainer.new()
+	column.add_theme_constant_override("separation", 6)
+	column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	panel.add_child(column)
+	return column
+
+
+# --------------------------------------------------------------------------
+# layout
+
+
+func _build_ui() -> void:
+	_back_button.pressed.connect(_on_back_pressed)
+	_build_profile()
+	_create_browser()
+	_build_idle()
+	_build_room()
+	_set_status("")
+
+
+func _build_profile() -> void:
+	_profile_row.add_child(_caption("NAME"))
+	_name_input = LineEdit.new()
+	_name_input.placeholder_text = "YOUR NAME"
+	_name_input.max_length = 16
+	_name_input.alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_name_input.custom_minimum_size = Vector2(230, 50)
+	_name_input.text_submitted.connect(func(_t: String) -> void: _commit_name())
+	_name_input.focus_exited.connect(_commit_name)
+	_name_input.focus_entered.connect(_on_name_focus.bind(true))
+	_name_input.focus_exited.connect(_on_name_focus.bind(false))
+	_profile_row.add_child(_name_input)
+	_typing_label = Label.new()
+	_typing_label.text = "TYPING"
+	_typing_label.visible = false
+	_typing_label.custom_minimum_size = Vector2(62, 0)
+	_typing_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_typing_label.add_theme_font_size_override("font_size", 11)
+	_typing_label.add_theme_color_override("font_color", UiPalette.GRASS)
+	_profile_row.add_child(_typing_label)
+
+	_profile_row.add_child(_caption("TAG"))
+	var swatch_grid := GridContainer.new()
+	swatch_grid.columns = 8
+	swatch_grid.add_theme_constant_override("h_separation", 6)
+	_profile_row.add_child(swatch_grid)
+	for swatch: Dictionary in TAG_COLORS:
+		var hex: String = str(swatch["hex"])
+		var swatch_button := Button.new()
+		# UiKit must not force these into 54 px tall pills.
+		swatch_button.set_meta("skip_kit", true)
+		swatch_button.custom_minimum_size = Vector2(40, 40)
+		swatch_button.tooltip_text = "%s NAME TAG" % str(swatch["name"])
+		var swatch_style := StyleBoxFlat.new()
+		swatch_style.bg_color = Color(hex)
+		swatch_style.set_corner_radius_all(9)
+		swatch_style.set_border_width_all(3)
+		swatch_style.border_color = UiPalette.INK
+		swatch_button.add_theme_stylebox_override("normal", swatch_style)
+		var hover_style: StyleBoxFlat = swatch_style.duplicate()
+		hover_style.bg_color = Color(hex).lightened(0.12)
+		swatch_button.add_theme_stylebox_override("hover", hover_style)
+		swatch_button.add_theme_stylebox_override("pressed", hover_style)
+		swatch_button.pressed.connect(_on_tag_color.bind(hex))
+		swatch_grid.add_child(swatch_button)
+		_tag_swatch_buttons[hex] = swatch_button
+	_refresh_tag_swatches()
+
+
+func _create_browser() -> void:
+	_browser = (load(ROOM_BROWSER_SCENE) as PackedScene).instantiate()
+	add_child(_browser)
+	_browser.connect("room_selected", _on_room_selected)
+
+
+func _build_idle() -> void:
+	_idle_box = VBoxContainer.new()
+	_idle_box.add_theme_constant_override("separation", 14)
+	_idle_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_body.add_child(_idle_box)
+
+	var host_step: Label = _section("1   HOST A ROOM")
+	host_step.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_idle_box.add_child(host_step)
+	var host_row := HBoxContainer.new()
+	host_row.add_theme_constant_override("separation", 14)
+	host_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	_idle_box.add_child(host_row)
+	var lan_button := _candy("HOST LAN ROOM", UiPalette.GRASS, 64, 22)
+	lan_button.custom_minimum_size.x = 320
+	lan_button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	lan_button.pressed.connect(_on_host_lan)
+	host_row.add_child(lan_button)
+	_host_pi_button = _candy("CREATE ONLINE ROOM", UiPalette.BLUE, 64, 22)
+	_host_pi_button.custom_minimum_size.x = 320
+	_host_pi_button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	_host_pi_button.pressed.connect(_on_host_pi)
+	host_row.add_child(_host_pi_button)
+
+	var join_step: Label = _section("2   JOIN A ROOM")
+	join_step.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_idle_box.add_child(join_step)
+	var join_row := HBoxContainer.new()
+	join_row.add_theme_constant_override("separation", 12)
+	join_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	_idle_box.add_child(join_row)
+	_join_input = LineEdit.new()
+	_join_input.placeholder_text = "5-LETTER CODE"
+	_join_input.max_length = 5
+	_join_input.alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_join_input.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	_join_input.custom_minimum_size = Vector2(360, 58)
+	_join_input.add_theme_font_size_override("font_size", 26)
+	_join_input.text_changed.connect(_on_code_typed)
+	_join_input.text_submitted.connect(func(_t: String) -> void: _on_join_pressed())
+	join_row.add_child(_join_input)
+	_join_button = _candy("JOIN", UiPalette.YELLOW, 58, 24)
+	_join_button.custom_minimum_size = Vector2(180, 58)
+	_join_button.pressed.connect(_on_join_pressed)
+	join_row.add_child(_join_button)
+
+	var browse_row := HBoxContainer.new()
+	browse_row.add_theme_constant_override("separation", 12)
+	browse_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	_idle_box.add_child(browse_row)
+	_lan_scan_button = _candy("FIND LAN ROOMS", UiPalette.CYAN, 52, 18)
+	_lan_scan_button.custom_minimum_size.x = 320
+	_lan_scan_button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	_lan_scan_button.pressed.connect(_on_find_lan)
+	browse_row.add_child(_lan_scan_button)
+	_browse_button = _candy("BROWSE ONLINE ROOMS", UiPalette.BLUE, 52, 18)
+	_browse_button.custom_minimum_size.x = 320
+	_browse_button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	_browse_button.pressed.connect(_on_browse_online)
+	browse_row.add_child(_browse_button)
+
+
+func _build_room() -> void:
+	_room_box = VBoxContainer.new()
+	_room_box.add_theme_constant_override("separation", 14)
+	_room_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_body.add_child(_room_box)
+
+	_room_box.add_child(_section("YOUR ROOM"))
+	_host_card = _card(_room_box)
+	# Code on the left, players on the right. No tall stack of unrelated rows.
+	var split := HBoxContainer.new()
+	split.add_theme_constant_override("separation", 18)
+	split.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_host_card.add_child(split)
+	var left := VBoxContainer.new()
+	left.add_theme_constant_override("separation", 8)
+	left.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	split.add_child(left)
+	var divider := ColorRect.new()
+	divider.custom_minimum_size = Vector2(3, 0)
+	divider.color = Color(UiPalette.INK, 0.18)
+	divider.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	split.add_child(divider)
+	var right := VBoxContainer.new()
+	right.add_theme_constant_override("separation", 6)
+	right.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	split.add_child(right)
+
+	_code_caption = _caption("ROOM CODE")
+	_code_caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_code_caption.add_theme_font_size_override("font_size", 13)
+	_code_caption.add_theme_color_override("font_color", UiPalette.BLUE_DARK)
+	left.add_child(_code_caption)
+	_code_label = Label.new()
+	_code_label.text = "-----"
+	_code_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_code_label.theme_type_variation = &"TitleLabel"
+	_code_label.add_theme_font_size_override("font_size", 42)
+	_code_label.add_theme_color_override("font_color", UiPalette.INK)
+	left.add_child(_code_label)
+	var code_row := HBoxContainer.new()
+	code_row.add_theme_constant_override("separation", 10)
+	code_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	left.add_child(code_row)
+	_copy_button = _candy("COPY CODE", UiPalette.CYAN, 46, 17)
+	_copy_button.custom_minimum_size = Vector2(178, 46)
+	_copy_button.pressed.connect(_on_copy_code)
+	code_row.add_child(_copy_button)
+	_leave_button = _candy("LEAVE ROOM", UiPalette.RED, 46, 17)
+	_leave_button.custom_minimum_size = Vector2(178, 46)
+	_leave_button.pressed.connect(_on_leave_pressed)
+	code_row.add_child(_leave_button)
+	# The hint is about the code, so it belongs in the left column.
+	_host_hint = _hint("")
+	left.add_child(_host_hint)
+
+	_players_header = _section("PLAYERS")
+	right.add_child(_players_header)
+	_players_box = VBoxContainer.new()
+	_players_box.add_theme_constant_override("separation", 3)
+	right.add_child(_players_box)
+
+	_config_box = VBoxContainer.new()
+	_config_box.add_theme_constant_override("separation", 8)
+	_room_box.add_child(_config_box)
+	_config_box.add_child(_section("HOST SETTINGS"))
+	var config_top := HBoxContainer.new()
+	config_top.add_theme_constant_override("separation", 10)
+	config_top.alignment = BoxContainer.ALIGNMENT_CENTER
+	_config_box.add_child(config_top)
+	_game_pill = _pill(PackedStringArray(["SANDBOX", "MINIGAMES"]),
+		[GameSettings.GAME_SANDBOX, GameSettings.GAME_MINIGAMES], 0)
+	_game_pill.custom_minimum_size.x = 330
+	_game_pill.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	_game_pill.connect("option_changed", func(value: Variant) -> void: _on_game_mode(str(value)))
+	config_top.add_child(_game_pill)
+	_bots_pill = _pill(BOT_LABELS, BOT_VALUES, GameSettings.effective_bot_count())
+	_bots_pill.custom_minimum_size.x = 330
+	_bots_pill.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	_bots_pill.connect("option_changed", _on_bots_changed)
+	config_top.add_child(_bots_pill)
+	var config_map := HBoxContainer.new()
+	config_map.add_theme_constant_override("separation", 10)
+	config_map.alignment = BoxContainer.ALIGNMENT_CENTER
+	_config_box.add_child(config_map)
+	_map_button = _candy("MAP: MEADOW LOOP", UiPalette.CYAN, 48, 16)
+	_map_button.custom_minimum_size.x = 330
+	_map_button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	_map_button.pressed.connect(_on_choose_map)
+	config_map.add_child(_map_button)
+	_vehicle_button = _candy("VEHICLE: SHOPPING CART", UiPalette.BLUE, 48, 16)
+	_vehicle_button.custom_minimum_size.x = 330
+	_vehicle_button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	_vehicle_button.pressed.connect(_on_change_vehicle)
+	config_map.add_child(_vehicle_button)
+
+	_start_button = _candy("START", UiPalette.YELLOW, 62, 26)
+	_start_button.custom_minimum_size.x = 400
+	_start_button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	_start_button.pressed.connect(_on_start_pressed)
+	_room_box.add_child(_start_button)
 
 
 func _on_name_focus(focused: bool) -> void:
@@ -425,14 +424,35 @@ func _process(delta: float) -> void:
 
 
 # --------------------------------------------------------------------------
+# room browser
+
+
+func _on_find_lan() -> void:
+	_browser_mode = "lan"
+	_browser.call("open", "lan")
+
+
+func _on_browse_online() -> void:
+	if not Network.server_online:
+		_set_status(SERVER_DOWN)
+		return
+	_browser_mode = "online"
+	_browser.call("open", "online")
+
+
+func _on_room_selected(room: Dictionary) -> void:
+	if _browser_mode == "lan":
+		Network.join_lan_room(room)
+		return
+	var code: String = str(room.get("room_code", "")).to_upper()
+	if code.length() != 5:
+		return
+	_join_input.text = code
+	_on_join_pressed()
+
+
+# --------------------------------------------------------------------------
 # server status
-
-
-func _on_server_pill_input(event: InputEvent) -> void:
-	var mouse := event as InputEventMouseButton
-	if mouse != null and mouse.button_index == MOUSE_BUTTON_LEFT and mouse.pressed:
-		_set_server_status(false, "checking")
-		_probe_server()
 
 
 func _probe_server() -> void:
@@ -447,15 +467,11 @@ func _on_server_status(online: bool, detail: String) -> void:
 
 
 func _set_server_status(online: bool, detail: String) -> void:
-	if _server_pill == null:
-		return
+	# Players do not need a server status light. Online means nothing is shown.
+	# Offline gets one plain error line, after the check has actually finished.
 	if detail == "checking":
-		_server_pill.text = "PI SERVER  ·  CHECKING"
-		_server_pill.add_theme_color_override("font_color", UiPalette.TEXT_DIM)
-	else:
-		_server_pill.text = "PI SERVER  ·  " + ("ONLINE" if online else "OFFLINE")
-		_server_pill.add_theme_color_override("font_color",
-			UiPalette.GRASS if online else UiPalette.RED)
+		return
+	_server_checked = true
 	if _join_button != null:
 		_join_button.disabled = not online
 	if _join_input != null:
@@ -464,6 +480,7 @@ func _set_server_status(online: bool, detail: String) -> void:
 		_browse_button.disabled = not online
 	if _host_pi_button != null:
 		_host_pi_button.disabled = not online
+	_refresh_status()
 
 
 # --------------------------------------------------------------------------
@@ -473,25 +490,24 @@ func _set_server_status(online: bool, detail: String) -> void:
 func _set_state(state: String) -> void:
 	_state = state
 	var idle: bool = state == "idle"
-	_mode_row.visible = idle
-	_profile_row.visible = idle
-	_intro.visible = idle
-	_show_card(_join_card, idle)
-	_show_card(_host_card, not idle)
+	_idle_box.visible = idle
+	_room_box.visible = not idle
 	_config_box.visible = state == "host"
 	_start_button.visible = state == "host"
 	_copy_button.visible = state == "host" and not Network.is_lan()
+	_leave_button.visible = not idle
 	_code_caption.visible = not idle
-	_status.visible = not idle or _status.text != ""
 	if idle:
 		_code_label.text = "-----"
-		_status.text = ""
-		_lan_box.visible = false
+		_refresh_status()
 		_join_button.disabled = not Network.server_online
 		_browse_button.disabled = not Network.server_online
 		_host_pi_button.disabled = not Network.server_online
+	else:
+		UiAnim.fade_in(_room_box, 0.22)
 	_refresh_config()
 	_refresh_players()
+	MenuNav.refresh()
 
 
 func _refresh_config() -> void:
@@ -508,7 +524,6 @@ func _refresh_config() -> void:
 		else GameSettings.selected_vehicle
 	var vehicle: Dictionary = Catalog.find(vehicle_id)
 	if mode == GameSettings.GAME_MINIGAMES and Network.is_host:
-		# One car for the whole field in races; only the name tags differ.
 		_vehicle_button.text = "RACE CAR: %s  (ALL PLAYERS)" % str(vehicle.get("name", "SHOPPING CART"))
 	else:
 		_vehicle_button.text = "VEHICLE: " + str(vehicle.get("name", "SHOPPING CART"))
@@ -516,7 +531,7 @@ func _refresh_config() -> void:
 
 
 # --------------------------------------------------------------------------
-# name and code
+# name, tag colour and code
 
 
 func _commit_name() -> void:
@@ -526,7 +541,6 @@ func _commit_name() -> void:
 
 
 func _on_tag_color(hex: String) -> void:
-	## Pick a name tag colour; saved locally and announced to the session.
 	Network.set_local_tag_color(hex)
 	_refresh_tag_swatches()
 
@@ -563,7 +577,7 @@ func _on_host_lan() -> void:
 
 func _on_host_pi() -> void:
 	if not Network.server_online:
-		_set_status("The Cart Slop server is offline. Host a LAN room or try again.")
+		_set_status(SERVER_DOWN)
 		return
 	_begin_host("pi")
 
@@ -574,7 +588,7 @@ func _begin_host(mode: String) -> void:
 	_code_caption.text = "OPENING"
 	_code_label.text = "....."
 	_host_hint.text = "Starting the room..."
-	_status.text = ""
+	_set_status("")
 	_start_button.visible = false
 	_copy_button.visible = false
 	Network.host_game(mode)
@@ -587,12 +601,12 @@ func _on_host_started(code: String) -> void:
 		_code_caption.text = "ROOM ON THIS WI-FI"
 		_code_label.text = "LAN"
 		_copy_button.visible = false
-		_host_hint.text = "No code needed. Players on your Wi-Fi can pick this room from FIND LAN ROOMS."
+		_host_hint.text = "Players on your Wi-Fi can find this room."
 	else:
 		_code_caption.text = "5-LETTER ROOM CODE"
 		_code_label.text = code
 		_copy_button.visible = true
-		_host_hint.text = "Share this code. Friends anywhere can join through the Cart Slop server."
+		_host_hint.text = "Share this code with your friends."
 	_refresh_config()
 	_refresh_players()
 
@@ -615,7 +629,7 @@ func _on_copy_code() -> void:
 func _on_join_pressed() -> void:
 	_commit_name()
 	if not Network.server_online:
-		_set_status("The Cart Slop server is offline. Check the internet, or join a LAN room.")
+		_set_status(SERVER_DOWN)
 		return
 	var code: String = _join_input.text.strip_edges()
 	if code.length() != 5:
@@ -641,7 +655,6 @@ func _on_join_succeeded() -> void:
 	_code_label.text = "ROOM"
 	_copy_button.visible = false
 	_start_button.visible = false
-	_config_box.visible = false
 	_host_hint.text = "Waiting for the host to start..."
 	_refresh_players()
 
@@ -657,86 +670,15 @@ func _set_status(text: String) -> void:
 	_status.visible = text != ""
 
 
-# --------------------------------------------------------------------------
-# LAN / online room lists
-
-
-func _scan_lan_rooms() -> void:
-	if _scanning:
+func _refresh_status() -> void:
+	## Keep the "server is down" line across state changes without ever
+	## overwriting a real join/host error with a stale online message.
+	if _status.text != "" and _status.text != SERVER_DOWN:
 		return
-	_scanning = true
-	_lan_scan_button.disabled = true
-	_clear_rooms()
-	_set_status("Looking for rooms on your Wi-Fi...")
-	var rooms: Array = await Network.scan_lan_rooms()
-	if not is_inside_tree():
-		return
-	_scanning = false
-	_lan_scan_button.disabled = false
-	if rooms.is_empty():
-		_set_status("No LAN rooms found. Ask a friend to press HOST LAN ROOM.")
-		return
-	_lan_box.visible = true
-	for entry: Variant in rooms:
-		if not (entry is Dictionary):
-			continue
-		var room: Dictionary = entry as Dictionary
-		var label: String = "%s  ·  %d player%s  ·  %s" % [
-			str(room.get("name", "HOST")),
-			int(room.get("players", 1)),
-			"" if int(room.get("players", 1)) == 1 else "s",
-			"IN GAME" if str(room.get("state", "lobby")) != "lobby" else "LOBBY",
-		]
-		var button: Button = _candy(label, UiPalette.CYAN, 40, 15)
-		button.disabled = str(room.get("state", "lobby")) != "lobby"
-		button.pressed.connect(func() -> void: Network.join_lan_room(room))
-		_lan_box.add_child(button)
-	_set_status("Pick a LAN room.")
-
-
-func _browse_pi_rooms() -> void:
-	if _browsing:
-		return
-	_browsing = true
-	_browse_button.disabled = true
-	_clear_rooms()
-	_set_status("Looking for online rooms...")
-	var lobbies: Array = await Network.fetch_lobbies()
-	if not is_inside_tree():
-		return
-	_browsing = false
-	_browse_button.disabled = false
-	if lobbies.is_empty():
-		_set_status("No online rooms right now. Create one!")
-		return
-	_lan_box.visible = true
-	var shown: int = 0
-	for entry: Variant in lobbies:
-		if shown >= 5 or not (entry is Dictionary):
-			continue
-		var lobby: Dictionary = entry as Dictionary
-		var code: String = str(lobby.get("room_code", "")).to_upper()
-		if code.length() != 5:
-			continue
-		shown += 1
-		var label: String = "%s  ·  %d player%s  ·  %s" % [
-			str(lobby.get("name", "HOST")),
-			int(lobby.get("players", 1)),
-			"" if int(lobby.get("players", 1)) == 1 else "s",
-			code,
-		]
-		var button: Button = _candy(label, UiPalette.BLUE, 40, 15)
-		button.pressed.connect(func() -> void:
-			_join_input.text = code
-			_on_join_pressed())
-		_lan_box.add_child(button)
-	_set_status("Pick a room or type its code.")
-
-
-func _clear_rooms() -> void:
-	for child: Node in _lan_box.get_children():
-		child.queue_free()
-	_lan_box.visible = false
+	if _server_checked and not Network.server_online:
+		_set_status(SERVER_DOWN)
+	else:
+		_set_status("")
 
 
 # --------------------------------------------------------------------------
@@ -762,7 +704,7 @@ func _on_bots_changed(value: Variant) -> void:
 
 func _on_choose_map() -> void:
 	GameSettings.vehicle_return_scene = LOBBY_SCENE
-	SceneLoader.go_to(MINIGAMES_SCENE, "MINIGAMES", "CHOOSE A MINIGAME")
+	SceneLoader.go_to(MINIGAMES_SCENE, "CHOOSE A MAP", "PICK A MAP")
 
 
 func _on_change_vehicle() -> void:
@@ -789,11 +731,13 @@ func _refresh_players() -> void:
 	for child: Node in _players_box.get_children():
 		child.queue_free()
 	if not Network.is_session_active():
+		_players_header.text = "PLAYERS"
 		return
 	var ids: Array[int] = [multiplayer.get_unique_id()]
 	for peer_id: int in multiplayer.get_peers():
 		ids.append(peer_id)
 	ids.sort()
+	_players_header.text = "PLAYERS   %d / 8" % ids.size()
 	for peer_id: int in ids:
 		var row := HBoxContainer.new()
 		row.add_theme_constant_override("separation", 7)
@@ -824,6 +768,12 @@ func _refresh_players() -> void:
 			ping_label.add_theme_color_override("font_color", UiPalette.BLUE_DARK)
 			row.add_child(ping_label)
 		_players_box.add_child(row)
+
+
+func _on_leave_pressed() -> void:
+	Network.leave()
+	_set_state("idle")
+	UiAnim.pop($Frame/Panel)
 
 
 func _on_back_pressed() -> void:

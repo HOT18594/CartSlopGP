@@ -175,3 +175,10 @@ Builds the full scene, asserts the spline length and foliage density, walks the
 kart around the loop three times, and asserts three lap times plus the visible
 result card. Expected output ends with
 `PASS  meadow loop builds and completes 3 laps`.
+
+## Start lights
+
+The gantry has two rows of five lamps, like a real Formula 1 start. On each
+countdown beat one column lights up, so exactly two lamps come on together.
+That is intentional, not a rendering bug. The sequence is 0, 2, 4, 6 red lamps
+on 3, 2, 1 and GO, then all ten snap green when the race starts.

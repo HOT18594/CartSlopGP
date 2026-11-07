@@ -615,8 +615,9 @@ func _build_gate(distance: float, caption: String, color: Color, finish: bool) -
 
 
 func _build_start_lights() -> void:
-	# A five-lamp gantry just ahead of the grid. The countdown drives it:
-	# red pairs light up on 3 / 2 / 1, all five snap green on GO.
+	# Real F1 gantries are two rows of five lamps. One column (two lamps) lights
+	# up per countdown beat, then the whole rig goes green on GO. That is why
+	# two dots come on together: it is intentional, not a bug.
 	var distance: float = START_DISTANCE + 12.0
 	var rig := Node3D.new()
 	rig.name = "StartLights"
@@ -634,30 +635,34 @@ func _build_start_lights() -> void:
 		rig.add_child(post)
 	var bar := MeshInstance3D.new()
 	var bar_box := BoxMesh.new()
-	bar_box.size = Vector3(ROAD_HALF * 2.0 + 1.9, 0.62, 0.3)
+	bar_box.size = Vector3(ROAD_HALF * 2.0 + 1.9, 1.50, 0.3)
 	bar.mesh = bar_box
-	bar.position = Vector3(0.0, 5.62, 0.0)
+	bar.position = Vector3(0.0, 5.32, 0.0)
 	var bar_mat := StandardMaterial3D.new()
 	bar_mat.albedo_color = Color(0.16, 0.18, 0.29, 1)
 	bar.material_override = bar_mat
 	rig.add_child(bar)
-	for i in 5:
-		var lamp := MeshInstance3D.new()
-		var sphere := SphereMesh.new()
-		sphere.radius = 0.27
-		sphere.height = 0.54
-		lamp.mesh = sphere
-		# +Z faces the approaching grid; the lamps must be on the near side of
-		# the beam or the whole gantry reads as one blank black bar.
-		lamp.position = Vector3((float(i) - 2.0) * 0.62, 5.55, 0.24)
-		var mat := StandardMaterial3D.new()
-		mat.albedo_color = Color(0.16, 0.14, 0.22, 1)
-		mat.emission_enabled = true
-		mat.emission = Color(0.35, 0.06, 0.08, 1)
-		mat.emission_energy_multiplier = 0.35
-		lamp.material_override = mat
-		rig.add_child(lamp)
-		_start_lights.append(lamp)
+	for column in 5:
+		for row in 2:
+			var lamp := MeshInstance3D.new()
+			var sphere := SphereMesh.new()
+			sphere.radius = 0.27
+			sphere.height = 0.54
+			lamp.mesh = sphere
+			# +Z faces the approaching grid; the lamps must be on the near side
+			# of the beam or the whole gantry reads as one blank black bar.
+			# Each column contributes two lamps, so _set_start_lights can light
+			# a whole column by adding two to the red count.
+			lamp.position = Vector3((float(column) - 2.0) * 0.62,
+				5.62 - float(row) * 0.60, 0.24)
+			var mat := StandardMaterial3D.new()
+			mat.albedo_color = Color(0.16, 0.14, 0.22, 1)
+			mat.emission_enabled = true
+			mat.emission = Color(0.35, 0.06, 0.08, 1)
+			mat.emission_energy_multiplier = 0.35
+			lamp.material_override = mat
+			rig.add_child(lamp)
+			_start_lights.append(lamp)
 
 
 func _set_start_lights(red_count: int, green: bool) -> void:
@@ -1578,7 +1583,7 @@ func _tick_countdown(delta: float) -> void:
 			_last_count = count
 			_countdown_label.text = str(count) if count > 0 else "GO!"
 			_pop_label(_countdown_label)
-			_set_start_lights([0, 2, 4, 5][clampi(3 - count, 0, 3)], false)
+			_set_start_lights([0, 2, 4, 6][clampi(3 - count, 0, 3)], false)
 			if count > 0:
 				_play_one_shot(COUNTDOWN_BEEP, -9.0, 1.0)
 		return
@@ -1587,7 +1592,7 @@ func _tick_countdown(delta: float) -> void:
 		_countdown_label.text = "GO!"
 		_countdown_label.add_theme_color_override("font_color", UiPalette.GRASS)
 		_pop_label(_countdown_label)
-		_set_start_lights(5, true)
+		_set_start_lights(_start_lights.size(), true)
 		_flash_gate(0)
 		_play_one_shot(COUNTDOWN_GO, -7.0, 1.0)
 	_go_time += delta

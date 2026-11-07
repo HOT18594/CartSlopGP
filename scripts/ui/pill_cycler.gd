@@ -38,9 +38,18 @@ func get_value() -> Variant:
 
 
 func _cycle() -> void:
+	step(1)
+
+
+func step(direction: int) -> void:
+	## Left/right arrow keys (and the d-pad) change the value in place instead
+	## of moving focus away. Clicking still always steps forward.
 	if options.is_empty():
 		return
-	selected_index = (selected_index + 1) % options.size()
+	var next: int = wrapi(selected_index + direction, 0, options.size())
+	if next == selected_index:
+		return
+	selected_index = next
 	_refresh()
 	option_changed.emit(get_value())
 

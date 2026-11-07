@@ -8,10 +8,17 @@ func _init() -> void:
 
 
 func _run() -> void:
+	var code: String = OS.get_environment("CODE").strip_edges()
+	if code == "":
+		# Live-server integration test. Without a real room code it was
+		# reporting a bogus FAIL instead of skipping.
+		print("JOIN_STARTED: SKIP (set CODE to a started room's code)")
+		quit(0)
+		return
 	var net: Node = root.get_node("Network")
 	net.set_relay_server("192.168.1.22:42777")
 	net.join_failed.connect(func(text: String) -> void: _reason = text)
-	net.join_game(OS.get_environment("CODE"))
+	net.join_game(code)
 	await create_timer(8.0).timeout
 	print("JOIN_STARTED reason=", _reason)
 	var ok: bool = _reason.to_lower().contains("already started")

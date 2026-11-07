@@ -1,633 +1,102 @@
-# Changelog
+# What's new
 
-All notable changes to Cart Slop GP. Format loosely follows
-[Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer.
+A quick list of what changed for players. Newest first.
 
-## [0.7.0] - 2026-11-06
+## [0.6.3] - 2026-11-06
 
-Race identity, skid marks, player list and an update-system rescue.
-
-### Added
-
-- **Skid marks in Meadow Loop.** The dirt road now has a real collision
-  surface, so drifting in the race leaves the same fading tyre ribbons the
-  sandbox has - painted ON the road instead of hidden underneath it.
-- **Hold Tab for a Minecraft-style player list** in every multiplayer scene:
-  tag-colour dot, name (with [HOST] / (YOU) markers) and each player's ping,
-  colour-coded green / amber / red.
-- **Name tag colours.** Eight colour swatches in the multiplayer lobby save a
-  personal tag colour; it syncs to everyone and colours the floating name
-  above your cart in the sandbox and races, the lobby player list and the
-  Tab list.
-- **The host picks one car for the whole race.** In MINIGAMES sessions every
-  cart is the host's chosen vehicle - only name tags (and their colours)
-  tell players apart. Sandbox keeps per-player vehicle choices.
-- **Per-player ping everywhere.** Clients report their round trip to the
-  host, the host relays the table, and the lobby player list shows it next
-  to every name.
-- **Update-system test harness:** a local mock update mirror plus headless
-  dialog tests for the happy path and a mid-download stall.
-
-### Changed
-
-- The HUD network line always shows ping in milliseconds (`PING 42 ms`); the
-  host reads `0 ms (host)` because it is the server.
-- Update downloads get a 10-minute budget, a **20-second stall watchdog**
-  (a dead connection now flips the dialog to TRY AGAIN instead of sitting on
-  DOWNLOADING... forever), partial-file cleanup on failure, and a
-  self-healing dialog: RESTART & UPDATE enables as soon as the zip for the
-  advertised version is on disk, even if the finish notification was missed
-  while the panel was hidden or the scene changed.
-- Update dialogs no longer tear down in-flight HTTP requests directly, which
-  could block the main loop; a stalled request is detached and freed when its
-  own transfer ends.
-
-### Fixed
-
-- **Meadow Loop's road had no collision.** Wheels rested on the ground box
-  four centimetres below the visible dirt, and every skid mark was painted
-  underneath the road texture where nobody could see it. The road is now
-  solid: wheels sit on the dirt and marks render on top of it.
-- **Remote carts and sandbox bots hovered in the air.** Ghosts run no
-  physics, so they stayed at their spawn height (20-25 cm up) until the
-  first sync packet; bots floated 12 cm permanently. Both now spawn snapped
-  to the ground.
-- Switching a client's race cart to the host's car reverted one frame later:
-  the off-track speed logic reset `max_speed` from a captured pre-switch
-  value. The base speed is re-captured after the swap.
-- The car-collision dev test crashed a moving cart into a ghost that was
-  frozen mid-air, measuring a free fall instead of the impact; the ghost now
-  rests on the floor and the test passes deterministically.
+- All menus are smaller now, so more of the artwork shows behind them.
+- Buttons are no longer stretched across the whole screen.
+- New illustrated backgrounds on the menus and the loading screen.
+- The game selector shows a slideshow of track views instead of one picture.
+- Updating on Mac is simpler. No manual re-signing needed.
+- The PLAY menu is now two big cards. Pick SINGLE or MULTIPLAYER, then go.
+- MULTIPLAYER goes straight to the lobby. No extra screen to click through.
+- Picking a map no longer asks you to pick a vehicle again.
+- The room screen puts the code on the left and the players on the right.
+- Server status is hidden. If it is down you just get one plain message.
+- Multiplayer is simpler all round, with a room browser you can search.
+- Loading screens look better and the progress number is easy to read.
+- Menus move smoothly. Arrow keys, WASD and a controller all work everywhere.
+- Vehicle stats are now 10 block bars, so you can compare cars at a glance.
+- The changelog is shorter, easier to read and scrolls on fewer pages.
+- Starting a race now leaves real skid marks on the dirt.
+- The host picks one car for everyone in a race. Name tag colours help tell players apart.
+- Hold Tab to see everyone in the room with their ping.
+- Updates are more reliable, including on Mac. One click still does it all.
 
 ## [0.6.2] - 2026-11-05
 
-Multiplayer reliability, compact UI, richer collisions and release hygiene.
-
-### Changed
-
-- Multiplayer now starts only two ways: **HOST LAN** (this PC is the server,
-  nearby players find it automatically) or **HOST ONLINE** (the Cart Slop Pi
-  returns a 5-letter room code). Direct IP, port, hostname, UPnP and
-  hand-built address codes are gone from the UI and the join path.
-- The lobby is a Fall Guys-style screen: two big host cards, a 5-letter join
-  box, automatic LAN room discovery, online room browsing and a live room
-  panel with a player list.
-- Online controls show **PI SERVER ONLINE/OFFLINE** and disable themselves
-  when no server can be reached. LAN hosting still works without internet.
-- Rooms carry a server-side state: `lobby`, `playing` or `finished`. Joining a
-  room that has already started is rejected.
-- Added a scene-readiness handshake between peers. Gameplay state is only sent
-  to peers that have loaded the world, and the host retries the scene start
-  until they confirm. This fixes the repeating Godot `Node not found:
-  "DrivingTest"` / `Invalid packet received` errors when a peer was still in
-  the lobby or loading the map. The readiness signal uses the existing scene
-  RPCs, so older builds can still join the same room.
-- Esc in multiplayer shows the menu but keeps the world running (Minecraft
-  style). Single-player still pauses. Opening the menu never changes the
-  server room state or pauses the Pi.
-- Updates check automatically, surface the update dialog, download in the
-  background, and then ask for **RESTART & UPDATE**. Windows, macOS and Linux
-  install and relaunch themselves; no manual unzip.
-- The updater asks the Pi mirror first, then GitHub.
-- Fixed the online room browser clipping: the lobby is now inside a bounded
-  scroll area, so room cards and BACK stay reachable.
-- Added two-body, host-authoritative car collisions in sandbox and race:
-  mass-weighted normal impulse, restitution and Coulomb friction, sent as a
-  delta-v to both owners. No more one-sided ghost hits.
-- Meadow Loop starts its countdown only after every peer has loaded the race,
-  and clients receive the synchronized countdown. Threaded scene loads have a
-  12-second fallback so "Syncing players..." cannot hang forever.
-- Fixed the Meadow Loop kicker ramps rendering as invisible floors: the wedge
-  material is double-sided and a solid top slab is drawn over the collision.
-- Added a small multiplayer HUD readout: FPS, ping and player count.
-- Compacted the main menu, pause menu, play screen and vehicle picker: related
-  actions now share rows instead of every button being full-width.
-- Added a blinking TYPING indicator to the multiplayer name field.
-- Stabilized the chase camera at high steering angles and airborne moments:
-  softer banking, speed-scaled steering look-ahead and tighter shake limits.
-- Restored a proper sweeping speedometer needle with a hub instead of a lone
-  circular knob.
-- Brightened the vehicle preview with ambient fill and a camera-side fill
-  light, so the dark side of every car is readable.
-- Faster server discovery and shorter HTTP timeouts, with a second room
-  registration attempt. The server pill is clickable to re-check the Pi.
-- The changelog is now paged two releases at a time with PREV/NEXT and a page
-  counter, instead of one endless scroll.
+- Two ways to play together: host on your Wi-Fi, or get a 5 letter room code online.
+- Car bumps feel heavier and more convincing.
+- Everyone loads the race before the countdown starts.
+- The game updates itself with one click.
 
 ## [0.6.1] - 2026-11-05
 
-Polish, audio, vehicle and Pi-connectivity update.
-
-### Changed
-
-- Rebuilt the vector shopping-cart artwork used by the menu backdrop, loading
-  screen, boot splash and window icon. The cart now has a proper sloped wire
-  basket, two handle supports, a child-seat flap, four casters and a lower rack.
-- Moved the SLOP paint drips onto real glyph positions (one under each letter),
-  gave them tapered shafts and beads, and made them follow the label rotation.
-- Added a fade-in/fade-out to every SceneLoader transition. Main Menu → Play,
-  pause → menu, vehicle → Play and all other scene changes now share it.
-- Loading screen now has a SlopMart storefront, trees, parking-bay lines and a
-  cart that sits on the progress road instead of floating over it.
-- Boot splash and window icon are generated from the same vector cart so the
-  branding matches the game.
-- All action-button labels are explicitly horizontally centred; the candy
-  styleboxes use symmetric vertical padding.
-- The checker flag now actually waves instead of being a static shape.
-- Meadow Loop now has a denser PBR forest, a ring of grassy hills and a
-  darker ridge, so the horizon is no longer an empty grass sheet. The flat
-  background trees are gone.
-- Added two wooden kicker ramps with convex collision, a visible crest lip and
-  side rails. Rival carts follow the ramp height.
-- Boost pads were buried under the road surface; they now sit above it and are
-  a simple glowing disc with a ring instead of a dark icon plate.
-- Simplified the race HUD: no DRIVING pill, no checkered badge, no sector
-  labels, a smooth boost bar instead of segments/bolt, a cleaner speedometer
-  and a control hint that disappears after 8.5 seconds.
-- Added countdown beeps, lap chime, finish fanfare, forest ambience, random
-  metal impact variants, UI click/hover sounds and a boost-pad whoosh.
-- Added a full vehicle picker with stat sheet to the multiplayer lobby and
-  minigame screen. Every car shows top speed, weight, acceleration, grip,
-  steering, smoke, skid width and push strength.
-- Added a baked public Pi fallback (`68.204.45.1:42777`) after LAN discovery.
-- Pi dashboard: dark, grouped status layout; correct internet-reachability
-  reporting; 22/22 UPnP ports verified.
-- Pi networking: fixed LAN address with a DHCP fallback, and verified host,
-  client and Meadow Loop races through the Pi on both LAN and public relay.
+- New engine sounds, music and menu polish.
+- More vehicles to pick from.
 
 ## [0.6.0] - 2026-11-05
 
-Content honesty, one-click updates and another bug-fix pass.
-
-### Changed
-
-- The minigame screen now lists **only playable events**. MEADOW LOOP uses a
-  real in-game screenshot; the four invented "coming soon" cards and their
-  illustrated placeholders are gone. A missing preview now means no image,
-  never a made-up drawing.
-- The minigame screen is a single featured card with the real preview, event
-  stats, a vehicle cycler and one clear action.
-- **UPDATE NOW** downloads, unpacks, installs and restarts in one click. No
-  manual unzip step on Windows, macOS or Linux.
-- The updater can use a Cart Slop Pi server first (`/api/update`) and falls
-  back to GitHub when the Pi has no manifest.
-- Multiplayer lobby copy now describes the Pi room-code flow instead of the
-  old direct-code-only flow.
-
-### Fixed
-
-- Multiplayer race results showed **RACE AGAIN** (a no-op) and **BACK TO HUB**
-  because the result card was built before the session type was known. It now
-  shows **BACK TO LOBBY** correctly.
-- The race publishes a final progress packet at the finish so peer placements
-  do not use stale positions.
-- Older settings that pointed at an invented minigame are repaired to
-  MEADOW LOOP instead of silently selecting nothing.
-- The minigame name getter no longer emits a settings-changed signal.
+- One click updates, no unzipping or copying files.
+- Honest menus. Only real game modes are shown.
 
 ## [0.5.4] - 2026-11-05
 
-Small UI consistency pass on top of 0.5.3.
-
-### Changed
-
-- Player names in the lobby are one compact wrapped line instead of an
-  eight-line tower that could push the host panel off-screen.
-- Room browser shows the first three rooms, so a busy server cannot overflow
-  the join panel.
-- Join placeholder now says 5-CHAR CODE to match the Pi room codes.
-- Every candy button now uses the same 6 px shadow offset as the rest of the
-  UI, not a mix of 5/6/9.
+- Menu buttons and text line up nicely everywhere.
 
 ## [0.5.3] - 2026-11-05
 
-UI overhaul, map selection in the lobby, race-only countdown and car-to-car physics.
-
-### Added
-
-- **Car-to-car collisions** with mass-aware momentum exchange. Remote carts,
-  sandbox bots and Meadow Loop rivals now push back, recoil and bump instead of
-  acting as immovable scenery.
-- **Map choice belongs to the lobby**: choosing a minigame now selects the map
-  and returns to the lobby. The host starts the race from START.
-- **One button height and type scale across every menu** via a shared UI kit.
-  Preview cards keep their larger size; all action buttons, fields and toggles
-  line up.
-
-### Changed
-
-- Solo minigames go straight into the race; the waiting-room countdown is gone.
-  The 3-2-1-GO countdown now plays after the race scene has loaded.
-- Lobby is calmer: the public-server field moved under ADVANCED, captions were
-  shortened, redundant hints were removed and the map is a single button.
-- Race result has one back-to-hub action instead of duplicate hub buttons.
-- HUD control hint shortened.
-
-### Fixed
-
-- Selecting a minigame while hosting no longer starts the game immediately.
-- Returning from a solo race goes back to the minigame hub, not the old waiting
-  room.
-- Buttons no longer jump between 34, 44, 52, 66 and 80 px on different screens.
-- Remote carts now receive their real catalog mass before collision resolution.
+- Map selection in the lobby.
+- A proper race countdown.
+- Cars now bump into each other.
 
 ## [0.5.2] - 2026-11-05
 
-Global Pi joins that survive Windows Firewall.
-
-### Added
-
-- **Host TCP tunnel**: the host game opens an outbound TCP connection to the Pi
-  (TCP 42820). A local loopback proxy gives every remote client its own ENet
-  peer, so Windows Firewall no longer blocks the Pi→host leg on Public
-  networks. Friends still connect to the normal UDP relay port.
-- **Optional SERVER field** in the lobby for internet clients: enter the Pi's
-  public IP or hostname once, then use the 5-character room code. Leaving it
-  empty keeps LAN discovery.
-- **NAT-PMP fallback** beside UPnP, plus an external TCP reachability check and
-  a public 14-character code in the Pi console.
-- Public Pi console shows TCP tunnel status and both short/public codes.
-
-### Fixed
-
-- Pi relay thread crash when a lobby was unregistered while a packet was in
-  flight.
-- Pi server advertised `127.0.0.1` when it started before Wi-Fi was ready.
-- LAN discovery now binds the physical Wi-Fi/Ethernet address and sends the
-  subnet broadcast, instead of letting a VPN/WARP default route swallow it.
-- Host registration reports its real LAN address, so relay works even when a
-  VPN changes the TCP source address.
+- Online rooms work better through home networks and firewalls.
 
 ## [0.5.1] - 2026-11-05
 
-Compact pill controls and the Raspberry Pi lobby/relay backend.
-
-### Added
-
-- **Cart Slop Pi server**: a headless Raspberry Pi 4 lobby + UDP relay with an
-  HTML console at `http://cartslop.local:42777`. The game discovers it by UDP
-  broadcast, registers the host, heartbeats, and gets a join code that routes
-  friends through the Pi. Relay ports are mapped with UPnP.
-- **Pill cycling controls**: one button cycles NO BOTS → 1 BOT → … → 5 BOTS in
-  PLAY and the lobby. Game mode and LAN/ONLINE are also single cycling pills.
-- **Race music**: `race_loop.mp3` plays in the Meadow Loop waiting room/race.
-- ADVANCED toggle reveals the optional PUBLIC IP field only when needed.
-
-### Changed
-
-- PLAY is shorter and clearer; the lobby shows only profile/mode/host/join
-  while idle, then switches to a compact host panel with game/bots pills.
-- Removed the extra bots count button and the always-visible public IP row.
+- Smaller, tidier controls.
 
 ## [0.5.0] - 2026-11-05
 
-Meadow Loop, a real minigame grid, and a much more reliable multiplayer lobby.
-
-### Added
-
-- **MEADOW LOOP** — the first playable minigame: three laps of a winding 491 m
-  dirt circuit through a dense grassy forest, with a 3-2-1-GO countdown, four
-  boost pads, 34 pushable cones, checkpoint gates, lap times, place badges and
-  a candy result card.
-- **Waiting room** (`meadow_lobby.tscn`): live 3D preview, editable name,
-  READY UP, rivals joining one by one and a start countdown.
-- **Realistic PBR scenery**: ~387 procedural trees built from CC0 Poly Haven
-  bark/leaf scans, tiled PBR ground, 5 scanned ground-cover models, wind and
-  kart-bending foliage shaders, and heavy viewport settings for the race only.
-- **Minigame grid** with generated preview cards for all five events; Meadow
-  Loop is READY and the other four are marked COMING SOON. Includes a vehicle
-  cycler and selected-event details.
-- **AI carts in the sandbox** when the BOTS toggle is on, plus the self-hosted
-  race rivals.
-- **Multiplayer race support**: peers own their carts, stream position/yaw at
-  20 Hz, exchange vehicle models, see name labels and are counted in the race
-  position. Result cards hide RACE AGAIN (which would desync the field).
-- **LAN code alongside the online code**, connection diagnostics for
-  UPnP/CGNAT failures, and a visible warning when only a LAN route exists.
-- Optional **PUBLIC IP** override remains for manual port-forwarding or a
-  VPN/tunnel address.
-
-### Changed
-
-- PLAY now has SINGLE PLAYER / MULTIPLAYER tabs with shared BOTS controls.
-- The multiplayer lobby switches between idle, host and client layouts instead
-  of showing every control at once.
-- Minigames are reached from PLAY again; the grid replaces the old options
-  prototype and tournament placeholder.
-
-### Fixed
-
-- Online hosting could hang forever on a router that never answered UPnP. The
-  host now gives discovery a hard 6 s budget, keeps loading in the background
-  and upgrades the code if the mapping arrives later.
-- The host no longer advertises a public IP as a joinable code when UPnP
-  failed; it shows the LAN code plus a clear port-forward/CGNAT explanation.
-- LAN IP selection skips VPN, Hyper-V, WSL, Docker and VirtualBox adapters.
-- Joining now times out after 12 s with an actionable message instead of
-  hanging on "Connecting...".
-- Starting any scene while another transition was in flight is queued instead
-  of silently dropped, and pause is cleared before every transition.
-- Multiplayer Meadow Loop now actually shows the other players and their
-  vehicle models instead of loading a solo scene.
-- In 3+ player sessions, client names and cart positions were only sent to the
-  host; the host now relays them so every client sees every player.
-- Race result titles now reflect the finishing place instead of always saying
-  YOU WIN, and the field size is no longer hard-coded to four.
-- Race sync stops cleanly when the host leaves, instead of spamming RPC errors
-  during the disconnect transition.
-- The loading screen no longer spams an invalid-polygon error; the hills layer
-  triangulates cleanly.
-- Minigame vehicle choice now applies to the race without overwriting the
-  saved sandbox choice.
+- Meadow Loop is playable. Three laps, rivals and boost pads.
+- The minigames screen shows real screenshots.
+- The multiplayer lobby is steadier.
 
 ## [0.4.2] - 2026-11-05
 
-Menu polish across every screen.
-
-### Changed
-
-- Main-menu buttons (PLAY / SETTINGS / CHANGELOG / QUIT) now share the same
-  80 px height, corner radius and spacing for a tidier stack.
-- Hover animation is mouse-only: buttons bob, wobble and squish under the
-  pointer, but a keyboard-focused button (including PLAY on boot) stays still.
-- Candy styling and hover effects extended to the pause menu, SETTINGS
-  (check-for-updates / back) and CHANGELOG back button; lobby, vehicle picker
-  and update dialog already inherit it.
-- Play menu hides its empty notice row, closing the awkward gap above BACK.
+- Menu polish across the whole game.
 
 ## [0.4.1] - 2026-11-05
 
-Every vehicle now has its own personality - and the game has a changelog.
-
-### Added
-
-- **Per-vehicle physics**: each catalog entry has a real mass, top speed,
-  engine power, grip and steering. Engine power is quoted at a 1.2 t reference,
-  so the 3.2 t truck launches gently while the 1.15 t sports car is quick.
-- **Momentum-based impacts**: hitting walls uses the vehicle's mass (light cart
-  bounces and sheds speed; heavy truck ploughs on) and ramming props transfers
-  proportionally more momentum from heavier vehicles. Camera shake scales down
-  with weight.
-- **Unique vehicle audio**: six distinct synthesized engine loops plus a
-  shopping-cart wheel rattle (no engine), all pitch-shifted by speed. Generated
-  by `tools/gen_vehicle_loops.py`; free CC0 source links in
-  `docs/AUDIO_SOURCES.md`.
-- **Per-vehicle smoke and skid marks**: sports car and truck produce the most
-  smoke; skid width and rear track now match each vehicle (cart thin, truck
-  wide).
-- **CHANGELOG button** on the main menu with a scrollable history built from
-  `CHANGELOG.md`, so every released version is listed in-game.
-
-### Changed
-
-- The speedometer dial rescales to the current vehicle's boosted top speed
-  instead of clipping at 90 km/h.
-- Vehicle picker/README now document the weight and top-speed differences.
-
-### Fixed
-
-- Skid trails for wide vehicles were both offset to the same side and merged
-  into one thick mark; they now keep their left/right wheel sides.
-- The update badge never appeared on the first menu load: the 3-argument
-  `update_available` signal was connected to a 1-argument handler.
-- The update dialog could not be dismissed once an update was ready; Escape
-  now closes it, release notes close it after opening, and "no matching build"
-  opens the download page instead of getting stuck on "DOWNLOADING".
-- Changing scenes while paused (host start / host quit) carried the pause flag
-  into the new menu, freezing it. Transitions always unpause first.
-- The loading overlay hid the custom cursor and let clicks reach the menu
-  behind it; it now blocks input and draws the cursor above the overlay.
-- Lobby could START before hosting finished, and a failed host left a fake
-  code panel; buttons wait for `host_started`, failures reset the panel, and
-  BACK cancels an in-flight host instead of leaking a server.
-- Tab focus could escape update/settings/changelog overlays; focus now loops
-  inside each overlay and closing pause clears an open settings panel.
-- Tournament dropdowns overwrote Free Play settings with the wrong widgets.
-- Vehicle select had no working buttons if the catalog was empty.
-- The loading screen kept redrawing while hidden and skipped the first tip.
-- Remote peers could keep the wrong vehicle model when joining mid-game; the
-  sandbox now exchanges a full vehicle map when each peer enters the scene.
-- Skid ribbons joined separate drifts with a stripe across the map; strips now
-  break into segments that fade independently.
-- Navigation requested during a transition was silently dropped, which could
-  desync host/client scene loads; it is queued instead.
-- Reset in multiplayer respawned on the single-player marker and snapped
-  host-owned props around; it now uses the network spawn and leaves props to
-  the host.
-- Crashed/recovering carts kept emitting drift smoke and skid marks.
-- Knocked-over props stayed upright on clients; full rotation is replicated.
-- Client pushes applied impulses to frozen props and the host ignored spin;
-  clients now only request, and the host validates and applies the kick.
-- Ghost carts ran smoke/skid/audio logic and could briefly steal the camera.
-- UPnP mappings are now time-limited instead of permanent.
-- Download progress no longer jumps to 100% when the CDN omits Content-Length,
-  and old update zips are pruned.
-- Guarded divide-by-zero on designer-exposed speed/recovery values.
+- Every vehicle feels different.
+- The in game changelog was added.
 
 ## [0.4.0] - 2026-11-05
 
-Playtest polish: real skid marks, music, a complete update flow and a quieter
-loading policy.
-
-### Added
-
-- **Tyre skid marks** (`scripts/feedback/skid_trail.gd`): one world-space
-  ribbon per rear wheel while drifting/handbraking. Marks hug ramps via ground
-  raycasts, break on jumps, never z-fight, and fade out over 6 seconds.
-- **Music system** (`Music` autoload): crossfades a menu bed and a sandbox bed,
-  loops MP3s, and silently skips missing files. Drop-in folder
-  `assets/audio/music/` with exact filenames and Suno prompt guide.
-- **Update progress UI**: real download percentage and MB counter, plus
-  **RESTART TO INSTALL** once complete; reopening the panel while a download
-  runs shows live progress. Failed downloads now offer the release page.
-- **SETTINGS → CHECK FOR UPDATES** with online/up-to-date/offline feedback.
-- **Async hosting**: the loading overlay animates while the port and UPnP
-  mapping are prepared; the lobby no longer freezes.
-- Easy player-facing download/play instructions in `README.md`.
-
-### Changed
-
-- The loading screen is only used for long transitions (entering the 3D arena,
-  starting a network session); quick menu hops are instant again.
-- **Minigames are removed from the UI** for now; the scene is kept for the
-  future scrollable preview grid. PLAY offers SANDBOX and MULTIPLAYER only.
-- Updater now selects the release zip for the **running platform** instead of
-  always preferring the Windows build.
-
-### Fixed
-
-- Update panel could not reopen cleanly mid-download and its secondary button
-  closed the dialog after a failed download instead of opening the release page.
-- macOS/Linux clients could previously download the Windows update package.
+- Tyre skid marks while drifting.
+- Music and a complete update flow.
+- Fewer update pop ups.
 
 ## [0.3.0] - 2026-11-05
 
-Profiles, online play, loading screens and the minigames hub.
-
-### Added
-
-- **Player names**: up to 16 printable characters, sanitised on send and
-  receive, persisted, shown in the lobby and floating above remote carts.
-- **LAN / ONLINE switch** in the lobby. Online uses UPnP or a public IP with an
-  optional manual PUBLIC IP override; LAN uses the local address.
-- **Checksummed 14-character join codes** - typos are rejected before connecting.
-- **Themed loading screens** for every scene transition (cart driving along a
-  road with the real progress) plus a branded boot splash.
-- **Minigames hub** (`minigames_menu`): Free Play cards with per-game options
-  (difficulty, rounds, vehicle) and a Tournament setup prototype; options are
-  persisted. All minigames are solo and marked COMING SOON.
-- PLAY now offers SANDBOX / MULTIPLAYER / MINIGAMES.
-
-### Fixed
-
-- Join-code decoding loop included the checksum byte, rejecting valid codes.
+- Player profiles and online play.
+- Loading screens and the minigames hub.
 
 ## [0.2.1] - 2026-11-05
 
-- Auto-install is Windows-only now: macOS and Linux update badges open the
-  release page instead of handing a .bat to a missing cmd.exe.
-- Multi-platform release assets (Windows, macOS, Linux, Web).
+- Small fixes after playtests.
 
 ## [0.2.0] - 2026-11-05
 
-Peer-to-peer multiplayer.
-
-### Added
-
-- **Host / join over the internet** with a 12-character join code (ENet over
-  UDP, no account or server). Hosting opens a port, asks the router for a UPnP
-  mapping and falls back to a public-IP lookup; the lobby shows the code, a
-  copy button, the player list and a measured ping.
-- **Lobby screen** (`lobby_menu`) reachable from HOST GAME / JOIN GAME, with a
-  paste-code field that also accepts `ip:port`.
-- **Shared sandbox**: every peer drives its own cart (position streamed at
-  20 Hz and interpolated on the other clients), the host simulates props and
-  broadcasts snapshots at 10 Hz, and client pushes are forwarded to the host.
-- Late join: connecting while a session is running drops you into the sandbox
-  with the existing players.
-- Per-player vehicle choice is synced to the ghosts.
-- `Network` autoload with join-code encode/decode, ping measurement and clean
-  disconnect handling.
-
-### Changed
-
-- Pause -> QUIT TO MENU leaves the session.
-- The HOST/JOIN notice on the play screen is gone; those buttons open the lobby.
+- Friends can join the same world.
 
 ## [0.1.1] - 2026-11-05
 
-Playtest pass: vehicle feel, arena rebuild, UI polish and audit fixes.
-
-### Added
-
-- Vehicle picker after SANDBOX: shopping cart (default), sedan, sports car,
-  taxi, van, box truck, police cruiser, with a spinning 3D preview.
-- Planned sandbox arena (`tools/build_arena.py` + `docs/ARENA_LAYOUT.md`):
-  140 x 140 m, start straight with speed bumps, jump + landing, drift ring,
-  slalom, cone field, crate wall, bowl and cliff jump.
-
-### Fixed
-
-- Kenney vehicles drove backwards (180 degree yaw error); the shopping cart was
-  the only one facing correctly.
-- Boost pads never fired: the Area3D masked layer 1 while the kart is layer 2.
-- Props could stop or launch the kart; they now sit on their own layer and are
-  popped by a push sensor, with a horizontal speed clamp as a safety net.
-- Cliff ramp/platform had a 0.2 m lip that trapped the kart.
-- Crate stack was unsupported and collapsed at spawn.
-- Coplanar track decals z-fought; decal heights are staggered.
-- Smoke particles: emission box moved onto the process material, orbit and
-  turbulence property names corrected (settings were silently ignored).
-- Update installer wrote a `user://` path into `update_install.bat`; it now
-  gets a globalised Windows path.
-- A finished update download is remembered across restarts, and zip extraction
-  rejects `..`/absolute entries.
-- SFX volume now controls gameplay audio, not just the menu click.
-- Holding boost on an empty tank no longer micro-pulses the FOV and boost sound.
-
-### Changed
-
-- Camera: smooth layered-sine shake, softer impact/landing trauma, corner
-  banking, vertical lag on jumps.
-- HUD shrunk (~40% smaller) and tilted; menu/panel spacing made consistent.
+- Better cart controls and a rebuilt arena.
 
 ## [0.1.0] - 2026-11-04
 
-First tagged prototype build: playable driving sandbox plus the full menu/shell layer.
-
-### Added
-
-- **Main menu** (`scenes/ui/main_menu.tscn`): PLAY, SETTINGS, QUIT, disabled HOST/JOIN
-  placeholders, version label, update badge.
-- **HUD** (`scenes/ui/hud.tscn`): speed readout, boost bar, drive-state label
-  (DRIVING / AIRBORNE / CRASHED / RECOVERY), controls hint.
-- **Pause menu** (Esc during driving) and **Settings** (master/SFX volume, fullscreen,
-  custom cursor toggle).
-- **Custom cursor** (`scenes/ui/cursor_controller.tscn`): OS pointer hidden in menus,
-  idle/hover/click states, tween pop on click, exported scale and pop strength.
-- **Theme** (`assets/ui/theme.tres`) and Fredoka font for menus/HUD.
-- **Update checker** autoload: silent GitHub release check, in-menu update badge,
-  browser/download/.bat-install tiers, `user://updates/` staging.
-- Windows export preset and `builds/v0.1.0/` packaging.
-- `version.txt`, `CHANGELOG.md`, `README.md`, `docs/RELEASE_WORKFLOW.md`.
-
-### Fixed
-
-- Boost pads were inert: their Area3D masked layer 1 while the kart is layer 2.
-- Props now live on their own layer with a push sensor, so they pop away
-  instead of blocking or launching the kart; a horizontal speed clamp is a
-  safety net.
-- Cliff ramp/platform lip removed; the route is drivable.
-- Crate stack is supported (two rows of five) and no longer collapses at spawn.
-- Coplanar track decals staggered to stop z-fighting.
-- Particle sheet: emission box moved to the process material, orbit/turbulence
-  property names corrected.
-- An empty boost tank no longer micro-pulses while the button is held.
-- Camera banks into corners instead of outward.
-- Update installer wrote a `user://` path into `update_install.bat`, so the
-  batch could never copy files. It now gets a globalised Windows path.
-- A finished download is remembered across restarts (and no longer resets to
-  "update available" when the menu reloads), so "RESTART TO INSTALL" works.
-- SFX volume now actually controls gameplay audio: engine, skid, impacts,
-  landing and boost players are routed to the SFX bus.
-- Zip extraction rejects `..`/absolute entries (zip-slip) and a failed download
-  request no longer leaks an HTTPRequest.
-
-### Changed
-
-- **Vehicle selector**: SANDBOX now opens `vehicle_select` with a spinning 3D
-  preview - shopping cart (default), sedan, sports car, taxi, van, box truck and
-  police cruiser. The choice is saved in `user://settings.cfg` and applied when
-  the sandbox cart spawns. The minigame buggy is intentionally not listed.
-- **Menu flow**: PLAY now opens a mode-select screen (`play_menu`) with
-  SANDBOX / HOST / JOIN / BACK. Sandbox loads the driving test; host and join
-  show a "multiplayer coming" notice. HOST/JOIN were removed from the main menu
-  and the title is a single playful `CART SLOP GP` line.
-- **HUD** made compact (about 40% smaller footprint) and tilted for personality:
-  smaller speedometer, boost meter and state pill, thinner hint text.
-- **Track dressing**: new animated chevron boost pad (shader), checkered start
-  line, palette-matched lane / landing / brake / drift pads, navy ramps.
-- **Props** are much lighter: cones 1.5 -> 0.35 kg, crates 3.0 -> 0.8 kg, they pop
-  upward and spin, and knocking them no longer slows the kart. Rollers are now
-  low ramps you can drive over.
-- **Main menu art** rebuilt to match the supplied mockup: vector SlopMart
-  parking-lot backdrop (sky, clouds, store, carts, lamps, lot lines), layered
-  `CART / SLOP / GP` title with paint drips and a waving checkered flag, and
-  candy buttons (yellow PLAY, blue SETTINGS, red QUIT) with thick outlines,
-  hard shadows and a gloss highlight.
-- **HUD** rebuilt in the same sticker style: round speedometer with needle and
-  colour sweep, segmented boost bar with a lightning bolt, cream state pill and
-  outlined hint text. Race position (`1st`) and lap (`LAP 1 / 3`) pills are
-  included but hidden by default - they are for race-style minigames
-  (`set_race_position()`, `set_lap()` or the `show_*` exports).
-- **Smoke** (`assets/textures/smoke_sheet.png`, `scenes/feedback/cart_feedback.tscn`):
-  replaced the old sheet (16 thin crescent frames that looked like boomerangs) with a
-  soft 4x4 billowing puff sheet generated by `tools/gen_smoke_sheet.py`. Drift smoke now
-  uses world-space particles (`local_coords = false`), gentler upward drift, less
-  turbulence and depth-sorted billboards; landing/crash bursts softened to match.
-- Main scene switched from the driving test to the main menu.
-
-### Known limitations
-
-- No multiplayer, laps, or track art yet (HOST/JOIN are placeholders).
-- Update support covers Windows .exe builds only.
+- First release. Drive a shopping cart around the arena.

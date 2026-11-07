@@ -10,7 +10,11 @@ func _init() -> void:
 
 	_expect_eq(checker.normalize_version("v0.2.0"), "0.2.0", "strip v prefix")
 	_expect_eq(checker.normalize_version("release-1.4.2"), "1.4.2", "find digits in tag")
-	_expect_eq(checker.read_version_file(), "0.6.2", "version.txt matches")
+	# Never hard-code the release number: version.txt and project.godot must
+	# always agree, whichever patch we are on.
+	_expect_eq(checker.read_version_file(),
+		str(ProjectSettings.get_setting("application/config/version")),
+		"version.txt matches project.godot")
 
 	_expect_true(checker.version_greater("0.2.0", "0.1.0"), "0.2.0 > 0.1.0")
 	_expect_false(checker.version_greater("0.1.0", "0.1.0"), "equal is not greater")

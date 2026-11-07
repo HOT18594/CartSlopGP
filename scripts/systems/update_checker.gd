@@ -482,9 +482,19 @@ func install_downloaded_update(zip_path: String = "") -> bool:
 
 	var exe_path: String = OS.get_executable_path().replace("\\", "/")
 	var pid: int = OS.get_process_id()
-	if platform == "macOS":
-		return _install_macos(exe_path, staging, pid)
+	# Every platform must reach this quit. The old macOS branch returned early,
+	# so the installer script sat in `while kill -0 $PID` forever and the
+	# "RESTART & UPDATE" button never actually restarted anything.
+	var launched: bool = _install_macos(exe_path, staging, pid) if platform == "macOS" \
+		else _install_desktop(exe_path, staging, pid, platform)
+	if not launched:
+		return false
+	get_tree().quit()
+	return true
 
+
+func _install_desktop(exe_path: String, staging: String, pid: int,
+		platform: String) -> bool:
 	var exe_name: String = exe_path.get_file()
 	var exe_dir: String = staging
 	if not FileAccess.file_exists(staging + "/" + exe_name):
@@ -499,15 +509,15 @@ func install_downloaded_update(zip_path: String = "") -> bool:
 			last_error = "cannot_write_bat"
 			return false
 		OS.create_process("cmd.exe", ["/c", bat_path.replace("/", "\\"), str(pid)], false)
-	else:
-		if not _write_unix_installer(exe_dir, game_dir, exe_name, pid):
-			return false
-	get_tree().quit()
-	return true
+		return true
+	return _write_unix_installer(exe_dir, game_dir, exe_name, pid)
 
 
 func _install_macos(exe_path: String, staging: String, pid: int) -> bool:
-	## An .app is a folder: swap the whole bundle from the staged zip.
+	## An .app is a folder, so swap the whole bundle. Unsigned / ad-hoc signed
+	## builds need three extra things the old script missed: a writable
+	## location check, restored executable bits (ZIPReader drops Unix modes),
+	## and a rollback if the new bundle will not launch.
 	var app_path: String = exe_path.get_base_dir().get_base_dir().get_base_dir()
 	if not app_path.ends_with(".app"):
 		last_error = "not_inside_app_bundle"
@@ -516,26 +526,85 @@ func _install_macos(exe_path: String, staging: String, pid: int) -> bool:
 	if staged_app == "":
 		last_error = "app_not_in_zip"
 		return false
+	# A standard macOS account cannot write to /Applications. Detect that now
+	# and let the dialog offer the manual download instead of lying.
+	var probe: String = app_path.get_base_dir() + "/.cartslop_write_probe"
+	var probe_file: FileAccess = FileAccess.open(probe, FileAccess.WRITE)
+	if probe_file == null:
+		last_error = "read_only_app_location"
+		return false
+	probe_file.close()
+	DirAccess.remove_absolute(probe)
+
 	var script_path: String = ProjectSettings.globalize_path(UPDATE_DIR + "/update_install.sh")
-	var lines: PackedStringArray = [
+	if not _write_script(script_path, _macos_install_script_lines(
+			app_path, staged_app, exe_path.get_file(), pid)):
+		return false
+	OS.create_process("/bin/bash", [script_path], false)
+	return true
+
+
+func _macos_install_script_lines(app_path: String, staged_app: String,
+		exe_name: String, pid: int) -> PackedStringArray:
+	## Kept as a pure function so the generated shell script can be unit tested
+	## on Windows, where /bin/bash does not exist.
+	return PackedStringArray([
 		"#!/bin/bash",
 		"trap '' HUP",
-		"APP=\"%s\"" % ProjectSettings.globalize_path(app_path),
-		"STAGED=\"%s\"" % ProjectSettings.globalize_path(staged_app),
+		"APP=" + _sh_quote(ProjectSettings.globalize_path(app_path)),
+		"STAGED=" + _sh_quote(ProjectSettings.globalize_path(staged_app)),
+		"BACKUP=" + _sh_quote(ProjectSettings.globalize_path(UPDATE_DIR + "/previous.app")),
+		"EXE=" + _sh_quote(exe_name),
+		"LOG=" + _sh_quote(ProjectSettings.globalize_path(UPDATE_DIR + "/update_install.log")),
 		"PID=%d" % pid,
+		"log() { echo \"$1\" >> \"$LOG\"; }",
+		": > \"$LOG\"",
+		"log 'waiting for the game to quit'",
 		"while kill -0 \"$PID\" 2>/dev/null; do sleep 1; done",
 		"sleep 1",
-		"rm -rf \"$APP\"",
-		"cp -R \"$STAGED\" \"$APP\"",
+		"rm -rf \"$BACKUP\"",
+		"if ! mv \"$APP\" \"$BACKUP\"; then log 'backup failed'; exit 1; fi",
+		"if ! cp -R \"$STAGED\" \"$APP\"; then log 'copy failed'; rm -rf \"$APP\"; mv \"$BACKUP\" \"$APP\"; open -n \"$APP\"; exit 1; fi",
+		# ZIPReader recreates every file as 0644. Restore the executable bit on
+		# the launcher ONLY. A blanket `chmod -R` here rewrites the sealed
+		# resource modes, invalidates the code signature and forces an ad-hoc
+		# re-sign on every single update.
+		"chmod +x \"$APP/Contents/MacOS/\"* 2>/dev/null",
+		# Locally created bundles are not quarantined, but clear it anyway so
+		# replacing a signed/notarized previous build never trips Gatekeeper.
 		"xattr -dr com.apple.quarantine \"$APP\" 2>/dev/null",
-		"codesign --force --deep --sign - \"$APP\" 2>/dev/null",
-		"open \"$APP\"",
+		"xattr -cr \"$APP\" 2>/dev/null",
+		# Godot exports are already ad-hoc signed. Verify first, and re-sign
+		# only if the copy actually broke the signature. No --strict: ad-hoc
+		# bundles legitimately fail strict resource-envelope checks.
+		"if command -v codesign >/dev/null 2>&1; then",
+		"  if ! codesign --verify --deep \"$APP\" >/dev/null 2>&1; then",
+		"    log 'signature invalid, re-signing ad-hoc'",
+		"    codesign --force --deep --sign - \"$APP\" >/dev/null 2>&1 || true",
+		"  else",
+		"    log 'signature intact, no re-sign needed'",
+		"  fi",
+		"fi",
+		"if [ -x \"$APP/Contents/MacOS/$EXE\" ] && open -n \"$APP\"; then",
+		"  log 'update installed'",
+		"  rm -rf \"$BACKUP\"",
+		"else",
+		"  log 'launch failed, restoring previous build'",
+		"  rm -rf \"$APP\"",
+		"  mv \"$BACKUP\" \"$APP\"",
+		"  open -n \"$APP\"",
+		"fi",
 		"rm -f \"$0\"",
-	]
-	if not _write_script(script_path, lines):
-		return false
-	OS.create_process("/bin/bash", [script_path, ""], false)
-	return true
+	])
+
+
+static func _sh_quote(text: String) -> String:
+	## Bundle paths contain spaces ("Cart Slop GP.app"). Quote and escape them.
+	var safe: String = text.replace("\\", "\\\\")
+	safe = safe.replace("\"", "\\\"")
+	safe = safe.replace("$", "\\$")
+	safe = safe.replace("`", "\\`")
+	return "\"" + safe + "\""
 
 
 func _write_unix_installer(stage_dir: String, game_dir: String, exe_name: String, pid: int) -> bool:

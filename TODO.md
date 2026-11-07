@@ -1,6 +1,6 @@
 # Cart Slop GP TODO
 
-Updated: 2026-11-06 (v0.7.0 prepared locally; NOT released yet)
+Updated: 2026-11-06 (v0.6.3 prepared locally; NOT released yet)
 
 ## Pi server
 
@@ -103,7 +103,7 @@ Updated: 2026-11-06 (v0.7.0 prepared locally; NOT released yet)
 - [x] RESTART & UPDATE prompt; install and relaunch without unzipping
 - [x] Pi update manifest endpoint (`/api/update`) with GitHub fallback
 - [x] Verify updater zip extraction and Pi manifest lookup
-- [x] Stall watchdog + self-healing update dialog (v0.7.0); verified with a
+- [x] Stall watchdog + self-healing update dialog (v0.6.3); verified with a
       mock mirror (happy path + stalled connection)
 - [ ] Verify the final file swap on each desktop platform
 - [ ] Optional automated copy of release assets to the Pi mirror

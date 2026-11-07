@@ -11,6 +11,12 @@ extends RefCounted
 const DEFAULT_ID: String = "shopping_cart"
 const REFERENCE_MASS: float = 1200.0
 
+## Keys used by the vehicle-picker comparison bars. Keep display order here.
+const STAT_KEYS: PackedStringArray = [
+	"top_speed", "accel", "weight", "grip",
+	"steering", "smoke", "skid_width", "push",
+]
+
 const VEHICLES: Array[Dictionary] = [
 	{
 		"id": "shopping_cart",
@@ -174,6 +180,51 @@ const VEHICLES: Array[Dictionary] = [
 		"has_engine": true,
 	},
 ]
+
+
+static func stats_for(entry: Dictionary) -> Dictionary:
+	## The single source of truth for the numbers behind the stat bars.
+	## Everything is converted to the units a player would expect (km/h etc.)
+	## and the no-engine shopping cart falls back to leg-power acceleration.
+	var mass: float = float(entry.get("mass", 0.0))
+	var engine: float = float(entry.get("engine_power", 0.0))
+	var accel: float = (engine * REFERENCE_MASS / maxf(mass, 1.0)) \
+		if engine > 0.0 else float(entry.get("push_accel", 0.0))
+	return {
+		"top_speed": float(entry.get("max_speed", 0.0)) * 3.6,
+		"accel": accel,
+		"weight": mass,
+		"grip": float(entry.get("grip", 1.0)),
+		"steering": float(entry.get("steering", 1.0)),
+		"smoke": float(entry.get("smoke", 0.0)),
+		"skid_width": float(entry.get("skid_width", 0.0)) * 100.0,
+		"push": float(entry.get("push_scale", 1.0)),
+	}
+
+
+static func stat_ranges() -> Dictionary:
+	## Min/max for every key across the garage, used to normalise the bars.
+	var ranges: Dictionary = {}
+	for key: String in STAT_KEYS:
+		ranges[key] = {"min": INF, "max": -INF}
+	for entry: Dictionary in VEHICLES:
+		var values: Dictionary = stats_for(entry)
+		for key: String in STAT_KEYS:
+			var value: float = float(values.get(key, 0.0))
+			var slot: Dictionary = ranges[key]
+			slot["min"] = minf(float(slot["min"]), value)
+			slot["max"] = maxf(float(slot["max"]), value)
+	return ranges
+
+
+static func stat_ratio(entry: Dictionary, key: String, ranges: Dictionary) -> float:
+	var value: float = float(stats_for(entry).get(key, 0.0))
+	var slot: Dictionary = ranges.get(key, {})
+	var low: float = float(slot.get("min", 0.0))
+	var high: float = float(slot.get("max", 1.0))
+	if high - low < 0.0001:
+		return 1.0
+	return clampf((value - low) / (high - low), 0.0, 1.0)
 
 
 static func all() -> Array[Dictionary]:

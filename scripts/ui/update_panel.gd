@@ -1,4 +1,5 @@
 extends Control
+const UiAnim := preload("res://scripts/ui/ui_anim.gd")
 ## Update dialog: check result, download with a real progress bar, then
 ## "RESTART & UPDATE" (desktop builds install and relaunch in place).
 
@@ -20,6 +21,7 @@ var _heal_timer: float = 0.0
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
+	add_to_group("nav_scope")
 	hide()
 	_primary_button.pressed.connect(_on_primary)
 	_secondary_button.pressed.connect(_on_secondary)
@@ -78,6 +80,8 @@ func open() -> void:
 		_progress_bar.value = ratio * 100.0
 		_progress_label.text = "%d%%" % int(round(ratio * 100.0))
 		show()
+		UiAnim.pop($Center/Panel)
+		MenuNav.refresh()
 		_secondary_button.grab_focus()
 		return
 	_install_ready = _desktop_updates() and UpdateChecker.has_downloaded_update(UpdateChecker.latest_version)
@@ -97,6 +101,8 @@ func open() -> void:
 		_primary_button.disabled = false
 		_secondary_button.text = "LATER"
 	show()
+	UiAnim.pop($Center/Panel)
+	MenuNav.refresh()
 	_primary_button.grab_focus()
 	# Start the download as soon as the update surfaces. The player can hide
 	# this panel or keep playing while it runs; the actual swap waits for the
@@ -126,7 +132,10 @@ func _on_primary() -> void:
 	if _install_ready:
 		_notes_label.text = "Installing and restarting..."
 		if not UpdateChecker.install_downloaded_update():
-			_notes_label.text = "Could not install automatically - opening the release page."
+			if UpdateChecker.last_error == "read_only_app_location":
+				_notes_label.text = "Cannot replace the app in this folder. Move Cart Slop GP somewhere writable (for example your Applications folder with an admin account), or install from the release page."
+			else:
+				_notes_label.text = "Could not install automatically (%s). Opening the release page." % UpdateChecker.last_error
 			UpdateChecker.open_release_page()
 		return
 	if not _desktop_updates() or UpdateChecker.latest_asset_url == "":
@@ -198,4 +207,7 @@ func _on_download_failed(reason: String) -> void:
 
 func close() -> void:
 	hide()
+	$Center/Panel.scale = Vector2.ONE
+	$Center/Panel.modulate = Color.WHITE
+	MenuNav.refresh()
 	closed.emit()

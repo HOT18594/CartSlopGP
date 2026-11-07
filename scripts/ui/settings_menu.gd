@@ -1,4 +1,5 @@
 extends Control
+const UiAnim := preload("res://scripts/ui/ui_anim.gd")
 ## Settings overlay used by both the main menu and the pause menu.
 
 signal closed
@@ -19,6 +20,7 @@ var _refreshing: bool = false
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
+	add_to_group("nav_scope")
 	hide()
 	_master_slider.value_changed.connect(_on_master_changed)
 	_sfx_slider.value_changed.connect(_on_sfx_changed)
@@ -37,6 +39,8 @@ func open() -> void:
 	_refresh()
 	show()
 	visible = true
+	UiAnim.pop($Center/Panel)
+	MenuNav.refresh()
 	_offline_note.visible = UpdateChecker.status == "offline" or UpdateChecker.status == "error"
 	_check_button.disabled = false
 	if UpdateChecker.status == "available":
@@ -133,4 +137,7 @@ func _on_back_pressed() -> void:
 
 func close() -> void:
 	hide()
+	$Center/Panel.scale = Vector2.ONE
+	$Center/Panel.modulate = Color.WHITE
+	MenuNav.refresh()
 	closed.emit()

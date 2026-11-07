@@ -1,5 +1,5 @@
 extends Node
-## Dev-only driver: LAN-host a race and verify the v0.7.0 sync features.
+## Dev-only driver: LAN-host a race and verify the v0.6.3 sync features.
 ## Lives under /root so scene changes cannot kill the coroutine.
 
 func _ready() -> void:

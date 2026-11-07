@@ -1,14 +1,31 @@
 extends Control
+const UiAnim := preload("res://scripts/ui/ui_anim.gd")
 ## Vehicle picker shown after SANDBOX and from the multiplayer lobby / minigame
-## screen. Cycles through the catalog with a live spinning 3D preview, a full
-## stat sheet and a remembered choice.
+## screen. Cycles through the catalog with a live spinning 3D preview and a
+## garage-relative stat sheet.
+##
+## Stats no longer show raw numbers. Each row is a 10-block bar normalised
+## against the whole catalog, so the sheet reads at a glance and stays aligned
+## no matter which car is selected.
 
+const StatBar := preload("res://scripts/ui/stat_bar.gd")
 const Catalog := preload("res://scripts/vehicles/vehicle_catalog.gd")
 const VehicleVisual := preload("res://scripts/vehicles/vehicle_visual.gd")
 const UiPalette := preload("res://scripts/ui/ui_palette.gd")
 
 const DRIVE_SCENE: String = "res://scenes/dev/driving_test.tscn"
 const BACK_SCENE: String = "res://scenes/ui/play_menu.tscn"
+
+var STATS: Array[Dictionary] = [
+	{"key": "top_speed", "label": "TOP SPEED", "color": UiPalette.YELLOW},
+	{"key": "weight", "label": "WEIGHT", "color": UiPalette.BLUE},
+	{"key": "accel", "label": "ACCEL", "color": UiPalette.RED},
+	{"key": "grip", "label": "GRIP", "color": UiPalette.GRASS},
+	{"key": "steering", "label": "STEERING", "color": UiPalette.CYAN},
+	{"key": "smoke", "label": "SMOKE", "color": UiPalette.PINK},
+	{"key": "skid_width", "label": "SKID WIDTH", "color": UiPalette.BLUE_DARK},
+	{"key": "push", "label": "PUSH", "color": UiPalette.YELLOW_DARK},
+]
 
 @onready var _model_root: Node3D = %ModelRoot
 @onready var _camera: Camera3D = %PreviewCamera
@@ -23,13 +40,17 @@ var _entries: Array[Dictionary] = []
 var _current: int = 0
 var _holder: Node3D = null
 var _stats_grid: GridContainer
+var _stat_bars: Dictionary = {}
 var _tag_label: Label
+var _ranges: Dictionary = {}
+var _time: float = 0.0
 
 
 func _ready() -> void:
 	CursorController.set_menu_mode(true)
 	_back_button.pressed.connect(_on_back)
 	_entries = Catalog.all()
+	_ranges = Catalog.stat_ranges()
 	if _entries.is_empty():
 		# Never leave the player on a dead screen.
 		_name_label.text = "NO VEHICLES AVAILABLE"
@@ -50,6 +71,18 @@ func _ready() -> void:
 	_drive_button.pressed.connect(_on_drive)
 	_show_current()
 	_drive_button.grab_focus()
+	call_deferred("_enter")
+
+
+func _enter() -> void:
+	UiAnim.pop($Center/Panel)
+	MenuNav.refresh()
+
+
+func nav_horizontal(direction: int) -> bool:
+	## Left/right arrows flip through the garage, not just the two arrow buttons.
+	_step(direction)
+	return true
 
 
 func _light_preview() -> void:
@@ -85,8 +118,11 @@ func _light_preview() -> void:
 
 
 func _process(delta: float) -> void:
+	_time += delta
 	if _model_root != null:
 		_model_root.rotation.y += delta * 0.55
+	if _holder != null:
+		_holder.position.y = sin(_time * 1.7) * 0.018
 
 
 func _build_stats() -> void:
@@ -98,12 +134,48 @@ func _build_stats() -> void:
 	body.add_child(_tag_label)
 	body.move_child(_tag_label, _index_label.get_index() + 1)
 
+	var caption := Label.new()
+	caption.text = "BARS COMPARE THIS RIDE TO THE WHOLE GARAGE   ·   10 BLOCKS = CLASS BEST"
+	caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	caption.add_theme_font_size_override("font_size", 12)
+	caption.add_theme_color_override("font_color", UiPalette.BLUE_DARK)
+	body.add_child(caption)
+	body.move_child(caption, _tag_label.get_index() + 1)
+
+	# Two aligned columns. Every cell has a fixed-width right-aligned label
+	# and an equally wide bar, so all eight rows line up under the preview.
 	_stats_grid = GridContainer.new()
-	_stats_grid.columns = 4
-	_stats_grid.add_theme_constant_override("h_separation", 18)
-	_stats_grid.add_theme_constant_override("v_separation", 3)
+	_stats_grid.columns = 2
+	_stats_grid.add_theme_constant_override("h_separation", 22)
+	_stats_grid.add_theme_constant_override("v_separation", 5)
 	body.add_child(_stats_grid)
-	body.move_child(_stats_grid, _tag_label.get_index() + 1)
+	body.move_child(_stats_grid, caption.get_index() + 1)
+	# The action row needs its own lane; without this the focus ring of the
+	# drive button touches the last stat row.
+	var spacer := Control.new()
+	spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	spacer.custom_minimum_size = Vector2(0, 14)
+	body.add_child(spacer)
+	body.move_child(spacer, _stats_grid.get_index() + 1)
+
+	for stat: Dictionary in STATS:
+		var cell := HBoxContainer.new()
+		cell.add_theme_constant_override("separation", 10)
+		cell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		var label := Label.new()
+		label.text = str(stat["label"])
+		label.custom_minimum_size = Vector2(112, 0)
+		label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		label.add_theme_font_size_override("font_size", 13)
+		label.add_theme_color_override("font_color", UiPalette.INK)
+		cell.add_child(label)
+		var bar := StatBar.new()
+		bar.fill_color = stat["color"] as Color
+		bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		cell.add_child(bar)
+		_stats_grid.add_child(cell)
+		_stat_bars[str(stat["key"])] = bar
 
 
 func _show_current() -> void:
@@ -113,44 +185,23 @@ func _show_current() -> void:
 	var entry: Dictionary = _entries[_current]
 	_holder = VehicleVisual.build(entry)
 	_model_root.add_child(_holder)
+	_holder.scale = Vector3.ONE * 0.86
+	var tween: Tween = _holder.create_tween()
+	tween.tween_property(_holder, "scale", Vector3.ONE, 0.32) \
+		.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 	_name_label.text = str(entry.get("name", ""))
 	_index_label.text = "%d / %d" % [_current + 1, _entries.size()]
+	UiAnim.fade_in(_name_label, 0.20)
 	_fill_stats(entry)
 
 
 func _fill_stats(entry: Dictionary) -> void:
-	var top_speed: float = float(entry.get("max_speed", 0.0)) * 3.6
-	var mass: float = float(entry.get("mass", 0.0))
-	var engine: float = float(entry.get("engine_power", 0.0))
-	var accel: float = (engine * Catalog.REFERENCE_MASS / maxf(mass, 1.0)) \
-		if engine > 0.0 else float(entry.get("push_accel", 0.0))
-	var grip: float = float(entry.get("grip", 1.0))
-	var steering: float = float(entry.get("steering", 1.0))
-	var smoke: float = float(entry.get("smoke", 0.0))
-	var skid: float = float(entry.get("skid_width", 0.0)) * 100.0
 	var has_engine: bool = bool(entry.get("has_engine", true))
 	_tag_label.text = "ENGINE  ·  IDLE + REV" if has_engine \
 		else "NO ENGINE  ·  LEG POWER / WHEEL RATTLE"
-	for child: Node in _stats_grid.get_children():
-		_stats_grid.remove_child(child)
-		child.queue_free()
-	_add_stat("TOP SPEED", "%d KM/H" % int(round(top_speed)),
-		"WEIGHT", ("%.2f T" % (mass / 1000.0)) if mass >= 1000.0 else "%d KG" % int(mass))
-	_add_stat("ACCEL M/S²", "%.1f" % accel, "GRIP", "%d%%" % int(round(grip * 100.0)))
-	_add_stat("STEERING", "%d%%" % int(round(steering * 100.0)),
-		"SMOKE", "%d%%" % int(round(smoke * 100.0)))
-	_add_stat("SKID WIDTH", "%.0f CM" % skid,
-		"PUSH", "%d%%" % int(round(float(entry.get("push_scale", 1.0)) * 100.0)))
-
-
-func _add_stat(label_a: String, value_a: String, label_b: String, value_b: String) -> void:
-	for text: String in [label_a, value_a, label_b, value_b]:
-		var label := Label.new()
-		label.text = text
-		label.add_theme_font_size_override("font_size", 14)
-		label.add_theme_color_override("font_color",
-			UiPalette.BLUE_DARK if text == label_a or text == label_b else UiPalette.INK)
-		_stats_grid.add_child(label)
+	for key: String in _stat_bars:
+		var bar: StatBar = _stat_bars[key]
+		bar.set_ratio(Catalog.stat_ratio(entry, key, _ranges) * 0.94 + 0.06)
 
 
 func _step(direction: int) -> void:

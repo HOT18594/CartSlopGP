@@ -26,6 +26,7 @@ var _menu_mode: bool = true
 var _hovering: bool = false
 var _was_hovering: bool = false
 var _pop_tween: Tween
+var _cursor_settled: bool = false
 
 
 func _ready() -> void:
@@ -64,10 +65,11 @@ func _apply_mode() -> void:
 	else:
 		Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 	if show_custom:
+		_cursor_settled = false
 		_update_sprite()
 
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	if not _menu_mode:
 		return
 	var show_custom: bool = _active()
@@ -83,7 +85,14 @@ func _process(_delta: float) -> void:
 			_hover_audio.play()
 	_sprite.texture = hover_texture if _hovering else normal_texture
 	var hotspot: Vector2 = hover_hotspot if _hovering else idle_hotspot
-	_sprite.position = get_viewport().get_mouse_position() - hotspot * cursor_scale
+	var target: Vector2 = get_viewport().get_mouse_position() - hotspot * cursor_scale
+	if _cursor_settled:
+		# Frame-rate independent damping removes the jitter of a raw mouse
+		# position while keeping the cursor responsive.
+		_sprite.position = _sprite.position.lerp(target, 1.0 - exp(-38.0 * delta))
+	else:
+		_sprite.position = target
+		_cursor_settled = true
 
 
 func _is_over_button(control: Control) -> bool:

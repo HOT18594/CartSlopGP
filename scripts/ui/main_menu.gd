@@ -1,4 +1,5 @@
 extends Control
+const UiAnim := preload("res://scripts/ui/ui_anim.gd")
 ## Main menu: PLAY / SETTINGS / QUIT and the update badge.
 
 const PLAY_MENU_SCENE: String = "res://scenes/ui/play_menu.tscn"
@@ -40,6 +41,12 @@ func _ready() -> void:
 
 	_play_button.grab_focus()
 	UpdateChecker.check_for_updates()
+	call_deferred("_enter")
+
+
+func _enter() -> void:
+	UiAnim.pop($Center/Column/Buttons)
+	MenuNav.refresh()
 
 
 func _on_play_pressed() -> void:

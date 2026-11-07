@@ -1,14 +1,20 @@
 extends CanvasLayer
+const UiAnim := preload("res://scripts/ui/ui_anim.gd")
 ## Global transition layer. Shows the themed loading screen while a scene is
 ## streamed in with ResourceLoader, then swaps to it. Autoload: SceneLoader.
+##
+## The loading screen owns its own percentage and damped fill now. This layer
+## only feeds it real progress values and animates the overlay in/out, so the
+## number and the bar can never disagree.
 
 const MIN_SHOW: float = 0.45 ## Never flash the overlay for less than this.
-const POST_LOAD_PAUSE: float = 0.15 ## Beat between 100% and the scene swap.
+const POST_LOAD_PAUSE: float = 0.18 ## Beat between 100% and the scene swap.
+const FADE_IN: float = 0.24
+const FADE_OUT: float = 0.22
 
 @onready var _ui: Control = $UI
 @onready var _title: Label = $UI/Title
 @onready var _message: Label = $UI/Message
-@onready var _percent: Label = $UI/Percent
 
 var _busy: bool = false
 var _task_mode: bool = false
@@ -16,7 +22,6 @@ var _path: String = ""
 var _pending_path: String = ""
 var _pending_title: String = ""
 var _pending_message: String = ""
-var _fade_tween: Tween
 
 
 func _ready() -> void:
@@ -40,20 +45,15 @@ func begin_task(title: String, message: String = "") -> void:
 	_task_mode = true
 	_title.text = title
 	_message.text = message
-	_percent.text = "..."
+	_ui.set_progress(0.0, true)
 	_ui.set_indeterminate(true)
-	_ui.set_progress(0.0)
 	_show_overlay()
 
 
 func _show_overlay() -> void:
-	# A short fade keeps the hard cut from feeling like a crash.
-	if _fade_tween != null and _fade_tween.is_valid():
-		_fade_tween.kill()
 	_ui.modulate = Color(1, 1, 1, 0)
 	show()
-	_fade_tween = create_tween()
-	_fade_tween.tween_property(_ui, "modulate:a", 1.0, 0.16)
+	UiAnim.fade_in(_ui, FADE_IN)
 
 
 func task_message(message: String) -> void:
@@ -68,6 +68,7 @@ func end_task() -> void:
 	_task_mode = false
 	_ui.set_indeterminate(false)
 	hide()
+	_ui.modulate = Color.WHITE
 	_busy = false
 	call_deferred("_run_pending")
 
@@ -85,8 +86,8 @@ func go_to(path: String, title: String = "LOADING", message: String = "") -> voi
 	_path = path
 	_title.text = title
 	_message.text = message
-	_percent.text = "0%"
-	_ui.set_progress(0.0)
+	_ui.set_indeterminate(false)
+	_ui.set_progress(0.0, true)
 	_show_overlay()
 
 	var started: float = Time.get_ticks_msec() / 1000.0
@@ -109,7 +110,6 @@ func _poll(started: float) -> void:
 	while true:
 		var status: int = ResourceLoader.load_threaded_get_status(_path, progress)
 		_ui.set_progress(progress[0])
-		_percent.text = "%d%%" % int(round(progress[0] * 100.0))
 		await get_tree().process_frame
 		if status == ResourceLoader.THREAD_LOAD_LOADED:
 			break
@@ -125,8 +125,7 @@ func _poll(started: float) -> void:
 			_finish(started)
 			return
 
-	_ui.set_progress(1.0)
-	_percent.text = "100%"
+	_ui.set_progress(1.0, true)
 	var elapsed: float = Time.get_ticks_msec() / 1000.0 - started
 	if elapsed < MIN_SHOW:
 		await get_tree().create_timer(MIN_SHOW - elapsed).timeout
@@ -145,14 +144,12 @@ func _finish(started: float) -> void:
 	if elapsed < MIN_SHOW:
 		await get_tree().create_timer(MIN_SHOW - elapsed).timeout
 	# Fade the overlay away after the new scene is already underneath it.
-	if _fade_tween != null and _fade_tween.is_valid():
-		_fade_tween.kill()
-	_fade_tween = create_tween()
-	_fade_tween.tween_property(_ui, "modulate:a", 0.0, 0.16)
-	await _fade_tween.finished
+	var tween: Tween = UiAnim.fade_out(_ui, FADE_OUT)
+	if tween != null:
+		await tween.finished
 	hide()
 	_ui.modulate = Color.WHITE
-	_ui.set_progress(0.0)
+	_ui.set_progress(0.0, true)
 	_busy = false
 	call_deferred("_run_pending")
 

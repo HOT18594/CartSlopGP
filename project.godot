@@ -11,7 +11,7 @@ config_version=5
 [application]
 
 config/name="Cart Slop GP"
-config/version="0.7.0"
+config/version="0.6.3"
 run/main_scene="res://scenes/ui/main_menu.tscn"
 config/features=PackedStringArray("4.7", "Mobile")
 boot_splash/bg_color=Color(0.18, 0.62, 0.91, 1)
@@ -26,6 +26,7 @@ Music="*res://scripts/systems/music_player.gd"
 UpdateChecker="*res://scripts/systems/update_checker.gd"
 CursorController="*res://scenes/ui/cursor_controller.tscn"
 UiKit="*res://scripts/ui/ui_kit.gd"
+MenuNav="*res://scripts/ui/menu_nav.gd"
 Network="*res://scripts/net/network.gd"
 SceneLoader="*res://scenes/ui/scene_loader.tscn"
 

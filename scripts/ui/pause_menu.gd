@@ -1,4 +1,5 @@
 extends Control
+const UiAnim := preload("res://scripts/ui/ui_anim.gd")
 ## Esc shows RESUME / SETTINGS / QUIT TO MENU.
 ##
 ## Single player: the world pauses.
@@ -21,6 +22,7 @@ var _mode_hint: Label
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
+	add_to_group("nav_scope")
 	_mode_hint = Label.new()
 	_mode_hint.name = "ModeHint"
 	_mode_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -64,6 +66,8 @@ func open() -> void:
 	# Multiplayer is a live world: do not pause the tree or the server.
 	get_tree().paused = not _multiplayer
 	CursorController.set_menu_mode(true)
+	UiAnim.pop($Center/Panel)
+	MenuNav.refresh()
 
 
 func close() -> void:
@@ -73,6 +77,9 @@ func close() -> void:
 		_settings_menu.close()
 	_is_open = false
 	visible = false
+	$Center/Panel.scale = Vector2.ONE
+	$Center/Panel.modulate = Color.WHITE
+	MenuNav.refresh()
 	get_tree().paused = false
 	CursorController.set_menu_mode(false)
 

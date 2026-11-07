@@ -1,4 +1,5 @@
 extends Control
+const UiAnim := preload("res://scripts/ui/ui_anim.gd")
 ## Minigame picker.
 ##
 ## Only events that actually ship are listed. Every card uses a real in-game
@@ -13,6 +14,7 @@ const MINIGAMES_SCENE: String = "res://scenes/ui/minigames_menu.tscn"
 const VEHICLE_SCENE: String = "res://scenes/ui/vehicle_select.tscn"
 const CANDY_BUTTON: String = "res://scripts/ui/candy_button.gd"
 const PREVIEW_DIR: String = "res://assets/ui/minigames/"
+const ART_BACKDROP := preload("res://scripts/ui/art_backdrop.gd")
 const UiPalette := preload("res://scripts/ui/ui_palette.gd")
 
 const EVENTS: Array[Dictionary] = [
@@ -29,7 +31,9 @@ const EVENTS: Array[Dictionary] = [
 ]
 
 var _body: VBoxContainer
+var _title: Label
 var _preview_panel: PanelContainer
+var _slideshow: Control
 var _detail_name: Label
 var _detail_meta: Label
 var _detail_desc: Label
@@ -45,16 +49,23 @@ func _ready() -> void:
 	_build_ui()
 	_select(0)
 	_play_button.grab_focus()
+	call_deferred("_enter")
+
+
+func _enter() -> void:
+	UiAnim.pop($Center/Panel)
+	MenuNav.refresh()
 
 
 func _build_ui() -> void:
-	var title := Label.new()
-	title.theme_type_variation = &"TitleLabel"
-	title.add_theme_font_size_override("font_size", 48)
-	title.add_theme_color_override("font_color", UiPalette.INK)
-	title.text = "MINIGAMES"
-	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_body.add_child(title)
+	_title = Label.new()
+	_title.theme_type_variation = &"TitleLabel"
+	_title.add_theme_font_size_override("font_size", 48)
+	_title.add_theme_color_override("font_color", UiPalette.INK)
+	# From the lobby this screen is a map picker, not a vehicle picker.
+	_title.text = "CHOOSE A MAP" if Network.is_session_active() else "MINIGAMES"
+	_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_body.add_child(_title)
 
 	var feature := HBoxContainer.new()
 	feature.add_theme_constant_override("separation", 18)
@@ -78,12 +89,17 @@ func _build_ui() -> void:
 	_preview_panel.add_theme_stylebox_override("panel", preview_style)
 	feature.add_child(_preview_panel)
 
-	var preview := TextureRect.new()
-	preview.name = "Preview"
-	preview.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	preview.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
-	preview.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_preview_panel.add_child(preview)
+	# A slow crossfade gallery replaces the single static screenshot. The
+	# aerial dirt-track shot leads, then the road, arena and finish line.
+	var slideshow: Control = ART_BACKDROP.new()
+	slideshow.set("texture_names", PackedStringArray([
+		"scene_track_aerial.png", "scene_road.png",
+		"scene_arena.png", "scene_finish.png",
+	]))
+	slideshow.set("slide_seconds", 4.5)
+	slideshow.set("fade_seconds", 0.8)
+	_preview_panel.add_child(slideshow)
+	_slideshow = slideshow
 
 	var details := VBoxContainer.new()
 	details.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -110,19 +126,27 @@ func _build_ui() -> void:
 
 	var action_row := HBoxContainer.new()
 	action_row.add_theme_constant_override("separation", 10)
+	action_row.alignment = BoxContainer.ALIGNMENT_CENTER
 	details.add_child(action_row)
 
 	_vehicle_button = _button("VEHICLE: SHOPPING CART", Color("8ed8f6"), 54, 18)
-	_vehicle_button.custom_minimum_size = Vector2(300, 54)
+	_vehicle_button.custom_minimum_size = Vector2(230, 54)
+	_vehicle_button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	_vehicle_button.pressed.connect(_on_change_vehicle)
+	# Hosts already pick a car in the lobby's HOST SETTINGS. Showing a second
+	# vehicle button here was a pointless extra click.
+	_vehicle_button.visible = not Network.is_session_active()
 	action_row.add_child(_vehicle_button)
 
 	_play_button = _button("RACE", UiPalette.YELLOW, 54, 21)
-	_play_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_play_button.custom_minimum_size = Vector2(180, 54)
+	_play_button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	_play_button.pressed.connect(_on_play)
 	action_row.add_child(_play_button)
 
 	_back_button = _button("BACK", UiPalette.RED, 54, 20)
+	_back_button.custom_minimum_size.x = 260
+	_back_button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	_back_button.pressed.connect(_on_back)
 	_body.add_child(_back_button)
 
@@ -149,16 +173,11 @@ func _select(index: int) -> void:
 
 	# Preview policy: show the real screenshot when it exists, otherwise show
 	# no image at all. Never substitute a drawing for a missing preview.
-	var texture_path: String = PREVIEW_DIR + str(data.get("preview", ""))
-	var has_preview: bool = texture_path != PREVIEW_DIR and ResourceLoader.exists(texture_path)
-	_preview_panel.visible = has_preview
-	if has_preview:
-		var preview: TextureRect = _preview_panel.get_node("Preview")
-		preview.texture = load(texture_path)
+	_preview_panel.visible = _slideshow != null and _slideshow.has_art()
 
 	_play_button.disabled = not available
 	var verb: String = "SELECT" if Network.is_session_active() else "RACE"
-	_play_button.text = "%s  ·  %s" % [verb, str(data["name"])] if available else "UNAVAILABLE"
+	_play_button.text = verb if available else "UNAVAILABLE"
 	_play_button.set("fill_color", data.get("accent", UiPalette.YELLOW) if available
 		else UiPalette.TEXT_DIM)
 

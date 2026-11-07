@@ -1,10 +1,16 @@
 extends Control
-## Compact PLAY menu: SOLO / MULTIPLAYER tabs, one cycling BOTS pill and the
-## two mode cards for the selected tab.
+const UiAnim := preload("res://scripts/ui/ui_anim.gd")
+## PLAY is a picker. Two big square cards (SINGLE / MULTIPLAYER), each with an
+## icon and a label underneath, and one full-width BACK bar below.
+##
+## MULTIPLAYER goes straight to the lobby. There is no intermediate "click
+## multiplayer again" screen. SINGLE keeps one short state because it has two
+## real destinations (SANDBOX and MINIGAMES) plus the BOTS setting.
 
 const UiPalette := preload("res://scripts/ui/ui_palette.gd")
 const CANDY_BUTTON := "res://scripts/ui/candy_button.gd"
 const PILL_CYCLER := "res://scripts/ui/pill_cycler.gd"
+const PLAY_CARD := "res://scripts/ui/play_card.gd"
 
 const VEHICLE_SCENE: String = "res://scenes/ui/vehicle_select.tscn"
 const MAIN_MENU_SCENE: String = "res://scenes/ui/main_menu.tscn"
@@ -14,87 +20,96 @@ const MINIGAMES_SCENE: String = "res://scenes/ui/minigames_menu.tscn"
 const BOT_LABELS: PackedStringArray = ["NO BOTS", "1 BOT", "2 BOTS", "3 BOTS", "4 BOTS", "5 BOTS"]
 const BOT_VALUES: Array[int] = [0, 1, 2, 3, 4, 5]
 
-var _body: VBoxContainer
-var _single_tab: Button
-var _multi_tab: Button
-var _bots_pill: Button
+@onready var _body: VBoxContainer = $Center/Panel/Body
+
+var _title: Label
+var _cards_row: HBoxContainer
 var _single_box: VBoxContainer
-var _multi_box: VBoxContainer
-var _tab: int = GameSettings.MODE_SINGLE
+var _back_bar: Button
+var _bots_pill: Button
+var _state: String = "picker" ## "picker" | "single"
 
 
 func _ready() -> void:
 	CursorController.set_menu_mode(true)
-	_body = $Center/Panel/Body
 	_build_ui()
-	_tab = GameSettings.play_mode
-	_show_tab(_tab)
+	_show_state("picker", false)
 	_refresh_bots()
+	call_deferred("_enter")
+
+
+func _enter() -> void:
+	UiAnim.pop($Center/Panel)
+	MenuNav.refresh()
 
 
 func _build_ui() -> void:
-	var title := Label.new()
-	title.theme_type_variation = &"TitleLabel"
-	title.add_theme_font_size_override("font_size", 48)
-	title.add_theme_color_override("font_color", UiPalette.INK)
-	title.text = "PLAY"
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_body.add_child(title)
+	_body.add_theme_constant_override("separation", 16)
 
-	var tabs := HBoxContainer.new()
-	tabs.add_theme_constant_override("separation", 8)
-	_body.add_child(tabs)
-	_single_tab = _button("SINGLE PLAYER", UiPalette.YELLOW, 44, 20)
-	_single_tab.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_single_tab.pressed.connect(_show_tab.bind(GameSettings.MODE_SINGLE))
-	tabs.add_child(_single_tab)
-	_multi_tab = _button("MULTIPLAYER", UiPalette.BLUE, 44, 20)
-	_multi_tab.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_multi_tab.pressed.connect(_show_tab.bind(GameSettings.MODE_MULTIPLAYER))
-	tabs.add_child(_multi_tab)
+	_title = Label.new()
+	_title.theme_type_variation = &"TitleLabel"
+	_title.add_theme_font_size_override("font_size", 48)
+	_title.add_theme_color_override("font_color", UiPalette.INK)
+	_title.text = "PLAY"
+	_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_body.add_child(_title)
 
+	_cards_row = HBoxContainer.new()
+	_cards_row.add_theme_constant_override("separation", 24)
+	_cards_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	_body.add_child(_cards_row)
+	var single_card: Button = _card("SINGLE", UiPalette.YELLOW, false)
+	single_card.pressed.connect(_on_single_card)
+	_cards_row.add_child(single_card)
+	var multi_card: Button = _card("MULTIPLAYER", UiPalette.BLUE, true)
+	multi_card.pressed.connect(_on_multi_card)
+	_cards_row.add_child(multi_card)
+
+	_single_box = VBoxContainer.new()
+	_single_box.add_theme_constant_override("separation", 12)
+	_body.add_child(_single_box)
 	_bots_pill = Button.new()
 	_bots_pill.set_script(load(PILL_CYCLER))
 	_bots_pill.set("corner_radius", 22)
 	_bots_pill.set("shadow_offset", 6)
-	_bots_pill.custom_minimum_size = Vector2(0, 44)
-	_bots_pill.add_theme_font_size_override("font_size", 18)
+	_bots_pill.custom_minimum_size = Vector2(320, 48)
+	_bots_pill.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	_bots_pill.add_theme_font_size_override("font_size", 19)
 	_bots_pill.call("configure", BOT_LABELS, BOT_VALUES, GameSettings.effective_bot_count())
 	_bots_pill.connect("option_changed", _on_bots_changed)
-	_body.add_child(_bots_pill)
-
-	_single_box = VBoxContainer.new()
-	_single_box.add_theme_constant_override("separation", 8)
-	_body.add_child(_single_box)
+	_single_box.add_child(_bots_pill)
 	var single_row := HBoxContainer.new()
-	single_row.add_theme_constant_override("separation", 8)
+	single_row.add_theme_constant_override("separation", 12)
+	single_row.alignment = BoxContainer.ALIGNMENT_CENTER
 	_single_box.add_child(single_row)
-	var sandbox := _button("SANDBOX", UiPalette.YELLOW, 54, 24)
-	sandbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var sandbox := _button("SANDBOX", UiPalette.YELLOW, 60, 24)
+	sandbox.custom_minimum_size.x = 280
+	sandbox.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	sandbox.pressed.connect(_on_single_sandbox)
 	single_row.add_child(sandbox)
-	var minigames := _button("MINIGAMES", UiPalette.GRASS, 54, 24)
-	minigames.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var minigames := _button("MINIGAMES", UiPalette.GRASS, 60, 24)
+	minigames.custom_minimum_size.x = 280
+	minigames.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	minigames.pressed.connect(_on_single_minigames)
 	single_row.add_child(minigames)
 
-	_multi_box = VBoxContainer.new()
-	_multi_box.add_theme_constant_override("separation", 8)
-	_body.add_child(_multi_box)
-	var multiplayer := _button("MULTIPLAYER LOBBY", UiPalette.BLUE, 56, 24)
-	multiplayer.pressed.connect(_on_multi)
-	_multi_box.add_child(multiplayer)
-	var multiplayer_hint := Label.new()
-	multiplayer_hint.text = "Host on your Wi-Fi, or join with a 5-letter room code."
-	multiplayer_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	multiplayer_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	multiplayer_hint.add_theme_font_size_override("font_size", 14)
-	multiplayer_hint.add_theme_color_override("font_color", UiPalette.BLUE_DARK)
-	_multi_box.add_child(multiplayer_hint)
+	# One exit bar under everything, whatever state we are in.
+	_back_bar = _button("BACK", UiPalette.RED, 54, 21)
+	_back_bar.custom_minimum_size.x = 260
+	_back_bar.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	_back_bar.pressed.connect(_on_back)
+	_body.add_child(_back_bar)
 
-	var back := _button("BACK", UiPalette.RED, 48, 20)
-	back.pressed.connect(_on_back)
-	_body.add_child(back)
+
+func _card(text: String, color: Color, two_carts: bool) -> Button:
+	var button := Button.new()
+	button.set_script(load(PLAY_CARD))
+	button.set("fill_color", color)
+	button.set("label_text", text)
+	button.set("two_carts", two_carts)
+	button.custom_minimum_size = Vector2(280, 270)
+	button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	return button
 
 
 func _button(text: String, color: Color, height: int, font_size: int) -> Button:
@@ -108,14 +123,19 @@ func _button(text: String, color: Color, height: int, font_size: int) -> Button:
 	return button
 
 
-func _show_tab(tab: int) -> void:
-	_tab = tab
-	GameSettings.set_play_mode(tab)
-	_single_box.visible = tab == GameSettings.MODE_SINGLE
-	_multi_box.visible = tab == GameSettings.MODE_MULTIPLAYER
-	_bots_pill.visible = tab == GameSettings.MODE_SINGLE
-	_single_tab.set("fill_color", UiPalette.YELLOW if tab == GameSettings.MODE_SINGLE else UiPalette.TEXT_DIM)
-	_multi_tab.set("fill_color", UiPalette.BLUE if tab == GameSettings.MODE_MULTIPLAYER else UiPalette.TEXT_DIM)
+func _show_state(state: String, animate: bool = true) -> void:
+	_state = state
+	_cards_row.visible = state == "picker"
+	_single_box.visible = state == "single"
+	if state == "single":
+		_title.text = "SINGLE PLAYER"
+		GameSettings.set_play_mode(GameSettings.MODE_SINGLE)
+	else:
+		_title.text = "PLAY"
+	_back_bar.text = "BACK" if state == "picker" else "BACK TO PLAY"
+	if animate:
+		UiAnim.fade_in(_cards_row if state == "picker" else _single_box, 0.22)
+	MenuNav.refresh()
 
 
 func _refresh_bots() -> void:
@@ -138,6 +158,16 @@ func _leave_session() -> void:
 		Network.leave()
 
 
+func _on_single_card() -> void:
+	_show_state("single")
+
+
+func _on_multi_card() -> void:
+	## No extra screen: the card IS the multiplayer button.
+	GameSettings.set_play_mode(GameSettings.MODE_MULTIPLAYER)
+	SceneLoader.go_to(LOBBY_SCENE, "MULTIPLAYER", "Host or join a room")
+
+
 func _on_single_sandbox() -> void:
 	_leave_session()
 	GameSettings.set_play_mode(GameSettings.MODE_SINGLE)
@@ -152,11 +182,8 @@ func _on_single_minigames() -> void:
 	SceneLoader.go_to(MINIGAMES_SCENE, "MINIGAMES")
 
 
-func _on_multi() -> void:
-	GameSettings.set_play_mode(GameSettings.MODE_MULTIPLAYER)
-	SceneLoader.go_to(LOBBY_SCENE, "MULTIPLAYER",
-		"Host on Wi-Fi or create a room on the Cart Slop server")
-
-
 func _on_back() -> void:
+	if _state != "picker":
+		_show_state("picker")
+		return
 	SceneLoader.go_to(MAIN_MENU_SCENE, "MAIN MENU")

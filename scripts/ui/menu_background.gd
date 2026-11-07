@@ -6,20 +6,30 @@ const CartDrawing := preload("res://scripts/ui/cart_drawing.gd")
 ## CanvasItem primitives so it stays crisp at any window size.
 
 const DISPLAY_FONT := "res://assets/ui/fonts/LuckiestGuy-Regular.ttf"
+const ART_BACKDROP := preload("res://scripts/ui/art_backdrop.gd")
 
 @export var show_store: bool = true
 @export var show_carts: bool = true
 
 var _display: FontFile
+var _art: Control
 
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_display = load(DISPLAY_FONT)
 	resized.connect(queue_redraw)
+	# AI artwork replaces the hand-drawn lot. The vector drawing below stays
+	# as a fallback for builds that do not ship the images.
+	_art = ART_BACKDROP.new()
+	_art.set("texture_names", PackedStringArray(["bg_parking.png"]))
+	_art.set("dim", 0.08)
+	add_child(_art)
 
 
 func _draw() -> void:
+	if _art != null and _art.has_art():
+		return
 	var area: Vector2 = size
 	if area.x < 4.0 or area.y < 4.0:
 		return
