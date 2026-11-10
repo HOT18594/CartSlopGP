@@ -3003,6 +3003,10 @@ func _physics_process(delta: float) -> void:
 		else:
 			_expire_prop_kicks()
 			_apply_prop_targets(delta)
+	if _waiting_for_peers:
+		# Keep the authored default countdown out of the physics tick until the
+		# host has actually started the race (local or server-owned).
+		return
 	match _phase:
 		Phase.COUNTDOWN:
 			_tick_countdown(delta)
@@ -3061,16 +3065,17 @@ func _process(delta: float) -> void:
 func _begin_race_countdown() -> void:
 	if not _is_host:
 		return
-	_waiting_for_peers = false
 	if Network.server_race_supported() and Network.relay_token != "":
-		# The Pi owns the clock and the bot field in multiplayer. If the older
-		# server answers 404, fall back to the original host countdown.
+		# The Pi owns the clock and the bot field in multiplayer. Stay in the
+		# WAITING state until the race exists; the physics tick must not run its
+		# default 3 s countdown while the HTTP request is in flight.
 		_begin_server_race()
 		return
 	_start_local_countdown(3.0)
 
 
 func _start_local_countdown(seconds: float) -> void:
+	_waiting_for_peers = false
 	_countdown = maxf(seconds, 0.1)
 	_last_count = 0
 	_go_shown = false
