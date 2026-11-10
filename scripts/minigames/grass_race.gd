@@ -153,6 +153,7 @@ var _sector_flags: int = 1
 var _skip_progress: bool = true
 var _last_cart_pos: Vector3 = Vector3.ZERO
 var _off_timer: float = 0.0
+var _was_off_track: bool = false
 var _base_max_speed: float = 19.0
 var _saved_vehicle: String = ""
 var _toast_timer: float = 0.0
@@ -1748,22 +1749,30 @@ func _tick_rivals(delta: float) -> void:
 		for other: CartPlayer in traffic:
 			if other == node or not is_instance_valid(other):
 				continue
+			var human: bool = other == _cart
 			var offset: Vector3 = other.global_position - node.global_position
 			offset.y = 0.0
 			var ahead: float = offset.dot(forward)
 			var side: float = offset.dot(node.global_transform.basis.x)
-			if ahead > 0.0 and ahead < 11.0 and absf(side) < 2.5:
+			var avoid_range: float = 12.0 if human else 11.0
+			var avoid_side: float = 3.0 if human else 2.5
+			if ahead > 0.0 and ahead < avoid_range and absf(side) < avoid_side:
 				var other_speed: float = maxf(other.get_collision_velocity().dot(forward), 0.0)
 				if ahead < 5.0:
 					target_speed = minf(target_speed, other_speed + (ahead - 2.0) * 0.5)
 				var aggression: float = float(rival["aggression"])
-				if aggression > 0.62 and ahead < 2.6 and absf(side) < 1.4:
-					# Hard bots lean into a slower car instead of politely
-					# driving around it.
+				# Never ram a human off the road: give the player the outside
+				# line and a clear pass. Hard bots still trade paint with each
+				# other, where a shunt cannot end somebody's race.
+				if not human and aggression > 0.62 and ahead < 2.6 and absf(side) < 1.4:
 					target_lane = clampf(target_lane - signf(side) * 1.4, -3.4, 3.4)
 					target_speed = maxf(target_speed, other_speed + 1.5)
 				else:
-					target_lane = clampf(target_lane + (-2.6 if side > 0.0 else 2.6), -3.4, 3.4)
+					var margin: float = 3.1 if human else 2.6
+					target_lane = clampf(target_lane + (-margin if side > 0.0 else margin), -3.4, 3.4)
+					if human and ahead < 3.6 and absf(side) < 2.0:
+						# Ease off rather than bump the player aside.
+						target_speed = minf(target_speed, other_speed + 0.6)
 
 		var target_frame: Dictionary = _spline.sample(progress + lookahead)
 		var target: Vector3 = target_frame["position"] + target_frame["right"] * target_lane
@@ -2753,12 +2762,9 @@ func _accept_remote_race_state(peer_id: int, cart: CartPlayer, position: Vector3
 	# distance as the local placement code, or a finished ghost stays solid.
 	var finish_line: float = _race_finish_distance()
 	if clamped_progress >= finish_line - 2.0:
-		# A crossed cart is not an obstacle. Clearing only the collision
-		# layer did nothing for a ghost (already layer 0); the host OBB
-		# solver checks contact_enabled, so without this a finished
-		# client stayed solid until its stream went stale.
-		cart.collision_layer = 0
-		cart.contact_enabled = false
+		# A crossed cart is not an obstacle, and it must stay that way even
+		# though it keeps streaming state until the race ends.
+		cart.mark_race_finished()
 
 
 # --------------------------------------------------------------------------
@@ -2901,11 +2907,7 @@ func _tick_race(delta: float) -> void:
 
 	var info: Dictionary = _spline.closest(_cart.global_position)
 	var s: float = info["s"]
-	# Use horizontal distance. The old 3D distance included ramp/hill height and
-	# could fire "off track" while the cart was still on the road.
 	var closest_point: Vector3 = info["point"] as Vector3
-	var distance: float = Vector2(_cart.global_position.x - closest_point.x,
-		_cart.global_position.z - closest_point.z).length()
 
 	# A reset (R) or a respawn is a teleport: resync, never bank the jump.
 	if _cart.global_position.distance_squared_to(_last_cart_pos) > 100.0:
@@ -2943,16 +2945,27 @@ func _tick_race(delta: float) -> void:
 			and _sector_flags == 0b1111:
 		_complete_lap()
 
-	# Barriers do the real work; this is a fallback for anything that slips out.
-	# The barrier sits at ROAD_HALF + 0.5; the curb ends at ROAD_HALF + 0.8.
-	# Warn only once the kart is genuinely outside the curb, not when a wall
-	# contact or a ramp crest makes the 3D distance spike.
-	var off: bool = distance > ROAD_HALF + 1.5
+	# Lateral offset from the centreline, not raw nearest-point distance: a
+	# barrier scrape or a tight hairpin can spike the 3D/nearest distance while
+	# the kart is still fully on the road.
+	var frame: Dictionary = _spline.sample(s)
+	var right: Vector3 = frame["right"] as Vector3
+	var lateral: float = absf((_cart.global_position - closest_point).dot(right))
+	# Hysteresis: leave the road at the curb, come back only once clearly
+	# inside it, so a scrape cannot flip the warning and the slowdown on and
+	# off every frame.
+	var off_limit: float = ROAD_HALF + 1.1
+	var back_on: float = ROAD_HALF + 0.5
+	var off: bool = lateral > (back_on if _was_off_track else off_limit)
+	_was_off_track = off
 	if off:
 		_off_timer += delta
 		_offtrack_label.visible = true
 		_cart.max_speed = _base_max_speed * 0.55
-		if _off_timer > 4.0 or distance > 12.0:
+		# Only pull a kart back once it is really out (past the barrier or the
+		# grass) or has been stuck out there for a while. The respawn point is
+		# forward of the current arc length, never behind it.
+		if _off_timer > 4.5 or lateral > 13.0 or _cart.global_position.y < -3.0:
 			_respawn(s)
 	else:
 		_off_timer = 0.0
@@ -2998,7 +3011,7 @@ func _safe_respawn_transform(s: float) -> Transform3D:
 	query.shape = shape
 	query.collision_mask = 1 | 2 | 8
 	query.exclude = [_cart.get_rid()] if _cart != null else []
-	for distance_offset: float in [0.0, 4.0, -4.0, 8.0, -8.0, 12.0, -12.0]:
+	for distance_offset: float in [0.0, 4.0, 8.0, 12.0]:
 		for lateral: float in [0.0, 2.5, -2.5, 5.0, -5.0]:
 			var candidate: Transform3D = _track_transform(s + distance_offset, lateral, 0.25)
 			query.transform = candidate.translated(Vector3.UP * 1.1)

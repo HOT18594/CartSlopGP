@@ -2,6 +2,17 @@
 
 Player-facing notes, newest first.
 
+## [0.6.9] - 2026-11-10
+
+### Cleaner racing
+
+- Players now collide with each other online instead of driving through one
+  another.
+- Bots no longer ram you off the road. They give you room and lift off when you
+  are alongside, while still racing each other hard.
+- The OFF TRACK warning only appears once you are past the barrier. A recovery
+  puts you back on the road ahead of where you left it, never behind.
+
 ## [0.6.8] - 2026-11-10
 
 ### Online rooms

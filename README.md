@@ -32,10 +32,10 @@ Get the latest build from the
 
 | Platform | Download | Run |
 | --- | --- | --- |
-| Windows | `CartSlopGP_v0.6.8_windows.zip` | Unzip, then run `CartSlopGP.exe`. SmartScreen may warn because the build is unsigned: **More info > Run anyway**. |
-| macOS | `CartSlopGP_v0.6.8_macos.zip` | Unzip, then open `Cart Slop GP.app`. If Gatekeeper blocks it, right-click the app and choose **Open**. |
-| Linux | `CartSlopGP_v0.6.8_linux.zip` | Unzip, `chmod +x CartSlopGP.x86_64`, then run it. |
-| Browser | `CartSlopGP_v0.6.8_web.zip` | Serve `index.html` over HTTP (a `file://` URL cannot load the data pack). Single player only. |
+| Windows | `CartSlopGP_v0.6.9_windows.zip` | Unzip, then run `CartSlopGP.exe`. SmartScreen may warn because the build is unsigned: **More info > Run anyway**. |
+| macOS | `CartSlopGP_v0.6.9_macos.zip` | Unzip, then open `Cart Slop GP.app`. If Gatekeeper blocks it, right-click the app and choose **Open**. |
+| Linux | `CartSlopGP_v0.6.9_linux.zip` | Unzip, `chmod +x CartSlopGP.x86_64`, then run it. |
+| Browser | `CartSlopGP_v0.6.9_web.zip` | Serve `index.html` over HTTP (a `file://` URL cannot load the data pack). Single player only. |
 
 There is no installer and no account. Settings and downloaded updates live in
 Godot's user data folder:

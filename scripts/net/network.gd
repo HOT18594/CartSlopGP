@@ -353,8 +353,11 @@ func resolve_car_collisions(local_cart: Node, remotes: Dictionary) -> void:
 					0.24 * impact_impulse)
 				impulse_a -= tangent_dir * tangent_impulse
 				impulse_b += tangent_dir * tangent_impulse
-		var delta_a: Vector3 = (impulse_a / mass_a * 0.78).limit_length(5.5)
-		var delta_b: Vector3 = (impulse_b / mass_b * 0.78).limit_length(5.5)
+		# Ghosts are solid bodies now, so the physics step already supplies the
+		# positional separation. The solver only adds the momentum exchange;
+		# keep it light or a contact bounces twice.
+		var delta_a: Vector3 = (impulse_a / mass_a * 0.50).limit_length(4.5)
+		var delta_b: Vector3 = (impulse_b / mass_b * 0.50).limit_length(4.5)
 		if id_a == host_id:
 			cart_a.call("apply_vehicle_impulse", delta_a)
 		else:

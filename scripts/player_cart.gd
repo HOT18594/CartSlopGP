@@ -128,9 +128,11 @@ var remote_peer_id: int = 0
 var net_position: Vector3 = Vector3.ZERO
 var net_yaw: float = 0.0
 var net_velocity: Vector3 = Vector3.ZERO
-## False only while a finished cart must not be an obstacle; ghosts stay
-## contact-enabled because the host resolver, not the physics body, owns them.
+## False while a finished or stale cart must not be an obstacle. Solid ghosts
+## use the GHOST collision layer so local carts cannot drive through them.
 var contact_enabled: bool = true
+## Permanent for the rest of the race: a crossed cart is never solid again.
+var race_finished: bool = false
 
 ## Remote snapshot pipeline. Two timestamped samples give a velocity estimate;
 ## the newest sample is then extrapolated briefly so a dropped or late packet
@@ -308,13 +310,17 @@ func setup_remote(peer_id: int) -> void:
 	name = "Remote_%d" % peer_id
 	remove_from_group("player")
 	add_to_group("remote_player")
-	# Contact is resolved by the host solver. Ghosts are never solid bodies on
-	# any peer; the resolver uses their extents and velocities instead.
-	collision_layer = 0
+	# Ghosts are solid to every local cart (GHOST layer) so players cannot
+	# drive through each other between state packets. The ghost itself never
+	# runs physics: it is placed by _update_remote_state and its mask stays 0,
+	# so it is never pushed by the world. The host's OBB resolver still owns
+	# the momentum exchange and the final separation.
+	collision_layer = CollisionLayers.GHOST
 	collision_mask = 0
 	set_physics_process(true)
 	set_process(false)
 	contact_enabled = true
+	race_finished = false
 	if _push_sensor != null:
 		_push_sensor.monitoring = false
 	if _camera_rig != null:
@@ -389,8 +395,16 @@ func set_net_state(position: Vector3, yaw: float, sent_ms: int,
 		global_position = position
 		rotation.y = yaw
 		reset_physics_interpolation()
-	contact_enabled = true
+	contact_enabled = not race_finished
 	return true
+
+
+func mark_race_finished() -> void:
+	## Called once when a remote cart crosses the line. A finished cart keeps
+	## streaming state, so this must stay sticky across later packets.
+	race_finished = true
+	contact_enabled = false
+	collision_layer = 0
 
 
 func setup_ai(vehicle_id: String) -> void:
@@ -449,7 +463,9 @@ func _update_remote_state(delta: float) -> void:
 		velocity = Vector3.ZERO
 		contact_enabled = false
 	else:
-		contact_enabled = true
+		contact_enabled = not race_finished
+	collision_layer = 0 if (not contact_enabled) or race_finished \
+		else CollisionLayers.GHOST
 	var blend: float = 1.0 - exp(-16.0 * delta)
 	global_position = global_position.lerp(target, blend)
 	rotation.y = lerp_angle(rotation.y, target_yaw, blend)
