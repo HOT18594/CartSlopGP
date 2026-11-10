@@ -63,6 +63,9 @@ var local_address: String = ""
 var public_address: String = ""
 var port: int = DEFAULT_PORT
 var latency_ms: int = 0
+## Host-only: round trip from this machine to the relay (the actual server).
+## A host directly serving on the LAN keeps this at 0.
+var host_ping_ms: int = 0
 var last_error: String = ""
 var connection_mode: String = "pi" ## "lan" (this PC) or "pi" (room service).
 var player_names: Dictionary = {} ## peer id -> sanitized display name
@@ -123,6 +126,7 @@ var _peer: ENetMultiplayerPeer
 var _host_ticket: int = 0
 var _join_ticket: int = 0
 var _ping_timer: float = 0.0
+var _host_ping_pending: bool = false
 var _join_started_ms: int = 0
 var _relay_heartbeat: float = 0.0
 var _relay_busy: bool = false
@@ -171,6 +175,10 @@ func _process(delta: float) -> void:
 		_ping_timer = 0.0
 		if not is_host:
 			rpc_id(1, "_net_ping", Time.get_ticks_msec())
+		elif connection_mode == "pi" and relay_base != "":
+			# The room is relayed through the Pi, so the host's real ping is its
+			# round trip to that server, not 0.
+			_measure_host_ping()
 
 
 func _host_retry_scene_start() -> void:
@@ -1240,6 +1248,8 @@ func leave() -> void:
 		_relay_tunnel = null
 	public_address = ""
 	latency_ms = 0
+	host_ping_ms = 0
+	_host_ping_pending = false
 	last_error = ""
 	player_names.clear()
 	player_colors.clear()
@@ -1580,8 +1590,32 @@ func _broadcast_ping_table() -> void:
 	## Host-only: relay everyone's reported ping so clients can show it too.
 	if not is_host or not is_session_active():
 		return
-	ping_table[1] = 0
+	ping_table[1] = host_ping_ms
 	rpc("_net_ping_table", ping_table)
+
+
+func _measure_host_ping() -> void:
+	## Host only: time a real HTTP round trip to the relay. The host has no ENet
+	## server above it, so 0 ms was a lie whenever the Pi relays the room.
+	if _host_ping_pending or not is_host or not is_session_active():
+		return
+	if connection_mode != "pi" or relay_base == "":
+		host_ping_ms = 0
+		return
+	_host_ping_pending = true
+	var started: int = Time.get_ticks_msec()
+	var status: Dictionary = await _relay_get("/api/status", 2.0)
+	_host_ping_pending = false
+	if not is_host or not is_session_active():
+		return
+	if status.is_empty():
+		# Keep the last good value rather than showing 0 for a dropped probe.
+		return
+	host_ping_ms = clampi(Time.get_ticks_msec() - started, 1, 5000)
+	ping_table[1] = host_ping_ms
+	ping_table_changed.emit()
+	latency_changed.emit(host_ping_ms)
+	_broadcast_ping_table()
 
 
 @rpc("authority", "reliable")

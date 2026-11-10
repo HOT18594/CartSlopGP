@@ -10,6 +10,8 @@ Player-facing notes, newest first.
   another.
 - Bots are simulated by the room host and streamed to every player, so
   everyone races the same rivals on the same line.
+- The host's ping now shows the real round trip to the Pi relay instead of a
+  hard-coded 0 ms.
 - Boxes and cones react on every screen: a client's hit is predicted locally
   and confirmed by the host. Crates now physically block carts.
 - Bots no longer ram you off the road. They give you room and lift off when you

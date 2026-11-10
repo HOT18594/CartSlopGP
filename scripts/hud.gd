@@ -463,8 +463,13 @@ func _draw() -> void:
 func _update_net_stats() -> void:
 	if not is_instance_valid(_net_label):
 		return
-	# The host IS the server, so its round trip is 0 ms; clients show real ms.
-	var ping: String = "0 ms (host)" if Network.is_host else "%d ms" % maxi(Network.latency_ms, 0)
+	# The host is the ENet server for the clients, but when the room is relayed
+	# through the Pi its real ping is the round trip to that server.
+	var ping: String
+	if Network.is_host:
+		ping = "%d ms (host)" % maxi(Network.host_ping_ms, 0)
+	else:
+		ping = "%d ms" % maxi(Network.latency_ms, 0)
 	# FPS is debug information; the shipping HUD only shows the ping and the
 	# player count. F3 still opens the full debug readout.
 	_net_label.text = "PING %s   ·   %d/%d" % [
@@ -631,6 +636,8 @@ func _update_scoreboard() -> void:
 		var ms: int = int(Network.ping_table.get(peer_id, 0))
 		if ms <= 0 and not Network.is_host and is_local:
 			ms = maxi(Network.latency_ms, 0)
+		if ms <= 0 and Network.is_host and peer_id == 1:
+			ms = maxi(Network.host_ping_ms, 0)
 		var ping_label: Label = entry["ping"]
 		ping_label.text = "%d ms" % ms
 		ping_label.add_theme_color_override("font_color", _ping_color(ms))

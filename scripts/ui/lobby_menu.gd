@@ -1174,6 +1174,8 @@ func _refresh_players() -> void:
 				var ms: int = int(Network.ping_table.get(peer_id, 0))
 				if ms <= 0 and not Network.is_host and peer_id == multiplayer.get_unique_id():
 					ms = maxi(Network.latency_ms, 0)
+				if ms <= 0 and Network.is_host and peer_id == 1:
+					ms = maxi(Network.host_ping_ms, 0)
 				var ping_label := Label.new()
 				ping_label.text = "%d ms" % ms
 				ping_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
