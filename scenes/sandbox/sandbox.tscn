@@ -1,0 +1,43 @@
+[gd_scene load_steps=9 format=3 uid="uid://1adlt6fmsra2"]
+
+[ext_resource type="Script" uid="uid://h51dvo5iixsj" path="res://scripts/sandbox.gd" id="1"]
+[ext_resource type="PackedScene" path="res://scenes/player/cart_player.tscn" id="2"]
+[ext_resource type="Script" path="res://scripts/sandbox_park.gd" id="3"]
+[ext_resource type="PackedScene" path="res://scenes/ui/hud.tscn" id="6"]
+[ext_resource type="PackedScene" path="res://scenes/ui/pause_menu.tscn" id="7"]
+
+[sub_resource type="ProceduralSkyMaterial" id="sky_mat"]
+sky_top_color = Color(0.38, 0.55, 0.85, 1)
+sky_horizon_color = Color(0.68, 0.72, 0.78, 1)
+ground_bottom_color = Color(0.2, 0.2, 0.22, 1)
+ground_horizon_color = Color(0.68, 0.72, 0.78, 1)
+
+[sub_resource type="Sky" id="sky"]
+sky_material = SubResource("sky_mat")
+
+[sub_resource type="Environment" id="env"]
+background_mode = 2
+sky = SubResource("sky")
+
+[node name="Sandbox" type="Node3D"]
+script = ExtResource("1")
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("env")
+
+[node name="Sun" type="DirectionalLight3D" parent="."]
+transform = Transform3D(0.921061, -0.279352, 0.27131, 0, 0.696707, 0.717356, -0.389418, -0.660729, 0.641709, 0, 0, 0)
+shadow_enabled = true
+
+[node name="Park" type="Node3D" parent="."]
+script = ExtResource("3")
+
+[node name="SpawnPoint" type="Marker3D" parent="." groups=["spawn_point"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.2, 66)
+
+[node name="CartPlayer" parent="." instance=ExtResource("2")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -6, 0.2, 64)
+
+[node name="HUD" parent="." instance=ExtResource("6")]
+
+[node name="PauseMenu" parent="." instance=ExtResource("7")]

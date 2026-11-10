@@ -1,0 +1,111 @@
+[gd_scene load_steps=13 format=3]
+
+[ext_resource type="Script" path="res://scripts/track/boost_pad.gd" id="1_padscript"]
+[ext_resource type="Shader" path="res://assets/materials/boost_pad.gdshader" id="2_padshader"]
+
+[sub_resource type="BoxShape3D" id="2_shape"]
+size = Vector3(5.0, 0.4, 2.6)
+
+[sub_resource type="CylinderMesh" id="3_padmesh"]
+top_radius = 1.55
+bottom_radius = 1.55
+height = 0.06
+radial_segments = 32
+rings = 1
+
+[sub_resource type="StandardMaterial3D" id="4_padmat"]
+transparency = 1
+shading_mode = 0
+albedo_color = Color(0.2, 0.9, 1, 0.30)
+emission_enabled = true
+emission = Color(0.2, 0.85, 1, 1)
+emission_energy_multiplier = 1.4
+
+[sub_resource type="TorusMesh" id="5_ring"]
+inner_radius = 1.10
+outer_radius = 1.34
+rings = 32
+ring_segments = 10
+
+[sub_resource type="StandardMaterial3D" id="6_ringmat"]
+transparency = 1
+shading_mode = 0
+albedo_color = Color(0.75, 0.98, 1, 0.85)
+emission_enabled = true
+emission = Color(0.45, 0.95, 1, 1)
+emission_energy_multiplier = 1.8
+
+[sub_resource type="StandardMaterial3D" id="7_puffmat"]
+transparency = 1
+shading_mode = 0
+billboard_mode = 3
+albedo_color = Color(0.55, 0.92, 1, 0.7)
+emission_enabled = true
+emission = Color(0.3, 0.85, 1, 1)
+emission_energy_multiplier = 1.5
+
+[sub_resource type="ShaderMaterial" id="10_padshader"]
+shader = ExtResource("2_padshader")
+shader_parameter/plate_color = Color(0.05, 0.12, 0.28, 0.55)
+shader_parameter/rim_color = Color(0.22, 0.84, 0.94, 1)
+shader_parameter/arrow_color = Color(1, 0.82, 0.18, 1)
+shader_parameter/scroll_speed = 1.8
+shader_parameter/glow = 1.3
+
+[sub_resource type="QuadMesh" id="11_padplane"]
+material = SubResource("10_padshader")
+size = Vector2(5.0, 2.6)
+
+[sub_resource type="QuadMesh" id="8_puffquad"]
+material = SubResource("7_puffmat")
+size = Vector2(0.4, 0.4)
+
+[sub_resource type="ParticleProcessMaterial" id="9_puffproc"]
+lifetime_randomness = 0.2
+emission_shape = 3
+emission_box_extents = Vector3(1.5, 0.1, 1.5)
+direction = Vector3(0, 1, 0)
+spread = 25.0
+initial_velocity_min = 0.6
+initial_velocity_max = 1.4
+gravity = Vector3(0, 1.6, 0)
+scale_min = 0.6
+scale_max = 1.2
+color = Color(1, 0.86, 0.35, 1)
+
+[node name="BoostPad" type="Area3D"]
+collision_layer = 0
+collision_mask = 10
+script = ExtResource("1_padscript")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.2, 0)
+shape = SubResource("2_shape")
+
+[node name="Chevrons" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 0, -1, 0, 1, 0, 0, 0.075, 0)
+cast_shadow = 0
+mesh = SubResource("11_padplane")
+
+[node name="FloatStrip" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 0, -1, 0, 1, 0, 0, 1.0, 0)
+cast_shadow = 0
+mesh = SubResource("11_padplane")
+scale = Vector3(0.9, 0.9, 0.9)
+
+[node name="Puff" type="GPUParticles3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.3, 0)
+cast_shadow = 0
+emitting = false
+amount = 18
+lifetime = 0.55
+one_shot = true
+explosiveness = 1.0
+process_material = SubResource("9_puffproc")
+draw_pass_1 = SubResource("8_puffquad")
+
+[node name="PadAudio" type="AudioStreamPlayer3D" parent="."]
+volume_db = -8.0
+max_distance = 45.0
+
+[connection signal="body_entered" from="." to="." method="_on_body_entered"]

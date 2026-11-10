@@ -1,0 +1,229 @@
+[gd_scene load_steps=10 format=3]
+
+[ext_resource type="Theme" path="res://assets/ui/theme.tres" id="1"]
+[ext_resource type="Script" path="res://scripts/ui/main_menu.gd" id="2"]
+[ext_resource type="PackedScene" path="res://scenes/ui/menu_background.tscn" id="3"]
+[ext_resource type="PackedScene" path="res://scenes/ui/settings_menu.tscn" id="4"]
+[ext_resource type="Script" path="res://scripts/ui/checker_flag.gd" id="5"]
+[ext_resource type="Script" path="res://scripts/ui/drip_label.gd" id="6"]
+[ext_resource type="Script" path="res://scripts/ui/candy_button.gd" id="7"]
+[ext_resource type="PackedScene" path="res://scenes/ui/update_panel.tscn" id="8"]
+[ext_resource type="PackedScene" path="res://scenes/ui/changelog_panel.tscn" id="9"]
+
+[node name="MainMenu" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme = ExtResource("1")
+script = ExtResource("2")
+
+[node name="Background" parent="." instance=ExtResource("3")]
+layout_mode = 1
+
+[node name="Center" type="CenterContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="Column" type="VBoxContainer" parent="Center"]
+layout_mode = 2
+theme_override_constants/separation = 12
+alignment = 1
+
+[node name="TitleStack" type="Control" parent="Center/Column"]
+custom_minimum_size = Vector2(1180, 250)
+layout_mode = 2
+mouse_filter = 2
+
+[node name="Flag" type="Control" parent="Center/Column/TitleStack"]
+layout_mode = 1
+anchor_left = 0.76
+anchor_top = -0.02
+anchor_right = 1.04
+anchor_bottom = 0.46
+grow_horizontal = 2
+grow_vertical = 2
+rotation = -0.12
+pivot_offset = Vector2(100.0, 80.0)
+mouse_filter = 2
+script = ExtResource("5")
+wave_amount = 9.0
+
+[node name="TitleRow" type="HBoxContainer" parent="Center/Column/TitleStack"]
+layout_mode = 1
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -24.0
+offset_right = -24.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/separation = 12
+alignment = 1
+
+[node name="TitleCART" type="Label" parent="Center/Column/TitleStack/TitleRow"]
+layout_mode = 2
+size_flags_vertical = 4
+rotation = -0.055
+pivot_offset = Vector2(150.0, 78.0)
+theme_type_variation = &"TitleLabel"
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_colors/font_outline_color = Color(0.117647, 0.105882, 0.227451, 1)
+theme_override_colors/font_shadow_color = Color(0.117647, 0.105882, 0.227451, 0.45)
+theme_override_constants/outline_size = 20
+theme_override_constants/shadow_offset_x = 0
+theme_override_constants/shadow_offset_y = 10
+theme_override_font_sizes/font_size = 118
+text = "CART"
+
+[node name="TitleSLOP" type="Label" parent="Center/Column/TitleStack/TitleRow"]
+layout_mode = 2
+size_flags_vertical = 4
+rotation = 0.035
+pivot_offset = Vector2(150.0, 78.0)
+theme_type_variation = &"TitleLabel"
+theme_override_colors/font_color = Color(0.94902, 0.423529, 0.654902, 1)
+theme_override_colors/font_outline_color = Color(0.117647, 0.105882, 0.227451, 1)
+theme_override_colors/font_shadow_color = Color(0.117647, 0.105882, 0.227451, 0.45)
+theme_override_constants/outline_size = 20
+theme_override_constants/shadow_offset_x = 0
+theme_override_constants/shadow_offset_y = 10
+theme_override_font_sizes/font_size = 118
+text = "SLOP"
+script = ExtResource("6")
+
+[node name="TitleGP" type="Label" parent="Center/Column/TitleStack/TitleRow"]
+layout_mode = 2
+size_flags_vertical = 4
+rotation = -0.05
+pivot_offset = Vector2(80.0, 78.0)
+theme_type_variation = &"TitleLabel"
+theme_override_colors/font_color = Color(1, 0.823529, 0.180392, 1)
+theme_override_colors/font_outline_color = Color(0.117647, 0.105882, 0.227451, 1)
+theme_override_colors/font_shadow_color = Color(0.117647, 0.105882, 0.227451, 0.45)
+theme_override_constants/outline_size = 20
+theme_override_constants/shadow_offset_x = 0
+theme_override_constants/shadow_offset_y = 10
+theme_override_font_sizes/font_size = 132
+text = "GP"
+
+[node name="Buttons" type="VBoxContainer" parent="Center/Column"]
+custom_minimum_size = Vector2(450, 0)
+layout_mode = 2
+size_flags_horizontal = 4
+theme_override_constants/separation = 12
+
+[node name="PlayButton" type="Button" parent="Center/Column/Buttons"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 78)
+layout_mode = 2
+theme_override_font_sizes/font_size = 38
+text = "PLAY"
+script = ExtResource("7")
+fill_color = Color(1, 0.823529, 0.180392, 1)
+corner_radius = 28
+
+[node name="MenuRow" type="HBoxContainer" parent="Center/Column/Buttons"]
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="SettingsButton" type="Button" parent="Center/Column/Buttons/MenuRow"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 60)
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 26
+text = "SETTINGS"
+script = ExtResource("7")
+fill_color = Color(0.270588, 0.713726, 0.941176, 1)
+corner_radius = 28
+
+[node name="ChangelogButton" type="Button" parent="Center/Column/Buttons/MenuRow"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 60)
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 26
+text = "CHANGELOG"
+script = ExtResource("7")
+fill_color = Color(0.94902, 0.423529, 0.654902, 1)
+corner_radius = 28
+
+[node name="QuitButton" type="Button" parent="Center/Column/Buttons"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(200, 50)
+layout_mode = 2
+size_flags_horizontal = 4
+theme_override_font_sizes/font_size = 22
+text = "QUIT"
+script = ExtResource("7")
+fill_color = Color(0.94902, 0.329412, 0.356863, 1)
+corner_radius = 28
+
+[node name="VersionLabel" type="Label" parent="."]
+unique_name_in_owner = true
+layout_mode = 1
+anchors_preset = 2
+anchor_top = 1.0
+anchor_bottom = 1.0
+offset_left = 34.0
+offset_top = -60.0
+offset_right = 300.0
+offset_bottom = -30.0
+grow_vertical = 0
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_colors/font_outline_color = Color(0.117647, 0.105882, 0.227451, 1)
+theme_override_constants/outline_size = 8
+theme_override_font_sizes/font_size = 20
+text = "v0.1.0"
+
+[node name="UpdateButton" type="Button" parent="."]
+unique_name_in_owner = true
+visible = false
+layout_mode = 1
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -470.0
+offset_top = 18.0
+offset_right = -28.0
+offset_bottom = 72.0
+grow_horizontal = 0
+theme_override_font_sizes/font_size = 20
+text = "UPDATE AVAILABLE"
+script = ExtResource("7")
+corner_radius = 22
+
+[node name="StatusLabel" type="Label" parent="."]
+unique_name_in_owner = true
+layout_mode = 1
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -470.0
+offset_top = 78.0
+offset_right = -28.0
+offset_bottom = 102.0
+grow_horizontal = 0
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_colors/font_outline_color = Color(0.117647, 0.105882, 0.227451, 1)
+theme_override_constants/outline_size = 8
+theme_override_font_sizes/font_size = 15
+horizontal_alignment = 2
+
+[node name="SettingsMenu" parent="." instance=ExtResource("4")]
+unique_name_in_owner = true
+layout_mode = 1
+
+[node name="UpdatePanel" parent="." instance=ExtResource("8")]
+unique_name_in_owner = true
+layout_mode = 1
+
+[node name="ChangelogPanel" parent="." instance=ExtResource("9")]
+unique_name_in_owner = true
+layout_mode = 1

@@ -1,0 +1,40 @@
+# Godot editor cache and imported binaries (regenerated on first open)
+.godot/
+*.translation
+export_credentials.cfg
+
+# Exported builds and packages
+builds/
+exports/
+*.pck
+*.exe.tmp
+*.zip
+
+# Secrets and local deployment files - never commit these
+.env
+.env.*
+*.pem
+*.key
+*.passwd
+*_password*
+secrets.*
+pi_setup/
+server/.env*
+cartslop-wifi.env
+
+# Logs and temp files
+*.log
+*.tmp
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# Local test and screenshot output
+_shots/
+.export_appdata/
+.test_appdata/
+Godot/
+
+# Python bytecode
+__pycache__/
+*.pyc

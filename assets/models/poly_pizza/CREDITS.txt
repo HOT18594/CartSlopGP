@@ -1,0 +1,4 @@
+Poly Pizza models
+- go_kart.glb: https://poly.pizza/m/MkByxZCSMA
+- shopping_cart.glb: https://poly.pizza/m/4lhRcMbl1pw
+Check each model page on poly.pizza for its exact license and attribution.

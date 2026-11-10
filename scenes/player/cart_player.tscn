@@ -1,0 +1,79 @@
+[gd_scene load_steps=8 format=3]
+
+[ext_resource type="Script" path="res://scripts/player_cart.gd" id="1"]
+[ext_resource type="PackedScene" path="res://assets/models/kenney_car-kit/Models/GLB format/kart-oozi.glb" id="2"]
+[ext_resource type="Script" path="res://scripts/chase_camera.gd" id="3"]
+[ext_resource type="PackedScene" path="res://scenes/feedback/cart_feedback.tscn" id="4"]
+
+[sub_resource type="CapsuleShape3D" id="body_shape"]
+radius = 0.68
+height = 2.0
+
+[sub_resource type="SphereShape3D" id="wheel_shape"]
+radius = 0.323
+
+[sub_resource type="SphereShape3D" id="arm_shape"]
+radius = 0.45
+
+[sub_resource type="BoxShape3D" id="push_shape"]
+size = Vector3(2.0, 1.3, 2.4)
+
+[node name="CartPlayer" type="CharacterBody3D" groups=["player"]]
+collision_layer = 2
+collision_mask = 9
+safe_margin = 0.025
+floor_snap_length = 0.75
+floor_max_angle = 1.308997
+floor_constant_speed = true
+wall_min_slide_angle = 0.0873
+max_slides = 8
+script = ExtResource("1")
+
+[node name="Body" type="CollisionShape3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 0.68, 0)
+shape = SubResource("body_shape")
+
+[node name="WheelFL" type="CollisionShape3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.43, 0.323, -0.5)
+shape = SubResource("wheel_shape")
+
+[node name="WheelFR" type="CollisionShape3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.43, 0.323, -0.5)
+shape = SubResource("wheel_shape")
+
+[node name="WheelRL" type="CollisionShape3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.43, 0.323, 0.555)
+shape = SubResource("wheel_shape")
+
+[node name="WheelRR" type="CollisionShape3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.43, 0.323, 0.555)
+shape = SubResource("wheel_shape")
+
+[node name="MeshRoot" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.32, 0)
+
+[node name="KartModel" parent="MeshRoot" instance=ExtResource("2")]
+transform = Transform3D(-1.540881, 0, 0, 0, 1.540881, 0, 0, 0, -1.540881, 0, -0.32, 0)
+
+[node name="CameraArm" type="SpringArm3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 0.966390, 0.257081, 0, -0.257081, 0.966390, 0, 1.4, 0.2)
+collision_mask = 1
+spring_length = 6.5
+margin = 0.25
+shape = SubResource("arm_shape")
+script = ExtResource("3")
+
+[node name="Camera3D" type="Camera3D" parent="CameraArm"]
+current = true
+fov = 70.0
+
+[node name="PushSensor" type="Area3D" parent="."]
+collision_layer = 0
+collision_mask = 4
+monitorable = false
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="PushSensor"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.6, 0)
+shape = SubResource("push_shape")
+
+[node name="Feedback" parent="." instance=ExtResource("4")]
