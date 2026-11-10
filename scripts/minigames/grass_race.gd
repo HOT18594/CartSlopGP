@@ -166,6 +166,16 @@ var _name_labels: Dictionary = {}
 var _remote_progress: Dictionary = {}
 var _remote_progress_ms: Dictionary = {} ## peer id -> newest accepted stamp
 var _net_sync_timer: float = 0.0
+## Server-authoritative race (Pi 1.6.0+): clock, official times, bot field.
+var _server_race_active: bool = false
+var _server_race_id: String = ""
+var _server_race_secret: String = ""
+var _server_start_ms: int = 0
+var _server_race_pending: bool = false
+var _server_bots_timer: float = 0.0
+var _server_bots_pending: bool = false
+var _server_official: Dictionary = {}
+var _server_finished_reported: bool = false
 var _bot_sync_timer: float = 0.0
 var _horn_stamp: Dictionary = {}
 ## Host-authoritative race props: the host simulates cones and broadcasts
@@ -2496,6 +2506,8 @@ func _setup_multiplayer() -> void:
 	Network.names_changed.connect(_refresh_net_names)
 	Network.tag_colors_changed.connect(_refresh_net_names)
 	Network.notify_scene_ready()
+	if Network.server_race_supported() and Network.relay_base != "":
+		Network.sync_server_clock()
 	if _is_host:
 		# Push the forced car to every peer. Peers that have not loaded the
 		# scene yet receive it again in _net_race_ready.
@@ -2624,7 +2636,10 @@ func _net_race_ready(vehicle_id: String) -> void:
 	# a race (the sandbox keeps per-peer choices).
 	_store_net_vehicle(sender, _race_vehicle if _is_host else vehicle_id)
 	if _is_host and not _waiting_for_peers:
-		if _phase == Phase.COUNTDOWN:
+		if _server_race_active:
+			rpc_id(sender, "_net_server_race_start", _server_race_id,
+				_server_race_secret, _server_start_ms, _rivals.size())
+		elif _phase == Phase.COUNTDOWN:
 			rpc_id(sender, "_net_race_countdown", maxf(_countdown, 0.1))
 		elif _phase == Phase.RACING or _phase == Phase.FINISHED:
 			# The host already started (or finished) while this peer was still
@@ -2947,7 +2962,7 @@ func _broadcast_bot_states() -> void:
 func _net_bot_states(positions: PackedVector3Array, yaws: PackedFloat32Array,
 		velocities: PackedVector3Array, progresses: PackedFloat32Array,
 		sent_ms: int) -> void:
-	if _is_host or not _multiplayer:
+	if _is_host or not _multiplayer or _server_race_active:
 		return
 	var count: int = mini(positions.size(), _rivals.size())
 	if yaws.size() < count or velocities.size() < count or progresses.size() < count:
@@ -3025,7 +3040,7 @@ func _process(delta: float) -> void:
 					_cart.global_position, _cart.rotation.y, _unwrapped,
 					Time.get_ticks_msec(), _cart.velocity)
 	if _multiplayer and _is_host and Network.is_session_active() \
-			and not _rivals.is_empty():
+			and not _rivals.is_empty() and not _server_race_active:
 		# Stream the bots even while the host sits on its result card: clients
 		# are still racing and must see them keep driving.
 		_bot_sync_timer += delta
@@ -3047,15 +3062,98 @@ func _begin_race_countdown() -> void:
 	if not _is_host:
 		return
 	_waiting_for_peers = false
-	_countdown = 3.0
+	if Network.server_race_supported() and Network.relay_token != "":
+		# The Pi owns the clock and the bot field in multiplayer. If the older
+		# server answers 404, fall back to the original host countdown.
+		_begin_server_race()
+		return
+	_start_local_countdown(3.0)
+
+
+func _start_local_countdown(seconds: float) -> void:
+	_countdown = maxf(seconds, 0.1)
 	_last_count = 0
 	_go_shown = false
 	_phase = Phase.COUNTDOWN
 	_countdown_label.visible = true
-	_countdown_label.text = "3"
+	_countdown_label.text = str(int(ceil(_countdown)))
 	if OS.get_environment("CART_DEBUG_NET") == "1":
 		print("RACE_COUNTDOWN_START host peers=", multiplayer.get_peers())
-	rpc("_net_race_countdown", 3.0)
+	rpc("_net_race_countdown", _countdown)
+
+
+func _begin_server_race() -> void:
+	if _server_race_pending or _server_race_active:
+		return
+	_server_race_pending = true
+	var race: Dictionary = await Network.start_server_race(
+		_total_laps, _bot_count(), GameSettings.minigame_difficulty,
+		_base_max_speed, Network.race_seed)
+	_server_race_pending = false
+	if race.is_empty():
+		_start_local_countdown(3.0)
+		return
+	var race_id: String = str(race.get("id", ""))
+	var secret: String = str(race.get("secret", ""))
+	var start_ms: int = int(race.get("start_ms", 0))
+	var bots: int = int(race.get("bots", 0))
+	if race_id == "" or start_ms <= 0:
+		_start_local_countdown(3.0)
+		return
+	_apply_server_race(race_id, secret, start_ms, bots)
+	rpc("_net_server_race_start", race_id, secret, start_ms, bots)
+
+
+@rpc("authority", "reliable")
+func _net_server_race_start(race_id: String, secret: String,
+		start_ms: int, bots: int) -> void:
+	if _is_host:
+		return
+	if not Network.server_clock_ready:
+		await Network.sync_server_clock(3)
+	_apply_server_race(race_id, secret, start_ms, bots)
+
+
+func _apply_server_race(race_id: String, secret: String, start_ms: int,
+		bots: int) -> void:
+	_server_race_active = true
+	_server_race_id = race_id
+	_server_race_secret = secret
+	_server_start_ms = start_ms
+	_server_finished_reported = false
+	_server_bots_pending = false
+	_server_bots_timer = 0.0
+	_waiting_for_peers = false
+	_convert_rivals_to_server()
+	# The server starts the race on a fixed wall-clock instant; every peer
+	# derives the same countdown from it instead of running its own 3 s timer.
+	var remaining: float = float(start_ms - Network.server_now_ms()) / 1000.0
+	_countdown = clampf(remaining, 0.1, 20.0)
+	_last_count = 0
+	_go_shown = false
+	_phase = Phase.COUNTDOWN
+	_countdown_label.visible = true
+	_countdown_label.text = str(int(ceil(_countdown)))
+	if OS.get_environment("CART_DEBUG_NET") == "1":
+		print("RACE_SERVER start id=", race_id, " start_ms=", start_ms,
+			" remaining=", _countdown, " bots=", bots)
+
+
+func _convert_rivals_to_server() -> void:
+	## From here on the rival bodies are ghosts driven only by the Pi snapshots.
+	## A host that had been running local AI physics hands them over as well.
+	var vehicle: String = _race_vehicle
+	if vehicle == "":
+		vehicle = GameSettings.minigame_vehicle
+	for i in _rivals.size():
+		var node: CartPlayer = _rivals[i]["node"]
+		if not is_instance_valid(node):
+			continue
+		if not node.remote_mode:
+			node.call("setup_remote", 1000 + i)
+			node.set_vehicle_id(vehicle)
+		_rivals[i]["progress"] = START_DISTANCE + 5.0 + float(i) * 4.5
+		_rivals[i]["finished"] = false
 
 
 @rpc("authority", "call_local", "reliable")
@@ -3087,8 +3185,13 @@ func _net_race_join_now() -> void:
 
 
 func _tick_countdown(delta: float) -> void:
-	if _countdown > 0.0:
+	if _server_race_active:
+		# Derived from the Pi clock every frame: a slow frame or a late RPC
+		# cannot shift this client's GO.
+		_countdown = maxf(0.0, float(_server_start_ms - Network.server_now_ms()) / 1000.0)
+	else:
 		_countdown -= delta
+	if _countdown > 0.0:
 		var count: int = int(ceil(maxf(_countdown, 0.0)))
 		if count != _last_count:
 			_last_count = count
@@ -3116,7 +3219,11 @@ func _tick_countdown(delta: float) -> void:
 
 
 func _tick_race(delta: float) -> void:
-	_race_time += delta
+	if _server_race_active:
+		# Official race clock: all peers read the same Pi timestamp.
+		_race_time = maxf(0.0, float(Network.server_now_ms() - _server_start_ms) / 1000.0)
+	else:
+		_race_time += delta
 	if _go_shown and _countdown_label.visible:
 		_go_time += delta
 		if _go_time >= 0.7:
@@ -3197,7 +3304,12 @@ func _tick_race(delta: float) -> void:
 	for material: ShaderMaterial in _bend_materials:
 		material.set_shader_parameter("kart_position", _cart.global_position)
 
-	if not _multiplayer or _is_host:
+	if _server_race_active:
+		_server_bots_timer += delta
+		if _server_bots_timer >= 0.125:
+			_server_bots_timer = 0.0
+			_fetch_server_bots()
+	elif not _multiplayer or _is_host:
 		_rival_tick_accum += delta
 		if _rival_tick_accum >= 1.0 / 30.0:
 			_tick_rivals(_rival_tick_accum)
@@ -3218,6 +3330,90 @@ func _tick_race(delta: float) -> void:
 		if _hud_standings_accum >= 0.25:
 			_hud_standings_accum = 0.0
 			_hud.call("set_standings", _result_entries())
+
+
+func _fetch_server_bots() -> void:
+	## The Pi is the only bot simulation in a server race. Each snapshot is
+	## applied as a ghost state; the existing interpolation smooths 8 Hz input.
+	if _server_bots_pending or _server_race_id == "":
+		return
+	_server_bots_pending = true
+	var snapshot: Dictionary = await Network.fetch_server_bots(_server_race_id)
+	if snapshot.is_empty() and is_inside_tree():
+		# One transient HTTP miss should not freeze the field for a whole poll.
+		snapshot = await Network.fetch_server_bots(_server_race_id)
+	_server_bots_pending = false
+	if snapshot.is_empty() or not _server_race_active:
+		return
+	var rows: Variant = snapshot.get("bots", [])
+	if not (rows is Array):
+		return
+	var stamp: int = Time.get_ticks_msec()
+	var count: int = mini((rows as Array).size(), _rivals.size())
+	for i in count:
+		var row: Variant = (rows as Array)[i]
+		if not (row is Array) or (row as Array).size() < 6:
+			continue
+		var values: Array = row as Array
+		var position := Vector3(float(values[0]), float(values[1]), float(values[2]))
+		if not position.is_finite():
+			continue
+		var node: CartPlayer = _rivals[i]["node"]
+		if not is_instance_valid(node):
+			continue
+		if not node.remote_mode:
+			node.call("setup_remote", 1000 + i)
+		var yaw: float = float(values[3])
+		var velocity := Vector3.ZERO
+		if values.size() > 7:
+			var speed: float = float(values[7])
+			if is_finite(speed):
+				velocity = Vector3(-sin(yaw), 0.0, -cos(yaw)) * clampf(speed, 0.0, 60.0)
+		node.set_net_state(position, yaw, stamp, velocity)
+		_rivals[i]["progress"] = float(values[4])
+		_rivals[i]["lap"] = int(values[5])
+		if values.size() > 6 and int(values[6]) == 1:
+			_rivals[i]["finished"] = true
+			node.call("mark_race_finished")
+
+
+func _report_server_lap_async(lap: int, lap_ms: float, finished: bool) -> void:
+	if not _server_race_active or _server_race_id == "" or _server_race_secret == "":
+		return
+	var peer: int = multiplayer.get_unique_id()
+	var race_ms: int = int(round(_race_time * 1000.0))
+	var official: Dictionary = await Network.report_server_lap(
+		_server_race_id, _server_race_secret, peer,
+		GameSettings.player_name, lap, race_ms, int(round(lap_ms * 1000.0)),
+		finished)
+	if official.is_empty():
+		return
+	_server_official = official
+	if finished:
+		_apply_official_finish(official)
+
+
+func _apply_official_finish(official: Dictionary) -> void:
+	## Replace the local finish time with the server's authoritative one and
+	## use the server standings for the big placement label.
+	var finish_ms: int = int(official.get("finish_ms", 0))
+	if finish_ms <= 0:
+		finish_ms = int(official.get("official_race_ms", 0))
+	if finish_ms > 0 and _result_total != null:
+		_result_total.text = _format_time(float(finish_ms) / 1000.0)
+	var best_ms: int = int(official.get("best_lap_ms", 0))
+	if best_ms > 0 and _result_best != null:
+		_result_best.text = _format_time(float(best_ms) / 1000.0)
+	var standings: Variant = official.get("standings", [])
+	if not (standings is Array) or _result_place == null:
+		return
+	var peer: int = multiplayer.get_unique_id()
+	for index in (standings as Array).size():
+		var entry: Variant = (standings as Array)[index]
+		if entry is Dictionary and int((entry as Dictionary).get("peer", -2)) == peer:
+			_result_place.text = "%s / %d" % [_ordinal(index + 1),
+				(standings as Array).size()]
+			return
 
 
 func _safe_respawn_transform(s: float) -> Transform3D:
@@ -3258,6 +3454,9 @@ func _complete_lap() -> void:
 	_lap_times.append(lap_time)
 	_lap_start = _race_time
 	_sector_flags = 0
+	if _server_race_active:
+		var completed_lap: int = _lap
+		_report_server_lap_async(completed_lap, lap_time, false)
 	_lap += 1
 	if _lap > _total_laps:
 		_finish()
@@ -3311,6 +3510,9 @@ func _finish() -> void:
 	_result_title.text = "YOU WIN!" if place == 1 \
 		else ("ON THE PODIUM!" if place <= 3 else "FINISHED")
 	_result_total.text = _format_time(_race_time) if not _lap_times.is_empty() else "—"
+	if _server_race_active and not _server_finished_reported:
+		_server_finished_reported = true
+		_report_server_lap_async(_total_laps + 1, _race_time, true)
 	_result_best.text = _format_time(best) if best >= 0.0 else "—"
 	_result_place.text = "%s / %d" % [suffix, _field_size()]
 	_result_laps.text = "%d / %d" % [mini(_lap_times.size(), _total_laps), _total_laps]

@@ -2,6 +2,17 @@
 
 Player-facing notes, newest first.
 
+## [0.7.0] - 2026-11-10
+
+### Races run by the Pi
+
+- The Pi now owns the multiplayer race clock, the official lap and finish
+  times, and the standings.
+- Bots are simulated by the Pi and streamed to every player, so the whole room
+  races the same field.
+- If the room server is older than 1.6.0, the game falls back to the previous
+  host-run race automatically.
+
 ## [0.6.9] - 2026-11-10
 
 ### Cleaner racing

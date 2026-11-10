@@ -32,10 +32,10 @@ Get the latest build from the
 
 | Platform | Download | Run |
 | --- | --- | --- |
-| Windows | `CartSlopGP_v0.6.9_windows.zip` | Unzip, then run `CartSlopGP.exe`. SmartScreen may warn because the build is unsigned: **More info > Run anyway**. |
-| macOS | `CartSlopGP_v0.6.9_macos.zip` | Unzip, then open `Cart Slop GP.app`. If Gatekeeper blocks it, right-click the app and choose **Open**. |
-| Linux | `CartSlopGP_v0.6.9_linux.zip` | Unzip, `chmod +x CartSlopGP.x86_64`, then run it. |
-| Browser | `CartSlopGP_v0.6.9_web.zip` | Serve `index.html` over HTTP (a `file://` URL cannot load the data pack). Single player only. |
+| Windows | `CartSlopGP_v0.7.0_windows.zip` | Unzip, then run `CartSlopGP.exe`. SmartScreen may warn because the build is unsigned: **More info > Run anyway**. |
+| macOS | `CartSlopGP_v0.7.0_macos.zip` | Unzip, then open `Cart Slop GP.app`. If Gatekeeper blocks it, right-click the app and choose **Open**. |
+| Linux | `CartSlopGP_v0.7.0_linux.zip` | Unzip, `chmod +x CartSlopGP.x86_64`, then run it. |
+| Browser | `CartSlopGP_v0.7.0_web.zip` | Serve `index.html` over HTTP (a `file://` URL cannot load the data pack). Single player only. |
 
 There is no installer and no account. Settings and downloaded updates live in
 Godot's user data folder:
@@ -117,6 +117,10 @@ tag colour, then choose how to play.
    host machine.
 
 Online rooms use the Cart Slop relay. LAN rooms always work without a relay.
+
+When the relay runs server 1.6.0 or newer, it owns the race clock, the official
+lap and finish times and the bot field for online races. With an older relay
+the game falls back to a host-run race, so both versions still work.
 
 ### In the room
 

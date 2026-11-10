@@ -80,6 +80,13 @@ var room_public: bool = false
 ## driving/boosting from mouse or keyboard input behind the menu.
 var input_locked: bool = false
 var server_online: bool = false
+## Version string reported by the Pi and the monotonic offset used to put every
+## client on the server's clock (see sync_server_clock()).
+var server_version: String = ""
+var server_clock_offset_ms: int = 0
+var server_clock_ready: bool = false
+var server_rtt_ms: int = 0
+var _clock_sync_pending: bool = false
 var server_detail: String = "checking"
 ## Peers that have loaded the current gameplay scene. Gameplay RPCs are only
 ## sent to these peers; otherwise a peer still in the lobby makes Godot log
@@ -763,6 +770,131 @@ func _relay_get(path: String, timeout: float = RELAY_HTTP_TIMEOUT) -> Dictionary
 	if parsed is Dictionary:
 		return parsed as Dictionary
 	return {}
+
+
+func _remember_server_version(status: Dictionary) -> void:
+	var version: String = str(status.get("version", "")).strip_edges()
+	if version != "":
+		server_version = version
+
+
+func server_race_supported() -> bool:
+	## 1.6.0 is the first server build with race sessions. An empty version is
+	## treated as "try it": a 1.5.1 Pi answers 404 and the caller falls back.
+	if server_version == "":
+		return true
+	var parts: PackedStringArray = server_version.split(".")
+	if parts.size() < 2:
+		return false
+	var major: int = int(parts[0])
+	var minor: int = int(parts[1])
+	return major > 1 or (major == 1 and minor >= 6)
+
+
+func server_now_ms() -> int:
+	## Monotonic local clock plus the offset measured against /api/time, so a
+	## wall-clock jump on the PC cannot move the race timer.
+	return Time.get_ticks_msec() + server_clock_offset_ms
+
+
+func sync_server_clock(samples: int = 5) -> bool:
+	## NTP-style: keep the sample with the lowest round trip and place the
+	## server clock at its midpoint. Every peer then derives the same race time.
+	if relay_base == "":
+		return false
+	if _clock_sync_pending:
+		# Another caller (scene setup, or the server-race RPC) is already
+		# measuring. Wait for that result instead of returning a stale offset.
+		for i in 180:
+			await get_tree().process_frame
+			if not _clock_sync_pending:
+				break
+		return server_clock_ready
+	_clock_sync_pending = true
+	var best_rtt: int = 1 << 30
+	var best_offset: int = 0
+	var got: bool = false
+	for i in maxi(samples, 1):
+		var t0: int = Time.get_ticks_msec()
+		var data: Dictionary = await _relay_get("/api/time", 2.0)
+		var t1: int = Time.get_ticks_msec()
+		if data.is_empty():
+			continue
+		var server_ms: int = int(data.get("time_ms", 0))
+		if server_ms <= 0:
+			continue
+		var rtt: int = t1 - t0
+		var offset: int = server_ms - (t0 + t1) / 2
+		if not got or rtt < best_rtt:
+			best_rtt = rtt
+			best_offset = offset
+			got = true
+		await get_tree().process_frame
+	_clock_sync_pending = false
+	if not got:
+		return false
+	server_clock_offset_ms = best_offset
+	server_rtt_ms = best_rtt
+	server_clock_ready = true
+	return true
+
+
+func start_server_race(laps: int, bots: int, difficulty: int,
+		max_speed: float, seed: int) -> Dictionary:
+	if relay_base == "" or relay_token == "" or not is_host:
+		return {}
+	if not server_clock_ready:
+		await sync_server_clock()
+	var payload: Dictionary = {
+		"token": relay_token,
+		"laps": clampi(laps, 1, 9),
+		"bots": clampi(bots, 0, 5),
+		"difficulty": clampi(difficulty, 0, 2),
+		"max_speed": clampf(max_speed, 8.0, 40.0),
+		"seed": seed,
+	}
+	var response: Dictionary = await _relay_post("/api/race/start", payload)
+	var race: Variant = response.get("race", {})
+	if race is Dictionary and str((race as Dictionary).get("id", "")) != "":
+		server_version = "1.6.0" if server_version == "" else server_version
+		return race as Dictionary
+	return {}
+
+
+func fetch_server_race(race_id: String) -> Dictionary:
+	if relay_base == "" or race_id == "":
+		return {}
+	var response: Dictionary = await _relay_get("/api/race/" + race_id, 2.0)
+	var race: Variant = response.get("race", {})
+	return race as Dictionary if race is Dictionary else {}
+
+
+func fetch_server_bots(race_id: String) -> Dictionary:
+	if relay_base == "" or race_id == "":
+		return {}
+	var response: Dictionary = await _relay_get("/api/race/" + race_id + "/bots", 2.0)
+	var bots: Variant = response.get("bots", {})
+	return bots as Dictionary if bots is Dictionary else {}
+
+
+func report_server_lap(race_id: String, secret: String, peer: int,
+		name: String, lap: int, race_ms: int, lap_ms: int,
+		finished: bool) -> Dictionary:
+	if relay_base == "" or race_id == "" or secret == "":
+		return {}
+	var payload: Dictionary = {
+		"race": race_id,
+		"secret": secret,
+		"peer": peer,
+		"name": name.substr(0, 16),
+		"lap": lap,
+		"race_ms": maxi(race_ms, 0),
+		"lap_ms": maxi(lap_ms, 0),
+		"finished": finished,
+	}
+	var response: Dictionary = await _relay_post("/api/race/lap", payload)
+	var official: Variant = response.get("official", {})
+	return official as Dictionary if official is Dictionary else {}
 
 
 func fetch_lobbies() -> Array:
@@ -1755,6 +1887,8 @@ func probe_server() -> bool:
 	if ticket != _host_ticket + _join_ticket or is_host or is_client or join_pending:
 		return true
 	server_online = not status.is_empty()
+	if server_online:
+		_remember_server_version(status)
 	server_detail = "online" if server_online else "offline"
 	if not server_online:
 		# Force the next attempt to rediscover instead of reusing a dead route.
