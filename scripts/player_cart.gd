@@ -414,7 +414,8 @@ func setup_ai(vehicle_id: String) -> void:
 	remove_from_group("player")
 	add_to_group("ai_player")
 	collision_layer = CollisionLayers.GHOST
-	collision_mask = CollisionLayers.WORLD | CollisionLayers.PLAYER | CollisionLayers.GHOST
+	collision_mask = (CollisionLayers.WORLD | CollisionLayers.PLAYER
+		| CollisionLayers.GHOST | CollisionLayers.SOLID_PROP)
 	reapply_vehicle(vehicle_id)
 	if _camera_rig != null:
 		_camera_rig.set_process(false)

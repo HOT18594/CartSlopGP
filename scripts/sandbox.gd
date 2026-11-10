@@ -27,6 +27,8 @@ var _prop_sync_timer: float = 0.0
 var _bots: Array[Dictionary] = []
 var _bot_time: float = 0.0
 var _cart_relay_ms: Dictionary = {} ## peer id -> last host relay (anti-amplification)
+## Client-side prediction for a pushed frozen prop.
+var _prop_kick_until: Dictionary = {}
 
 
 
@@ -118,6 +120,7 @@ func _physics_process(delta: float) -> void:
 			_prop_sync_timer = 0.0
 			_broadcast_props()
 	else:
+		_expire_prop_kicks()
 		_apply_prop_targets(delta)
 
 
@@ -532,6 +535,8 @@ func _apply_prop_targets(delta: float) -> void:
 		var prop: RigidBody3D = _props[index]
 		if not is_instance_valid(prop):
 			continue
+		if _prop_kick_until.has(prop.get_instance_id()):
+			continue
 		var data: Array = _prop_targets[index]
 		prop.global_position = prop.global_position.lerp(data[0] as Vector3, blend)
 		var target_rotation: Vector3 = data[1] as Vector3
@@ -545,8 +550,40 @@ func _on_local_push_requested(prop: Node, direction: Vector3, kick: float) -> vo
 	if _host_mode:
 		return
 	var index: int = _props.find(prop as RigidBody3D)
-	if index >= 0:
-		rpc_id(1, "_net_request_push", index, direction, kick)
+	if index < 0:
+		return
+	# Predict locally so the box moves on this screen immediately; the host
+	# remains authoritative and the next snapshot corrects the pose.
+	_kick_prop(prop as RigidBody3D, direction, kick)
+	rpc_id(1, "_net_request_push", index, direction, kick)
+
+
+func _kick_prop(prop: RigidBody3D, direction: Vector3, kick: float) -> void:
+	if not is_instance_valid(prop) or not direction.is_finite() or not is_finite(kick):
+		return
+	if direction.length_squared() < 0.0001:
+		return
+	prop.freeze = false
+	prop.sleeping = false
+	direction = direction.normalized()
+	kick = clampf(kick, 0.1, 4.0)
+	prop.apply_central_impulse(direction * prop.mass * kick + Vector3.UP * prop.mass * kick * 0.85)
+	var spin := Vector3(randf_range(-1.0, 1.0), randf_range(-0.5, 0.5), randf_range(-1.0, 1.0))
+	prop.apply_torque_impulse(spin * prop.mass * 1.6)
+	_prop_kick_until[prop.get_instance_id()] = Time.get_ticks_msec() + 400
+
+
+func _expire_prop_kicks() -> void:
+	if _prop_kick_until.is_empty():
+		return
+	var now: int = Time.get_ticks_msec()
+	for id: int in _prop_kick_until.keys():
+		if now < int(_prop_kick_until[id]):
+			continue
+		_prop_kick_until.erase(id)
+		var prop: RigidBody3D = instance_from_id(id) as RigidBody3D
+		if is_instance_valid(prop):
+			prop.freeze = true
 
 
 func _ground_height(at: Vector3) -> float:

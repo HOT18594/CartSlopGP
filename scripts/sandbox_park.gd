@@ -888,7 +888,9 @@ func _crate(prop_name: String, at: Vector3) -> void:
 	var body := RigidBody3D.new()
 	body.name = prop_name
 	body.add_to_group("pushable")
-	body.collision_layer = 4
+	# Crates are heavy and solid: the kart cannot drive through one, and the
+	# push sensor still launches it. Cones stay on the non-blocking PROP layer.
+	body.collision_layer = 4 | 16
 	body.collision_mask = 5
 	body.mass = 0.8
 	body.continuous_cd = true

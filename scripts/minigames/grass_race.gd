@@ -166,7 +166,19 @@ var _name_labels: Dictionary = {}
 var _remote_progress: Dictionary = {}
 var _remote_progress_ms: Dictionary = {} ## peer id -> newest accepted stamp
 var _net_sync_timer: float = 0.0
+var _bot_sync_timer: float = 0.0
 var _horn_stamp: Dictionary = {}
+## Host-authoritative race props: the host simulates cones and broadcasts
+## snapshots; clients freeze their copy and ask the host to apply pushes.
+var _props: Array[RigidBody3D] = []
+var _prop_targets: Dictionary = {}
+var _prop_sync_timer: float = 0.0
+var _push_stamp: Dictionary = {}
+## Client-side prediction: a pushed frozen prop is unfrozen briefly so the
+## player sees it fly immediately instead of driving through it.
+var _prop_kick_until: Dictionary = {}
+var _prop_serial: int = 0
+const PROP_SYNC_INTERVAL: float = 0.10
 
 var _canvas: CanvasLayer
 var _countdown_label: Label
@@ -1044,6 +1056,10 @@ func _chicane(holder: Node3D, cone: PackedScene, center: float, count: int,
 func _spawn_cone(holder: Node3D, cone: PackedScene, distance: float,
 		lateral: float, scale: float) -> void:
 	var body := RigidBody3D.new()
+	# Explicit names keep the prop index identical on every peer, so a push
+	# request and a snapshot always address the same cone.
+	body.name = "TrackProp%03d" % _prop_serial
+	_prop_serial += 1
 	body.add_to_group("pushable")
 	body.collision_layer = 4
 	body.collision_mask = 5
@@ -1574,6 +1590,10 @@ func _build_rivals() -> void:
 	var count: int = _bot_count()
 	if count <= 0:
 		return
+	# Only the host runs the rival simulation. Clients spawn the same bodies as
+	# interpolated ghosts and follow the host's snapshot, so every player sees
+	# the same bots on the same line.
+	var authority: bool = not _multiplayer or _is_host
 	var rng := RandomNumberGenerator.new()
 	if _multiplayer and Network.race_seed != 0:
 		rng.seed = Network.race_seed
@@ -1602,15 +1622,22 @@ func _build_rivals() -> void:
 		var progress: float = START_DISTANCE + 5.0 + float(i) * 4.5
 		var spawn: Transform3D = _track_transform(progress, lane, 0.12)
 		var rival: CartPlayer = CART_SCENE.instantiate() as CartPlayer
-		rival.name = "Rival_" + str(names[i % names.size()])
-		# Mark AI before add_child so CartFeedback skips audio, skid ribbons and
-		# per-frame particle work during _ready (saves ~100 ms and 10-15 MB).
-		rival.ai_mode = true
 		# Transform before add_child: a body created at the origin spends its
 		# first tick overlapping the player and other rivals.
 		rival.transform = spawn
-		add_child(rival)
-		rival.setup_ai(vehicle_id)
+		if authority:
+			rival.name = "Rival_" + str(names[i % names.size()])
+			# Mark AI before add_child so CartFeedback skips audio, skid ribbons
+			# and per-frame particle work during _ready.
+			rival.ai_mode = true
+			add_child(rival)
+			rival.setup_ai(vehicle_id)
+		else:
+			# Client copy: a solid ghost driven only by the host's snapshot.
+			add_child(rival)
+			rival.call("setup_remote", 1000 + i)
+			rival.name = "Rival_" + str(names[i % names.size()])
+			rival.set_vehicle_id(vehicle_id)
 		var label := Label3D.new()
 		label.text = str(names[i % names.size()])
 		label.font = load(TITLE_FONT)
@@ -2461,6 +2488,7 @@ func _setup_multiplayer() -> void:
 	_peer_vehicles[multiplayer.get_unique_id()] = \
 		_race_vehicle if _is_host else GameSettings.minigame_vehicle
 	_place_local_on_grid()
+	_setup_props_net()
 	for peer_id: int in multiplayer.get_peers():
 		_spawn_remote(peer_id)
 	multiplayer.peer_connected.connect(_on_net_peer_connected)
@@ -2768,6 +2796,180 @@ func _accept_remote_race_state(peer_id: int, cart: CartPlayer, position: Vector3
 
 
 # --------------------------------------------------------------------------
+# host-authoritative props and bots
+
+
+func _setup_props_net() -> void:
+	for node in get_tree().get_nodes_in_group("pushable"):
+		if node is RigidBody3D:
+			_props.append(node as RigidBody3D)
+	_props.sort_custom(func(a: RigidBody3D, b: RigidBody3D) -> bool: return str(a.name) < str(b.name))
+	if _cart != null and not _cart.net_push_requested.is_connected(_on_local_push_requested):
+		_cart.net_push_requested.connect(_on_local_push_requested)
+	if not _is_host:
+		for prop: RigidBody3D in _props:
+			prop.freeze_mode = RigidBody3D.FREEZE_MODE_STATIC
+			prop.freeze = true
+
+
+func _on_local_push_requested(prop: Node, direction: Vector3, kick: float) -> void:
+	if _is_host or not _multiplayer:
+		return
+	var index: int = _props.find(prop as RigidBody3D)
+	if index < 0:
+		return
+	# Predict locally so the cone flies on this screen too; the host stays
+	# authoritative and the next snapshot corrects the pose.
+	_kick_prop(prop as RigidBody3D, direction, kick)
+	rpc_id(1, "_net_request_push", index, direction, kick)
+
+
+func _kick_prop(prop: RigidBody3D, direction: Vector3, kick: float) -> void:
+	if not is_instance_valid(prop) or not direction.is_finite() or not is_finite(kick):
+		return
+	if direction.length_squared() < 0.0001:
+		return
+	prop.freeze = false
+	prop.sleeping = false
+	direction = direction.normalized()
+	kick = clampf(kick, 0.1, 4.0)
+	prop.apply_central_impulse(direction * prop.mass * kick + Vector3.UP * prop.mass * kick * 0.85)
+	var spin := Vector3(randf_range(-1.0, 1.0), randf_range(-0.5, 0.5), randf_range(-1.0, 1.0))
+	prop.apply_torque_impulse(spin * prop.mass * 1.6)
+	_prop_kick_until[prop.get_instance_id()] = Time.get_ticks_msec() + 400
+
+
+func _expire_prop_kicks() -> void:
+	if _prop_kick_until.is_empty():
+		return
+	var now: int = Time.get_ticks_msec()
+	for id: int in _prop_kick_until.keys():
+		if now < int(_prop_kick_until[id]):
+			continue
+		_prop_kick_until.erase(id)
+		var prop: RigidBody3D = instance_from_id(id) as RigidBody3D
+		if is_instance_valid(prop):
+			prop.freeze = true
+
+
+func _broadcast_props() -> void:
+	if _props.is_empty():
+		return
+	var positions := PackedVector3Array()
+	var rotations := PackedVector3Array()
+	for prop: RigidBody3D in _props:
+		if not is_instance_valid(prop):
+			positions.append(Vector3.ZERO)
+			rotations.append(Vector3.ZERO)
+			continue
+		positions.append(prop.global_position)
+		rotations.append(prop.global_rotation)
+	for target: int in multiplayer.get_peers():
+		if Network.is_scene_ready(target):
+			rpc_id(target, "_net_props", positions, rotations)
+
+
+func _apply_prop_targets(delta: float) -> void:
+	if _prop_targets.is_empty():
+		return
+	var blend: float = 1.0 - exp(-12.0 * delta)
+	for index: int in _prop_targets:
+		if index < 0 or index >= _props.size():
+			continue
+		var prop: RigidBody3D = _props[index]
+		if not is_instance_valid(prop):
+			continue
+		if _prop_kick_until.has(prop.get_instance_id()):
+			continue
+		var data: Array = _prop_targets[index]
+		prop.global_position = prop.global_position.lerp(data[0] as Vector3, blend)
+		var target_rotation: Vector3 = data[1] as Vector3
+		prop.global_rotation = Vector3(
+			lerp_angle(prop.global_rotation.x, target_rotation.x, blend),
+			lerp_angle(prop.global_rotation.y, target_rotation.y, blend),
+			lerp_angle(prop.global_rotation.z, target_rotation.z, blend))
+
+
+@rpc("authority", "unreliable")
+func _net_props(positions: PackedVector3Array, rotations: PackedVector3Array) -> void:
+	if _is_host or not _multiplayer:
+		return
+	if positions.size() != _props.size() or rotations.size() != _props.size():
+		return
+	for index in positions.size():
+		if not positions[index].is_finite() or not rotations[index].is_finite():
+			continue
+		_prop_targets[index] = [positions[index], rotations[index]]
+
+
+@rpc("any_peer", "reliable")
+func _net_request_push(index: int, direction: Vector3, kick: float) -> void:
+	if not _is_host or index < 0 or index >= _props.size():
+		return
+	if not direction.is_finite() or not is_finite(kick):
+		return
+	if direction.length_squared() < 0.0001:
+		return
+	var sender: int = _rpc_sender()
+	var now: int = Time.get_ticks_msec()
+	if now - int(_push_stamp.get(sender, -10000)) < 100:
+		return
+	_push_stamp[sender] = now
+	_kick_prop(_props[index], direction, kick)
+
+
+func _broadcast_bot_states() -> void:
+	if _rivals.is_empty():
+		return
+	var positions := PackedVector3Array()
+	var yaws := PackedFloat32Array()
+	var velocities := PackedVector3Array()
+	var progresses := PackedFloat32Array()
+	for rival: Dictionary in _rivals:
+		var node: CartPlayer = rival["node"]
+		if not is_instance_valid(node):
+			positions.append(Vector3.ZERO)
+			yaws.append(0.0)
+			velocities.append(Vector3.ZERO)
+			progresses.append(float(rival["progress"]))
+			continue
+		positions.append(node.global_position)
+		yaws.append(node.rotation.y)
+		velocities.append(node.velocity.limit_length(60.0))
+		progresses.append(float(rival["progress"]))
+	var stamp: int = Time.get_ticks_msec()
+	for target: int in multiplayer.get_peers():
+		if Network.is_scene_ready(target):
+			rpc_id(target, "_net_bot_states", positions, yaws, velocities, progresses, stamp)
+
+
+@rpc("authority", "unreliable")
+func _net_bot_states(positions: PackedVector3Array, yaws: PackedFloat32Array,
+		velocities: PackedVector3Array, progresses: PackedFloat32Array,
+		sent_ms: int) -> void:
+	if _is_host or not _multiplayer:
+		return
+	var count: int = mini(positions.size(), _rivals.size())
+	if yaws.size() < count or velocities.size() < count or progresses.size() < count:
+		return
+	var finish: float = _race_finish_distance()
+	for i in count:
+		var position: Vector3 = positions[i]
+		if not position.is_finite() or not is_finite(yaws[i]) \
+				or not velocities[i].is_finite() or not is_finite(progresses[i]):
+			continue
+		var rival: Dictionary = _rivals[i]
+		var node: CartPlayer = rival["node"]
+		if not is_instance_valid(node) or not node.remote_mode:
+			continue
+		node.set_net_state(position, yaws[i], sent_ms, velocities[i])
+		rival["progress"] = progresses[i]
+		if not bool(rival["finished"]) and progresses[i] >= finish - 2.0:
+			rival["finished"] = true
+			node.mark_race_finished()
+
+
+# --------------------------------------------------------------------------
 # race loop
 
 
@@ -2777,6 +2979,15 @@ func _physics_process(delta: float) -> void:
 	# depend on the render rate.
 	if _multiplayer and _is_host and _cart != null:
 		Network.resolve_car_collisions(_cart, _remote_carts)
+	if _multiplayer and Network.is_session_active():
+		if _is_host:
+			_prop_sync_timer += delta
+			if _prop_sync_timer >= PROP_SYNC_INTERVAL:
+				_prop_sync_timer = 0.0
+				_broadcast_props()
+		else:
+			_expire_prop_kicks()
+			_apply_prop_targets(delta)
 	match _phase:
 		Phase.COUNTDOWN:
 			_tick_countdown(delta)
@@ -2813,6 +3024,14 @@ func _process(delta: float) -> void:
 				rpc_id(1, "_net_race_cart_state", multiplayer.get_unique_id(),
 					_cart.global_position, _cart.rotation.y, _unwrapped,
 					Time.get_ticks_msec(), _cart.velocity)
+	if _multiplayer and _is_host and Network.is_session_active() \
+			and not _rivals.is_empty():
+		# Stream the bots even while the host sits on its result card: clients
+		# are still racing and must see them keep driving.
+		_bot_sync_timer += delta
+		if _bot_sync_timer >= 0.05:
+			_bot_sync_timer = 0.0
+			_broadcast_bot_states()
 	match _phase:
 		Phase.FINISHED:
 			# Peers keep streaming their progress after we cross the line, so
@@ -2978,10 +3197,11 @@ func _tick_race(delta: float) -> void:
 	for material: ShaderMaterial in _bend_materials:
 		material.set_shader_parameter("kart_position", _cart.global_position)
 
-	_rival_tick_accum += delta
-	if _rival_tick_accum >= 1.0 / 30.0:
-		_tick_rivals(_rival_tick_accum)
-		_rival_tick_accum = 0.0
+	if not _multiplayer or _is_host:
+		_rival_tick_accum += delta
+		if _rival_tick_accum >= 1.0 / 30.0:
+			_tick_rivals(_rival_tick_accum)
+			_rival_tick_accum = 0.0
 	_hud_time_accum += delta
 	if _hud_time_accum >= 0.05:
 		_hud_time_accum = 0.0

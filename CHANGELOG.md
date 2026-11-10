@@ -8,6 +8,10 @@ Player-facing notes, newest first.
 
 - Players now collide with each other online instead of driving through one
   another.
+- Bots are simulated by the room host and streamed to every player, so
+  everyone races the same rivals on the same line.
+- Boxes and cones react on every screen: a client's hit is predicted locally
+  and confirmed by the host. Crates now physically block carts.
 - Bots no longer ram you off the road. They give you room and lift off when you
   are alongside, while still racing each other hard.
 - The OFF TRACK warning only appears once you are past the barrier. A recovery
