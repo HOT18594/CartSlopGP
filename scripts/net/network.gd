@@ -37,11 +37,10 @@ const LAN_ROOM_PORT: int = 42779
 const RELAY_HEARTBEAT_INTERVAL: float = 20.0
 const DISCOVERY_TIMEOUT_MS: int = 1200
 const RELAY_HTTP_TIMEOUT: float = 4.0
-## Optional relay address baked into a custom build for internet joins.
-## Empty by default: a normal build uses the relay found on the local network,
-## or one supplied at runtime through CARTSLOP_RELAY. No address is ever shown
-## to the player or typed into a field.
-const DEFAULT_RELAY_SERVER: String = ""
+## Built-in relay address, used for internet joins when LAN discovery finds
+## nothing. It is never shown to the player and never typed into a field;
+## CARTSLOP_RELAY can point a build at a different relay for testing.
+const DEFAULT_RELAY_SERVER: String = "68.204.45.1:42777"
 const ROOM_CODE_ALPHABET: String = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 const ALLOWED_SCENES: Array[String] = [GAME_SCENE, RACE_SCENE]
 const MAX_BOT_COUNT: int = 5
@@ -535,8 +534,8 @@ func _discover_relay() -> bool:
 				udp.put_packet("CARTSLOP_DISCOVER".to_utf8_buffer())
 		await get_tree().process_frame
 	udp.close()
-	# No LAN answer. Try the configured relay once; this is what lets a player on
-	# a restrictive network use a short room code through the public relay.
+	# No LAN answer. Try the built-in relay once; this is what lets a player on
+	# a restrictive network use a short room code through the online relay.
 	if _use_default_public_relay():
 		var probe: Dictionary = await _relay_get("/api/status", 3.0)
 		if not probe.is_empty():

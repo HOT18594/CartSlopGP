@@ -32,10 +32,10 @@ Get the latest build from the
 
 | Platform | Download | Run |
 | --- | --- | --- |
-| Windows | `CartSlopGP_v0.6.7_windows.zip` | Unzip, then run `CartSlopGP.exe`. SmartScreen may warn because the build is unsigned: **More info > Run anyway**. |
-| macOS | `CartSlopGP_v0.6.7_macos.zip` | Unzip, then open `Cart Slop GP.app`. If Gatekeeper blocks it, right-click the app and choose **Open**. |
-| Linux | `CartSlopGP_v0.6.7_linux.zip` | Unzip, `chmod +x CartSlopGP.x86_64`, then run it. |
-| Browser | `CartSlopGP_v0.6.7_web.zip` | Serve `index.html` over HTTP (a `file://` URL cannot load the data pack). Single player only. |
+| Windows | `CartSlopGP_v0.6.8_windows.zip` | Unzip, then run `CartSlopGP.exe`. SmartScreen may warn because the build is unsigned: **More info > Run anyway**. |
+| macOS | `CartSlopGP_v0.6.8_macos.zip` | Unzip, then open `Cart Slop GP.app`. If Gatekeeper blocks it, right-click the app and choose **Open**. |
+| Linux | `CartSlopGP_v0.6.8_linux.zip` | Unzip, `chmod +x CartSlopGP.x86_64`, then run it. |
+| Browser | `CartSlopGP_v0.6.8_web.zip` | Serve `index.html` over HTTP (a `file://` URL cannot load the data pack). Single player only. |
 
 There is no installer and no account. Settings and downloaded updates live in
 Godot's user data folder:
@@ -116,10 +116,7 @@ tag colour, then choose how to play.
 3. The host connects out to the relay, so no port forwarding is needed on the
    host machine.
 
-The game ships with no server address. Online rooms use a relay discovered on
-your network, or one supplied at launch through the `CARTSLOP_RELAY`
-environment variable (for example `CARTSLOP_RELAY=relay.example.net:42777`).
-LAN rooms always work without a relay.
+Online rooms use the Cart Slop relay. LAN rooms always work without a relay.
 
 ### In the room
 

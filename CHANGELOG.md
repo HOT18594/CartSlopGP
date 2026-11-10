@@ -2,14 +2,12 @@
 
 Player-facing notes, newest first.
 
-## [0.6.7] - 2026-11-10
+## [0.6.8] - 2026-11-10
 
-### Online privacy
+### Online rooms
 
-- The game no longer ships with a fixed server address. Online rooms use a
-  relay found on your network, or one supplied at launch, so no private network
-  details are baked into the build.
-- Leftover test scenes and old asset copies were removed from the package.
+- Online rooms connect through the Cart Slop relay again.
+- Gameplay is unchanged from 0.6.6.
 
 ## [0.6.6] - 2026-11-08
 
