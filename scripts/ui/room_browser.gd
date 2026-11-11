@@ -47,6 +47,10 @@ func _ready() -> void:
 	_close_button.pressed.connect(close)
 	_refresh_button.pressed.connect(func() -> void: _refresh())
 	_search_field.text_changed.connect(_on_search_changed)
+	_search_field.set_meta("nav_default", true)
+	_close_button.tooltip_text = "Close the browser and go back to the lobby."
+	_refresh_button.tooltip_text = "Search the room service again."
+	_search_field.tooltip_text = "Filter the list by host name. Rooms join with one click."
 	_style_scrollbar()
 	_apply_soft_disabled(_refresh_button)
 	_build_action_button()
@@ -60,12 +64,18 @@ func open(mode: String) -> void:
 	show()
 	UiAnim.pop(_panel)
 	MenuNav.refresh()
+	MenuNav.focus(_search_field)
 	# A scan from a previous open may still be awaiting. Invalidate it so its
 	# late result cannot repaint this fresh list.
 	_ticket += 1
 	_busy = false
 	_error = false
 	_refresh()
+
+
+func request_close() -> void:
+	## MenuNav's Escape fallback calls this; only the browser itself closes.
+	close()
 
 
 func close() -> void:
@@ -77,6 +87,7 @@ func close() -> void:
 	_panel.scale = Vector2.ONE
 	_panel.modulate = Color.WHITE
 	_refresh_button.disabled = false
+	_refresh_button.text = "REFRESH"
 	MenuNav.refresh()
 	closed.emit()
 
@@ -111,6 +122,7 @@ func _refresh() -> void:
 	_ticket += 1
 	var ticket: int = _ticket
 	_refresh_button.disabled = true
+	_refresh_button.text = "REFRESHING"
 	_clear_list()
 	_set_state("loading", "LOOKING FOR ROOMS...", "", Callable())
 	_title.text = _base_title()
@@ -123,6 +135,7 @@ func _refresh() -> void:
 		return
 	_busy = false
 	_refresh_button.disabled = false
+	_refresh_button.text = "REFRESH"
 	_rooms.clear()
 	for entry: Variant in result:
 		if entry is Dictionary:
@@ -167,7 +180,8 @@ func _rebuild_list() -> void:
 			# with the readable lavender one after the row enters the tree.
 			_apply_soft_disabled(row_button)
 	if shown > 0:
-		_set_state("idle", "", "", Callable())
+		_set_state("idle", "%d ROOM%s  ·  TAB TO A ROOM, THEN PRESS ENTER" % [
+			shown, "" if shown == 1 else "S"], "", Callable())
 		_title.text = "%s  ·  %d OPEN" % [_base_title(), shown]
 		MenuNav.refresh()
 		return

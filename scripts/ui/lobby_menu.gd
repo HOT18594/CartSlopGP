@@ -122,18 +122,33 @@ func _ready() -> void:
 
 func _enter() -> void:
 	UiAnim.pop($Frame/Panel)
+	MenuNav.refresh()
+	match _state:
+		"host":
+			_focus_host()
+		"client":
+			_focus_client()
+		_:
+			_focus_idle()
 
 
 func _focus_idle() -> void:
-	pass
+	## Idle lobby: the keyboard lands on the primary door.
+	if _host_pi_button != null and not _host_pi_button.disabled:
+		MenuNav.focus(_host_pi_button)
+	elif _lan_button != null:
+		MenuNav.focus(_lan_button)
 
 
 func _focus_host() -> void:
-	pass
+	if _start_button != null and _start_button.visible:
+		MenuNav.focus(_start_button)
 
 
 func _focus_client() -> void:
-	pass
+	## Clients cannot start the race, so the useful action is LEAVE.
+	if _leave_button != null and _leave_button.visible:
+		MenuNav.focus(_leave_button)
 
 
 # --------------------------------------------------------------------------
@@ -285,6 +300,7 @@ func _build_profile() -> void:
 	_name_input.alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_name_input.custom_minimum_size = Vector2(220, 46)
 	_name_input.set_meta("skip_kit", true)
+	_name_input.tooltip_text = "The name other players see in the room."
 	_name_input.add_theme_font_size_override("font_size", 22)
 	_name_input.text_submitted.connect(func(_t: String) -> void: _commit_name())
 	_name_input.focus_exited.connect(_commit_name)
@@ -371,12 +387,14 @@ func _build_idle() -> void:
 	_host_pi_button = _candy("CREATE ONLINE ROOM", UiPalette.YELLOW, 58, 21)
 	_host_pi_button.custom_minimum_size.x = 0
 	_host_pi_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_host_pi_button.tooltip_text = "Open a public online room. You get a 5-letter code to share."
 	_host_pi_button.pressed.connect(_on_host_pi)
 	host_col.add_child(_host_pi_button)
 	_apply_soft_disabled(_host_pi_button)
 	_lan_button = _candy("HOST LAN ROOM", UiPalette.BLUE, 44, 16)
 	_lan_button.custom_minimum_size.x = 0
 	_lan_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_lan_button.tooltip_text = "Host on this Wi-Fi. Friends on the same network find it automatically."
 	_lan_button.pressed.connect(_on_host_lan)
 	host_col.add_child(_lan_button)
 	host_col.add_child(_vertical_spacer())
@@ -391,6 +409,7 @@ func _build_idle() -> void:
 	_join_input.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_join_input.custom_minimum_size = Vector2(0, 46)
 	_join_input.add_theme_font_size_override("font_size", 22)
+	_join_input.tooltip_text = "Type the room code the host shared with you."
 	# UiKit would flatten this field back to 50 px / 18 px; keep the big code.
 	_join_input.set_meta("skip_kit", true)
 	_join_input.text_changed.connect(_on_code_typed)
@@ -399,6 +418,7 @@ func _build_idle() -> void:
 	_join_button = _candy("JOIN", UiPalette.YELLOW, 58, 23)
 	_join_button.custom_minimum_size.x = 0
 	_join_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_join_button.tooltip_text = "Join the room for the code above."
 	_join_button.pressed.connect(_on_join)
 	join_col.add_child(_join_button)
 	_apply_soft_disabled(_join_button)
@@ -416,12 +436,14 @@ func _build_idle() -> void:
 	_browse_button = _candy("SEARCH ONLINE", UiPalette.BLUE, 48, 18)
 	_browse_button.custom_minimum_size.x = 0
 	_browse_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_browse_button.tooltip_text = "Browse public online rooms and join with one click."
 	_browse_button.pressed.connect(_on_browse)
 	search_row.add_child(_browse_button)
 	_apply_soft_disabled(_browse_button)
 	_lan_scan_button = _candy("SEARCH LAN", UiPalette.CYAN, 48, 18)
 	_lan_scan_button.custom_minimum_size.x = 0
 	_lan_scan_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_lan_scan_button.tooltip_text = "Look for rooms hosted on this Wi-Fi network."
 	_lan_scan_button.pressed.connect(_on_lan_scan)
 	search_row.add_child(_lan_scan_button)
 
@@ -508,11 +530,13 @@ func _build_room() -> void:
 	_copy_button = _candy("COPY", UiPalette.CYAN, 38, 14)
 	_copy_button.custom_minimum_size = Vector2(120, 44)
 	_copy_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_copy_button.tooltip_text = "Copy the room code to the clipboard."
 	_copy_button.pressed.connect(_on_copy_code)
 	code_row.add_child(_copy_button)
 	_leave_button = _candy("LEAVE ROOM", UiPalette.RED, 38, 14)
 	_leave_button.custom_minimum_size = Vector2(140, 44)
 	_leave_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_leave_button.tooltip_text = "Close the room for everyone. Press twice to confirm."
 	_leave_button.pressed.connect(_on_leave_pressed)
 	code_row.add_child(_leave_button)
 	_visibility_pill = _pill(PackedStringArray(["PRIVATE", "PUBLIC"]),
@@ -568,6 +592,7 @@ func _build_room() -> void:
 	_start_button = _candy("START", UiPalette.YELLOW, 72, 30)
 	_start_button.custom_minimum_size = Vector2(480, 72)
 	_start_button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	_start_button.tooltip_text = "Start the race for everyone in the room."
 	_start_button.pressed.connect(_on_start_pressed)
 	_room_box.add_child(_start_button)
 

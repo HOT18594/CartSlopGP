@@ -30,6 +30,8 @@ var _bots_pill: Button
 var _state: String = "picker" ## "picker" | "single"
 var _single_card: Button
 var _multi_card: Button
+var _sandbox_button: Button
+var _minigames_button: Button
 
 
 func _ready() -> void:
@@ -47,8 +49,7 @@ func _enter() -> void:
 		var preferred: Button = _single_card
 		if GameSettings.play_mode == GameSettings.MODE_MULTIPLAYER:
 			preferred = _multi_card
-		if preferred != null:
-			pass
+		MenuNav.focus(preferred)
 
 
 func _build_ui() -> void:
@@ -95,18 +96,23 @@ func _build_ui() -> void:
 	var sandbox := _button("SANDBOX", UiPalette.YELLOW, 60, 24)
 	sandbox.custom_minimum_size.x = 250
 	sandbox.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	sandbox.tooltip_text = "Drive around the park on your own. No laps, no rivals."
 	sandbox.pressed.connect(_on_single_sandbox)
 	single_row.add_child(sandbox)
+	_sandbox_button = sandbox
 	var minigames := _button("MINIGAMES", UiPalette.GRASS, 60, 24)
 	minigames.custom_minimum_size.x = 250
 	minigames.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	minigames.tooltip_text = "Race the field on a real track."
 	minigames.pressed.connect(_on_single_minigames)
 	single_row.add_child(minigames)
+	_minigames_button = minigames
 
 	# One exit bar under everything, whatever state we are in.
 	_back_bar = _button("BACK", UiPalette.RED, 54, 21)
 	_back_bar.custom_minimum_size.x = 260
 	_back_bar.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	_back_bar.tooltip_text = "Back to the mode picker, then the main menu."
 	_back_bar.pressed.connect(_on_back)
 	_body.add_child(_back_bar)
 
@@ -146,6 +152,11 @@ func _show_state(state: String, animate: bool = true) -> void:
 	if animate:
 		UiAnim.fade_in(_cards_row if state == "picker" else _single_box, 0.22)
 	MenuNav.refresh()
+	# Land on the action the state is for, not on whatever was focused before.
+	if state == "single" and _sandbox_button != null:
+		MenuNav.focus(_sandbox_button)
+	elif state == "picker" and _single_card != null:
+		MenuNav.focus(_single_card)
 
 
 func _refresh_bots() -> void:
@@ -157,6 +168,13 @@ func _refresh_bots() -> void:
 func _on_bots_changed(value: Variant) -> void:
 	GameSettings.set_bot_total(int(value))
 	_refresh_bots()
+
+
+func _unhandled_input(event: InputEvent) -> void:
+	## Escape walks one step back, exactly like the BACK bar.
+	if event.is_action_pressed("ui_cancel") and not SceneLoader.is_busy():
+		_on_back()
+		get_viewport().set_input_as_handled()
 
 
 # --------------------------------------------------------------------------

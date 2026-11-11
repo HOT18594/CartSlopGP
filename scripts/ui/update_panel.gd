@@ -82,7 +82,7 @@ func open() -> void:
 		show()
 		UiAnim.pop($Center/Panel)
 		MenuNav.refresh()
-		pass
+		MenuNav.focus(_secondary_button)
 		return
 	_install_ready = _desktop_updates() and UpdateChecker.has_downloaded_update(UpdateChecker.latest_version)
 	if _install_ready:
@@ -106,9 +106,14 @@ func open() -> void:
 	show()
 	UiAnim.pop($Center/Panel)
 	MenuNav.refresh()
-	pass
+	MenuNav.focus(_primary_button)
 	# No automatic download: a 100 MB transfer is the player's choice. The
 	# panel shows the size and waits for DOWNLOAD UPDATE.
+
+
+func request_close() -> void:
+	## Single-overlay Escape: the update dialog closes itself and nothing else.
+	close()
 
 
 func _show_install_state() -> void:
@@ -186,7 +191,9 @@ func _on_download_finished(_path: String) -> void:
 	_show_install_state()
 	if not visible:
 		show()
-		pass
+		UiAnim.pop($Center/Panel)
+		MenuNav.refresh()
+		MenuNav.focus(_primary_button)
 
 
 func _on_download_failed(reason: String) -> void:
@@ -204,6 +211,7 @@ func _on_download_failed(reason: String) -> void:
 		show()
 		UiAnim.pop($Center/Panel)
 		MenuNav.refresh()
+		MenuNav.focus(_primary_button)
 
 
 func close() -> void:

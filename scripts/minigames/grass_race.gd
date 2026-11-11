@@ -13,6 +13,7 @@ extends Node3D
 ## the sandbox uses. Nothing here touches multiplayer.
 
 const TrackSpline := preload("res://scripts/minigames/track_spline.gd")
+const RaceAI := preload("res://scripts/minigames/race_ai.gd")
 const CART_SCENE := preload("res://scenes/player/cart_player.tscn")
 const VehicleCatalog := preload("res://scripts/vehicles/vehicle_catalog.gd")
 const FoliageBaker := preload("res://scripts/minigames/foliage_baker.gd")
@@ -46,10 +47,22 @@ const LAP_CHIME: AudioStream = preload("res://assets/audio/sfx/race/lap_chime.wa
 const FINISH_FANFARE: AudioStream = preload("res://assets/audio/sfx/race/finish_fanfare.wav")
 const FOREST_AMBIENCE: AudioStream = preload("res://assets/audio/ambience/forest_ambience.mp3")
 const NET_SYNC_INTERVAL: float = 0.05
+## Host -> Pi live position batch cadence (server race only).
+const STATE_STREAM_INTERVAL: float = 0.10
 ## A spoofed far-future sender stamp must not permanently freeze a peer's
 ## progress and leave every result card waiting forever. A huge backwards jump
 ## is treated as a clock reset and re-baselined.
 const NET_CLOCK_RESET_MS: int = 60_000
+## A server race streams the Pi's bot field at 6-12 Hz. Each poll stores a
+## target; the ghost is moved every physics frame, so corners and ramp heights
+## glide in instead of the body teleporting on every sample.
+const SERVER_BOT_BLEND: float = 12.0
+const SERVER_BOT_VERTICAL_BLEND: float = 24.0
+## A snapshot is extrapolated with the server's velocity for at most this long,
+## so a stalled poll parks the ghost instead of launching it down the track.
+const SERVER_BOT_MAX_EXTRAPOLATION: float = 0.35
+## A correction larger than this is a respawn or a warp, not network jitter.
+const SERVER_BOT_SNAP_DISTANCE: float = 8.0
 
 const TOTAL_LAPS: int = 3
 var _total_laps: int = TOTAL_LAPS
@@ -127,6 +140,19 @@ var _baked: Dictionary = {}
 var _grid: Dictionary = {}
 var _foliage_material: Material
 var _rivals: Array[Dictionary] = []
+## Reused cart list for rival avoidance; rebuilt only when a rival joins.
+var _traffic: Array[CartPlayer] = []
+## Solid trackside bodies (hay bales, apex tyre stacks) the race AI dodges.
+var _trackside_solids: PackedVector3Array = PackedVector3Array()
+## Local copies of the spline's centreline tables, used by the rivals' own
+## nearest-point search. Sharing TrackSpline.closest()'s single cached index
+## between five carts can return a boundary point a corner away, which used to
+## freeze a rival's progress and even teleport the local player forward.
+var _track_points: PackedVector3Array = PackedVector3Array()
+var _track_cumulative: PackedFloat32Array = PackedFloat32Array()
+var _track_total: float = 1.0
+var _rival_nearest_distance: float = 0.0
+var _rival_nearest_index: int = 0
 var _scenery: RefCounted
 var _scenery_stats: Dictionary = {}
 var _effects: Node3D
@@ -166,6 +192,7 @@ var _name_labels: Dictionary = {}
 var _remote_progress: Dictionary = {}
 var _remote_progress_ms: Dictionary = {} ## peer id -> newest accepted stamp
 var _net_sync_timer: float = 0.0
+var _state_stream_timer: float = 0.0
 ## Server-authoritative race (Pi 1.6.0+): clock, official times, bot field.
 var _server_race_active: bool = false
 var _server_race_id: String = ""
@@ -240,6 +267,9 @@ func _exit_tree() -> void:
 
 func _ready() -> void:
 	_spline = TrackSpline.new()
+	_track_points = _spline.points
+	_track_cumulative = _spline.cumulative
+	_track_total = maxf(_spline.total_length, 1.0)
 	var test_laps: String = OS.get_environment("CART_TEST_LAPS")
 	if test_laps.is_valid_int():
 		_total_laps = clampi(test_laps.to_int(), 1, 9)
@@ -352,52 +382,11 @@ func _build_ground() -> void:
 
 
 func _build_hills() -> void:
-	# The old horizon was a flat sheet of grass. A ring of soft, grassy hills
-	# gives the chase camera a layered background and hides the world edge.
+	## Layered ridges, cliffs and peaks replace the old row of half-buried
+	## spheres, which read as "semicircle hills" from the chase camera.
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 7713
-	var mat := _pbr_material("grass_diff", "grass_nor", "grass_rough", 20.0,
-		Color(0.62, 0.78, 0.55), 0.10, 0.06)
-	for index in 18:
-		var angle: float = TAU * float(index) / 18.0 + rng.randf_range(-0.08, 0.08)
-		var radius: float = rng.randf_range(210.0, 380.0)
-		var hill_radius: float = rng.randf_range(40.0, 70.0)
-		var hill_height: float = hill_radius * rng.randf_range(1.35, 1.75)
-		var sphere := SphereMesh.new()
-		sphere.radius = hill_radius
-		sphere.height = hill_height
-		sphere.radial_segments = 24
-		sphere.rings = 12
-		var hill := MeshInstance3D.new()
-		hill.name = "Hill_%02d" % index
-		hill.mesh = sphere
-		hill.material_override = mat
-		hill.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		hill.position = Vector3(cos(angle) * radius, -hill_height * 0.18,
-			sin(angle) * radius)
-		hill.scale = Vector3(rng.randf_range(1.1, 1.3), 1.0, rng.randf_range(1.1, 1.3))
-		add_child(hill)
-	# A darker ridge behind the first ring closes the horizon.
-	var ridge_mat := StandardMaterial3D.new()
-	ridge_mat.albedo_color = Color(0.24, 0.38, 0.28)
-	ridge_mat.roughness = 1.0
-	ridge_mat.shading_mode = BaseMaterial3D.SHADING_MODE_PER_PIXEL
-	for index in 9:
-		var angle: float = TAU * float(index) / 9.0 + 0.28
-		var radius: float = rng.randf_range(430.0, 600.0)
-		var sphere := SphereMesh.new()
-		sphere.radius = rng.randf_range(70.0, 120.0)
-		sphere.height = rng.randf_range(75.0, 120.0)
-		sphere.radial_segments = 16
-		sphere.rings = 8
-		var ridge := MeshInstance3D.new()
-		ridge.mesh = sphere
-		ridge.material_override = ridge_mat
-		ridge.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		ridge.position = Vector3(cos(angle) * radius, -sphere.height * 0.18,
-			sin(angle) * radius)
-		ridge.scale = Vector3(rng.randf_range(1.4, 1.8), 1.0, rng.randf_range(1.4, 1.8))
-		add_child(ridge)
+	RaceScenery.new().build_horizon(self)
 	# Far peaks, rural landmarks and woodland push the horizon out in layers.
 	Backdrop.add_mountains(self, rng, 14)
 	Backdrop.add_clouds(self, rng, 18)
@@ -1600,6 +1589,7 @@ func _build_rivals() -> void:
 	var count: int = _bot_count()
 	if count <= 0:
 		return
+	_collect_trackside_solids()
 	# Only the host runs the rival simulation. Clients spawn the same bodies as
 	# interpolated ghosts and follow the host's snapshot, so every player sees
 	# the same bots on the same line.
@@ -1661,23 +1651,55 @@ func _build_rivals() -> void:
 		label.position = Vector3(0.0, 2.2, 0.0)
 		rival.add_child(label)
 		rival.set_spawn_transform(spawn)
+		# Personality is drawn in the same order as before the AI rewrite, so a
+		# seeded field stays familiar. Skill is the only thing the driver uses
+		# to vary its margins; lane only spreads the pack across the road.
+		var skill: float = rng.randf_range(skill_lo[difficulty], skill_hi[difficulty])
+		var lookahead: float = rng.randf_range(0.82, 1.18)
+		var boost_bias: float = rng.randf_range(boost_lo[difficulty], boost_hi[difficulty])
+		var aggression: float = rng.randf_range(aggr_lo[difficulty], aggr_hi[difficulty])
+		var phase: float = rng.randf() * TAU
+		var driver: RaceAI = null
+		if authority:
+			driver = RaceAI.new(_spline, ROAD_HALF)
+			driver.configure(skill, lane * 0.25, boost_bias, rival.max_speed)
+			driver.set_obstacles(_trackside_solids)
 		_rivals.append({
 			"node": rival,
 			"label": label,
 			"progress": progress,
 			"prev_s": _spline.wrap_distance(progress),
+			"index": _track_index_at_distance(progress),
 			"lateral": lane,
 			"lane": lane,
-			"skill": rng.randf_range(skill_lo[difficulty], skill_hi[difficulty]),
-			"lookahead": rng.randf_range(0.82, 1.18),
-			"boost_bias": rng.randf_range(boost_lo[difficulty], boost_hi[difficulty]),
-			"aggression": rng.randf_range(aggr_lo[difficulty], aggr_hi[difficulty]),
-			"phase": rng.randf() * TAU,
+			"skill": skill,
+			"lookahead": lookahead,
+			"boost_bias": boost_bias,
+			"aggression": aggression,
+			"phase": phase,
 			"vehicle": vehicle_id,
 			"stuck": 0.0,
 			"off_time": 0.0,
 			"finished": false,
+			"driver": driver,
+			"server_pos": Vector3.ZERO,
+			"server_yaw": 0.0,
+			"server_velocity": Vector3.ZERO,
+			"server_stamp_ms": 0,
+			"has_server_sample": false,
 		})
+
+
+func _collect_trackside_solids() -> void:
+	## Hay-bale walls and apex tyre stacks are solid bodies right at the road
+	## edge. The race AI avoids them without a per-frame physics query.
+	_trackside_solids.clear()
+	var hazards: Node3D = get_node_or_null("CornerHazards") as Node3D
+	if hazards == null:
+		return
+	for child: Node in hazards.get_children():
+		if child is StaticBody3D:
+			_trackside_solids.append((child as StaticBody3D).global_position)
 
 
 func _reset_rival(index: int) -> void:
@@ -1690,49 +1712,82 @@ func _reset_rival(index: int) -> void:
 	node.reset_for_respawn()
 	node.velocity = Vector3.ZERO
 	rival["prev_s"] = _spline.wrap_distance(float(rival["progress"]))
+	rival["index"] = _track_index_at_distance(float(rival["progress"]))
 	rival["stuck"] = 0.0
 	rival["off_time"] = 0.0
+	var driver: RaceAI = rival["driver"]
+	if driver != null:
+		driver.reset()
 
 
-func _bot_obstacle_lane(progress: float, desired: float) -> float:
-	## Follow a readable line through the two slaloms and thread the cone gate.
-	var wrapped: float = _spline.wrap_distance(progress)
-	var chicanes: Array = [
-		[0.515, 4, 6.0, 1.9],
-		[0.135, 3, 6.5, 1.8],
-	]
-	for course: Array in chicanes:
-		var center: float = _spline.total_length * float(course[0])
-		var count: int = int(course[1])
-		var spacing: float = float(course[2])
-		var start: float = center - float(count - 1) * spacing * 0.5
-		var local: float = fposmod(wrapped - start + 5.0, _spline.total_length)
-		var span: float = float(count - 1) * spacing + 10.0
-		if local < span:
-			var index: int = clampi(int(floor((local - 5.0) / spacing + 0.5)), 0, count - 1)
-			var cone_side: float = 1.0 if index % 2 == 0 else -1.0
-			return -cone_side * maxf(float(course[3]) + 0.8, 2.5)
-	var gate_local: float = fposmod(wrapped - _spline.total_length * 0.635 + 5.0,
-		_spline.total_length)
-	if gate_local < 15.0:
+func _track_index_at_distance(distance: float) -> int:
+	## Binary search over the local copy of the spline's cumulative arc length.
+	var count: int = _track_cumulative.size()
+	if count <= 0:
+		return 0
+	var target: float = fposmod(distance, _track_total)
+	var low: int = 0
+	var high: int = count - 1
+	while low < high:
+		var mid: int = (low + high + 1) / 2
+		if _track_cumulative[mid] <= target:
+			low = mid
+		else:
+			high = mid - 1
+	return low
+
+
+func _rival_nearest(world_position: Vector3, hint_index: int) -> float:
+	## Nearest centreline arc length around this rival's own last segment.
+	## One shared spline cache cannot tell five carts apart: its window can
+	## return a boundary point a corner away and freeze a rival's progress,
+	## so each rival keeps its own hint. Results land in _rival_nearest_index
+	## and _rival_nearest_distance; the scan allocates nothing.
+	var count: int = _track_points.size()
+	if count < 2:
+		_rival_nearest_index = 0
+		_rival_nearest_distance = 0.0
 		return 0.0
-	return desired
-
-
-func _bot_boost_lane(progress: float, desired: float) -> float:
-	## Bots deliberately line up for pads instead of merely hoping to touch one.
-	var wrapped: float = _spline.wrap_distance(progress)
-	var laterals: Array[float] = [-2.4, 2.4, 0.0, -1.6]
-	for i in 4:
-		var pad_s: float = _spline.total_length * (0.13 + float(i) * 0.245)
-		var gap: float = fposmod(pad_s - wrapped, _spline.total_length)
-		if gap < 26.0:
-			desired = laterals[i]
-	return _bot_obstacle_lane(progress + 4.0, desired)
+	var best_sq: float = INF
+	var best_s: float = 0.0
+	var best_index: int = posmod(hint_index, count)
+	var offset: int = -8
+	while offset <= 16:
+		var index: int = posmod(hint_index + offset, count)
+		var a: Vector3 = _track_points[index]
+		var b: Vector3 = _track_points[(index + 1) % count]
+		var ab: Vector3 = b - a
+		var length_sq: float = ab.length_squared()
+		var t: float = 0.0
+		if length_sq > 0.000001:
+			t = clampf((world_position - a).dot(ab) / length_sq, 0.0, 1.0)
+		var candidate: Vector3 = a + ab * t
+		var d_sq: float = world_position.distance_squared_to(candidate)
+		if d_sq < best_sq:
+			best_sq = d_sq
+			best_s = _track_cumulative[index] + sqrt(length_sq) * t
+			best_index = index
+		offset += 1
+	_rival_nearest_index = best_index
+	_rival_nearest_distance = sqrt(best_sq)
+	return fposmod(best_s, _track_total)
 
 
 func _tick_rivals(delta: float) -> void:
+	## Host/solo AI. One shared traffic list is rebuilt per tick (not per rival)
+	## and every rival is driven by its own RaceAI; lap and progress bookkeeping
+	## stays exactly where it was.
 	var limit: float = _race_finish_distance()
+	_traffic.clear()
+	for other_rival: Dictionary in _rivals:
+		var other_node: CartPlayer = other_rival["node"]
+		if is_instance_valid(other_node):
+			_traffic.append(other_node)
+	if _cart != null:
+		_traffic.append(_cart)
+	for remote: CartPlayer in _remote_carts.values():
+		if is_instance_valid(remote):
+			_traffic.append(remote)
 	for i in _rivals.size():
 		var rival: Dictionary = _rivals[i]
 		var node: CartPlayer = rival["node"]
@@ -1741,8 +1796,9 @@ func _tick_rivals(delta: float) -> void:
 		if bool(rival["finished"]):
 			node.set_ai_controls(0.0, 0.35, 0.0)
 			continue
-		var info: Dictionary = _spline.closest(node.global_position)
-		var s: float = info["s"]
+		var s: float = _rival_nearest(node.global_position, int(rival["index"]))
+		rival["index"] = _rival_nearest_index
+		var track_distance: float = _rival_nearest_distance
 		var step: float = s - float(rival["prev_s"])
 		if step < -_spline.total_length * 0.5:
 			step += _spline.total_length
@@ -1762,89 +1818,23 @@ func _tick_rivals(delta: float) -> void:
 			node.set_ai_controls(0.0, 0.5, 0.0)
 			continue
 
-		var forward: Vector3 = -node.global_transform.basis.z
-		var speed: float = maxf(node.velocity.dot(forward), 0.0)
-		var skill: float = rival["skill"]
-		var lookahead: float = clampf(speed * 0.65, 7.0, 15.0) * float(rival["lookahead"])
-		var curve_near: float = absf(_spline.curvature_at(progress + 4.0))
-		var curve_ahead: float = absf(_spline.curvature_at(progress + lookahead + 7.0))
-		var corner: float = clampf(1.0 - maxf(curve_near, curve_ahead * 0.9)
-			* lerpf(12.5, 8.5, inverse_lerp(0.72, 1.06, skill)), 0.48, 1.0)
-		var target_speed: float = node.max_speed * corner * lerpf(0.78, 1.0, skill)
-		var phase: float = rival["phase"]
-		var wander: float = sin(_race_time * 0.55 + phase) * lerpf(0.75, 0.16, skill)
-		var target_lane: float = _bot_boost_lane(progress + lookahead * 0.4,
-			float(rival["lane"]) + wander)
+		var driver: RaceAI = rival["driver"]
+		if driver == null:
+			# A rival carried over from a scene built before the driver table
+			# existed still rolls forward instead of parking on the grid.
+			node.set_ai_controls(0.6, 0.0, 0.0)
+			continue
+		driver.update(delta, node, progress, _traffic)
+		node.set_ai_controls(driver.throttle, driver.brake, driver.steer,
+			driver.boost, driver.drift)
 
-		var traffic: Array[CartPlayer] = []
-		for other_rival: Dictionary in _rivals:
-			traffic.append(other_rival["node"])
-		if _cart != null:
-			traffic.append(_cart)
-		for remote: CartPlayer in _remote_carts.values():
-			traffic.append(remote)
-		for other: CartPlayer in traffic:
-			if other == node or not is_instance_valid(other):
-				continue
-			var human: bool = other == _cart
-			var offset: Vector3 = other.global_position - node.global_position
-			offset.y = 0.0
-			var ahead: float = offset.dot(forward)
-			var side: float = offset.dot(node.global_transform.basis.x)
-			var avoid_range: float = 12.0 if human else 11.0
-			var avoid_side: float = 3.0 if human else 2.5
-			if ahead > 0.0 and ahead < avoid_range and absf(side) < avoid_side:
-				var other_speed: float = maxf(other.get_collision_velocity().dot(forward), 0.0)
-				if ahead < 5.0:
-					target_speed = minf(target_speed, other_speed + (ahead - 2.0) * 0.5)
-				var aggression: float = float(rival["aggression"])
-				# Never ram a human off the road: give the player the outside
-				# line and a clear pass. Hard bots still trade paint with each
-				# other, where a shunt cannot end somebody's race.
-				if not human and aggression > 0.62 and ahead < 2.6 and absf(side) < 1.4:
-					target_lane = clampf(target_lane - signf(side) * 1.4, -3.4, 3.4)
-					target_speed = maxf(target_speed, other_speed + 1.5)
-				else:
-					var margin: float = 3.1 if human else 2.6
-					target_lane = clampf(target_lane + (-margin if side > 0.0 else margin), -3.4, 3.4)
-					if human and ahead < 3.6 and absf(side) < 2.0:
-						# Ease off rather than bump the player aside.
-						target_speed = minf(target_speed, other_speed + 0.6)
-
-		var target_frame: Dictionary = _spline.sample(progress + lookahead)
-		var target: Vector3 = target_frame["position"] + target_frame["right"] * target_lane
-		var local_target: Vector3 = node.to_local(target)
-		var steer: float = clampf(atan2(-local_target.x, -local_target.z) * 2.2, -1.0, 1.0)
-		steer += sin(_race_time * 1.3 + phase) * (1.06 - skill) * 0.16
-		var throttle: float = clampf(skill + 0.06, 0.72, 1.0) if speed < target_speed else 0.0
-		var brake: float = clampf((speed - target_speed) / 5.0, 0.0, 0.85) if speed > target_speed + 1.0 else 0.0
-		var use_boost: bool = curve_ahead < 0.022 and curve_near < 0.026 \
-			and speed > node.max_speed * 0.55 and node.boost_amount > 24.0 \
-			and float(rival["boost_bias"]) > 0.52 and brake <= 0.0
-		var drift: bool = curve_near > 0.045 and speed > node.max_speed * 0.65 and skill > 0.94
-		var stuck_time: float = float(rival["stuck"])
-		if stuck_time > 1.2 and stuck_time < 4.0:
-			# Reverse out of a wall or a pile-up before the hard reset fires.
-			throttle = 0.0
-			brake = 1.0
-			steer = clampf(-steer * 0.8, -1.0, 1.0)
-			use_boost = false
-			drift = false
-		if float(rival["off_time"]) > 0.35:
-			target_lane = clampf(-float(rival["lateral"]), -3.4, 3.4)
-			target_speed *= 0.72
-			var recovery_frame: Dictionary = _spline.sample(progress + lookahead)
-			var recovery_target: Vector3 = recovery_frame["position"] \
-				+ recovery_frame["right"] * target_lane
-			var recovery_local: Vector3 = node.to_local(recovery_target)
-			steer = clampf(atan2(-recovery_local.x, -recovery_local.z) * 2.2, -1.0, 1.0)
-		node.set_ai_controls(throttle, brake, steer, use_boost, drift)
-
+		var speed: float = maxf(node.velocity.dot(
+			-node.global_transform.basis.z), 0.0)
 		if speed < 0.8:
 			rival["stuck"] = float(rival["stuck"]) + delta
 		else:
 			rival["stuck"] = maxf(float(rival["stuck"]) - delta * 2.0, 0.0)
-		if float(info["distance"]) > ROAD_HALF + 5.0 or node.global_position.y < -3.0:
+		if float(track_distance) > ROAD_HALF + 5.0 or node.global_position.y < -3.0:
 			rival["off_time"] = float(rival["off_time"]) + delta
 		else:
 			rival["off_time"] = 0.0
@@ -3051,6 +3041,15 @@ func _process(delta: float) -> void:
 		if _bot_sync_timer >= 0.05:
 			_bot_sync_timer = 0.0
 			_broadcast_bot_states()
+	if _multiplayer and _is_host and _server_race_active \
+			and _phase == Phase.RACING and Network.is_session_active() \
+			and Network.is_connected_to_server():
+		# The Pi-owned race gets one batched position snapshot every 100 ms.
+		# Network.stream_race_state() drops a tick if the relay is still busy.
+		_state_stream_timer += delta
+		if _state_stream_timer >= STATE_STREAM_INTERVAL:
+			_state_stream_timer = 0.0
+			_push_server_state()
 	match _phase:
 		Phase.FINISHED:
 			# Peers keep streaming their progress after we cross the line, so
@@ -3139,6 +3138,10 @@ func _apply_server_race(race_id: String, secret: String, start_ms: int,
 	_phase = Phase.COUNTDOWN
 	_countdown_label.visible = true
 	_countdown_label.text = str(int(ceil(_countdown)))
+	_state_stream_timer = 0.0
+	# The shared HUD reads Network.relay_rtt_ms / race_state_receiving directly;
+	# reset the counters so a new race starts at WAIT instead of the old RX.
+	Network.reset_race_state_stream()
 	if OS.get_environment("CART_DEBUG_NET") == "1":
 		print("RACE_SERVER start id=", race_id, " start_ms=", start_ms,
 			" remaining=", _countdown, " bots=", bots)
@@ -3159,6 +3162,55 @@ func _convert_rivals_to_server() -> void:
 			node.set_vehicle_id(vehicle)
 		_rivals[i]["progress"] = START_DISTANCE + 5.0 + float(i) * 4.5
 		_rivals[i]["finished"] = false
+		# A sample from a previous race must never be extrapolated into this one.
+		_rivals[i]["has_server_sample"] = false
+		_rivals[i]["server_stamp_ms"] = 0
+		var driver: RaceAI = _rivals[i]["driver"]
+		if driver != null:
+			driver.reset()
+
+
+func _push_server_state() -> void:
+	## Host only: one batch with every human cart. The Pi validates bounds and
+	## progress before exposing a row; it never trusts an input blindly.
+	if _cart == null or _server_race_id == "" or _server_race_secret == "":
+		return
+	if not Network.race_state_stream_enabled:
+		# A 1.6.0 relay has no /api/race/pos. The race still runs from the
+		# server clock and bot snapshots; only this position stream stays off.
+		return
+	var rows: Array = []
+	var host_row: Array = _race_state_row(multiplayer.get_unique_id(), _cart,
+		_unwrapped)
+	if not host_row.is_empty():
+		rows.append(host_row)
+	for peer_id: int in _remote_carts:
+		if not Network.is_scene_ready(peer_id):
+			# A peer that returned to the lobby has no live cart state to send.
+			continue
+		var cart: CartPlayer = _remote_carts[peer_id]
+		if not is_instance_valid(cart):
+			continue
+		var row: Array = _race_state_row(peer_id, cart,
+			float(_remote_progress.get(peer_id, 0.0)))
+		if not row.is_empty():
+			rows.append(row)
+	Network.stream_race_state(_server_race_id, _server_race_secret, rows)
+
+
+func _race_state_row(peer_id: int, cart: CartPlayer, progress: float) -> Array:
+	## [peer, x, y, z, vx, vy, vz, yaw, lap], the batch format /api/race/pos
+	## validates. Lap is derived from absolute track progress so every peer
+	## agrees with the host's unwrapped distance.
+	var position: Vector3 = cart.global_position
+	var velocity: Vector3 = cart.get_collision_velocity()
+	var yaw: float = cart.global_rotation.y
+	if not position.is_finite() or not velocity.is_finite() or not is_finite(yaw):
+		return []
+	var total: float = maxf(_spline.total_length, 1.0)
+	var lap: int = clampi(int(floor(progress / total)) + 1, 1, _total_laps)
+	return [peer_id, position.x, position.y, position.z,
+		velocity.x, velocity.y, velocity.z, yaw, lap]
 
 
 @rpc("authority", "call_local", "reliable")
@@ -3310,8 +3362,10 @@ func _tick_race(delta: float) -> void:
 		material.set_shader_parameter("kart_position", _cart.global_position)
 
 	if _server_race_active:
+		# Polls only store a target; the ghosts are interpolated every frame.
+		_tick_server_rivals(delta)
 		_server_bots_timer += delta
-		if _server_bots_timer >= 0.125:
+		if _server_bots_timer >= Network.server_bot_poll_interval():
 			_server_bots_timer = 0.0
 			_fetch_server_bots()
 	elif not _multiplayer or _is_host:
@@ -3338,8 +3392,9 @@ func _tick_race(delta: float) -> void:
 
 
 func _fetch_server_bots() -> void:
-	## The Pi is the only bot simulation in a server race. Each snapshot is
-	## applied as a ghost state; the existing interpolation smooths 8 Hz input.
+	## The Pi is the only bot simulation in a server race. A poll only stores a
+	## target sample here; _tick_server_rivals() moves the ghosts every physics
+	## frame, so the 6-12 Hz stream never teleports a body across the track.
 	if _server_bots_pending or _server_race_id == "":
 		return
 	_server_bots_pending = true
@@ -3374,12 +3429,57 @@ func _fetch_server_bots() -> void:
 			var speed: float = float(values[7])
 			if is_finite(speed):
 				velocity = Vector3(-sin(yaw), 0.0, -cos(yaw)) * clampf(speed, 0.0, 60.0)
-		node.set_net_state(position, yaw, stamp, velocity)
-		_rivals[i]["progress"] = float(values[4])
-		_rivals[i]["lap"] = int(values[5])
+		# The sample carries the server's ramp height in y. Keep it intact:
+		# the ghost rides the server surface instead of a flat road guess.
+		var rival: Dictionary = _rivals[i]
+		rival["server_pos"] = position
+		rival["server_yaw"] = yaw
+		rival["server_velocity"] = velocity
+		rival["server_stamp_ms"] = stamp
+		rival["has_server_sample"] = true
+		# The ghost has no local physics; publish the server momentum so the
+		# local player's contact response still pushes the rival correctly.
+		node.net_position = position
+		node.net_yaw = yaw
+		node.net_velocity = velocity
+		rival["progress"] = float(values[4])
+		rival["lap"] = int(values[5])
 		if values.size() > 6 and int(values[6]) == 1:
-			_rivals[i]["finished"] = true
+			rival["finished"] = true
 			node.call("mark_race_finished")
+
+
+func _tick_server_rivals(delta: float) -> void:
+	## Interpolate every server-driven rival toward its newest snapshot. The
+	## horizontal error is corrected softly and the snapshot is extrapolated
+	## with the server velocity for at most SERVER_BOT_MAX_EXTRAPOLATION; only a
+	## correction bigger than SERVER_BOT_SNAP_DISTANCE snaps the body (respawn,
+	## warp, first sample). Y is taken straight from the server sample, which
+	## carries the ramp height, so the ghosts no longer sink through kickers.
+	if _rivals.is_empty():
+		return
+	var now: int = Time.get_ticks_msec()
+	var blend: float = 1.0 - exp(-SERVER_BOT_BLEND * delta)
+	var vertical_blend: float = 1.0 - exp(-SERVER_BOT_VERTICAL_BLEND * delta)
+	for rival: Dictionary in _rivals:
+		var node: CartPlayer = rival["node"]
+		if not is_instance_valid(node) or not bool(rival["has_server_sample"]):
+			continue
+		var age: float = clampf(float(now - int(rival["server_stamp_ms"])) / 1000.0,
+			0.0, SERVER_BOT_MAX_EXTRAPOLATION)
+		var sample_position: Vector3 = rival["server_pos"]
+		var sample_velocity: Vector3 = rival["server_velocity"]
+		var target_yaw: float = float(rival["server_yaw"])
+		var target: Vector3 = sample_position + sample_velocity * age
+		if node.global_position.distance_to(target) > SERVER_BOT_SNAP_DISTANCE:
+			node.global_position = target
+			node.rotation.y = target_yaw
+			node.reset_physics_interpolation()
+			continue
+		var position: Vector3 = node.global_position.lerp(target, blend)
+		position.y = lerpf(node.global_position.y, target.y, vertical_blend)
+		node.global_position = position
+		node.rotation.y = lerp_angle(node.rotation.y, target_yaw, blend)
 
 
 func _report_server_lap_async(lap: int, lap_ms: float, finished: bool) -> void:

@@ -23,6 +23,11 @@ signal session_config_changed()
 signal server_status_changed(online: bool, detail: String)
 signal tag_colors_changed()
 signal ping_table_changed()
+## Smoothed HTTP round trip to the relay. Emitted only when the value changes.
+signal relay_metrics_changed(rtt_ms: int, jitter_ms: int)
+## Host -> Pi race state stream: whether /api/race/pos is acknowledging batches
+## and how many batches it has accepted for the current race.
+signal race_state_stream_changed(receiving: bool, updates: int)
 
 const DEFAULT_PORT: int = 8910
 const PORT_RANGE: int = 40
@@ -35,6 +40,22 @@ const PING_INTERVAL: float = 2.0
 const RELAY_DISCOVERY_PORT: int = 42778
 const LAN_ROOM_PORT: int = 42779
 const RELAY_HEARTBEAT_INTERVAL: float = 20.0
+## A slow Pi can miss a heartbeat or two without the room being gone. A
+## definite 404/410 still ends the lobby quickly; timeouts get more attempts.
+const HEARTBEAT_MAX_FAILURES: int = 4
+const HEARTBEAT_TIMEOUT: float = 8.0
+## Relay latency sampling (host ping / client clock probe) and its smoothing.
+const RELAY_PROBE_INTERVAL: float = 8.0
+const RELAY_RTT_ALPHA: float = 0.25
+const RELAY_JITTER_ALPHA: float = 0.2
+## Relay tunnel supervisor: rebuild a dead tunnel with exponential backoff.
+const TUNNEL_RETRY_BASE: float = 2.0
+const TUNNEL_RETRY_MAX: float = 30.0
+## HTTPRequest objects are pooled: the race state stream posts ten times a
+## second and must not allocate a node per packet.
+const HTTP_POOL_MAX: int = 6
+const STATE_POST_TIMEOUT: float = 3.0
+const COLLISION_SOLVER_PATH: String = "res://scripts/systems/cart_collision.gd"
 const DISCOVERY_TIMEOUT_MS: int = 1200
 const RELAY_HTTP_TIMEOUT: float = 4.0
 ## Built-in relay address, used for internet joins when LAN discovery finds
@@ -54,6 +75,10 @@ const RelayTunnel := preload("res://scripts/net/relay_tunnel.gd")
 const SCENE_RETRY_INTERVAL: float = 5.0
 const SCENE_RETRY_MAX: int = 6
 const WORLD_BOUND_SQ: float = 5000.0 * 5000.0
+## Pair keys pack two peer ids into one int: low id in the high word, high id
+## in the low word. This avoids formatting a String per contacting pair per tick.
+const PAIR_ID_SHIFT: int = 32
+const PAIR_ID_MASK: int = 0xFFFFFFFF
 
 var is_host: bool = false
 var is_client: bool = false
@@ -86,8 +111,20 @@ var server_version: String = ""
 var server_clock_offset_ms: int = 0
 var server_clock_ready: bool = false
 var server_rtt_ms: int = 0
+## Smoothed HTTP round trip and jitter to the relay. The host refreshes this
+## from its existing ping probe; a client probes /api/time every few seconds.
+## A LAN session keeps both at 0 because there is no HTTP relay in the path.
+var relay_rtt_ms: int = 0
+var relay_jitter_ms: int = 0
 var _clock_sync_pending: bool = false
 var server_detail: String = "checking"
+## Host -> Pi live position stream (server race on a 1.6.1+ relay).
+## `race_state_updates` counts acknowledged batches; the race HUD uses it as
+## proof that the server is receiving state.
+var race_state_updates: int = 0
+var race_state_receiving: bool = false
+var race_state_stream_enabled: bool = true
+var race_state_last_status: int = 0
 ## Peers that have loaded the current gameplay scene. Gameplay RPCs are only
 ## sent to these peers; otherwise a peer still in the lobby makes Godot log
 ## "Node not found: Sandbox" for every 20 Hz state packet.
@@ -97,9 +134,12 @@ var scene_ready_peers: Dictionary = {}
 var _left_scene_peers: Dictionary = {}
 var _scene_sync_timer: float = 0.0
 var _scene_load_path: String = ""
-## Pair key -> last resting-separation impulse time. Prevents a stale ghost
-## from being pushed every physics tick while it rests against the host cart.
+## Pair key -> last solver impulse time. Rate-limits resting contact and
+## duplicate remote impacts while a state packet is still in flight.
 var _separation_ms: Dictionary = {}
+var _impact_ms: Dictionary = {}
+## Wall-clock stamp of the last stale-key sweep (see _prune_separation_ms).
+var _separation_prune_ms: int = 0
 var relay_base: String = ""
 var relay_lan_ip: String = ""
 var relay_token: String = ""
@@ -119,6 +159,23 @@ var relay_tunnel_active: bool = false
 var _relay_tunnel: Node = null
 var _lan_listener: PacketPeerUDP = null
 var _relay_forced: bool = false
+## HTTP status of the last completed relay call. Callers read it immediately
+## after their own await (single-threaded signal resume), which lets the
+## heartbeat tell a slow Pi (timeout) from an expired room (404).
+var _relay_http_status: int = 0
+var _http_idle: Array[HTTPRequest] = []
+var _relay_probe_timer: float = 0.0
+var _relay_probe_pending: bool = false
+var _relay_rtt_ema: float = -1.0
+var _relay_jitter_ema: float = 0.0
+var _relay_last_rtt: float = -1.0
+var _race_state_busy: bool = false
+var _race_state_generation: int = 0
+var _race_state_failures: int = 0
+var _tunnel_retry_timer: float = -1.0
+var _tunnel_retry_attempt: int = 0
+var _collision_solver: Variant = null
+var _collision_solver_checked: bool = false
 
 ## Host-chosen configuration, broadcast with _net_begin_game so every peer
 ## loads the same world with the same bots. Clients never write these locally.
@@ -166,6 +223,7 @@ func _ready() -> void:
 func _process(delta: float) -> void:
 	_poll_lan_listener()
 	_relay_heartbeat_tick(delta)
+	_relay_tunnel_retry_tick(delta)
 	if join_pending and Time.get_ticks_msec() - _join_started_ms > 12000:
 		join_pending = false
 		leave()
@@ -186,6 +244,13 @@ func _process(delta: float) -> void:
 			# The room is relayed through the Pi, so the host's real ping is its
 			# round trip to that server, not 0.
 			_measure_host_ping()
+	if is_client and not is_host and relay_base != "":
+		# The host already probes every 2 s. Clients need their own sample for
+		# the server ping HUD and the adaptive bot poll interval.
+		_relay_probe_timer += delta
+		if _relay_probe_timer >= RELAY_PROBE_INTERVAL:
+			_relay_probe_timer = 0.0
+			_probe_relay_latency()
 
 
 func _host_retry_scene_start() -> void:
@@ -218,6 +283,7 @@ func clear_scene_ready() -> void:
 	_left_scene_peers.clear()
 	_scene_retry_counts.clear()
 	_separation_ms.clear()
+	_impact_ms.clear()
 	_scene_load_path = ""
 	if is_host:
 		scene_ready_peers[1] = true
@@ -237,6 +303,87 @@ func _cart_extents(cart: Node) -> Dictionary:
 	if cart.has_method("get_collision_extents"):
 		return cart.call("get_collision_extents")
 	return {"width": 1.50, "length": 2.26, "height": 1.70}
+
+
+func _shared_collision_solver() -> Variant:
+	## Loaded lazily and cached: the shared solver may not exist while another
+	## workstream is still landing it, and load() must not run every tick.
+	if not _collision_solver_checked:
+		_collision_solver_checked = true
+		_collision_solver = load(COLLISION_SOLVER_PATH)
+	return _collision_solver
+
+
+func _cart_velocity_value(cart: Node) -> Vector3:
+	## Raw velocity property (the shared solver writes this on every body).
+	## get_collision_velocity() returns net_velocity for a remote ghost, which
+	## the solver deliberately leaves untouched while it resolves the ghost.
+	## Sanitise here: a single NaN body velocity must not poison the pair.
+	var value: Variant = cart.get("velocity")
+	if not (value is Vector3):
+		return Vector3.ZERO
+	var raw: Vector3 = value as Vector3
+	return raw if raw.is_finite() else Vector3.ZERO
+
+
+func _collision_velocity_of(cart: Node) -> Vector3:
+	## Velocity used for the closing-speed test. A ghost advertises its
+	## authoritative net_velocity through get_collision_velocity(); a local
+	## body exposes its physics velocity directly.
+	if cart.has_method("get_collision_velocity"):
+		var value: Variant = cart.call("get_collision_velocity")
+		if value is Vector3:
+			var velocity: Vector3 = value as Vector3
+			return velocity if velocity.is_finite() else Vector3.ZERO
+	return _cart_velocity_value(cart)
+
+
+func _cart_mass(cart: Node) -> float:
+	## Must match CartCollision._body_mass so the delta-v computed from the
+	## solver's scalar impulse is exactly the one it applied locally.
+	if cart.has_method("get_mass"):
+		var value: Variant = cart.call("get_mass")
+		if value is float or value is int:
+			var mass: float = float(value)
+			if is_finite(mass) and mass > 0.0:
+				return mass
+	return 1200.0
+
+
+func _pair_key(id_a: int, id_b: int) -> int:
+	## Stable pair key without a per-tick String allocation.
+	return (mini(id_a, id_b) << PAIR_ID_SHIFT) \
+		| (maxi(id_a, id_b) & PAIR_ID_MASK)
+
+
+func _erase_peer_separation(peer_id: int) -> void:
+	## Drop pair throttle stamps that mention a departed peer. Peer churn used
+	## to leave keys behind for the rest of the session.
+	_erase_peer_pair_keys(_separation_ms, peer_id)
+	_erase_peer_pair_keys(_impact_ms, peer_id)
+
+
+func _erase_peer_pair_keys(stamps: Dictionary, peer_id: int) -> void:
+	if stamps.is_empty():
+		return
+	for key: int in stamps.keys():
+		var low: int = key >> PAIR_ID_SHIFT
+		var high: int = key & PAIR_ID_MASK
+		if low == peer_id or high == peer_id:
+			stamps.erase(key)
+
+
+func _prune_separation_ms(now_ms: int) -> void:
+	## Contact stamps are keyed by peer pair. Peer churn (reconnects reuse new
+	## ids) used to grow the dictionaries for the whole session. Sweep old keys
+	## no more than every 15 s; the per-tick path stays allocation-free.
+	if now_ms - _separation_prune_ms <= 15_000:
+		return
+	_separation_prune_ms = now_ms
+	for stamps: Dictionary in [_separation_ms, _impact_ms]:
+		for key: int in stamps.keys():
+			if now_ms - int(stamps[key]) > 60_000:
+				stamps.erase(key)
 
 
 func _obb_contact(offset: Vector3, yaw_a: float, yaw_b: float,
@@ -271,18 +418,68 @@ func _obb_contact(offset: Vector3, yaw_a: float, yaw_b: float,
 	return {"normal": best_axis.normalized(), "penetration": min_overlap}
 
 
+func _swept_obb_contact(cart_a: Node, cart_b: Node, offset: Vector3,
+		ext_a: Dictionary, ext_b: Dictionary) -> Dictionary:
+	## Conservative swept fallback for a pair that moved through itself.
+	## A discrete overlap test misses two carts that swap sides between ticks:
+	## at 40 m/s each the pair closes 2.7 m per 60 Hz frame, more than the
+	## 2.26 m body length. Walk the pair backwards along this tick's relative
+	## motion and return the most recent overlapping sample. Four probes are
+	## enough because the sampled step is always shorter than a body.
+	var relative: Vector3 = _collision_velocity_of(cart_a) \
+		- _collision_velocity_of(cart_b)
+	relative.y = 0.0
+	var ticks: float = float(Engine.physics_ticks_per_second)
+	if not is_finite(ticks) or ticks <= 0.0:
+		return {}
+	var travel: float = relative.length() / ticks
+	if travel < 0.25:
+		return {}
+	# Broad phase first: bodies further apart than both lengths plus this
+	# tick's travel cannot have touched, so no probes are needed.
+	var reach: float = maxf(float(ext_a.get("length", 2.26)),
+		float(ext_a.get("width", 1.5))) \
+		+ maxf(float(ext_b.get("length", 2.26)), float(ext_b.get("width", 1.5))) \
+		+ travel
+	if offset.length_squared() > reach * reach:
+		return {}
+	var step: Vector3 = relative / (ticks * 4.0)
+	var probe: Vector3 = offset
+	var yaw_a: float = cart_a.global_rotation.y
+	var yaw_b: float = cart_b.global_rotation.y
+	for i in 4:
+		probe -= step
+		var contact: Dictionary = _obb_contact(
+			probe, yaw_a, yaw_b, ext_a, ext_b)
+		if contact.is_empty():
+			continue
+		# Only trust a probe that still describes the current side of the
+		# contact. Once the pair has swapped sides the old normal points the
+		# wrong way, and the impulse would pull the two carts together.
+		var probe_normal: Vector3 = contact["normal"] as Vector3
+		if offset.dot(probe_normal) <= 0.0:
+			return {}
+		return contact
+	return {}
+
+
 func resolve_car_collisions(local_cart: Node, remotes: Dictionary) -> void:
 	## The host resolves every contact each physics tick. Momentum handles the
-	## impact; a bounded separation impulse handles resting contact and pushing.
+	## impact; the physics engine owns positional separation and the shared
+	## solver owns the equal/opposite velocity exchange.
 	if not is_host or local_cart == null:
 		return
+	var solver: Variant = _shared_collision_solver()
 	var host_id: int = multiplayer.get_unique_id()
-	var pairs: Array = []
-	if remotes.size() > 0:
-		for peer_id: Variant in remotes.keys():
-			pairs.append([host_id, local_cart, int(peer_id), remotes[peer_id]])
+	var now_ms: int = Time.get_ticks_msec()
+	_prune_separation_ms(now_ms)
 	var ids: Array = remotes.keys()
 	ids.sort()
+	# Build the pair list once; remotes.keys() used to be called twice and
+	# allocated a second array every physics tick.
+	var pairs: Array = []
+	for peer_id: Variant in ids:
+		pairs.append([host_id, local_cart, int(peer_id), remotes[peer_id]])
 	for i in ids.size():
 		for j in range(i + 1, ids.size()):
 			pairs.append([int(ids[i]), remotes[ids[i]], int(ids[j]), remotes[ids[j]]])
@@ -293,8 +490,8 @@ func resolve_car_collisions(local_cart: Node, remotes: Dictionary) -> void:
 		var cart_b: Node = pair[3]
 		if cart_a == null or cart_b == null:
 			continue
-		# A finished cart is not an obstacle. Ghosts keep contact_enabled=true
-		# even though their body layer is 0; the host solver owns that contact.
+		# A finished or severed cart is not an obstacle. Its owner already set
+		# contact_enabled=false and layer 0; never resolve it here.
 		if cart_a.get("contact_enabled") == false:
 			continue
 		if cart_b.get("contact_enabled") == false:
@@ -324,29 +521,82 @@ func resolve_car_collisions(local_cart: Node, remotes: Dictionary) -> void:
 			offset, cart_a.global_rotation.y, cart_b.global_rotation.y,
 			ext_a, ext_b)
 		if contact.is_empty():
-			continue
+			# A discrete overlap test can miss a fast pair entirely: two 40 m/s
+			# carts close 2.7 m per 60 Hz tick against a 2.26 m body. Probe the
+			# relative motion for the most recent overlapping sample.
+			contact = _swept_obb_contact(cart_a, cart_b, offset, ext_a, ext_b)
+			if contact.is_empty():
+				continue
 		var normal: Vector3 = contact["normal"]
 		var penetration: float = float(contact["penetration"])
-		var vel_a: Vector3 = cart_a.call("get_collision_velocity")
-		var vel_b: Vector3 = cart_b.call("get_collision_velocity")
+		var vel_a: Vector3 = _collision_velocity_of(cart_a)
+		var vel_b: Vector3 = _collision_velocity_of(cart_b)
 		if not vel_a.is_finite() or not vel_b.is_finite():
 			continue
 		var relative: Vector3 = vel_a - vel_b
 		var closing: float = maxf(relative.dot(normal), 0.0)
 		if not is_finite(closing):
 			continue
-		var pair_key: String = "%d:%d" % [mini(id_a, id_b), maxi(id_a, id_b)]
-		var now_ms: int = Time.get_ticks_msec()
+		var pair_key: int = _pair_key(id_a, id_b)
 		if closing < 0.08:
-			# Resting overlap is positional, not an impact. Only correct it in
-			# small, rate-limited steps; the old per-tick impulse made a ghost
-			# resting near a wall visibly vibrate and shove the local cart.
+			# Resting overlap is positional, not an impact. The physics engine
+			# separates the bodies; rate-limit the solver's small resting
+			# impulse so a ghost parked against the host does not vibrate.
 			if penetration < 0.03:
 				continue
 			if now_ms - int(_separation_ms.get(pair_key, -1000)) < 120:
 				continue
 			_separation_ms[pair_key] = now_ms
-		elif closing < 0.015:
+		else:
+			# One momentum impulse per pair per 100 ms. A late state packet can
+			# rewind the predicted ghost velocity below; without this guard
+			# the same impact fired on several consecutive ticks and sent the
+			# remote duplicate impulses (a momentum-conservation bug and a
+			# visible double bounce). Kept separate from the resting stamps so
+			# a resting pair still gets a full impact impulse when it is hit.
+			if now_ms - int(_impact_ms.get(pair_key, -1000)) < 100:
+				continue
+			_impact_ms[pair_key] = now_ms
+		if solver != null:
+			# The shared solver owns all impulse maths (including resting and
+			# friction rules) so the sandbox and the race respond identically.
+			# The physics engine already separated this pair, so pass
+			# separate=false: double separation was the visible jitter.
+			var contact_point: Vector3 = (pos_a + pos_b) * 0.5
+			var raw_a: Vector3 = _cart_velocity_value(cart_a)
+			var raw_b: Vector3 = _cart_velocity_value(cart_b)
+			var impulse_mag: float = float(solver.resolve_pair(cart_a, cart_b,
+				contact_point, normal, penetration, false))
+			# The solver returns the scalar impulse it just applied. Both
+			# owners get exactly that delta-v: the host directly, a remote
+			# through the existing RPC. Inferring the delta from the post-solve
+			# velocity was wrong for a ghost, because the solver measures a
+			# ghost against net_velocity while its raw property is scratch.
+			if impulse_mag > 0.0:
+				var impulse_dir: Vector3 = normal.normalized()
+				if id_a != host_id:
+					var delta_a: Vector3 = -impulse_dir \
+						* (impulse_mag / _cart_mass(cart_a))
+					if delta_a.is_finite() and delta_a.length_squared() > 0.000001:
+						local_cart.rpc_id(id_a, "_net_apply_car_impulse", delta_a)
+						# Predict the owner's velocity locally so the next tick's
+						# closing test does not fire the same impact again while
+						# its post-impact packet is still in flight.
+						cart_a.set("net_velocity",
+							(vel_a + delta_a).limit_length(60.0))
+				if id_b != host_id:
+					var delta_b: Vector3 = impulse_dir \
+						* (impulse_mag / _cart_mass(cart_b))
+					if delta_b.is_finite() and delta_b.length_squared() > 0.000001:
+						local_cart.rpc_id(id_b, "_net_apply_car_impulse", delta_b)
+						cart_b.set("net_velocity",
+							(vel_b + delta_b).limit_length(60.0))
+			# Restore the host-side scratch velocity the solver wrote. A remote
+			# owner receives the impulse above and keeps its own physics.
+			if id_a != host_id:
+				cart_a.set("velocity", raw_a)
+			if id_b != host_id:
+				cart_b.set("velocity", raw_b)
 			continue
 		var mass_a: float = maxf(float(cart_a.call("get_mass")), 1.0)
 		var mass_b: float = maxf(float(cart_b.call("get_mass")), 1.0)
@@ -368,11 +618,11 @@ func resolve_car_collisions(local_cart: Node, remotes: Dictionary) -> void:
 					0.24 * impact_impulse)
 				impulse_a -= tangent_dir * tangent_impulse
 				impulse_b += tangent_dir * tangent_impulse
-		# Ghosts are solid bodies now, so the physics step already supplies the
-		# positional separation. The solver only adds the momentum exchange;
-		# keep it light or a contact bounces twice.
-		var delta_a: Vector3 = (impulse_a / mass_a * 0.50).limit_length(4.5)
-		var delta_b: Vector3 = (impulse_b / mass_b * 0.50).limit_length(4.5)
+		# Pre-1.6.0 fallback while the shared solver is unavailable: compute the
+		# raw momentum exchange here. apply_vehicle_impulse() only adds the
+		# delta-v; it no longer applies a second, smaller cap.
+		var delta_a: Vector3 = impulse_a / mass_a
+		var delta_b: Vector3 = impulse_b / mass_b
 		if id_a == host_id:
 			cart_a.call("apply_vehicle_impulse", delta_a)
 		else:
@@ -564,6 +814,13 @@ func _discover_relay() -> bool:
 
 func _use_default_public_relay() -> bool:
 	var text: String = OS.get_environment("CARTSLOP_RELAY").strip_edges()
+	if text == "" and OS.has_feature("web"):
+		# The hosted page and the game API share an origin, so the browser build
+		# must talk to the server that served it rather than a baked-in address.
+		# That keeps LAN play and any mirror working without a rebuild.
+		var origin: String = str(JavaScriptBridge.eval("location.host", true)).strip_edges()
+		if origin != "":
+			text = origin
 	if text == "":
 		text = DEFAULT_RELAY_SERVER.strip_edges()
 	if text == "":
@@ -728,22 +985,51 @@ func join_lan_room(room: Dictionary) -> void:
 	_connect_to(host, open_port, "lan")
 
 
-func _relay_post(path: String, payload: Dictionary) -> Dictionary:
-	if relay_base == "":
-		return {}
+func _acquire_http(timeout: float) -> HTTPRequest:
+	## Reuse an idle request when possible. The 10 Hz race state stream used to
+	## create and free an HTTPRequest node ten times a second.
+	while not _http_idle.is_empty():
+		var pooled: HTTPRequest = _http_idle.pop_back()
+		if is_instance_valid(pooled) and pooled.is_inside_tree():
+			pooled.timeout = timeout
+			pooled.body_size_limit = MAX_HTTP_BODY
+			return pooled
 	var http := HTTPRequest.new()
-	http.timeout = 6.0
+	http.timeout = timeout
 	http.body_size_limit = MAX_HTTP_BODY
 	add_child(http)
+	return http
+
+
+func _release_http(http: HTTPRequest) -> void:
+	if not is_instance_valid(http) or not http.is_inside_tree():
+		return
+	if _http_idle.size() >= HTTP_POOL_MAX:
+		http.queue_free()
+		return
+	_http_idle.append(http)
+
+
+func _relay_post(path: String, payload: Dictionary,
+		timeout: float = 6.0) -> Dictionary:
+	## One JSON POST, parsed into a Dictionary. The request object comes from
+	## the shared pool so fire-and-forget callers do not allocate per packet.
+	if relay_base == "":
+		_relay_http_status = 0
+		return {}
+	var http: HTTPRequest = _acquire_http(timeout)
 	var headers: PackedStringArray = ["Content-Type: application/json"]
 	var error: Error = http.request(relay_base + path, headers,
 		HTTPClient.METHOD_POST, JSON.stringify(payload))
 	if error != OK:
-		http.queue_free()
+		_relay_http_status = -1
+		_release_http(http)
 		return {}
 	var response: Array = await http.request_completed
-	http.queue_free()
-	if int(response[1]) != 200:
+	var status: int = int(response[1])
+	_relay_http_status = status
+	_release_http(http)
+	if status != 200:
 		return {}
 	var parsed: Variant = JSON.parse_string((response[3] as PackedByteArray).get_string_from_utf8())
 	if parsed is Dictionary:
@@ -753,18 +1039,19 @@ func _relay_post(path: String, payload: Dictionary) -> Dictionary:
 
 func _relay_get(path: String, timeout: float = RELAY_HTTP_TIMEOUT) -> Dictionary:
 	if relay_base == "":
+		_relay_http_status = 0
 		return {}
-	var http := HTTPRequest.new()
-	http.timeout = timeout
-	http.body_size_limit = MAX_HTTP_BODY
-	add_child(http)
+	var http: HTTPRequest = _acquire_http(timeout)
 	var error: Error = http.request(relay_base + path, [], HTTPClient.METHOD_GET)
 	if error != OK:
-		http.queue_free()
+		_relay_http_status = -1
+		_release_http(http)
 		return {}
 	var response: Array = await http.request_completed
-	http.queue_free()
-	if int(response[1]) != 200:
+	var status: int = int(response[1])
+	_relay_http_status = status
+	_release_http(http)
+	if status != 200:
 		return {}
 	var parsed: Variant = JSON.parse_string((response[3] as PackedByteArray).get_string_from_utf8())
 	if parsed is Dictionary:
@@ -789,6 +1076,24 @@ func server_race_supported() -> bool:
 	var major: int = int(parts[0])
 	var minor: int = int(parts[1])
 	return major > 1 or (major == 1 and minor >= 6)
+
+
+func server_pos_supported() -> bool:
+	## /api/race/pos arrived in 1.6.1. An empty version is tried; the first 404
+	## then disables the stream for that race. A known 1.6.0 relay skips it.
+	if server_version == "":
+		return true
+	var parts: PackedStringArray = server_version.split(".")
+	if parts.size() < 2:
+		return false
+	var major: int = int(parts[0])
+	var minor: int = int(parts[1])
+	if major != 1:
+		return major > 1
+	if minor != 6:
+		return minor > 6
+	var patch: int = int(parts[2]) if parts.size() > 2 else 0
+	return patch >= 1
 
 
 func server_now_ms() -> int:
@@ -825,6 +1130,7 @@ func sync_server_clock(samples: int = 5) -> bool:
 			continue
 		var rtt: int = t1 - t0
 		var offset: int = server_ms - (t0 + t1) / 2
+		_note_relay_rtt(rtt)
 		if not got or rtt < best_rtt:
 			best_rtt = rtt
 			best_offset = offset
@@ -839,12 +1145,133 @@ func sync_server_clock(samples: int = 5) -> bool:
 	return true
 
 
+func _note_relay_rtt(sample_ms: int) -> void:
+	## Exponential moving average plus mean absolute deviation. The host feeds
+	## this from its existing 2 s ping probe; clients feed it from the clock
+	## probe, so the HUD shows the real path to the server, not only the ENet
+	## hop to the host.
+	var sample: float = float(clampi(sample_ms, 0, 5000))
+	if _relay_rtt_ema < 0.0:
+		_relay_rtt_ema = sample
+	else:
+		_relay_rtt_ema = lerpf(_relay_rtt_ema, sample, RELAY_RTT_ALPHA)
+	if _relay_last_rtt >= 0.0:
+		var delta: float = absf(sample - _relay_last_rtt)
+		_relay_jitter_ema = lerpf(_relay_jitter_ema, delta, RELAY_JITTER_ALPHA)
+	_relay_last_rtt = sample
+	var rtt: int = int(round(_relay_rtt_ema))
+	var jitter: int = int(round(_relay_jitter_ema))
+	if rtt == relay_rtt_ms and jitter == relay_jitter_ms:
+		return
+	relay_rtt_ms = rtt
+	relay_jitter_ms = jitter
+	relay_metrics_changed.emit(relay_rtt_ms, relay_jitter_ms)
+
+
+func _probe_relay_latency() -> void:
+	## Clients have no host ping probe. A small /api/time GET keeps the relay
+	## RTT and jitter fresh for the HUD and the adaptive bot poll interval.
+	if _relay_probe_pending or relay_base == "":
+		return
+	_relay_probe_pending = true
+	var started: int = Time.get_ticks_msec()
+	var data: Dictionary = await _relay_get("/api/time", 2.0)
+	var rtt: int = Time.get_ticks_msec() - started
+	_relay_probe_pending = false
+	if data.is_empty() or not is_session_active():
+		return
+	_note_relay_rtt(rtt)
+
+
+func server_bot_poll_interval() -> float:
+	## Server bots are polled at 6-12 Hz. A slow or jittery relay gets fewer
+	## polls so the HTTP queue (and the Pi's rate limiter) never saturates; the
+	## default is 8 Hz, matching the current server's bot simulation cadence.
+	if relay_rtt_ms <= 0:
+		return 1.0 / 8.0
+	var path_ms: int = relay_rtt_ms + relay_jitter_ms
+	var hz: float = 8.0
+	if path_ms >= 300:
+		hz = 6.0
+	elif path_ms >= 180:
+		hz = 7.0
+	elif path_ms <= 50:
+		hz = 12.0
+	elif path_ms <= 100:
+		hz = 10.0
+	return 1.0 / hz
+
+
+func reset_race_state_stream() -> void:
+	## A new server race starts a fresh stream. Re-enabling here also lets a
+	## relay upgraded mid-session pick up /api/race/pos on the next race.
+	_race_state_generation += 1
+	race_state_updates = 0
+	race_state_receiving = false
+	race_state_stream_enabled = server_pos_supported()
+	race_state_last_status = 0
+	_race_state_busy = false
+	_race_state_failures = 0
+	race_state_stream_changed.emit(false, 0)
+
+
+func stream_race_state(race_id: String, secret: String, rows: Array) -> void:
+	## Host-only fire-and-forget batch of live cart states for the Pi. One
+	## request is allowed in flight: if it is still running, this tick's data is
+	## dropped rather than queued, so a slow relay can never build a backlog.
+	if not is_host or not race_state_stream_enabled or _race_state_busy:
+		return
+	if relay_base == "" or race_id == "" or secret == "" or rows.is_empty():
+		return
+	if not server_clock_ready:
+		return
+	_race_state_busy = true
+	var generation: int = _race_state_generation
+	var payload: Dictionary = {
+		"race": race_id,
+		"secret": secret,
+		"t": server_now_ms(),
+		"p": rows,
+	}
+	var response: Dictionary = await _relay_post("/api/race/pos", payload,
+		STATE_POST_TIMEOUT)
+	if generation != _race_state_generation:
+		# A new race or a disconnect owns the stream now. A late reply must not
+		# clear the newer request's busy flag or count toward its HUD.
+		return
+	_race_state_busy = false
+	race_state_last_status = _relay_http_status
+	if response.is_empty() or response.get("ok") == false:
+		_race_state_failures += 1
+		if race_state_last_status == 404 or race_state_last_status == 405:
+			# 1.6.0 and older relays have the race API but no /pos. Stop
+			# posting silently instead of hammering a missing endpoint.
+			race_state_stream_enabled = false
+			race_state_receiving = false
+			race_state_stream_changed.emit(false, race_state_updates)
+		elif race_state_receiving:
+			race_state_receiving = false
+			race_state_stream_changed.emit(false, race_state_updates)
+		return
+	race_state_updates += 1
+	_race_state_failures = 0
+	var notify: bool = not race_state_receiving or race_state_updates <= 1 \
+		or race_state_updates % 10 == 0
+	race_state_receiving = true
+	if notify:
+		race_state_stream_changed.emit(true, race_state_updates)
+
+
 func start_server_race(laps: int, bots: int, difficulty: int,
 		max_speed: float, seed: int) -> Dictionary:
 	if relay_base == "" or relay_token == "" or not is_host:
 		return {}
 	if not server_clock_ready:
 		await sync_server_clock()
+	if not server_clock_ready:
+		# Without the server clock the countdown and the race timer would be
+		# nonsense. Fall back to the host-run race instead of starting one.
+		return {}
 	var payload: Dictionary = {
 		"token": relay_token,
 		"laps": clampi(laps, 1, 9),
@@ -856,7 +1283,6 @@ func start_server_race(laps: int, bots: int, difficulty: int,
 	var response: Dictionary = await _relay_post("/api/race/start", payload)
 	var race: Variant = response.get("race", {})
 	if race is Dictionary and str((race as Dictionary).get("id", "")) != "":
-		server_version = "1.6.0" if server_version == "" else server_version
 		return race as Dictionary
 	return {}
 
@@ -961,11 +1387,51 @@ func _start_relay_tunnel() -> void:
 	_relay_tunnel = RelayTunnel.new()
 	add_child(_relay_tunnel)
 	_relay_tunnel.configure(host, relay_tunnel_port, relay_tunnel_token, port)
-	_relay_tunnel.tunnel_ready.connect(func() -> void:
-		relay_tunnel_active = true)
-	_relay_tunnel.tunnel_lost.connect(func() -> void:
-		relay_tunnel_active = false)
+	_relay_tunnel.tunnel_ready.connect(_on_relay_tunnel_ready)
+	_relay_tunnel.tunnel_lost.connect(_on_relay_tunnel_lost)
 	_relay_tunnel.start()
+
+
+func _on_relay_tunnel_ready() -> void:
+	## A live tunnel cancels any pending backoff and resets the schedule.
+	relay_tunnel_active = true
+	_tunnel_retry_attempt = 0
+	_tunnel_retry_timer = -1.0
+
+
+func _on_relay_tunnel_lost() -> void:
+	relay_tunnel_active = false
+	if not is_host or not relay_active or _relay_tunnel == null:
+		return
+	if _tunnel_retry_timer >= 0.0:
+		return
+	_tunnel_retry_attempt = mini(_tunnel_retry_attempt + 1, 8)
+	var delay: float = minf(
+		TUNNEL_RETRY_BASE * pow(2.0, float(_tunnel_retry_attempt - 1)),
+		TUNNEL_RETRY_MAX)
+	_tunnel_retry_timer = delay
+
+
+func _relay_tunnel_retry_tick(delta: float) -> void:
+	## The tunnel retries on its own; after the backoff expires, rebuild it so a
+	## half-open socket or a rotated token cannot wedge the room forever.
+	if _tunnel_retry_timer < 0.0:
+		return
+	if not is_host or not relay_active or _relay_tunnel == null or relay_tunnel_active:
+		_tunnel_retry_timer = -1.0
+		return
+	_tunnel_retry_timer -= delta
+	if _tunnel_retry_timer > 0.0:
+		return
+	_tunnel_retry_timer = -1.0
+	if _relay_tunnel.tunnel_ready.is_connected(_on_relay_tunnel_ready):
+		_relay_tunnel.tunnel_ready.disconnect(_on_relay_tunnel_ready)
+	if _relay_tunnel.tunnel_lost.is_connected(_on_relay_tunnel_lost):
+		_relay_tunnel.tunnel_lost.disconnect(_on_relay_tunnel_lost)
+	_relay_tunnel.stop()
+	_relay_tunnel.queue_free()
+	_relay_tunnel = null
+	_start_relay_tunnel()
 
 
 func _relay_heartbeat_tick(delta: float) -> void:
@@ -981,16 +1447,20 @@ func _relay_heartbeat_tick(delta: float) -> void:
 		"state": room_state,
 		"players": peer_count(),
 		"public": room_public,
-	})
+	}, HEARTBEAT_TIMEOUT)
+	var status: int = _relay_http_status
 	_relay_busy = false
 	if not is_host or not relay_active:
 		return
 	if response.is_empty() or response.get("ok") != true:
-		# A single transient timeout is not fatal, but a Pi restart or an
-		# expired lobby makes every later heartbeat return 404. Without this
-		# the lobby kept showing a code that could never be joined.
+		# A slow Pi can miss a heartbeat or two without the room being gone.
+		# Only a definite 404/410/ok:false (or a long run of timeouts) ends the
+		# lobby; a timed-out Pi keeps its room until the grace period expires.
 		_heartbeat_failures += 1
-		if _heartbeat_failures >= 2:
+		var definite: bool = not response.is_empty() \
+			or status == 404 or status == 410
+		if (definite and _heartbeat_failures >= 2) \
+				or _heartbeat_failures >= HEARTBEAT_MAX_FAILURES:
 			_on_relay_room_lost()
 		return
 	_heartbeat_failures = 0
@@ -1311,7 +1781,15 @@ func join_game(raw_code: String) -> void:
 
 
 func _connect_to(connect_ip: String, connect_port: int, mode: String) -> void:
+	# A Pi client keeps the relay's HTTP route after the ENet handshake: the
+	# shared race clock, the server bot poll and the latency probe all use it.
+	# leave() clears the route so a failed/replaced session cannot leak it.
+	var keep_relay: String = relay_base if mode != "lan" else ""
+	var keep_public: bool = relay_base_public if mode != "lan" else false
 	leave()
+	if keep_relay != "":
+		relay_base = keep_relay
+		relay_base_public = keep_public
 	if not _valid_ip(connect_ip):
 		connect_ip = IP.resolve_hostname(connect_ip)
 		if connect_ip == "":
@@ -1375,6 +1853,10 @@ func leave() -> void:
 	relay_tunnel_token = ""
 	relay_tunnel_port = 0
 	if _relay_tunnel != null:
+		if _relay_tunnel.tunnel_ready.is_connected(_on_relay_tunnel_ready):
+			_relay_tunnel.tunnel_ready.disconnect(_on_relay_tunnel_ready)
+		if _relay_tunnel.tunnel_lost.is_connected(_on_relay_tunnel_lost):
+			_relay_tunnel.tunnel_lost.disconnect(_on_relay_tunnel_lost)
 		_relay_tunnel.stop()
 		_relay_tunnel.queue_free()
 		_relay_tunnel = null
@@ -1382,6 +1864,17 @@ func leave() -> void:
 	latency_ms = 0
 	host_ping_ms = 0
 	_host_ping_pending = false
+	relay_rtt_ms = 0
+	relay_jitter_ms = 0
+	_relay_rtt_ema = -1.0
+	_relay_jitter_ema = 0.0
+	_relay_last_rtt = -1.0
+	_relay_probe_timer = 0.0
+	_relay_probe_pending = false
+	_relay_http_status = 0
+	_tunnel_retry_timer = -1.0
+	_tunnel_retry_attempt = 0
+	reset_race_state_stream()
 	last_error = ""
 	player_names.clear()
 	player_colors.clear()
@@ -1623,6 +2116,7 @@ func _net_set_tag_color(peer_id: int, raw_hex: String) -> void:
 
 func _on_peer_disconnected(id: int) -> void:
 	scene_ready_peers.erase(id)
+	_erase_peer_separation(id)
 	_scene_retry_counts.erase(id)
 	_left_scene_peers.erase(id)
 	player_names.erase(id)
@@ -1744,6 +2238,7 @@ func _measure_host_ping() -> void:
 		# Keep the last good value rather than showing 0 for a dropped probe.
 		return
 	host_ping_ms = clampi(Time.get_ticks_msec() - started, 1, 5000)
+	_note_relay_rtt(host_ping_ms)
 	ping_table[1] = host_ping_ms
 	ping_table_changed.emit()
 	latency_changed.emit(host_ping_ms)

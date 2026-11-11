@@ -11,6 +11,7 @@ const CART_SCENE := preload("res://scenes/player/cart_player.tscn")
 const VehicleCatalog := preload("res://scripts/vehicles/vehicle_catalog.gd")
 const VehicleVisual := preload("res://scripts/vehicles/vehicle_visual.gd")
 const VisualGrade := preload("res://scripts/systems/visual_grade.gd")
+const SandboxBot := preload("res://scripts/ai/sandbox_bot.gd")
 const TITLE_FONT: String = "res://assets/ui/fonts/LuckiestGuy-Regular.ttf"
 const CART_SYNC_INTERVAL: float = 0.05
 const PROP_SYNC_INTERVAL: float = 0.10
@@ -24,7 +25,8 @@ var _host_mode: bool = false
 var _name_labels: Dictionary = {} ## peer id -> Label3D
 var _cart_sync_timer: float = 0.0
 var _prop_sync_timer: float = 0.0
-var _bots: Array[Dictionary] = []
+var _bots: Array[SandboxBot] = []
+var _traffic: Array[CartPlayer] = [] ## local player first, then every bot cart
 var _bot_time: float = 0.0
 var _cart_relay_ms: Dictionary = {} ## peer id -> last host relay (anti-amplification)
 ## Client-side prediction for a pushed frozen prop.
@@ -176,21 +178,17 @@ func _setup_bots() -> void:
 		label.position = Vector3(0.0, 2.4, 0.0)
 		node.add_child(label)
 		var difficulty: int = clampi(GameSettings.minigame_difficulty, 0, 2)
-		var skill_lo: Array[float] = [0.60, 0.72, 0.86]
-		var skill_hi: Array[float] = [0.80, 1.00, 1.12]
-		_bots.append({
-			"node": node,
-			"radius": radius,
-			# Deterministic lanes: the first three bots always take a
-			# different ring/swing line instead of randomly becoming a train.
-			"radius_offset": [-4.0, 0.0, 4.0][i % 3],
-			"path_style": i % 3,
-			"skill": rng.randf_range(skill_lo[difficulty], skill_hi[difficulty]),
-			"boost_bias": rng.randf_range(0.45, 1.0),
-			"phase": rng.randf() * TAU,
-			"stuck": 0.0,
-			"stranded": 0.0,
-		})
+		var bot: SandboxBot = SandboxBot.new()
+		bot.setup(node, i, rng, difficulty)
+		_bots.append(bot)
+	# The traffic list is rebuilt once, not every tick: every driver reads the
+	# local player and the other bots from this shared array.
+	_traffic.clear()
+	if _local_cart != null and is_instance_valid(_local_cart):
+		_traffic.append(_local_cart)
+	for built: SandboxBot in _bots:
+		if is_instance_valid(built.cart):
+			_traffic.append(built.cart)
 
 
 func _update_bots(delta: float) -> void:
@@ -198,76 +196,14 @@ func _update_bots(delta: float) -> void:
 		return
 	_bot_time += delta
 	for i in _bots.size():
-		var bot: Dictionary = _bots[i]
-		var node: CartPlayer = bot["node"]
-		if not is_instance_valid(node):
+		var bot: SandboxBot = _bots[i]
+		if not is_instance_valid(bot.cart):
 			continue
-		var position: Vector3 = node.global_position
-		var forward: Vector3 = -node.global_transform.basis.z
-		var speed: float = maxf(node.velocity.dot(forward), 0.0)
-		var skill: float = bot["skill"]
-		var style: int = int(bot["path_style"])
-		var swing: float = [0.6, 3.2, 2.0][style]
-		var radius: float = clampf(float(bot["radius"]) + float(bot["radius_offset"])
-			+ sin(_bot_time * 0.35 + float(bot["phase"])) * swing, 44.0, 60.0)
-		if style == 2:
-			radius = clampf(float(bot["radius"]) + float(bot["radius_offset"])
-				+ sin(atan2(position.z, position.x) * 3.0 + float(bot["phase"])) * 2.5,
-				44.0, 60.0)
-		var angle: float = atan2(position.z, position.x)
-		var lookahead: float = clampf(speed * 0.65, 7.0, 14.0) * lerpf(1.16, 0.90, skill)
-		var target_angle: float = angle + lookahead / radius
-		var target := Vector3(cos(target_angle) * radius, position.y,
-			sin(target_angle) * radius)
-		var target_speed: float = node.max_speed * lerpf(0.62, 0.93, skill)
-		for other: CartPlayer in [_local_cart] + _bots.map(func(item: Dictionary) -> CartPlayer: return item["node"]):
-			if other == node or not is_instance_valid(other):
-				continue
-			var offset: Vector3 = other.global_position - position
-			offset.y = 0.0
-			var ahead: float = offset.dot(forward)
-			var side: float = offset.dot(node.global_transform.basis.x)
-			if ahead > 0.0 and ahead < 10.0 and absf(side) < 2.4:
-				if ahead < 5.0:
-					target_speed = minf(target_speed, maxf(other.get_collision_velocity().dot(forward), 0.0))
-				target += node.global_transform.basis.x * (-2.5 if side > 0.0 else 2.5)
-		var local_target: Vector3 = node.to_local(target)
-		var steer: float = clampf(atan2(-local_target.x, -local_target.z) * 2.0, -1.0, 1.0)
-		steer += sin(_bot_time + float(bot["phase"])) * (1.06 - skill) * 0.12
-		var throttle: float = 1.0 if speed < target_speed else 0.0
-		var brake: float = clampf((speed - target_speed) / 5.0, 0.0, 0.75) \
-			if speed > target_speed + 1.0 else 0.0
-		var use_boost: bool = speed > node.max_speed * 0.55 and node.boost_amount > 25.0 \
-			and float(bot["boost_bias"]) > 0.52 and absf(steer) < 0.45 and brake <= 0.0
-		if float(bot["stuck"]) > 1.0 and float(bot["stuck"]) < 4.0:
-			# Back out of a wall/prop before the hard respawn.
-			throttle = 0.0
-			brake = 1.0
-			steer = clampf(-steer * 0.8, -1.0, 1.0)
-			use_boost = false
-		node.set_ai_controls(throttle, brake, steer, use_boost)
-		if speed < 0.8:
-			bot["stuck"] = float(bot["stuck"]) + delta
-		else:
-			bot["stuck"] = maxf(float(bot["stuck"]) - delta * 2.0, 0.0)
-		if position.y < -3.0 or Vector2(position.x, position.z).length() > 80.0:
-			bot["stranded"] = float(bot["stranded"]) + delta
-		else:
-			bot["stranded"] = 0.0
-		if float(bot["stuck"]) > 4.0 or float(bot["stranded"]) > 1.5:
-			var reset_angle: float = atan2(position.z, position.x) + 0.12
-			var reset_position := Vector3(cos(reset_angle) * radius, 0.0,
-				sin(reset_angle) * radius)
-			# The bot ring crosses the mesa/highline skirts; a fixed y=0.15
-			# respawns a stuck bot inside the terrain and starts a fall loop.
-			reset_position.y = _ground_height(reset_position) + 0.12
-			node.global_position = reset_position
-			node.rotation = Vector3(0.0, PI - reset_angle, 0.0)
-			node.set_spawn_transform(node.global_transform)
-			node.reset_for_respawn()
-			node.velocity = Vector3.ZERO
-			bot["stuck"] = 0.0
-			bot["stranded"] = 0.0
+		bot.tick(delta, _bot_time, _traffic)
+		# The hard reset is the last resort: a bot that is still stuck after its
+		# reverse attempt (or has left the park) gets put back on its lane.
+		if bot.stuck > 4.0 or bot.stranded > 1.5:
+			bot.respawn()
 
 
 # --------------------------------------------------------------------------

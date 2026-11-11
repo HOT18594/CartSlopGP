@@ -10,6 +10,7 @@ signal closed
 const UiAnim := preload("res://scripts/ui/ui_anim.gd")
 const UiPalette := preload("res://scripts/ui/ui_palette.gd")
 const CANDY_BUTTON: String = "res://scripts/ui/candy_button.gd"
+const FOCUS_SLIDER: String = "res://scripts/ui/focus_slider.gd"
 
 const SECTIONS: Array[String] = ["AUDIO", "VIDEO", "GAMEPLAY", "ACCESSIBILITY", "UPDATES"]
 
@@ -44,6 +45,7 @@ var _difficulty_button: Button
 var _check_button: Button
 var _update_status: Label
 var _offline_note: Label
+var _desc_label: Label
 var _refreshing: bool = false
 
 
@@ -61,6 +63,8 @@ func open() -> void:
 	show()
 	visible = true
 	_show_page(_current_page)
+	if _desc_label != null:
+		_desc_label.text = "Hover or focus a row to see what it changes."
 	UiAnim.pop($Center/Panel)
 	MenuNav.refresh()
 	_check_button.disabled = false
@@ -91,6 +95,7 @@ func _build_ui() -> void:
 	header.add_child(title)
 	var close_button := _candy_button("BACK", UiPalette.RED, 46, 18)
 	close_button.custom_minimum_size = Vector2(150, 46)
+	close_button.tooltip_text = "Close Settings and return. Escape does the same."
 	close_button.pressed.connect(close)
 	header.add_child(close_button)
 
@@ -111,12 +116,15 @@ func _build_ui() -> void:
 	for index in SECTIONS.size():
 		var button := _plain_button(SECTIONS[index], 18, 46)
 		# The shared UiKit centres every button label. The section rail reads
-		# better as a left-aligned list, so opt this one control out.
+		# better as a left-aligned list, so opt this one sizing rule out.
 		button.set_meta("skip_kit", true)
 		button.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		button.tooltip_text = "Show the %s settings." % SECTIONS[index].to_lower()
 		button.pressed.connect(_show_page.bind(index))
 		nav.add_child(button)
 		_nav_buttons.append(button)
+	# Enter on a freshly opened Settings panel lands on the section rail.
+	nav.get_child(0).set_meta("nav_default", true)
 
 	var card := PanelContainer.new()
 	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -146,11 +154,23 @@ func _build_ui() -> void:
 	_build_accessibility(_pages[3])
 	_build_updates(_pages[4])
 
+	# One quiet help line for the whole card. Every row writes its explanation
+	# here on hover or keyboard focus, so the panel stays fast to scan instead
+	# of repeating a paragraph under all fourteen controls.
+	var desc_rule := ColorRect.new()
+	desc_rule.custom_minimum_size = Vector2(0, 2)
+	desc_rule.color = Color(UiPalette.INK, 0.10)
+	_content.add_child(desc_rule)
+	_desc_label = UiKit.caption("")
+	_desc_label.custom_minimum_size = Vector2(0, 34)
+	_content.add_child(_desc_label)
+
 	var footer := HBoxContainer.new()
 	footer.add_theme_constant_override("separation", 12)
 	_body.add_child(footer)
 	var reset := _candy_button("RESET DEFAULTS", UiPalette.BLUE, 46, 16)
 	reset.custom_minimum_size = Vector2(220, 46)
+	reset.tooltip_text = "Put every setting back to its original value."
 	reset.pressed.connect(_on_reset_defaults)
 	footer.add_child(reset)
 	var spacer := Control.new()
@@ -163,64 +183,66 @@ func _build_ui() -> void:
 
 func _build_audio(page: VBoxContainer) -> void:
 	_page_header(page, "AUDIO", "Balance the game against your own music and voice chat.")
-	_master_slider = _slider_row(page, "Master volume", 0, 100, 1, _on_master_changed)
+	_master_slider = _slider_row(page, "Master volume",
+		"Overall loudness of the game. This scales music and effects together.",
+		0, 100, 1, _on_master_changed)
 	_master_value = _last_value
-	_music_slider = _slider_row(page, "Music", 0, 100, 1, _on_music_changed)
+	_music_slider = _slider_row(page, "Music",
+		"Volume of the soundtrack only. Sound effects and voice chat stay as they are.",
+		0, 100, 1, _on_music_changed)
 	_music_value = _last_value
-	_sfx_slider = _slider_row(page, "Sound effects", 0, 100, 1, _on_sfx_changed)
+	_sfx_slider = _slider_row(page, "Sound effects",
+		"Engine, crashes, boosts and menu clicks. Lower it to hear chat or your own music.",
+		0, 100, 1, _on_sfx_changed)
 	_sfx_value = _last_value
 
 
 func _build_video(page: VBoxContainer) -> void:
 	_page_header(page, "VIDEO", "Resolution and comfort. The game keeps the UI at native size.")
-	_fullscreen_toggle = _toggle_row(page, "Fullscreen", _on_fullscreen_toggled)
-	_cursor_toggle = _toggle_row(page, "Custom cursor", _on_cursor_toggled)
-	_camera_slider = _slider_row(page, "Camera shake", 0, 150, 1, _on_camera_changed)
+	_fullscreen_toggle = _toggle_row(page, "Fullscreen",
+		"Fill the whole monitor instead of a window. The web build follows the browser tab.",
+		_on_fullscreen_toggled)
+	_cursor_toggle = _toggle_row(page, "Custom cursor",
+		"Draw the cartoon cursor on menus. Turn it off to use the system pointer.",
+		_on_cursor_toggled)
+	_camera_slider = _slider_row(page, "Camera shake",
+		"How much the camera kicks on landings, crashes and boosts. 0% is the calmest.",
+		0, 150, 1, _on_camera_changed)
 	_camera_value = _last_value
-	_hud_slider = _slider_row(page, "HUD scale", 75, 150, 5, _on_hud_changed)
+	_hud_slider = _slider_row(page, "HUD scale",
+		"Size of the in-race speed, boost and standings panels.",
+		75, 150, 5, _on_hud_changed)
 	_hud_value = _last_value
-	var quality := HBoxContainer.new()
-	quality.add_theme_constant_override("separation", 14)
-	page.add_child(quality)
-	var quality_label := _label("Quality preset", 17, UiPalette.INK)
-	quality_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	quality.add_child(quality_label)
-	_quality_button = _plain_button(_cycle_text(GameSettings.quality_name()), 17, 42)
-	_quality_button.custom_minimum_size = Vector2(180, 42)
-	_quality_button.add_theme_stylebox_override("normal",
-		_flat_style(Color(1, 0.96, 0.89, 1.0), UiPalette.INK))
-	_quality_button.add_theme_stylebox_override("hover",
-		_flat_style(UiPalette.YELLOW, UiPalette.INK))
-	_quality_button.pressed.connect(_on_quality_pressed)
-	quality.add_child(_quality_button)
+	_quality_button = _cycle_row(page, "Quality preset",
+		"Automatic resolution and effect quality. Lower it for the web build or an older GPU.",
+		_cycle_text(GameSettings.quality_name()), _on_quality_pressed)
 
 
 func _build_gameplay(page: VBoxContainer) -> void:
 	_page_header(page, "GAMEPLAY", "Driving assists that do not change the physics.")
-	_boost_toggle = _toggle_row(page, "Hold boost instead of toggle", _on_boost_toggled)
-	_drift_toggle = _toggle_row(page, "Hold drift instead of toggle", _on_drift_toggled)
-	_deadzone_slider = _slider_row(page, "Stick deadzone", 0, 40, 1, _on_deadzone_changed)
+	_boost_toggle = _toggle_row(page, "Hold boost instead of toggle",
+		"Hold the boost button to boost. Off: press once to start and once to stop.",
+		_on_boost_toggled)
+	_drift_toggle = _toggle_row(page, "Hold drift instead of toggle",
+		"Hold to drift. Off: tap once to latch the handbrake on and again to release.",
+		_on_drift_toggled)
+	_deadzone_slider = _slider_row(page, "Stick deadzone",
+		"How far the stick must move before the cart reacts. Raise it for a worn or drifty pad.",
+		0, 40, 1, _on_deadzone_changed)
 	_deadzone_value = _last_value
-	var difficulty := HBoxContainer.new()
-	difficulty.add_theme_constant_override("separation", 14)
-	page.add_child(difficulty)
-	var difficulty_label := _label("Bot difficulty", 17, UiPalette.INK)
-	difficulty_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	difficulty.add_child(difficulty_label)
-	_difficulty_button = _plain_button(_cycle_text(GameSettings.ai_difficulty_name()), 17, 42)
-	_difficulty_button.custom_minimum_size = Vector2(180, 42)
-	_difficulty_button.add_theme_stylebox_override("normal",
-		_flat_style(Color(1, 0.96, 0.89, 1.0), UiPalette.INK))
-	_difficulty_button.add_theme_stylebox_override("hover",
-		_flat_style(UiPalette.YELLOW, UiPalette.INK))
-	_difficulty_button.pressed.connect(_on_difficulty_pressed)
-	difficulty.add_child(_difficulty_button)
+	_difficulty_button = _cycle_row(page, "Bot difficulty",
+		"How hard the AI carts race in single-player events. Hosts set it in the room.",
+		_cycle_text(GameSettings.ai_difficulty_name()), _on_difficulty_pressed)
 
 
 func _build_accessibility(page: VBoxContainer) -> void:
 	_page_header(page, "ACCESSIBILITY", "Less motion, clearer information.")
-	_reduce_motion_toggle = _toggle_row(page, "Reduce motion", _on_reduce_motion_toggled)
-	_show_fps_toggle = _toggle_row(page, "Show FPS", _on_show_fps_toggled)
+	_reduce_motion_toggle = _toggle_row(page, "Reduce motion",
+		"Damps camera roll, shake and FOV kicks without slowing the cart.",
+		_on_reduce_motion_toggled)
+	_show_fps_toggle = _toggle_row(page, "Show FPS",
+		"Draw a small frame-rate counter in the corner of the HUD.",
+		_on_show_fps_toggled)
 
 
 func _build_updates(page: VBoxContainer) -> void:
@@ -231,6 +253,7 @@ func _build_updates(page: VBoxContainer) -> void:
 	_check_button = _candy_button("CHECK FOR UPDATES", UiPalette.YELLOW, 48, 18)
 	_check_button.custom_minimum_size = Vector2(280, 48)
 	_check_button.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	_check_button.tooltip_text = "Ask the update server whether a newer build exists."
 	_check_button.pressed.connect(_on_check_updates)
 	page.add_child(_check_button)
 	_update_status = _label("", 14, UiPalette.MUTED)
@@ -249,25 +272,28 @@ func _page_header(page: VBoxContainer, title_text: String, subtitle_text: String
 	page.add_child(rule)
 
 
-func _slider_row(page: VBoxContainer, label_text: String, min_value: float,
-		max_value: float, step: float, callback: Callable) -> HSlider:
+func _slider_row(page: VBoxContainer, label_text: String, description: String,
+		min_value: float, max_value: float, step: float,
+		callback: Callable) -> HSlider:
 	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 14)
+	row.add_theme_constant_override("separation", UiKit.SPACING)
 	page.add_child(row)
 	var label := _label(label_text, 17, UiPalette.INK)
 	label.custom_minimum_size = Vector2(210, 0)
 	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	row.add_child(label)
 	var slider := HSlider.new()
+	slider.set_script(load(FOCUS_SLIDER))
 	slider.min_value = min_value
 	slider.max_value = max_value
 	slider.step = step
 	slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	slider.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	slider.custom_minimum_size = Vector2(240, 36)
-	slider.focus_mode = Control.FOCUS_NONE
+	slider.tooltip_text = description
 	slider.value_changed.connect(callback)
 	row.add_child(slider)
+	_describe(slider, description)
 	var value := _label("", 20, UiPalette.BODY_BLUE)
 	value.custom_minimum_size = Vector2(64, 0)
 	value.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
@@ -280,10 +306,10 @@ func _slider_row(page: VBoxContainer, label_text: String, min_value: float,
 var _last_value: Label
 
 
-func _toggle_row(page: VBoxContainer, label_text: String,
+func _toggle_row(page: VBoxContainer, label_text: String, description: String,
 		callback: Callable) -> ToggleSwitch:
 	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 14)
+	row.add_theme_constant_override("separation", UiKit.SPACING)
 	page.add_child(row)
 	var label := _label(label_text, 17, UiPalette.INK)
 	label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -291,9 +317,44 @@ func _toggle_row(page: VBoxContainer, label_text: String,
 	row.add_child(label)
 	var toggle := ToggleSwitch.new()
 	toggle.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	toggle.tooltip_text = description
 	toggle.toggled.connect(callback)
 	row.add_child(toggle)
+	_describe(toggle, description)
 	return toggle
+
+
+func _cycle_row(page: VBoxContainer, label_text: String, description: String,
+		value_text: String, callback: Callable) -> Button:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", UiKit.SPACING)
+	page.add_child(row)
+	var label := _label(label_text, 17, UiPalette.INK)
+	label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	row.add_child(label)
+	var button := _plain_button(value_text, 17, 42)
+	button.custom_minimum_size = Vector2(180, 42)
+	button.add_theme_stylebox_override("normal",
+		_flat_style(Color(1, 0.96, 0.89, 1.0), UiPalette.INK))
+	button.add_theme_stylebox_override("hover",
+		_flat_style(UiPalette.YELLOW, UiPalette.INK))
+	button.tooltip_text = description
+	button.pressed.connect(callback)
+	row.add_child(button)
+	_describe(button, description)
+	return button
+
+
+func _describe(control: Control, description: String) -> void:
+	## Hover and keyboard focus both explain the row in the shared help line.
+	control.mouse_entered.connect(_show_description.bind(description))
+	control.focus_entered.connect(_show_description.bind(description))
+
+
+func _show_description(description: String) -> void:
+	if _desc_label != null and is_instance_valid(_desc_label):
+		_desc_label.text = description
 
 
 func _label(text: String, font_size: int, color: Color) -> Label:
@@ -311,10 +372,11 @@ func _plain_button(text: String, font_size: int, height: int) -> Button:
 	button.custom_minimum_size = Vector2(0, height)
 	button.add_theme_font_size_override("font_size", font_size)
 	_ink_text(button)
-	button.focus_mode = Control.FOCUS_NONE
+	button.focus_mode = Control.FOCUS_ALL
 	button.add_theme_stylebox_override("normal", _flat_style(Color(1, 1, 1, 0.0), Color(0, 0, 0, 0)))
 	button.add_theme_stylebox_override("hover", _flat_style(Color(1, 0.96, 0.89, 0.75), UiPalette.INK))
 	button.add_theme_stylebox_override("pressed", _flat_style(UiPalette.YELLOW, UiPalette.INK))
+	UiKit.apply_focus_ring(button, 12)
 	return button
 
 
@@ -373,6 +435,10 @@ func _show_page(index: int) -> void:
 		button.add_theme_stylebox_override("hover",
 			_flat_style(UiPalette.YELLOW if selected else Color(1, 0.96, 0.89, 0.75),
 				UiPalette.INK))
+	if _desc_label != null:
+		_desc_label.text = "Hover or focus a row to see what it changes."
+	# The visible page changed, so the focus map has to as well.
+	MenuNav.refresh()
 
 
 func _refresh() -> void:

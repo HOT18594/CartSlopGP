@@ -50,6 +50,7 @@ var _art_index: int = -1
 var _task_mode: bool = false
 var _task_title: String = ""
 var _task_message: String = ""
+var _last_percent: int = -1
 
 
 func _ready() -> void:
@@ -65,9 +66,41 @@ func _ready() -> void:
 	var title_label: Label = get_node_or_null("Title") as Label
 	if title_label != null:
 		title_label.visible = false
+	_place_labels()
 	resized.connect(queue_redraw)
 	_show_tip()
 	_refresh_labels()
+
+
+func _place_labels() -> void:
+	## The bar lives on the lower band. The two labels that survived the art
+	## pass are pinned to it so the number can never drift away from the fill.
+	if _percent_label != null:
+		_percent_label.anchor_left = BAR_X + BAR_W
+		_percent_label.anchor_right = BAR_X + BAR_W
+		_percent_label.anchor_top = BAR_TOP
+		_percent_label.anchor_bottom = BAR_TOP
+		_percent_label.offset_left = -260.0
+		_percent_label.offset_top = -48.0
+		_percent_label.offset_right = 0.0
+		_percent_label.offset_bottom = -6.0
+		_percent_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		_percent_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		_percent_label.add_theme_font_size_override("font_size", 32)
+	if _tip_label != null:
+		_tip_label.anchor_left = 0.0
+		_tip_label.anchor_right = 1.0
+		_tip_label.anchor_top = BAR_TOP + BAR_HEIGHT + 0.018
+		_tip_label.anchor_bottom = BAR_TOP + BAR_HEIGHT + 0.060
+		_tip_label.offset_left = 0.0
+		_tip_label.offset_right = 0.0
+		_tip_label.offset_top = 0.0
+		_tip_label.offset_bottom = 0.0
+		_tip_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	if _caption_label != null:
+		_caption_label.visible = false
+	if _message_label != null:
+		_message_label.visible = false
 
 
 func set_progress(value: float, immediate: bool = false) -> void:
@@ -96,20 +129,38 @@ func _process(delta: float) -> void:
 		_shown = UiAnim.damp(_shown, progress, delta, 14.0)
 		if absf(_shown - progress) < 0.001:
 			_shown = progress
+	_tip_timer += delta
+	if _tip_timer >= 4.5:
+		_tip_timer = 0.0
+		_tip_index = (_tip_index + 1) % TIPS.size()
+		_show_tip()
 	_refresh_labels()
 	queue_redraw()
 
 
 func _refresh_labels() -> void:
-	# The transition is one art background plus one bar. No percent, phase
-	# caption, message or rotating tip competes with it.
-	for label: Label in [_percent_label, _caption_label, _message_label, _tip_label]:
-		if label != null:
-			label.visible = false
+	# The bar is the primary read; the number above its right edge tells the
+	# player how much real work is left. Network tasks are indeterminate, so
+	# they show the task title instead of a fake percentage.
+	if _percent_label != null:
+		_percent_label.visible = not indeterminate
+		if not indeterminate:
+			var percent: int = int(round(_shown * 100.0))
+			if percent != _last_percent:
+				_last_percent = percent
+				_percent_label.text = "%d%%" % percent
+	if _caption_label != null:
+		_caption_label.visible = false
+	if _message_label != null:
+		_message_label.visible = false
+	if _tip_label != null:
+		_tip_label.visible = _tip_label.text != ""
 
 
 func _show_tip() -> void:
-	pass
+	if _tip_label == null or TIPS.is_empty():
+		return
+	_tip_label.text = TIPS[_tip_index % TIPS.size()]
 
 
 func _fill_ratio() -> float:

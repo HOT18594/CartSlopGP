@@ -53,6 +53,14 @@ func _ready() -> void:
 func _enter() -> void:
 	UiAnim.pop($Center/Panel)
 	MenuNav.refresh()
+	MenuNav.focus(_play_button if not _play_button.disabled else _back_button)
+
+
+func _unhandled_input(event: InputEvent) -> void:
+	## Escape is the same as BACK, with the lobby routing handled by _on_back.
+	if event.is_action_pressed("ui_cancel") and not SceneLoader.is_busy():
+		_on_back()
+		get_viewport().set_input_as_handled()
 
 
 func _build_ui() -> void:
@@ -133,6 +141,7 @@ func _build_ui() -> void:
 	_vehicle_button = _button("VEHICLE: SHOPPING CART", Color("8ed8f6"), 54, 18)
 	_vehicle_button.custom_minimum_size = Vector2(230, 54)
 	_vehicle_button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	_vehicle_button.tooltip_text = "Pick the cart you will race."
 	_vehicle_button.pressed.connect(_on_change_vehicle)
 	# Hosts already pick a car in the lobby's HOST SETTINGS. Showing a second
 	# vehicle button here was a pointless extra click.

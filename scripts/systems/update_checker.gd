@@ -174,6 +174,11 @@ var _last_check_ms: int = 0
 func check_for_updates(force: bool = false) -> void:
 	## Fire and forget. The main menu is rebuilt often, so an automatic check
 	## is rate-limited; SETTINGS > CHECK FOR UPDATES passes force=true.
+	if OS.has_feature("web"):
+		## The browser build is the install: reloading the served page is the
+		## update, so never offer a download the page cannot apply.
+		status = "current"
+		return
 	if not enable_update_checks or _checking or _downloading:
 		return
 	if github_owner == "" or github_repo == "":
@@ -541,6 +546,9 @@ func open_download_in_browser() -> void:
 
 func download_update() -> void:
 	## Tier 2: pull the release zip into user://updates/.
+	if OS.has_feature("web"):
+		download_failed.emit("web_build")
+		return
 	if _downloading:
 		return
 	if latest_asset_url == "":
@@ -763,6 +771,9 @@ func install_downloaded_update(zip_path: String = "") -> bool:
 	## Tier 3: stage the zip, write a small launcher script and quit. The script
 	## waits for this process to exit, swaps the files, relaunches and deletes
 	## itself. Windows uses .bat, macOS/Linux use bash.
+	if OS.has_feature("web"):
+		last_error = "install_unsupported_platform"
+		return false
 	if not OS.has_feature("template"):
 		last_error = "install_only_in_exported_build"
 		return false

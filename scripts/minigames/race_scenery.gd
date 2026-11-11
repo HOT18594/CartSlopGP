@@ -8,12 +8,24 @@ extends RefCounted
 ##   3. ~1,400 instanced photogrammetry ground-cover glTF models.
 ## The original Kenney low-poly forest stays as the cheap far-field canopy.
 ##
+## On top of that, build_horizon() rings the meadow with layered noise ridges,
+## cliffs, mountains and depth fog, and build_trackside() dresses the loop like
+## a real circuit: tyre walls, banners, marshal posts, grandstands, a start
+## gantry, distance boards, a pit wall and spectator parking.
+##
 ## Every cutout shares one of a handful of ShaderMaterials; the race controller
 ## feeds the kart's world position into them so grass visibly bends aside.
 
 const RealisticTree := preload("res://scripts/minigames/realistic_tree.gd")
 const PbrBaker := preload("res://scripts/minigames/pbr_baker.gd")
 const FoliageBaker := preload("res://scripts/minigames/foliage_baker.gd")
+const HorizonBuilder := preload("res://scripts/minigames/scenery/horizon_builder.gd")
+const TracksideStructures := preload("res://scripts/minigames/scenery/trackside_structures.gd")
+const TracksideProps := preload("res://scripts/minigames/scenery/trackside_props.gd")
+const TrackSpline := preload("res://scripts/minigames/track_spline.gd")
+
+const TRACKSIDE_HOLDER: String = "TracksideCircuit"
+const DEFAULT_SEED: int = 9137
 
 const TEX: String = "res://assets/textures/polyhaven/"
 const CARD: String = "res://assets/textures/foliage/"
@@ -30,6 +42,10 @@ const SCANNED_MODELS: PackedStringArray = [
 var wind_materials: Array[ShaderMaterial] = []
 var bend_materials: Array[ShaderMaterial] = []
 var stats: Dictionary = {"trees": 0, "grass_cards": 0, "scanned": 0, "draw_calls": 0}
+var horizon_stats: Dictionary = {"bands": 0, "draw_calls": 0}
+var trackside_stats: Dictionary = {"tyre_walls": 0, "tyres": 0, "grandstands": 0,
+	"crowd": 0, "figures": 0, "banners": 0, "distance_boards": 0,
+	"marshal_posts": 0, "spectator_cars": 0, "draw_calls": 0}
 
 var _parent: Node3D
 var _spline: RefCounted
@@ -46,11 +62,75 @@ func build(parent: Node3D, spline: RefCounted, host: Node, seed_value: int) -> D
 	_build_trees()
 	_build_grass_cards()
 	_build_scanned_plants()
+	# The circuit layers ride along with the old build() call so the race gets
+	# them even if nothing else is wired up. Both entry points are idempotent,
+	# so an explicit call from the race controller is always safe too.
+	build_horizon(parent)
+	if spline != null:
+		build_trackside(parent, Array(spline.points))
 	return {
 		"wind_materials": wind_materials,
 		"bend_materials": bend_materials,
 		"stats": stats,
+		"horizon_stats": horizon_stats,
+		"trackside_stats": trackside_stats,
 	}
+
+
+# --------------------------------------------------------------------------
+# circuit layers
+
+
+## Replaces the old SphereMesh dome horizon with layered, noise-displaced
+## ridges, cliffs, distant mountains and depth fog. Needs no prior build() call,
+## so the race controller can call it straight from its own hills step.
+func build_horizon(parent: Node3D) -> void:
+	if parent == null:
+		return
+	HorizonBuilder.build(parent, horizon_stats)
+
+
+## Adds the circuit furniture around the loop: tyre walls, sponsor banners,
+## marshal posts, grandstands with crowds, the start gantry, distance boards,
+## the pit wall, spectator cars and catch fences.
+##
+## `track` is the centreline the race controller already has. When build() was
+## not called first, an identical spline is generated, because TrackSpline is
+## built from fixed constants; the points only decide whether it is worth
+## building at all.
+func build_trackside(parent: Node3D, track: Array) -> void:
+	if parent == null or parent.has_node(TRACKSIDE_HOLDER):
+		return
+	var spline: RefCounted = _resolve_spline(track)
+	if spline == null:
+		return
+	var holder := Node3D.new()
+	holder.name = TRACKSIDE_HOLDER
+	parent.add_child(holder)
+	var rng: RandomNumberGenerator = _ensure_rng()
+	TracksideStructures.build(holder, spline, rng, trackside_stats)
+	TracksideProps.build(holder, spline, rng, trackside_stats)
+	print("MEADOW LOOP circuit: %d tyre walls, %d grandstands, %d figures, %d cars" % [
+		int(trackside_stats.get("tyre_walls", 0)),
+		int(trackside_stats.get("grandstands", 0)),
+		int(trackside_stats.get("figures", 0)),
+		int(trackside_stats.get("spectator_cars", 0))])
+
+
+func _ensure_rng() -> RandomNumberGenerator:
+	if _rng == null:
+		_rng = RandomNumberGenerator.new()
+		_rng.seed = DEFAULT_SEED
+	return _rng
+
+
+func _resolve_spline(track: Array) -> RefCounted:
+	if _spline != null:
+		return _spline
+	if track.is_empty():
+		return null
+	_spline = TrackSpline.new()
+	return _spline
 
 
 # --------------------------------------------------------------------------

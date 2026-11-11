@@ -4,11 +4,22 @@ extends CharacterBody3D
 const VehicleCatalog := preload("res://scripts/vehicles/vehicle_catalog.gd")
 const VehicleVisual := preload("res://scripts/vehicles/vehicle_visual.gd")
 const CollisionLayers := preload("res://scripts/systems/collision_layers.gd")
+const CartCollisionSystem := preload("res://scripts/systems/cart_collision.gd")
 const REFERENCE_MASS: float = 1200.0 ## Mass at which `engine_power` is quoted.
+## A bump only ever adds a shove; these bounds keep it from turning into a
+## launch and from taking steering away for longer than it reads on screen.
+const BUMP_MAX_IMPULSE: float = 9.0
+const BUMP_MIN_DURATION: float = 0.35
+const BUMP_MAX_DURATION: float = 0.6
+const BUMP_DEFAULT_DURATION: float = 0.45
+const BUMP_STEER_AUTHORITY: float = 0.45
 ## A sender clock is its own process uptime, so a single absurd stamp must not
 ## permanently reject every later packet. A backwards jump larger than this is
 ## treated as a clock reset and re-baselined; normal reordering stays rejected.
 const NET_CLOCK_RESET_MS: int = 60_000
+## A peer that joins but never streams a state must not stay solid at its
+## spawn point. Give the first packet a generous grace, then drop the body.
+const GHOST_STREAM_TIMEOUT_MS: int = 1500
 
 signal net_push_requested(prop: Node, direction: Vector3, kick: float)
 signal horn_requested()
@@ -36,6 +47,9 @@ const FALL_RESET_HEIGHT: float = -4.0
 @export var drift_grip: float = 2.5 ## Lateral grip while the handbrake is held (m/s^2).
 @export var drift_detection_threshold: float = 2.0 ## Sideways speed (m/s) that counts as drifting.
 @export var landing_stability_strength: float = 0.6 ## Fraction of sideways speed removed on landing (0-1).
+@export var slip_grip_falloff_start: float = 3.5 ## Sideways speed (m/s) where lateral grip starts to saturate.
+@export var slip_grip_falloff_end: float = 10.0 ## Sideways speed (m/s) where grip falloff bottoms out.
+@export var slip_grip_falloff_min: float = 0.45 ## Fraction of lateral grip left at full slide (0-1).
 
 @export_group("Steering & Air")
 @export var steering_speed: float = 2.6 ## Max yaw rate (radians/second).
@@ -44,14 +58,15 @@ const FALL_RESET_HEIGHT: float = -4.0
 @export var steer_attack: float = 7.0 ## How fast digital/keyboard steering reaches lock.
 @export var steer_release: float = 12.0 ## How fast it returns to centre.
 @export var steer_curve: float = 1.35 ## >1 gives finer control near centre, full lock at the edge.
+@export var weight_transfer_steering: float = 0.12 ## Turn-in gain under braking, loss under throttle (0-1).
 @export var air_control_strength: float = 0.25 ## Steering authority while airborne (0-1).
 @export var gravity: float = 22.0 ## Downward acceleration (m/s^2).
 @export var extra_fall_gravity: float = 1.6 ## Gravity multiplier while falling, for snappy landings.
 
 @export_group("Collision Recoil")
-@export var impact_speed_loss: float = 0.35 ## Fraction of impact speed lost on a hit (0-1).
-@export var impact_recoil: float = 0.32 ## Fraction of impact speed bounced away from the surface.
-@export var max_recoil_speed: float = 3.0 ## Cap on the recoil impulse (m/s).
+@export var impact_speed_loss: float = 0.35 ## Fraction of impact speed lost on a legacy vehicle hit (0-1).
+@export var impact_recoil: float = 0.32 ## Fraction of impact speed bounced away from a legacy vehicle.
+@export var max_recoil_speed: float = 3.0 ## Cap on the legacy vehicle recoil impulse (m/s).
 @export var min_impact_speed: float = 2.5 ## Impacts slower than this are ignored (m/s).
 @export var impact_cooldown: float = 0.12 ## Seconds between impact effects.
 @export var impact_tilt_strength: float = 0.22 ## Angular suspension kick from a solid impact.
@@ -103,6 +118,8 @@ const FALL_RESET_HEIGHT: float = -4.0
 @export_group("Suspension & Terrain")
 @export var slope_follow_strength: float = 1.0 ## 0-1: how strongly the chassis follows the support plane.
 @export var slope_smooth_speed: float = 12.0 ## How quickly grounded suspension follows terrain.
+@export var slope_gravity_scale: float = 0.30 ## Share of gravity pulling along the four-point support plane.
+@export var slope_lateral_gravity_scale: float = 0.15 ## Camber pull across the four-point support plane.
 @export var air_tilt_smooth_speed: float = 3.5 ## How quickly the chassis follows its flight arc.
 @export var ledge_tip_amount: float = 0.68 ## Nose/downward tip when an axle loses support (radians).
 @export var ledge_tip_smooth_speed: float = 5.5 ## Progressive tip response as wheels pass a ledge.
@@ -195,6 +212,12 @@ var _frame_start_velocity: Vector3 = Vector3.ZERO
 var _prev_velocity: Vector3 = Vector3.ZERO
 var _input_locked_now: bool = false
 var _impact_timer: float = 0.0
+## Seconds of reduced steering left from the last network/prop bump.
+var _bump_timer: float = 0.0
+## Wall-clock deadline for `_bump_timer`. A timer that only decrements in
+## _physics_process can freeze at its last value when the race ends and physics
+## is switched off; the deadline guarantees the penalty still expires.
+var _bump_expire_ms: int = 0
 ## True while the last contact was another cart's roof. CharacterBody treats
 ## that top face as floor, but accelerating along it is not real ground.
 var _cart_roof_contact: bool = false
@@ -310,16 +333,19 @@ func setup_remote(peer_id: int) -> void:
 	name = "Remote_%d" % peer_id
 	remove_from_group("player")
 	add_to_group("remote_player")
-	# Ghosts are solid to every local cart (GHOST layer) so players cannot
-	# drive through each other between state packets. The ghost itself never
-	# runs physics: it is placed by _update_remote_state and its mask stays 0,
-	# so it is never pushed by the world. The host's OBB resolver still owns
-	# the momentum exchange and the final separation.
-	collision_layer = CollisionLayers.GHOST
+	# Once its owner streams state, a ghost is solid to every local cart (GHOST
+	# layer) so players cannot drive through each other between packets. The
+	# ghost itself never runs physics: it is placed by _update_remote_state and
+	# its mask stays 0, so it is never pushed by the world. The host's OBB
+	# resolver owns the momentum exchange and the final separation.
+	# A ghost is not an obstacle until its owner streams a state. A peer that
+	# connects and then stalls in the loading screen used to leave a solid,
+	# invisible cart parked at its spawn for the whole race.
+	collision_layer = 0
 	collision_mask = 0
 	set_physics_process(true)
 	set_process(false)
-	contact_enabled = true
+	contact_enabled = false
 	race_finished = false
 	if _push_sensor != null:
 		_push_sensor.monitoring = false
@@ -396,6 +422,9 @@ func set_net_state(position: Vector3, yaw: float, sent_ms: int,
 		rotation.y = yaw
 		reset_physics_interpolation()
 	contact_enabled = not race_finished
+	# Publish solidity with the packet instead of waiting for the next
+	# interpolation tick, so a freshly arrived ghost is solid immediately.
+	collision_layer = CollisionLayers.GHOST if contact_enabled else 0
 	return true
 
 
@@ -405,6 +434,10 @@ func mark_race_finished() -> void:
 	race_finished = true
 	contact_enabled = false
 	collision_layer = 0
+	# A finished cart no longer gets guaranteed physics ticks, so clear the
+	# steering penalty here rather than leaving it frozen for a reuse/reset.
+	_bump_timer = 0.0
+	_bump_expire_ms = 0
 
 
 func setup_ai(vehicle_id: String) -> void:
@@ -440,6 +473,11 @@ func set_ai_controls(throttle: float, brake: float, steer: float,
 
 func _update_remote_state(delta: float) -> void:
 	if not _net_has_sample:
+		# A peer that connected but has not streamed yet is not an obstacle;
+		# after the grace period stop pretending it is a parked kart.
+		if Time.get_ticks_msec() - _net_last_receive_ms > GHOST_STREAM_TIMEOUT_MS:
+			contact_enabled = false
+			collision_layer = 0
 		return
 	var now: int = Time.get_ticks_msec()
 	# Cap prediction at 100 ms; 250 ms at 45 m/s was an 11 m overshoot.
@@ -541,6 +579,8 @@ func apply_vehicle_bump(normal: Vector3, push: float) -> void:
 	if push <= 0.0 or normal.length_squared() < 0.0001:
 		return
 	velocity += normal.normalized() * push
+	if not velocity.is_finite():
+		velocity = Vector3.ZERO
 	# Also nudge the visible pose so the hit reads immediately.
 	_susp_vel += minf(push * 0.035, 0.35)
 
@@ -549,10 +589,15 @@ func apply_vehicle_impulse(impulse: Vector3) -> void:
 	## Host-resolved momentum impulse for a two-body car collision.
 	if remote_mode or not impulse.is_finite():
 		return
-	impulse = impulse.limit_length(6.5)
-	if impulse.length() < 0.01:
+	# The shared solver already scaled the impulse by mass and turned it into
+	# a delta-v. Re-clamping it here (the old 6.5 m/s cap) truncated heavy hits
+	# and made remote carts conserve less momentum than locals. Only reject
+	# numerical noise; _clamp_horizontal_speed() remains the gameplay cap.
+	if impulse.length_squared() < 0.0001:
 		return
 	velocity += impulse
+	if not velocity.is_finite():
+		velocity = Vector3.ZERO
 	_impact_timer = maxf(_impact_timer, 0.08)
 	_susp_vel += minf(impulse.length() * 0.03, 0.30)
 	var strength: float = impulse.length()
@@ -564,20 +609,66 @@ func apply_vehicle_impulse(impulse: Vector3) -> void:
 		_feedback.on_collision(clampf(strength / maxf(max_speed, 1.0), 0.15, 0.85))
 
 
+func apply_bump(impulse: Vector3, duration: float) -> void:
+	## Short, forgiving shove used by network car contact and prop bumps.
+	## It only ever adds velocity: a bump must never stop the kart dead, spin it
+	## or flip it. Steering authority is briefly softened so the hit reads
+	## without taking the wheel away for long.
+	if remote_mode or not impulse.is_finite():
+		return
+	var kick: Vector3 = impulse.limit_length(BUMP_MAX_IMPULSE)
+	# Keep a bump from becoming a launch or a tumble trigger.
+	kick.y = clampf(kick.y, -1.0, 1.2)
+	if kick.length_squared() < 0.0001:
+		return
+	var before: Vector2 = Vector2(velocity.x, velocity.z)
+	var before_speed: float = before.length()
+	velocity += kick
+	if not velocity.is_finite():
+		velocity = Vector3.ZERO
+	# If the impulse cancelled almost all forward motion, keep a residual along
+	# the old heading. This is the difference between a bump and a handbrake.
+	var after: Vector2 = Vector2(velocity.x, velocity.z)
+	if before_speed > 0.5 and after.length() < before_speed * 0.25:
+		var heading: Vector2 = before / before_speed
+		velocity.x = heading.x * before_speed * 0.25
+		velocity.z = heading.y * before_speed * 0.25
+	var hold: float = duration if is_finite(duration) and duration > 0.0 \
+		else BUMP_DEFAULT_DURATION
+	hold = clampf(hold, BUMP_MIN_DURATION, BUMP_MAX_DURATION)
+	# Take the longer of the remaining penalty and this bump; never add them.
+	# Two hits in quick succession cost at most one full penalty instead of
+	# stacking into a long steering lockout.
+	if hold > _bump_timer:
+		_bump_timer = hold
+		_bump_expire_ms = Time.get_ticks_msec() + int(round(hold * 1000.0))
+	_impact_timer = maxf(_impact_timer, 0.08)
+	var strength: float = kick.length()
+	_susp_vel += minf(strength * 0.03, 0.30)
+	_squash_impulse = maxf(_squash_impulse, clampf(strength * 0.08, 0.12, 0.5))
+	if _camera_rig != null:
+		_camera_rig.add_shake(clampf(strength * 0.05, 0.04, 0.30))
+	if _feedback != null:
+		_feedback.on_collision(clampf(strength / maxf(max_speed, 1.0), 0.12, 0.7))
+
+
 @rpc("authority", "reliable")
 func _net_apply_car_impulse(impulse: Vector3) -> void:
 	## Sent from the host's local cart; its path matches every client's local
 	## cart, so the correction lands on the cart that actually owns the physics.
 	if remote_mode or not impulse.is_finite():
 		return
-	apply_vehicle_impulse(impulse.limit_length(6.5))
+	# No second cap here: apply_vehicle_impulse() is the single entry point and
+	# the shared solver already owns the impulse scale.
+	apply_vehicle_impulse(impulse)
 
 
 @rpc("authority", "reliable")
 func _net_apply_car_bump(normal: Vector3, push: float) -> void:
 	if remote_mode or not normal.is_finite() or not is_finite(push):
 		return
-	apply_vehicle_bump(normal.normalized(), clampf(push, 0.0, 8.0))
+	# apply_vehicle_bump() already normalises and bounds the shove.
+	apply_vehicle_bump(normal, push)
 
 
 func _apply_vehicle_visual() -> Dictionary:
@@ -706,6 +797,16 @@ func _physics_process(delta: float) -> void:
 		_update_remote_state(delta)
 		return
 	_impact_timer = maxf(_impact_timer - delta, 0.0)
+	# The bump penalty is both decremented and bounded by a wall-clock
+	# deadline. If physics stops (race finished, scene change, node paused)
+	# the deadline still expires the stale lockout instead of freezing it.
+	if _bump_timer > 0.0 and Time.get_ticks_msec() >= _bump_expire_ms:
+		_bump_timer = 0.0
+	_bump_timer = maxf(_bump_timer - delta, 0.0)
+	# Guard the whole tick, not just the post-contact state: _update_drive
+	# decomposes velocity and would spread one NaN into every component.
+	if not velocity.is_finite():
+		velocity = Vector3.ZERO
 	_frame_start_velocity = velocity
 	_input_locked_now = false if ai_mode else Network.input_locked
 	var boost_held: bool = ai_boost if ai_mode else not _input_locked_now and _read_boost_held()
@@ -731,6 +832,10 @@ func _physics_process(delta: float) -> void:
 	move_and_slide()
 	_clamp_horizontal_speed()
 	_process_collisions()
+	# A malformed impulse must never leave NaN/Inf in the body. Every later
+	# frame (move_and_slide included) would consume it and poison the cart.
+	if not velocity.is_finite():
+		velocity = _prev_velocity if _prev_velocity.is_finite() else Vector3.ZERO
 	_process_landing_and_launch()
 	_update_ground_tilt(delta)
 	_update_tumble(steer_input, delta)
@@ -753,7 +858,11 @@ func _update_drive(delta: float, handbrake_held: bool) -> void:
 	# A cart roof is a flat CharacterBody floor, but it is not terrain: let the
 	# cart slide off instead of accelerating along another vehicle.
 	var grounded: bool = is_on_floor() and not _cart_roof_contact
+	# The four-point probe set sees crests and cambers that the single engine
+	# floor normal smooths over. Fall back before the first probe pass.
 	var normal: Vector3 = get_floor_normal() if grounded else Vector3.UP
+	if grounded and _support_count > 0 and _ground_normal.length_squared() > 0.01:
+		normal = _ground_normal
 	var forward_dir: Vector3 = -global_transform.basis.z
 	var right_dir: Vector3 = global_transform.basis.x
 	if grounded:
@@ -803,6 +912,12 @@ func _update_drive(delta: float, handbrake_held: bool) -> void:
 		# while the driver is actually on the throttle.
 		var grade: float = clampf(-normal.dot(forward_dir), 0.0, 1.0)
 		fwd_speed += grade * gravity * 0.85 * delta
+	if grounded:
+		# Four-point slope support: let gravity pull along the support plane.
+		# The throttle assist above still wins on climbs; this makes downhill
+		# runs carry speed and keeps a parked cart from feeling glued down.
+		fwd_speed += gravity * normal.dot(forward_dir) * slope_gravity_scale * delta
+		lat_speed += gravity * normal.dot(right_dir) * slope_lateral_gravity_scale * delta
 	# Charge the mini-turbo from the actual pre-grip slip, then release it.
 	# The returned kick is folded into fwd_speed so the velocity rebuild below
 	# cannot discard it.
@@ -813,6 +928,13 @@ func _update_drive(delta: float, handbrake_held: bool) -> void:
 		fwd_speed = move_toward(fwd_speed, 0.0, brake_power * 0.4 * delta)
 	if not grounded:
 		grip *= 0.25
+	else:
+		# Grip saturates past the slip angle: small slides stay planted, big
+		# ones keep sliding so a handbrake drift or a heavy landing can rotate.
+		var slip_speed: float = absf(lat_speed)
+		var slip_t: float = clampf((slip_speed - slip_grip_falloff_start)
+			/ maxf(slip_grip_falloff_end - slip_grip_falloff_start, 0.001), 0.0, 1.0)
+		grip *= lerpf(1.0, clampf(slip_grip_falloff_min, 0.0, 1.0), slip_t * slip_t)
 	lat_speed = move_toward(lat_speed, 0.0, grip * delta)
 	if grounded:
 		velocity = forward_dir * fwd_speed + right_dir * lat_speed
@@ -879,13 +1001,20 @@ func _apply_steering(steer_input: float, delta: float) -> void:
 	var start_factor: float = clampf(absf(fwd_speed) / min_turn_speed, 0.0, 1.0)
 	var high_speed_factor: float = lerpf(1.0, high_speed_steering_scale, speed_frac)
 	var authority: float = start_factor * high_speed_factor
+	# Weight transfer: braking loads the front axle and sharpens turn-in; throttle
+	# unloads it and widens the line. One frame of lag is fine for arcade feel.
+	var weight_transfer: float = clampf(_longitudinal_accel / maxf(gravity, 0.001),
+		-1.0, 1.0)
+	authority *= 1.0 - weight_transfer * weight_transfer_steering
+	if _bump_timer > 0.0:
+		authority *= BUMP_STEER_AUTHORITY
 	if not is_on_floor():
 		authority *= air_control_strength
 	rotate_y(steer_input * steering_speed * authority * signf(fwd_speed) * delta)
 
 
 func _process_collisions() -> void:
-	## Solid hits keep tangent speed, recoil away from the contact and kick the
+	## Solid hits keep tangent speed, add a small bounce and kick the
 	## suspension in the direction of the actual contact normal.
 	_cart_roof_contact = false
 	if _impact_timer > 0.0:
@@ -893,10 +1022,15 @@ func _process_collisions() -> void:
 	var handled: Dictionary = {}
 	for i in get_slide_collision_count():
 		var collision: KinematicCollision3D = get_slide_collision(i)
-		# Knocking a cone or crate around should never slow the kart down.
 		var hit: Object = collision.get_collider()
-		if hit is Node and (hit as Node).is_in_group("pushable"):
-			continue
+		var hit_node: Node = hit as Node
+		# Cones are launched by the push sensor and must never slow the kart.
+		# Solid crates do block it, but only softly (see below).
+		var solid_prop: bool = false
+		if hit_node != null and hit_node.is_in_group("pushable"):
+			solid_prop = _is_solid_prop(hit_node)
+			if not solid_prop:
+				continue
 		if hit is Object:
 			var hit_id: int = hit.get_instance_id()
 			if handled.has(hit_id):
@@ -919,10 +1053,14 @@ func _process_collisions() -> void:
 			other_vehicle = true
 			other_mass = (hit as CartPlayer).get_mass()
 			other_velocity = (hit as CartPlayer).get_collision_velocity()
-		elif hit is Node and (hit as Node).has_meta("vehicle_mass"):
+		elif solid_prop and hit is RigidBody3D:
+			# A launched crate can hit a stationary kart too; use its motion so
+			# the softening response reads in both directions.
+			other_velocity = (hit as RigidBody3D).linear_velocity
+		elif hit_node != null and hit_node.has_meta("vehicle_mass"):
 			other_vehicle = true
-			other_mass = float((hit as Node).get_meta("vehicle_mass"))
-			other_velocity = (hit as Node).get_meta("vehicle_velocity", Vector3.ZERO)
+			other_mass = float(hit_node.get_meta("vehicle_mass"))
+			other_velocity = hit_node.get_meta("vehicle_velocity", Vector3.ZERO)
 		if normal.y > 0.6 and not other_vehicle:
 			continue
 		if other_vehicle and normal.y > 0.6:
@@ -941,8 +1079,6 @@ func _process_collisions() -> void:
 		var impact_speed: float = maxf(-(_prev_velocity - other_velocity).dot(normal), 0.0)
 		if impact_speed < (0.05 if other_vehicle else min_impact_speed):
 			continue
-		# Momentum exchange. For a car-to-car hit both bodies share the impulse;
-		# for a wall, the wall is effectively infinite.
 		var own_mass: float = maxf(_profile_mass, 1.0)
 		var total_mass: float = maxf(own_mass + other_mass, 1.0)
 		var own_share: float = other_mass / total_mass if other_vehicle else 0.5
@@ -953,27 +1089,36 @@ func _process_collisions() -> void:
 			loss_scale *= clampf(pow(maxf(other_mass, 1.0) / own_mass, 0.25), 0.7, 1.5)
 		var shake_scale: float = clampf(1.0 / sqrt(weight_ratio), 0.65, 1.20)
 		var impact_factor: float = clampf(impact_speed / maxf(max_speed, 0.001), 0.0, 1.0)
-		# Even a slow shove needs a separating response; otherwise the engine
-		# simply presses one cart into an immovable bot every frame.
-		var contact_speed: float = maxf(impact_speed, 0.35) if other_vehicle else impact_speed
-		var recoil: float = contact_speed * impact_recoil * recoil_scale \
-			* (1.0 + own_share if other_vehicle else 1.0)
-		velocity += normal * minf(recoil, max_recoil_speed * maxf(recoil_scale, 1.0)
-			* (1.0 + own_share if other_vehicle else 1.0))
-		if other_vehicle:
-			# A physical AI is a real second body, not an offset on a rail. Both
-			# carts receive a comparable momentum change; the heavier vehicle
-			# transfers more momentum to the lighter one.
+		if not other_vehicle:
+			# Walls and solid crates: keep the slide and replace the harsh stop
+			# with a small bounce. This is the forgiving arcade wall response.
+			velocity = CartCollisionSystem.soften_wall_hit(self, normal, impact_speed)
+		elif hit is CartPlayer:
+			# Momentum-conserving two-body impulse. A heavy truck shoves a light
+			# kart aside and both keep their speed instead of dying on contact.
+			var pair_normal: Vector3 = -normal
+			# The physics engine already separated this pair during
+			# move_and_slide. The shared solver must only exchange momentum
+			# here, or the pair double-separates and visibly jitters.
+			CartCollisionSystem.resolve_pair(self, hit as CartPlayer,
+				collision.get_position(), pair_normal, collision.get_depth(), false)
+		else:
+			# Legacy meta-bodied vehicle (minigame bots): keep the old momentum
+			# exchange so their protocol does not change.
+			var contact_speed: float = maxf(impact_speed, 0.35)
+			var recoil: float = contact_speed * impact_recoil * recoil_scale \
+				* (1.0 + own_share)
+			velocity += normal * minf(recoil, max_recoil_speed * maxf(recoil_scale, 1.0)
+				* (1.0 + own_share))
 			var other_push: float = contact_speed * 0.78 * (own_mass / total_mass)
-			if hit is CartPlayer:
-				(hit as CartPlayer).apply_vehicle_impulse(-normal * other_push)
-			elif hit is Node and (hit as Node).has_meta("bump_velocity"):
-				var bump: Vector3 = (hit as Node).get_meta("bump_velocity", Vector3.ZERO)
-				(hit as Node).set_meta("bump_velocity", bump - normal * other_push)
-		var loss: float = impact_speed * impact_speed_loss * loss_scale
-		var planar: Vector3 = Vector3(velocity.x, 0.0, velocity.z).move_toward(Vector3.ZERO, loss)
-		velocity.x = planar.x
-		velocity.z = planar.z
+			if hit_node.has_meta("bump_velocity"):
+				var bump: Vector3 = hit_node.get_meta("bump_velocity", Vector3.ZERO)
+				hit_node.set_meta("bump_velocity", bump - normal * other_push)
+			var loss: float = impact_speed * impact_speed_loss * loss_scale
+			var planar: Vector3 = Vector3(velocity.x, 0.0, velocity.z).move_toward(
+				Vector3.ZERO, loss)
+			velocity.x = planar.x
+			velocity.z = planar.z
 		var local_normal: Vector3 = (global_transform.basis.inverse() * normal).normalized()
 		_base_pitch_vel += local_normal.z * impact_factor * impact_tilt_strength * 12.0
 		_base_roll_vel -= local_normal.x * impact_factor * impact_tilt_strength * 12.0
@@ -993,6 +1138,12 @@ func _process_collisions() -> void:
 		# Keep scanning: a car bump must not hide a wall contact in the same
 		# frame. Duplicate compound-shape contacts are deduped above.
 		continue
+
+
+func _is_solid_prop(node: Node) -> bool:
+	## Crates advertise SOLID_PROP in their collision layer; cones do not.
+	var body: CollisionObject3D = node as CollisionObject3D
+	return body != null and (body.collision_layer & CollisionLayers.SOLID_PROP) != 0
 
 
 func _on_push_sensor_body_entered(body: Node3D) -> void:
@@ -1111,6 +1262,9 @@ func _cancel_hit_stop() -> void:
 
 func _exit_tree() -> void:
 	_cancel_hit_stop()
+	# Never leave a penalized state behind if this node is removed/reused.
+	_bump_timer = 0.0
+	_bump_expire_ms = 0
 
 
 func on_boost_pad(burst_speed: float) -> void:
@@ -1184,6 +1338,8 @@ func _enter_crashed(up_dot: float) -> void:
 	_drift_charging = false
 	_mini_boost_timer = 0.0
 	_pad_burst_timer = 0.0
+	_bump_timer = 0.0
+	_bump_expire_ms = 0
 	velocity *= 0.5
 	if not is_on_floor():
 		global_position.y += 0.4
@@ -1419,8 +1575,11 @@ func reset_for_respawn() -> void:
 	var keep: Transform3D = global_transform
 	_reset_cart(false)
 	global_transform = keep
-	contact_enabled = true
-	collision_layer = 0 if remote_mode else (CollisionLayers.GHOST if ai_mode else CollisionLayers.PLAYER)
+	# Respawn revives a racing cart, never a finished one: a crossed cart must
+	# stay intangible for the rest of the race.
+	contact_enabled = not race_finished
+	collision_layer = 0 if race_finished or remote_mode \
+		else (CollisionLayers.GHOST if ai_mode else CollisionLayers.PLAYER)
 	reset_physics_interpolation()
 
 
@@ -1434,6 +1593,8 @@ func _reset_cart(restore_props: bool = true) -> void:
 	_squash_impulse = 0.0
 	_stretch_impulse = 0.0
 	_impact_timer = 0.0
+	_bump_timer = 0.0
+	_bump_expire_ms = 0
 	is_drifting = false
 	_frame_start_velocity = Vector3.ZERO
 	_prev_velocity = Vector3.ZERO

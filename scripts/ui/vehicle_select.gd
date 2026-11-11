@@ -62,7 +62,9 @@ func _ready() -> void:
 		_prev_button.disabled = true
 		_next_button.disabled = true
 		_drive_button.disabled = true
-		pass
+		# BACK is the only live action; give the keyboard something to land on.
+		MenuNav.refresh()
+		MenuNav.focus(_back_button)
 		return
 	_build_stats()
 	var current_id: String = GameSettings.minigame_vehicle if GameSettings.vehicle_edit_minigame \
@@ -81,6 +83,17 @@ func _ready() -> void:
 func _enter() -> void:
 	UiAnim.pop($Center/Panel)
 	MenuNav.refresh()
+	if _entries.is_empty():
+		MenuNav.focus(_back_button)
+	else:
+		MenuNav.focus(_drive_button)
+
+
+func _unhandled_input(event: InputEvent) -> void:
+	## Escape leaves the garage the same way BACK does.
+	if event.is_action_pressed("ui_cancel") and not SceneLoader.is_busy():
+		_on_back()
+		get_viewport().set_input_as_handled()
 
 
 func nav_horizontal(direction: int) -> bool:

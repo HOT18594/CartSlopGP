@@ -46,7 +46,7 @@ func _ready() -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	if event.is_action_pressed("pause"):
+	if event.is_action_pressed("pause") or event.is_action_pressed("ui_cancel"):
 		# The loading overlay owns input while a scene is being swapped. An
 		# old pause menu can still be in the tree during that transition;
 		# opening it there paused the tree and the next scene came up frozen.
@@ -54,6 +54,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 			return
 		if _settings_menu.visible:
+			# Escape closes the topmost overlay only: Settings, not Pause.
 			return
 		if _is_open:
 			close()
@@ -81,6 +82,7 @@ func open() -> void:
 	CursorController.set_menu_mode(true)
 	UiAnim.pop($Center/Panel)
 	MenuNav.refresh()
+	MenuNav.focus(_resume_button)
 
 
 func close() -> void:

@@ -2,6 +2,50 @@
 
 Player-facing notes, newest first.
 
+## [0.7.1] - 2026-11-10
+
+### Bumps that move you
+
+- Hitting another cart now transfers momentum properly: two karts shove each
+  other apart instead of one simply stopping dead.
+- A careless hit costs you a moment of steering, not the whole race, and
+  clipping a wall or a crate now keeps your speed and slides instead of
+  stopping the kart.
+- Heavier vehicles push lighter ones around, as you would expect.
+
+### Bots that race
+
+- Race bots follow a real racing line, brake before corners and stop driving
+  into tyre walls.
+- Bots now ride the dirt ramps instead of passing through them, and they
+  recover on their own if they get beached.
+- Free-roam bots in the sandbox steer around crates, ramps and other carts.
+
+### A map worth looking at
+
+- The row of dome-shaped hills is gone. Both maps now sit inside layered
+  ridges, cliffs and distant peaks.
+- The track has grandstands with crowds, a start gantry, tyre walls, marshal
+  posts and sponsor boards.
+- The park gained a pond, boulders, fencing, a paddock and denser woodland.
+
+### Easier to use
+
+- Menus work properly with a keyboard or gamepad: focus is visible, Escape
+  closes only the top panel, and every menu has a way back.
+- The HUD shows your gear, current and best lap, the gap to the leader, and
+  the real ping to the server.
+
+### Play in your browser
+
+- The Pi can serve the game itself: sign in with the panel password and play
+  in the browser, no download.
+
+### Fixes
+
+- The browser build no longer offers an update it cannot install.
+- Rubber-banding is gone from bot races.
+
 ## [0.7.0] - 2026-11-10
 
 ### Races run by the Pi

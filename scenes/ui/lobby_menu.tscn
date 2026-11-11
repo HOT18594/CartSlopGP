@@ -78,6 +78,7 @@ layout_mode = 2
 size_flags_vertical = 3
 horizontal_scroll_mode = 0
 vertical_scroll_mode = 1
+follow_focus = true
 
 [node name="Body" type="VBoxContainer" parent="Frame/Panel/Shell/Content"]
 custom_minimum_size = Vector2(860, 0)

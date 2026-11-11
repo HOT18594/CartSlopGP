@@ -47,6 +47,7 @@ func _ready() -> void:
 func _enter() -> void:
 	UiAnim.pop($Center/Column/Buttons)
 	MenuNav.refresh()
+	MenuNav.focus(_play_button)
 
 
 func _on_play_pressed() -> void:

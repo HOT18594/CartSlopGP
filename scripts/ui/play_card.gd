@@ -29,7 +29,7 @@ func _ready() -> void:
 	_display = load(DISPLAY_FONT)
 	alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_apply_styles()
-	focus_mode = Control.FOCUS_NONE
+	focus_mode = Control.FOCUS_ALL
 	_update_pivot()
 	resized.connect(_update_pivot)
 	mouse_entered.connect(func() -> void: _hovered = true)
@@ -42,7 +42,7 @@ func _process(delta: float) -> void:
 	if not is_visible_in_tree():
 		return
 	_time += delta
-	var active: bool = _hovered and not _held and not disabled
+	var active: bool = (_hovered or has_focus()) and not _held and not disabled
 	if disabled:
 		_held = false
 	var target_scale: float = 0.97 if _held else (1.03 if active else 1.0)
@@ -121,6 +121,9 @@ func _apply_styles() -> void:
 	add_theme_stylebox_override("hover", _make(fill_color.lightened(0.12), 11))
 	add_theme_stylebox_override("pressed", _make(fill_color.darkened(0.10), 3))
 	add_theme_stylebox_override("disabled", _make(Color("9a94b4"), 5))
+	var kit: Node = get_node_or_null("/root/UiKit")
+	if kit != null and kit.has_method("apply_focus_ring"):
+		kit.call("apply_focus_ring", self, 30)
 
 
 func _make(color: Color, drop: int) -> StyleBoxFlat:

@@ -87,6 +87,19 @@ func open() -> void:
 	show()
 	UiAnim.pop(_panel)
 	MenuNav.refresh()
+	_focus_list()
+
+
+func request_close() -> void:
+	## Escape from MenuNav closes only this panel, never the screen behind it.
+	close()
+
+
+func _focus_list() -> void:
+	if _releases.is_empty() or _release_buttons.is_empty():
+		MenuNav.focus(_back_button)
+	else:
+		MenuNav.focus(_release_buttons[0])
 
 
 func close() -> void:
@@ -146,6 +159,7 @@ func _show_list() -> void:
 	_list_view.visible = true
 	_detail_view.visible = false
 	MenuNav.refresh()
+	_focus_list()
 
 
 func _show_release(index: int) -> void:
@@ -158,6 +172,7 @@ func _show_release(index: int) -> void:
 	_detail_view.visible = true
 	UiAnim.fade_in(_detail_view, 0.18)
 	MenuNav.refresh()
+	MenuNav.focus(_all_versions_button)
 
 
 func _read_changelog() -> String:

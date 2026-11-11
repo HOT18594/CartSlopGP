@@ -4,8 +4,9 @@ const UiAnim := preload("res://scripts/ui/ui_anim.gd")
 ## shadow and white outlined text (font comes from the theme).
 ##
 ## Motion is shared with every other menu through UiAnim's frame-rate
-## independent damping. Buttons respond to the mouse only; keyboard focus and
-## its rings/chevrons/notches were removed at the owner's request.
+## independent damping. The button reacts to the mouse and to keyboard/gamepad
+## focus: a focused pill keeps a small, deliberate wiggle so the player can see
+## where Enter/Space will land, and UiKit paints the focus ring.
 
 @export var fill_color: Color = Color("45b6f0"):
 	set(value):
@@ -32,7 +33,7 @@ var _rotation_now: float = 0.0
 
 
 func _ready() -> void:
-	focus_mode = Control.FOCUS_NONE
+	focus_mode = Control.FOCUS_ALL
 	_gloss.bg_color = Color(1, 1, 1, 0.22)
 	_gloss.set_corner_radius_all(20)
 	_apply_styles()
@@ -48,7 +49,8 @@ func _process(delta: float) -> void:
 	if not is_visible_in_tree():
 		return
 	_time += delta
-	var active: bool = _hovered and not _held and not disabled
+	var focused: bool = has_focus()
+	var active: bool = (_hovered or focused) and not _held and not disabled
 	if disabled:
 		_held = false
 	z_index = 1 if active or _held else 0
@@ -91,6 +93,10 @@ func _apply_styles() -> void:
 	add_theme_stylebox_override("hover", _make(fill_color.lightened(0.14), shadow_offset + 2))
 	add_theme_stylebox_override("pressed", _make(fill_color.darkened(0.10), maxi(shadow_offset - 6, 2)))
 	add_theme_stylebox_override("disabled", _make(Color("9a94b4"), 5))
+	# The ring follows this button's authored corner radius, not UiKit's default.
+	var kit: Node = get_node_or_null("/root/UiKit")
+	if kit != null and kit.has_method("apply_focus_ring"):
+		kit.call("apply_focus_ring", self, corner_radius)
 
 
 func _make(color: Color, drop: int) -> StyleBoxFlat:

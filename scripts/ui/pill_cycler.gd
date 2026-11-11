@@ -54,6 +54,19 @@ func step(direction: int) -> void:
 	option_changed.emit(get_value())
 
 
+func _gui_input(event: InputEvent) -> void:
+	## A focused selector changes value with left/right, like a slider. Up/down
+	## and Tab still move focus, and Enter still steps forward via `pressed`.
+	if not has_focus():
+		return
+	if event.is_action_pressed("ui_left"):
+		step(-1)
+		accept_event()
+	elif event.is_action_pressed("ui_right"):
+		step(1)
+		accept_event()
+
+
 func _refresh() -> void:
 	if options.is_empty():
 		return
