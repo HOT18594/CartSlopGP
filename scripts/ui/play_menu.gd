@@ -8,8 +8,6 @@ const UiAnim := preload("res://scripts/ui/ui_anim.gd")
 ## real destinations (SANDBOX and MINIGAMES) plus the BOTS setting.
 
 const UiPalette := preload("res://scripts/ui/ui_palette.gd")
-const CANDY_BUTTON := "res://scripts/ui/candy_button.gd"
-const PILL_CYCLER := "res://scripts/ui/pill_cycler.gd"
 const PLAY_CARD := "res://scripts/ui/play_card.gd"
 
 const VEHICLE_SCENE: String = "res://scenes/ui/vehicle_select.tscn"
@@ -17,7 +15,7 @@ const MAIN_MENU_SCENE: String = "res://scenes/ui/main_menu.tscn"
 const LOBBY_SCENE: String = "res://scenes/ui/lobby_menu.tscn"
 const MINIGAMES_SCENE: String = "res://scenes/ui/minigames_menu.tscn"
 
-const BOT_LABELS: PackedStringArray = ["NO BOTS", "1 BOT", "2 BOTS", "3 BOTS", "4 BOTS", "5 BOTS"]
+const BOT_LABELS: PackedStringArray = ["NONE", "1", "2", "3", "4", "5"]
 const BOT_VALUES: Array[int] = [0, 1, 2, 3, 4, 5]
 
 @onready var _body: VBoxContainer = $Center/Panel/Body
@@ -53,18 +51,18 @@ func _enter() -> void:
 
 
 func _build_ui() -> void:
-	_body.add_theme_constant_override("separation", 16)
+	_body.add_theme_constant_override("separation", UiKit.SPACING_WIDE)
 
 	_title = Label.new()
 	_title.theme_type_variation = &"TitleLabel"
-	_title.add_theme_font_size_override("font_size", 48)
+	_title.add_theme_font_size_override("font_size", UiKit.TITLE_SIZE)
 	_title.add_theme_color_override("font_color", UiPalette.INK)
 	_title.text = "PLAY"
 	_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_body.add_child(_title)
 
 	_cards_row = HBoxContainer.new()
-	_cards_row.add_theme_constant_override("separation", 24)
+	_cards_row.add_theme_constant_override("separation", UiKit.SPACING_WIDE)
 	_cards_row.alignment = BoxContainer.ALIGNMENT_CENTER
 	_body.add_child(_cards_row)
 	_single_card = _card("SINGLE", UiPalette.YELLOW, false)
@@ -77,30 +75,34 @@ func _build_ui() -> void:
 	_cards_row.add_child(_multi_card)
 
 	_single_box = VBoxContainer.new()
-	_single_box.add_theme_constant_override("separation", 12)
+	_single_box.add_theme_constant_override("separation", UiKit.SPACING)
 	_body.add_child(_single_box)
-	_bots_pill = Button.new()
-	_bots_pill.set_script(load(PILL_CYCLER))
-	_bots_pill.set("corner_radius", 22)
-	_bots_pill.set("shadow_offset", 6)
-	_bots_pill.custom_minimum_size = Vector2(320, 48)
+	# A small choice is a strip of equal tiles, not one pill stretched across
+	# the screen. The caption above it names the setting.
+	var bots_caption := Label.new()
+	bots_caption.text = "BOTS"
+	bots_caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	bots_caption.add_theme_font_size_override("font_size", UiKit.CAPTION_SIZE)
+	bots_caption.add_theme_color_override("font_color", UiPalette.MUTED)
+	_single_box.add_child(bots_caption)
+	_bots_pill = UiKit.segmented(BOT_LABELS, BOT_VALUES,
+		GameSettings.effective_bot_count(), 84.0, 52.0)
 	_bots_pill.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	_bots_pill.add_theme_font_size_override("font_size", 19)
-	_bots_pill.call("configure", BOT_LABELS, BOT_VALUES, GameSettings.effective_bot_count())
+	_bots_pill.tooltip_text = "How many AI carts join the race."
 	_bots_pill.connect("option_changed", _on_bots_changed)
 	_single_box.add_child(_bots_pill)
 	var single_row := HBoxContainer.new()
-	single_row.add_theme_constant_override("separation", 12)
+	single_row.add_theme_constant_override("separation", UiKit.SPACING)
 	single_row.alignment = BoxContainer.ALIGNMENT_CENTER
 	_single_box.add_child(single_row)
-	var sandbox := _button("SANDBOX", UiPalette.YELLOW, 60, 24)
+	var sandbox := _button("SANDBOX", UiPalette.YELLOW, 72, 22)
 	sandbox.custom_minimum_size.x = 250
 	sandbox.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	sandbox.tooltip_text = "Drive around the park on your own. No laps, no rivals."
 	sandbox.pressed.connect(_on_single_sandbox)
 	single_row.add_child(sandbox)
 	_sandbox_button = sandbox
-	var minigames := _button("MINIGAMES", UiPalette.GRASS, 60, 24)
+	var minigames := _button("MINIGAMES", UiPalette.GRASS, 72, 22)
 	minigames.custom_minimum_size.x = 250
 	minigames.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	minigames.tooltip_text = "Race the field on a real track."
@@ -109,8 +111,8 @@ func _build_ui() -> void:
 	_minigames_button = minigames
 
 	# One exit bar under everything, whatever state we are in.
-	_back_bar = _button("BACK", UiPalette.RED, 54, 21)
-	_back_bar.custom_minimum_size.x = 260
+	_back_bar = _button("BACK", UiPalette.RED, 54, 19)
+	_back_bar.custom_minimum_size.x = 220
 	_back_bar.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	_back_bar.tooltip_text = "Back to the mode picker, then the main menu."
 	_back_bar.pressed.connect(_on_back)
@@ -129,14 +131,7 @@ func _card(text: String, color: Color, two_carts: bool) -> Button:
 
 
 func _button(text: String, color: Color, height: int, font_size: int) -> Button:
-	var button := Button.new()
-	button.set_script(load(CANDY_BUTTON))
-	button.set("fill_color", color)
-	button.set("corner_radius", mini(int(height / 2), 28))
-	button.text = text
-	button.custom_minimum_size = Vector2(0, height)
-	button.add_theme_font_size_override("font_size", font_size)
-	return button
+	return UiKit.tile(text, color, float(height), font_size)
 
 
 func _show_state(state: String, animate: bool = true) -> void:
@@ -162,7 +157,6 @@ func _show_state(state: String, animate: bool = true) -> void:
 func _refresh_bots() -> void:
 	var total: int = GameSettings.effective_bot_count()
 	_bots_pill.call("set_index", total)
-	_bots_pill.set("fill_color", UiPalette.GRASS if total > 0 else UiPalette.CREAM)
 
 
 func _on_bots_changed(value: Variant) -> void:

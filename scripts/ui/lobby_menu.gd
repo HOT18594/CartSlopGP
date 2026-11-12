@@ -19,15 +19,13 @@ const LOBBY_SCENE: String = "res://scenes/ui/lobby_menu.tscn"
 const ROOM_BROWSER_SCENE: String = "res://scenes/ui/room_browser.tscn"
 const Catalog := preload("res://scripts/vehicles/vehicle_catalog.gd")
 const UiPalette := preload("res://scripts/ui/ui_palette.gd")
-const CANDY_BUTTON: String = "res://scripts/ui/candy_button.gd"
-const PILL_CYCLER: String = "res://scripts/ui/pill_cycler.gd"
 
 const SERVER_DOWN: String = "Game server is down. Try again later."
 const OFFLINE_TEXT: String = "Online play is unavailable right now. LAN play still works."
 const LEAVE_WARNING: String = "Leaving will close the room for everyone."
 const MAX_SLOTS: int = 8
 
-const BOT_LABELS: PackedStringArray = ["NO BOTS", "1 BOT", "2 BOTS", "3 BOTS", "4 BOTS", "5 BOTS"]
+const BOT_LABELS: PackedStringArray = ["NONE", "1", "2", "3", "4", "5"]
 const BOT_VALUES: Array[int] = [0, 1, 2, 3, 4, 5]
 const TAG_COLORS: Array[Dictionary] = [
 	{"name": "YELLOW", "hex": "ffd22e"},
@@ -71,7 +69,7 @@ var _host_hint: Label
 var _players_box: VBoxContainer
 var _players_header: Label
 var _config_box: VBoxContainer
-var _settings_row: HBoxContainer
+var _settings_row: GridContainer
 var _setting_views: Dictionary = {} ## key -> Button
 var _summary: Label
 var _client_note: Label
@@ -156,27 +154,12 @@ func _focus_client() -> void:
 
 
 func _candy(text: String, color: Color, height: int, font_size: int) -> Button:
-	var button := Button.new()
-	button.set_script(load(CANDY_BUTTON))
-	button.set("fill_color", color)
-	button.set("corner_radius", mini(int(height / 2), 28))
-	button.set("shadow_offset", clampi(int(height / 8), 3, 8))
-	button.text = text
-	button.custom_minimum_size = Vector2(0, height)
-	button.add_theme_font_size_override("font_size", font_size)
-	return button
+	return UiKit.tile(text, color, float(height), font_size)
 
 
-func _pill(labels: PackedStringArray, values: Array, start_index: int) -> Button:
-	var button := Button.new()
-	button.set_script(load(PILL_CYCLER))
-	button.set("fill_color", UiPalette.CREAM)
-	button.set("corner_radius", 20)
-	button.set("shadow_offset", 4)
-	button.custom_minimum_size = Vector2(0, 46)
-	button.add_theme_font_size_override("font_size", 17)
-	button.call("configure", labels, values, start_index)
-	return button
+func _pill(labels: PackedStringArray, values: Array, start_index: int,
+		tile_width: float = 78.0) -> Button:
+	return UiKit.segmented(labels, values, start_index, tile_width, 48.0)
 
 
 func _caption(text: String) -> Label:
@@ -202,7 +185,7 @@ func _hint(text: String) -> Label:
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	label.custom_minimum_size = Vector2(0, 28)
-	label.add_theme_font_size_override("font_size", 12)
+	label.add_theme_font_size_override("font_size", 13)
 	label.add_theme_color_override("font_color", UiPalette.MUTED)
 	return label
 
@@ -222,7 +205,7 @@ func _heading(text: String) -> Label:
 	label.text = text
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	label.theme_type_variation = &"TitleLabel"
-	label.add_theme_font_size_override("font_size", 26)
+	label.add_theme_font_size_override("font_size", 24)
 	label.add_theme_color_override("font_color", UiPalette.INK)
 	return label
 
@@ -235,40 +218,33 @@ func _vertical_spacer() -> Control:
 
 
 func _card(parent: Node) -> VBoxContainer:
-	## Cream rounded panel with a thick navy outline. No coloured top bar.
+	## Tinted rounded block, no outline: the gap between the two doors is what
+	## separates them, so a card never draws a frame of its own.
 	var panel := PanelContainer.new()
 	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var style := StyleBoxFlat.new()
-	style.bg_color = UiPalette.CREAM
-	style.set_corner_radius_all(22)
-	style.set_border_width_all(5)
-	style.border_color = UiPalette.INK
-	style.shadow_color = Color(0.12, 0.10, 0.23, 0.30)
-	style.shadow_offset = Vector2(0, 5)
+	style.bg_color = Color(1.0, 1.0, 1.0, 0.45)
+	style.set_corner_radius_all(UiKit.CORNER_RADIUS)
 	style.content_margin_left = 20
 	style.content_margin_right = 20
-	style.content_margin_top = 10
-	style.content_margin_bottom = 10
+	style.content_margin_top = 14
+	style.content_margin_bottom = 14
 	panel.add_theme_stylebox_override("panel", style)
 	parent.add_child(panel)
 	var column := VBoxContainer.new()
-	column.add_theme_constant_override("separation", 8)
+	column.add_theme_constant_override("separation", UiKit.SPACING_TIGHT)
 	column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	panel.add_child(column)
 	return column
 
 
 func _soft_disabled_style() -> StyleBoxFlat:
-	## The theme's disabled lavender, not the muddy grey candy_button default.
+	## One quiet disabled tint, same radius as every other control.
 	var style := StyleBoxFlat.new()
 	style.bg_color = Color("d8d3e4")
-	style.set_corner_radius_all(22)
-	style.set_border_width_all(5)
-	style.border_color = Color("4b4560")
-	style.shadow_color = Color(0.12, 0.10, 0.23, 0.30)
-	style.shadow_offset = Vector2(0, 4)
-	style.content_margin_left = 26
-	style.content_margin_right = 26
+	style.set_corner_radius_all(UiKit.CORNER_RADIUS)
+	style.content_margin_left = 22
+	style.content_margin_right = 22
 	style.content_margin_top = 10
 	style.content_margin_bottom = 10
 	return style
@@ -384,14 +360,14 @@ func _build_idle() -> void:
 	# Host door has fewer actions; two equal spacers keep the heading aligned
 	# with the join card while its buttons sit balanced in the leftover height.
 	host_col.add_child(_vertical_spacer())
-	_host_pi_button = _candy("CREATE ONLINE ROOM", UiPalette.YELLOW, 58, 21)
+	_host_pi_button = _candy("CREATE ONLINE ROOM", UiPalette.YELLOW, 56, 18)
 	_host_pi_button.custom_minimum_size.x = 0
 	_host_pi_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_host_pi_button.tooltip_text = "Open a public online room. You get a 5-letter code to share."
 	_host_pi_button.pressed.connect(_on_host_pi)
 	host_col.add_child(_host_pi_button)
 	_apply_soft_disabled(_host_pi_button)
-	_lan_button = _candy("HOST LAN ROOM", UiPalette.BLUE, 44, 16)
+	_lan_button = _candy("HOST LAN ROOM", UiPalette.BLUE, 48, 15)
 	_lan_button.custom_minimum_size.x = 0
 	_lan_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_lan_button.tooltip_text = "Host on this Wi-Fi. Friends on the same network find it automatically."
@@ -415,7 +391,7 @@ func _build_idle() -> void:
 	_join_input.text_changed.connect(_on_code_typed)
 	_join_input.text_submitted.connect(func(_t: String) -> void: _on_join_pressed())
 	join_col.add_child(_join_input)
-	_join_button = _candy("JOIN", UiPalette.YELLOW, 58, 23)
+	_join_button = _candy("JOIN", UiPalette.YELLOW, 56, 20)
 	_join_button.custom_minimum_size.x = 0
 	_join_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_join_button.tooltip_text = "Join the room for the code above."
@@ -433,14 +409,14 @@ func _build_idle() -> void:
 	search_row.add_theme_constant_override("separation", 18)
 	search_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_idle_box.add_child(search_row)
-	_browse_button = _candy("SEARCH ONLINE", UiPalette.BLUE, 48, 18)
+	_browse_button = _candy("SEARCH ONLINE", UiPalette.BLUE, 48, 16)
 	_browse_button.custom_minimum_size.x = 0
 	_browse_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_browse_button.tooltip_text = "Browse public online rooms and join with one click."
 	_browse_button.pressed.connect(_on_browse)
 	search_row.add_child(_browse_button)
 	_apply_soft_disabled(_browse_button)
-	_lan_scan_button = _candy("SEARCH LAN", UiPalette.CYAN, 48, 18)
+	_lan_scan_button = _candy("SEARCH LAN", UiPalette.CYAN, 48, 16)
 	_lan_scan_button.custom_minimum_size.x = 0
 	_lan_scan_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_lan_scan_button.tooltip_text = "Look for rooms hosted on this Wi-Fi network."
@@ -453,12 +429,9 @@ func _build_offline_banner() -> void:
 	_offline_banner.visible = false
 	_offline_banner.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var style := StyleBoxFlat.new()
-	style.bg_color = UiPalette.YELLOW
+	# A warm tint carries the warning; no outline, no drop shadow.
+	style.bg_color = Color(UiPalette.YELLOW, 0.85)
 	style.set_corner_radius_all(16)
-	style.set_border_width_all(4)
-	style.border_color = UiPalette.INK
-	style.shadow_color = Color(0.12, 0.10, 0.23, 0.28)
-	style.shadow_offset = Vector2(0, 4)
 	style.content_margin_left = 20
 	style.content_margin_right = 20
 	style.content_margin_top = 12
@@ -476,7 +449,7 @@ func _build_offline_banner() -> void:
 	_offline_label.add_theme_font_size_override("font_size", 14)
 	_offline_label.add_theme_color_override("font_color", UiPalette.INK)
 	row.add_child(_offline_label)
-	_retry_button = _candy("RETRY", UiPalette.CREAM, 44, 13)
+	_retry_button = _candy("RETRY", UiPalette.CREAM, 44, 14)
 	_retry_button.custom_minimum_size = Vector2(100, 44)
 	_retry_button.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	_retry_button.pressed.connect(_retry_server)
@@ -492,22 +465,17 @@ func _build_room() -> void:
 
 	_host_card = _card(_room_box)
 	var split := HBoxContainer.new()
-	split.add_theme_constant_override("separation", 16)
+	split.add_theme_constant_override("separation", UiKit.SPACING_WIDE)
 	split.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_host_card.add_child(split)
 	var left := VBoxContainer.new()
-	left.add_theme_constant_override("separation", 6)
+	left.add_theme_constant_override("separation", UiKit.SPACING_TIGHT)
 	left.alignment = BoxContainer.ALIGNMENT_CENTER
 	left.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	left.size_flags_stretch_ratio = 0.95
 	split.add_child(left)
-	var divider := ColorRect.new()
-	divider.custom_minimum_size = Vector2(4, 0)
-	divider.color = Color(UiPalette.INK, 0.30)
-	divider.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	split.add_child(divider)
 	var right := VBoxContainer.new()
-	right.add_theme_constant_override("separation", 4)
+	right.add_theme_constant_override("separation", UiKit.SPACING_TIGHT / 2)
 	right.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	right.size_flags_stretch_ratio = 1.05
 	split.add_child(right)
@@ -527,23 +495,24 @@ func _build_room() -> void:
 	code_row.add_theme_constant_override("separation", 8)
 	code_row.alignment = BoxContainer.ALIGNMENT_CENTER
 	left.add_child(code_row)
-	_copy_button = _candy("COPY", UiPalette.CYAN, 38, 14)
+	_copy_button = _candy("COPY", UiPalette.CYAN, 44, 14)
 	_copy_button.custom_minimum_size = Vector2(120, 44)
 	_copy_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_copy_button.tooltip_text = "Copy the room code to the clipboard."
 	_copy_button.pressed.connect(_on_copy_code)
 	code_row.add_child(_copy_button)
-	_leave_button = _candy("LEAVE ROOM", UiPalette.RED, 38, 14)
+	_leave_button = _candy("LEAVE ROOM", UiPalette.RED, 44, 14)
 	_leave_button.custom_minimum_size = Vector2(140, 44)
 	_leave_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_leave_button.tooltip_text = "Close the room for everyone. Press twice to confirm."
 	_leave_button.pressed.connect(_on_leave_pressed)
 	code_row.add_child(_leave_button)
 	_visibility_pill = _pill(PackedStringArray(["PRIVATE", "PUBLIC"]),
-		[false, true], 1 if GameSettings.room_public else 0)
+		[false, true], 1 if GameSettings.room_public else 0, 96.0)
 	_visibility_pill.tooltip_text = "PRIVATE: CODE ONLY  ·  PUBLIC: LISTED IN THE BROWSER"
 	_visibility_pill.connect("option_changed", _on_visibility_changed)
-	_visibility_box = _setting_box("ROOM", "room", _visibility_pill, UiPalette.PINK)
+	_visibility_box = _setting_box("ROOM", "room", _visibility_pill,
+		UiPalette.PINK, false)
 	left.add_child(_visibility_box)
 	_host_hint = _hint("")
 	left.add_child(_host_hint)
@@ -556,28 +525,32 @@ func _build_room() -> void:
 	right.add_child(_players_box)
 
 	_config_box = VBoxContainer.new()
-	_config_box.add_theme_constant_override("separation", 6)
+	_config_box.add_theme_constant_override("separation", UiKit.SPACING_TIGHT)
 	_room_box.add_child(_config_box)
 	_config_box.add_child(_section("HOST SETTINGS"))
-	_settings_row = HBoxContainer.new()
-	_settings_row.add_theme_constant_override("separation", 10)
+	# Two equal columns of larger blocks instead of four narrow pills: MODE and
+	# BOTS are tile strips, MAP and CAR are full-width action tiles.
+	_settings_row = GridContainer.new()
+	_settings_row.columns = 2
+	_settings_row.add_theme_constant_override("h_separation", UiKit.SPACING)
+	_settings_row.add_theme_constant_override("v_separation", UiKit.SPACING_TIGHT)
 	_config_box.add_child(_settings_row)
 
 	_game_pill = _pill(PackedStringArray(["SANDBOX", "MINIGAMES"]),
-		[GameSettings.GAME_SANDBOX, GameSettings.GAME_MINIGAMES], 0)
+		[GameSettings.GAME_SANDBOX, GameSettings.GAME_MINIGAMES], 0, 108.0)
 	_game_pill.connect("option_changed", func(value: Variant) -> void: _on_game_mode(str(value)))
-	_settings_row.add_child(_setting_box("MODE", "mode", _game_pill, UiPalette.YELLOW))
+	_settings_row.add_child(_setting_box("MODE", "mode", _game_pill, UiPalette.YELLOW, false))
 
-	_bots_pill = _pill(BOT_LABELS, BOT_VALUES, GameSettings.effective_bot_count())
+	_bots_pill = _pill(BOT_LABELS, BOT_VALUES, GameSettings.effective_bot_count(), 68.0)
 	_bots_pill.connect("option_changed", _on_bots_changed)
-	_settings_row.add_child(_setting_box("BOTS", "bots", _bots_pill, UiPalette.GRASS))
+	_settings_row.add_child(_setting_box("BOTS", "bots", _bots_pill, UiPalette.GRASS, false))
 
-	_map_button = _candy("", UiPalette.CREAM, 46, 15)
+	_map_button = _candy("", UiPalette.CREAM, 48, 15)
 	_map_button.tooltip_text = "CHOOSE MAP"
 	_map_button.pressed.connect(_on_choose_map)
 	_settings_row.add_child(_setting_box("MAP", "map", _map_button, UiPalette.CYAN))
 
-	_vehicle_button = _candy("", UiPalette.CREAM, 46, 15)
+	_vehicle_button = _candy("", UiPalette.CREAM, 48, 15)
 	_vehicle_button.tooltip_text = "CHOOSE VEHICLE"
 	_vehicle_button.pressed.connect(_on_change_vehicle)
 	_settings_row.add_child(_setting_box("CAR", "vehicle", _vehicle_button, UiPalette.BLUE))
@@ -589,8 +562,8 @@ func _build_room() -> void:
 	_summary.visible = false
 	_room_box.add_child(_summary)
 
-	_start_button = _candy("START", UiPalette.YELLOW, 72, 30)
-	_start_button.custom_minimum_size = Vector2(480, 72)
+	_start_button = _candy("START", UiPalette.YELLOW, 64, 26)
+	_start_button.custom_minimum_size = Vector2(320, 64)
 	_start_button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	_start_button.tooltip_text = "Start the race for everyone in the room."
 	_start_button.pressed.connect(_on_start_pressed)
@@ -605,18 +578,20 @@ func _build_room() -> void:
 	_room_box.add_child(_client_note)
 
 
-func _setting_box(label_text: String, key: String, control: Button, accent: Color) -> VBoxContainer:
+func _setting_box(label_text: String, key: String, control: Button, accent: Color,
+		expand: bool = true) -> VBoxContainer:
 	var box := VBoxContainer.new()
 	box.add_theme_constant_override("separation", 4)
 	box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var label := Label.new()
 	label.text = label_text
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	label.add_theme_font_size_override("font_size", 18)
+	label.add_theme_font_size_override("font_size", 17)
 	label.add_theme_color_override("font_color", UiPalette.INK)
 	box.add_child(label)
-	control.custom_minimum_size = Vector2(0, 46)
-	control.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	control.custom_minimum_size = Vector2(control.custom_minimum_size.x, 48)
+	control.size_flags_horizontal = Control.SIZE_EXPAND_FILL if expand \
+		else Control.SIZE_SHRINK_CENTER
 	box.add_child(control)
 	_decorate_setting(control, key, accent)
 	return box
@@ -810,13 +785,9 @@ func _refresh_config() -> void:
 	var active: bool = Network.is_session_active()
 	var mode: String = Network.session_mode if active else GameSettings.multiplayer_mode
 	_game_pill.call("set_index", 0 if mode == GameSettings.GAME_SANDBOX else 1)
-	_set_badge("mode", "SANDBOX" if mode == GameSettings.GAME_SANDBOX else "MINIGAMES",
-		UiPalette.YELLOW if mode == GameSettings.GAME_SANDBOX else UiPalette.GRASS)
 	var bots: int = Network.session_bot_count if active else GameSettings.effective_bot_count()
 	bots = clampi(bots, 0, BOT_LABELS.size() - 1)
 	_bots_pill.call("set_index", bots)
-	_set_badge("bots", BOT_LABELS[bots],
-		UiPalette.GRASS if bots > 0 else UiPalette.TEXT_DIM)
 	var map_id: String = Network.session_minigame if active and Network.is_host \
 		else GameSettings.selected_minigame
 	var map_text: String = GameSettings.minigame_name(map_id) \
@@ -837,8 +808,6 @@ func _refresh_config() -> void:
 	_set_badge("vehicle", vehicle_text, UiPalette.BLUE)
 	var public_room: bool = Network.room_public if active and Network.is_host else GameSettings.room_public
 	_visibility_pill.call("set_index", 1 if public_room else 0)
-	_set_badge("room", "PUBLIC" if public_room else "PRIVATE",
-		UiPalette.PINK if public_room else UiPalette.TEXT_DIM)
 	_start_button.text = "START RACE" if mode == GameSettings.GAME_MINIGAMES else "START SANDBOX"
 	_refresh_summary()
 

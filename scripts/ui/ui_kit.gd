@@ -1,24 +1,34 @@
 extends Node
-## One source of truth for menu sizing, focus feedback and small type tokens.
+## One source of truth for menu sizing, focus feedback and type tokens.
 ## Any normal Button/LineEdit that enters the tree is snapped to the same height
 ## and type scale, so screens cannot drift apart again. Large preview cards
 ## (>= 120 px tall) are left alone.
+##
+## The system is deliberately small: one corner radius (16), one spacing scale
+## (8 / 16 / 24), one accent (yellow) and three text sizes (title, label,
+## caption). Pages group content with gaps and tint blocks, never with rules or
+## boxed-in rows.
 ##
 ## Controls are keyboard/gamepad focusable. This kit installs one bright,
 ## high-contrast focus ring (a yellow outline with a dark halo) so the engine's
 ## focus navigation and MenuNav's explicit neighbour map are always visible,
 ## including on yellow candy buttons where the old white ring disappeared.
 
-const BUTTON_HEIGHT: float = 54.0
-const FIELD_HEIGHT: float = 50.0
-const BUTTON_FONT: int = 22
+const BUTTON_HEIGHT: float = 56.0
+const FIELD_HEIGHT: float = 48.0
+const BUTTON_FONT: int = 20
 const FIELD_FONT: int = 18
-const CORNER_RADIUS: int = 24
-const SPACING: int = 14 ## Gap between form rows / screen blocks.
+const CORNER_RADIUS: int = 16 ## One radius for every tile, control and row.
+const SPACING: int = 16 ## Gap between form rows / screen blocks.
 const SPACING_TIGHT: int = 8 ## Gap inside one row or card.
-const CAPTION_SIZE: int = 14 ## Secondary explanation line.
+const SPACING_WIDE: int = 24 ## Gap between a page and the next big block.
+const CAPTION_SIZE: int = 15 ## Secondary explanation line.
+const TITLE_SIZE: int = 40 ## The one page-title size.
+const TILE_MIN_WIDTH: float = 68.0 ## Equal square tiles in an option strip.
 const FOCUS_RING: Color = Color("ffd22e")
 const FOCUS_RING_DARK: Color = Color("1e1b3a")
+const CANDY_BUTTON: String = "res://scripts/ui/candy_button.gd"
+const OPTION_TILES: String = "res://scripts/ui/pill_cycler.gd"
 const UiPalette := preload("res://scripts/ui/ui_palette.gd")
 
 var _focus_styles: Dictionary = {} ## corner radius -> StyleBoxFlat
@@ -150,3 +160,44 @@ func caption(text: String) -> Label:
 	node.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	node.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	return node
+
+
+func tile(text: String, fill: Color, height: float = BUTTON_HEIGHT,
+		font_size: int = BUTTON_FONT) -> Button:
+	## Shared action tile: the candy look, one corner radius and one font size.
+	## Screens pass the accent; the shadow, border and focus ring are the kit's.
+	var button := Button.new()
+	button.set_script(load(CANDY_BUTTON))
+	button.set("fill_color", fill)
+	button.set("corner_radius", CORNER_RADIUS)
+	button.text = text
+	button.custom_minimum_size = Vector2(0, height)
+	button.add_theme_font_size_override("font_size", font_size)
+	return button
+
+
+func segmented(labels: PackedStringArray, values: Array, start_index: int = 0,
+		tile_width: float = TILE_MIN_WIDTH, height: float = 48.0) -> Button:
+	## Equal square tiles side by side for a small discrete choice. One focus
+	## stop: left/right changes the value, Enter steps, clicking picks a tile.
+	## The selected tile uses the shared yellow accent, like every other
+	## selected state in the UI.
+	var button := Button.new()
+	button.set_script(load(OPTION_TILES))
+	button.set("fill_color", UiPalette.YELLOW)
+	button.set("tile_min_width", tile_width)
+	button.set("corner_radius", CORNER_RADIUS)
+	button.custom_minimum_size = Vector2(labels.size() * tile_width, height)
+	button.add_theme_font_size_override("font_size", 17)
+	button.call("configure", labels, values, start_index)
+	return button
+
+
+func flat_card(bg: Color, radius: int = CORNER_RADIUS) -> StyleBoxFlat:
+	## Borderless block used for grouped content. A gap plus a tint groups a
+	## section; a 1 px rule never does.
+	var style := StyleBoxFlat.new()
+	style.bg_color = bg
+	style.set_corner_radius_all(radius)
+	style.anti_aliasing = true
+	return style

@@ -39,50 +39,53 @@ grow_horizontal = 2
 grow_vertical = 2
 
 [node name="Panel" type="PanelContainer" parent="Root/Center"]
-custom_minimum_size = Vector2(400, 0)
+custom_minimum_size = Vector2(560, 0)
 layout_mode = 2
 
 [node name="Body" type="VBoxContainer" parent="Root/Center/Panel"]
 layout_mode = 2
-theme_override_constants/separation = 14
+theme_override_constants/separation = 20
 
 [node name="Title" type="Label" parent="Root/Center/Panel/Body"]
 layout_mode = 2
 theme_type_variation = &"TitleLabel"
 theme_override_colors/font_color = Color(0.117647, 0.105882, 0.227451, 1)
-theme_override_font_sizes/font_size = 54
+theme_override_font_sizes/font_size = 40
 text = "PAUSED"
 horizontal_alignment = 1
 
-[node name="ResumeButton" type="Button" parent="Root/Center/Panel/Body"]
-unique_name_in_owner = true
-custom_minimum_size = Vector2(0, 60)
+[node name="ActionGrid" type="GridContainer" parent="Root/Center/Panel/Body"]
 layout_mode = 2
-theme_override_font_sizes/font_size = 28
+theme_override_constants/h_separation = 12
+theme_override_constants/v_separation = 12
+columns = 3
+
+[node name="ResumeButton" type="Button" parent="Root/Center/Panel/Body/ActionGrid"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 96)
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 18
 text = "RESUME"
 script = ExtResource("4")
 fill_color = Color(1, 0.823529, 0.180392, 1)
 
-[node name="ActionRow" type="HBoxContainer" parent="Root/Center/Panel/Body"]
-layout_mode = 2
-theme_override_constants/separation = 10
-
-[node name="PauseSettingsButton" type="Button" parent="Root/Center/Panel/Body/ActionRow"]
+[node name="PauseSettingsButton" type="Button" parent="Root/Center/Panel/Body/ActionGrid"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(180, 58)
+custom_minimum_size = Vector2(0, 96)
 layout_mode = 2
 size_flags_horizontal = 3
-theme_override_font_sizes/font_size = 23
+theme_override_font_sizes/font_size = 18
 text = "SETTINGS"
 script = ExtResource("4")
 fill_color = Color(0.270588, 0.713726, 0.941176, 1)
 
-[node name="QuitToMenuButton" type="Button" parent="Root/Center/Panel/Body/ActionRow"]
+[node name="QuitToMenuButton" type="Button" parent="Root/Center/Panel/Body/ActionGrid"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(180, 58)
+custom_minimum_size = Vector2(0, 96)
 layout_mode = 2
 size_flags_horizontal = 3
-theme_override_font_sizes/font_size = 23
+theme_override_font_sizes/font_size = 18
 text = "QUIT TO MENU"
 script = ExtResource("4")
 fill_color = Color(0.94902, 0.329412, 0.356863, 1)

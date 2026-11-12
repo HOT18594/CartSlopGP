@@ -113,57 +113,57 @@ theme_override_font_sizes/font_size = 132
 text = "GP"
 
 [node name="Buttons" type="VBoxContainer" parent="Center/Column"]
-custom_minimum_size = Vector2(450, 0)
+custom_minimum_size = Vector2(520, 0)
 layout_mode = 2
 size_flags_horizontal = 4
-theme_override_constants/separation = 12
+theme_override_constants/separation = 16
 
 [node name="PlayButton" type="Button" parent="Center/Column/Buttons"]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(0, 78)
 layout_mode = 2
-theme_override_font_sizes/font_size = 38
+theme_override_font_sizes/font_size = 34
 text = "PLAY"
 script = ExtResource("7")
 fill_color = Color(1, 0.823529, 0.180392, 1)
-corner_radius = 28
+corner_radius = 16
 
 [node name="MenuRow" type="HBoxContainer" parent="Center/Column/Buttons"]
 layout_mode = 2
-theme_override_constants/separation = 12
+theme_override_constants/separation = 16
 
 [node name="SettingsButton" type="Button" parent="Center/Column/Buttons/MenuRow"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(0, 60)
+custom_minimum_size = Vector2(0, 64)
 layout_mode = 2
 size_flags_horizontal = 3
-theme_override_font_sizes/font_size = 26
+theme_override_font_sizes/font_size = 17
 text = "SETTINGS"
 script = ExtResource("7")
 fill_color = Color(0.270588, 0.713726, 0.941176, 1)
-corner_radius = 28
+corner_radius = 16
 
 [node name="ChangelogButton" type="Button" parent="Center/Column/Buttons/MenuRow"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(0, 60)
+custom_minimum_size = Vector2(0, 64)
 layout_mode = 2
 size_flags_horizontal = 3
-theme_override_font_sizes/font_size = 26
+theme_override_font_sizes/font_size = 17
 text = "CHANGELOG"
 script = ExtResource("7")
 fill_color = Color(0.94902, 0.423529, 0.654902, 1)
-corner_radius = 28
+corner_radius = 16
 
-[node name="QuitButton" type="Button" parent="Center/Column/Buttons"]
+[node name="QuitButton" type="Button" parent="Center/Column/Buttons/MenuRow"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(200, 50)
+custom_minimum_size = Vector2(0, 64)
 layout_mode = 2
-size_flags_horizontal = 4
-theme_override_font_sizes/font_size = 22
+size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 17
 text = "QUIT"
 script = ExtResource("7")
 fill_color = Color(0.94902, 0.329412, 0.356863, 1)
-corner_radius = 28
+corner_radius = 16
 
 [node name="VersionLabel" type="Label" parent="."]
 unique_name_in_owner = true
@@ -189,15 +189,15 @@ layout_mode = 1
 anchors_preset = 1
 anchor_left = 1.0
 anchor_right = 1.0
-offset_left = -470.0
+offset_left = -360.0
 offset_top = 18.0
 offset_right = -28.0
-offset_bottom = 72.0
+offset_bottom = 66.0
 grow_horizontal = 0
-theme_override_font_sizes/font_size = 20
+theme_override_font_sizes/font_size = 17
 text = "UPDATE AVAILABLE"
 script = ExtResource("7")
-corner_radius = 22
+corner_radius = 16
 
 [node name="StatusLabel" type="Label" parent="."]
 unique_name_in_owner = true
@@ -206,9 +206,9 @@ anchors_preset = 1
 anchor_left = 1.0
 anchor_right = 1.0
 offset_left = -470.0
-offset_top = 78.0
+offset_top = 72.0
 offset_right = -28.0
-offset_bottom = 102.0
+offset_bottom = 96.0
 grow_horizontal = 0
 theme_override_colors/font_color = Color(1, 1, 1, 1)
 theme_override_colors/font_outline_color = Color(0.117647, 0.105882, 0.227451, 1)

@@ -12,7 +12,6 @@ const PLAY_MENU_SCENE: String = "res://scenes/ui/play_menu.tscn"
 const LOBBY_SCENE: String = "res://scenes/ui/lobby_menu.tscn"
 const MINIGAMES_SCENE: String = "res://scenes/ui/minigames_menu.tscn"
 const VEHICLE_SCENE: String = "res://scenes/ui/vehicle_select.tscn"
-const CANDY_BUTTON: String = "res://scripts/ui/candy_button.gd"
 const PREVIEW_DIR: String = "res://assets/ui/minigames/"
 const ART_BACKDROP := preload("res://scripts/ui/art_backdrop.gd")
 const UiPalette := preload("res://scripts/ui/ui_palette.gd")
@@ -66,7 +65,7 @@ func _unhandled_input(event: InputEvent) -> void:
 func _build_ui() -> void:
 	_title = Label.new()
 	_title.theme_type_variation = &"TitleLabel"
-	_title.add_theme_font_size_override("font_size", 44)
+	_title.add_theme_font_size_override("font_size", UiKit.TITLE_SIZE)
 	_title.add_theme_color_override("font_color", UiPalette.INK)
 	# From the lobby this screen is a map picker, not a vehicle picker.
 	_title.text = "MAP SELECT"
@@ -74,8 +73,8 @@ func _build_ui() -> void:
 	var header := HBoxContainer.new()
 	header.add_theme_constant_override("separation", 16)
 	header.add_child(_title)
-	_back_button = _button("BACK", UiPalette.RED, 46, 18)
-	_back_button.custom_minimum_size = Vector2(150, 46)
+	_back_button = _button("BACK", UiPalette.RED, 46, 17)
+	_back_button.custom_minimum_size = Vector2(124, 46)
 	_back_button.pressed.connect(_on_back)
 	header.add_child(_back_button)
 	_body.add_child(header)
@@ -88,17 +87,10 @@ func _build_ui() -> void:
 	_preview_panel = PanelContainer.new()
 	_preview_panel.custom_minimum_size = Vector2(470, 270)
 	_preview_panel.clip_contents = true
+	# Just a dark rounded backdrop behind the art: no frame, no double border.
 	var preview_style := StyleBoxFlat.new()
 	preview_style.bg_color = UiPalette.OUTLINE
-	preview_style.corner_radius_top_left = 20
-	preview_style.corner_radius_top_right = 20
-	preview_style.corner_radius_bottom_left = 20
-	preview_style.corner_radius_bottom_right = 20
-	preview_style.border_width_left = 5
-	preview_style.border_width_top = 5
-	preview_style.border_width_right = 5
-	preview_style.border_width_bottom = 5
-	preview_style.border_color = UiPalette.OUTLINE
+	preview_style.set_corner_radius_all(UiKit.CORNER_RADIUS)
 	_preview_panel.add_theme_stylebox_override("panel", preview_style)
 	feature.add_child(_preview_panel)
 
@@ -122,7 +114,7 @@ func _build_ui() -> void:
 
 	_detail_name = Label.new()
 	_detail_name.theme_type_variation = &"TitleLabel"
-	_detail_name.add_theme_font_size_override("font_size", 34)
+	_detail_name.add_theme_font_size_override("font_size", 30)
 	_detail_name.add_theme_color_override("font_color", UiPalette.INK)
 	details.add_child(_detail_name)
 
@@ -138,8 +130,8 @@ func _build_ui() -> void:
 	action_row.alignment = BoxContainer.ALIGNMENT_CENTER
 	details.add_child(action_row)
 
-	_vehicle_button = _button("VEHICLE: SHOPPING CART", Color("8ed8f6"), 54, 18)
-	_vehicle_button.custom_minimum_size = Vector2(230, 54)
+	_vehicle_button = _button("VEHICLE: SHOPPING CART", Color("8ed8f6"), 60, 17)
+	_vehicle_button.custom_minimum_size = Vector2(230, 60)
 	_vehicle_button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	_vehicle_button.tooltip_text = "Pick the cart you will race."
 	_vehicle_button.pressed.connect(_on_change_vehicle)
@@ -148,8 +140,8 @@ func _build_ui() -> void:
 	_vehicle_button.visible = not Network.is_session_active()
 	action_row.add_child(_vehicle_button)
 
-	_play_button = _button("RACE", UiPalette.YELLOW, 60, 24)
-	_play_button.custom_minimum_size = Vector2(220, 60)
+	_play_button = _button("RACE", UiPalette.YELLOW, 60, 22)
+	_play_button.custom_minimum_size = Vector2(230, 60)
 	_play_button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	_play_button.pressed.connect(_on_play)
 	action_row.add_child(_play_button)
@@ -158,13 +150,7 @@ func _build_ui() -> void:
 
 
 func _button(text: String, color: Color, height: int, font_size: int) -> Button:
-	var button := Button.new()
-	button.set_script(load(CANDY_BUTTON))
-	button.set("fill_color", color)
-	button.text = text
-	button.custom_minimum_size = Vector2(0, height)
-	button.add_theme_font_size_override("font_size", font_size)
-	return button
+	return UiKit.tile(text, color, float(height), font_size)
 
 
 func _select(index: int) -> void:

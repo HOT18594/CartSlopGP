@@ -37,7 +37,7 @@ size_flags_vertical = 3
 
 [node name="Shell" type="VBoxContainer" parent="Frame/Panel"]
 layout_mode = 2
-theme_override_constants/separation = 10
+theme_override_constants/separation = 12
 
 [node name="Header" type="HBoxContainer" parent="Frame/Panel/Shell"]
 layout_mode = 2
@@ -48,25 +48,20 @@ layout_mode = 2
 size_flags_horizontal = 3
 theme_type_variation = &"TitleLabel"
 theme_override_colors/font_color = Color(0.117647, 0.105882, 0.227451, 1)
-theme_override_font_sizes/font_size = 42
+theme_override_font_sizes/font_size = 40
 text = "MULTIPLAYER"
 vertical_alignment = 1
 
 [node name="BackButton" type="Button" parent="Frame/Panel/Shell/Header"]
 unique_name_in_owner = true
 layout_mode = 2
-custom_minimum_size = Vector2(130, 50)
-theme_override_font_sizes/font_size = 19
+custom_minimum_size = Vector2(120, 48)
+theme_override_font_sizes/font_size = 17
 text = "BACK"
 script = ExtResource("4")
 fill_color = Color(0.94902, 0.329412, 0.356863, 1)
-corner_radius = 22
-shadow_offset = 6
-
-[node name="Rule" type="ColorRect" parent="Frame/Panel/Shell"]
-custom_minimum_size = Vector2(0, 3)
-layout_mode = 2
-color = Color(0.117647, 0.105882, 0.227451, 1)
+corner_radius = 16
+shadow_offset = 5
 
 [node name="ProfileRow" type="HBoxContainer" parent="Frame/Panel/Shell"]
 layout_mode = 2

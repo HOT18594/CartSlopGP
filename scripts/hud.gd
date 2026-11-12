@@ -1,16 +1,17 @@
 extends Control
-## In-game HUD: round speedometer, segmented boost meter, drive state and a
-## controls hint. F3 toggles the debug readout.
+## In-game HUD: round speedometer, segmented boost meter, drive state, race
+## plaque and live standings. F3 toggles the debug readout.
 ##
-## The race position / lap pills are only shown for race-style minigames: turn
-## them on with `show_position_badge` / `show_lap_badge`, then feed them with
-## set_race_position() and set_lap().
+## The race readout is one quiet plaque in the top-left corner (position, lap,
+## time, best) instead of a stack of bordered pills. `show_position_badge` /
+## `show_lap_badge` stay part of the API and are fed by set_race_position() and
+## set_lap(); the plaque itself appears as soon as either is called.
 
 const UiPalette := preload("res://scripts/ui/ui_palette.gd")
 
 @export_group("Minigame HUD")
-@export var show_position_badge: bool = false ## Race placement pill (1st/2nd/...).
-@export var show_lap_badge: bool = false ## Lap counter pill (LAP 1 / 3).
+@export var show_position_badge: bool = false ## Race placement readout (1st/2nd/...).
+@export var show_lap_badge: bool = false ## Lap counter readout (LAP 1 / 3).
 
 @onready var _speed_value: Label = %SpeedValue
 @onready var _speed_gauge: Control = %SpeedGauge
@@ -18,13 +19,6 @@ const UiPalette := preload("res://scripts/ui/ui_palette.gd")
 @onready var _state_pill: PanelContainer = $StatePill
 @onready var _state_label: Label = %StateLabel
 @onready var _hint_label: Label = $HintLabel
-@onready var _position_badge: PanelContainer = %PositionBadge
-@onready var _place_label: Label = %PlaceLabel
-@onready var _lap_badge: PanelContainer = %LapBadge
-@onready var _lap_value: Label = %LapValue
-@onready var _time_badge: PanelContainer = get_node_or_null("%TimeBadge") as PanelContainer
-@onready var _time_value: Label = get_node_or_null("%TimeValue") as Label
-@onready var _best_value: Label = get_node_or_null("%BestValue") as Label
 @onready var _debug_label: Label = %DebugLabel
 
 var _debug_visible: bool = false
@@ -104,11 +98,6 @@ func _ready() -> void:
 		_build_scoreboard()
 	_debug_label.visible = false
 	_build_boost_percent()
-	_position_badge.visible = show_position_badge
-	_lap_badge.visible = show_lap_badge
-	if _time_badge != null:
-		_time_badge.visible = show_lap_badge
-	$RaceBox.visible = false
 	_build_race_plaque()
 	_build_standings()
 	_build_gear_badge()
@@ -188,18 +177,17 @@ func _hud_pivot(control: Control) -> Vector2:
 	return pivot
 
 
-func _panel_style(bg: Color, border: Color) -> StyleBoxFlat:
+func _panel_style(bg: Color) -> StyleBoxFlat:
+	## Quiet translucent block: no outline, no stacked borders. Text and colour
+	## carry the information, and the plate only severs it from the track.
 	var style := StyleBoxFlat.new()
 	style.bg_color = bg
-	style.border_color = border
-	style.set_border_width_all(3)
-	style.set_corner_radius_all(18)
-	style.shadow_color = Color(0.06, 0.05, 0.12, 0.45)
-	style.shadow_size = 8
+	style.set_corner_radius_all(16)
 	style.content_margin_left = 14.0
 	style.content_margin_right = 14.0
 	style.content_margin_top = 10.0
 	style.content_margin_bottom = 10.0
+	style.anti_aliasing = true
 	return style
 
 
@@ -224,10 +212,10 @@ func _build_race_plaque() -> void:
 	_race_plaque.anchor_top = 0.0
 	_race_plaque.offset_left = 24.0
 	_race_plaque.offset_top = 20.0
-	_race_plaque.offset_right = 24.0 + 368.0
-	_race_plaque.offset_bottom = 20.0 + 132.0
+	_race_plaque.offset_right = 24.0 + 340.0
+	_race_plaque.offset_bottom = 20.0 + 120.0
 	_race_plaque.add_theme_stylebox_override("panel",
-		_panel_style(Color(0.118, 0.106, 0.227, 0.94), UiPalette.CREAM))
+		_panel_style(Color(0.118, 0.106, 0.227, 0.80)))
 	add_child(_race_plaque)
 	var column := VBoxContainer.new()
 	column.add_theme_constant_override("separation", 2)
@@ -235,7 +223,7 @@ func _build_race_plaque() -> void:
 	var top := HBoxContainer.new()
 	top.add_theme_constant_override("separation", 8)
 	column.add_child(top)
-	_plaque_pos = _label("1ST", 64, UiPalette.YELLOW, 10)
+	_plaque_pos = _label("1ST", 52, UiPalette.YELLOW, 9)
 	top.add_child(_plaque_pos)
 	var pos_stack := VBoxContainer.new()
 	pos_stack.size_flags_vertical = Control.SIZE_SHRINK_END
@@ -246,7 +234,7 @@ func _build_race_plaque() -> void:
 	var spacer := Control.new()
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	top.add_child(spacer)
-	_plaque_lap = _label("LAP 1/3", 24, UiPalette.CREAM)
+	_plaque_lap = _label("LAP 1/3", 20, UiPalette.CREAM)
 	_plaque_lap.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	top.add_child(_plaque_lap)
 	var bottom := HBoxContainer.new()
@@ -255,7 +243,7 @@ func _build_race_plaque() -> void:
 	var time_caption := _label("TIME", 13, Color(1, 1, 1, 0.65))
 	time_caption.size_flags_vertical = Control.SIZE_SHRINK_END
 	bottom.add_child(time_caption)
-	_plaque_time = _label("0:00.000", 30, UiPalette.YELLOW)
+	_plaque_time = _label("0:00.000", 26, UiPalette.YELLOW)
 	bottom.add_child(_plaque_time)
 	var best_caption := _label("BEST", 13, Color(1, 1, 1, 0.55))
 	best_caption.size_flags_vertical = Control.SIZE_SHRINK_END
@@ -295,7 +283,7 @@ func _build_gear_badge() -> void:
 	_gear_badge.offset_right = -206.0
 	_gear_badge.offset_bottom = -60.0
 	_gear_badge.add_theme_stylebox_override("panel",
-		_panel_style(Color(0.118, 0.106, 0.227, 0.88), Color(1, 1, 1, 0.30)))
+		_panel_style(Color(0.118, 0.106, 0.227, 0.76)))
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 8)
 	row.alignment = BoxContainer.ALIGNMENT_CENTER
@@ -303,7 +291,7 @@ func _build_gear_badge() -> void:
 	var caption := _label("GEAR", 12, Color(1, 1, 1, 0.6))
 	caption.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	row.add_child(caption)
-	_gear_value = _label("N", 28, UiPalette.YELLOW, 7)
+	_gear_value = _label("N", 24, UiPalette.YELLOW, 6)
 	_gear_value.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	row.add_child(_gear_value)
 	add_child(_gear_badge)
@@ -358,7 +346,7 @@ func _build_standings() -> void:
 	_standings_panel.offset_top = 20.0
 	_standings_panel.offset_bottom = 20.0 + 250.0
 	_standings_panel.add_theme_stylebox_override("panel",
-		_panel_style(Color(0.118, 0.106, 0.227, 0.86), Color(1, 1, 1, 0.35)))
+		_panel_style(Color(0.118, 0.106, 0.227, 0.76)))
 	add_child(_standings_panel)
 	var column := VBoxContainer.new()
 	column.add_theme_constant_override("separation", 3)
@@ -401,9 +389,7 @@ func _apply_standings(entries: Array[Dictionary]) -> void:
 		row.custom_minimum_size = Vector2(0.0, 36.0)
 		var local: bool = bool(entry.get("local", false))
 		var row_style := _panel_style(
-			Color(1.0, 0.96, 0.89, 0.18) if local else Color(1.0, 0.96, 0.89, 1.0),
-			Color(1, 1, 1, 0.30) if local else Color(0.12, 0.10, 0.23, 0.16))
-		row_style.shadow_size = 0
+			Color(1.0, 0.96, 0.89, 0.16) if local else Color(1.0, 0.96, 0.89, 0.95))
 		row_style.set_corner_radius_all(12)
 		row.add_theme_stylebox_override("panel", row_style)
 		var line := HBoxContainer.new()
@@ -822,10 +808,8 @@ func _build_scoreboard() -> void:
 	_scoreboard.name = "Scoreboard"
 	_scoreboard.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var style := StyleBoxFlat.new()
-	style.bg_color = Color(0.06, 0.07, 0.15, 0.86)
-	style.border_color = Color(0.12, 0.10, 0.23, 0.9)
-	style.set_border_width_all(3)
-	style.set_corner_radius_all(14)
+	style.bg_color = Color(0.06, 0.07, 0.15, 0.82)
+	style.set_corner_radius_all(UiKit.CORNER_RADIUS)
 	style.content_margin_left = 14.0
 	style.content_margin_right = 14.0
 	style.content_margin_top = 10.0

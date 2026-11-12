@@ -14,7 +14,7 @@ const UiAnim := preload("res://scripts/ui/ui_anim.gd")
 		if is_node_ready():
 			_apply_styles()
 @export var shadow_offset: int = 9 ## Vertical offset of the hard shadow in px.
-@export var corner_radius: int = 30
+@export var corner_radius: int = 16 ## One shared radius: rounded square, not a pill.
 
 @export_group("Hover Wiggle")
 @export var hover_scale: float = 1.03 ## Peak scale while hovered/focused.
@@ -35,7 +35,7 @@ var _rotation_now: float = 0.0
 func _ready() -> void:
 	focus_mode = Control.FOCUS_ALL
 	_gloss.bg_color = Color(1, 1, 1, 0.22)
-	_gloss.set_corner_radius_all(20)
+	_gloss.set_corner_radius_all(maxi(corner_radius - 4, 4))
 	_apply_styles()
 	_update_pivot()
 	resized.connect(_update_pivot)
@@ -89,6 +89,7 @@ func _draw() -> void:
 
 
 func _apply_styles() -> void:
+	_gloss.set_corner_radius_all(maxi(corner_radius - 4, 4))
 	add_theme_stylebox_override("normal", _make(fill_color, shadow_offset))
 	add_theme_stylebox_override("hover", _make(fill_color.lightened(0.14), shadow_offset + 2))
 	add_theme_stylebox_override("pressed", _make(fill_color.darkened(0.10), maxi(shadow_offset - 6, 2)))

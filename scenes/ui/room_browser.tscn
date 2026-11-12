@@ -41,7 +41,7 @@ layout_mode = 2
 
 [node name="Body" type="VBoxContainer" parent="Center/Panel"]
 layout_mode = 2
-theme_override_constants/separation = 14
+theme_override_constants/separation = 16
 
 [node name="Header" type="HBoxContainer" parent="Center/Panel/Body"]
 layout_mode = 2
@@ -53,25 +53,20 @@ layout_mode = 2
 size_flags_horizontal = 3
 theme_type_variation = &"TitleLabel"
 theme_override_colors/font_color = Color(0.117647, 0.105882, 0.227451, 1)
-theme_override_font_sizes/font_size = 36
+theme_override_font_sizes/font_size = 40
 text = "ONLINE ROOMS"
 vertical_alignment = 1
 
 [node name="CloseButton" type="Button" parent="Center/Panel/Body/Header"]
 unique_name_in_owner = true
 layout_mode = 2
-custom_minimum_size = Vector2(130, 50)
-theme_override_font_sizes/font_size = 18
+custom_minimum_size = Vector2(120, 48)
+theme_override_font_sizes/font_size = 17
 text = "CLOSE"
 script = ExtResource("3")
 fill_color = Color(0.94902, 0.329412, 0.356863, 1)
-corner_radius = 22
-shadow_offset = 6
-
-[node name="Rule" type="ColorRect" parent="Center/Panel/Body"]
-custom_minimum_size = Vector2(0, 3)
-layout_mode = 2
-color = Color(0.117647, 0.105882, 0.227451, 1)
+corner_radius = 16
+shadow_offset = 5
 
 [node name="SearchRow" type="HBoxContainer" parent="Center/Panel/Body"]
 layout_mode = 2
@@ -81,7 +76,7 @@ theme_override_constants/separation = 12
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
-custom_minimum_size = Vector2(0, 50)
+custom_minimum_size = Vector2(0, 48)
 theme_override_font_sizes/font_size = 18
 placeholder_text = "SEARCH HOST NAME"
 alignment = 1
@@ -89,13 +84,13 @@ alignment = 1
 [node name="RefreshButton" type="Button" parent="Center/Panel/Body/SearchRow"]
 unique_name_in_owner = true
 layout_mode = 2
-custom_minimum_size = Vector2(160, 50)
-theme_override_font_sizes/font_size = 18
+custom_minimum_size = Vector2(150, 48)
+theme_override_font_sizes/font_size = 17
 text = "REFRESH"
 script = ExtResource("3")
 fill_color = Color(0.270588, 0.713726, 0.941176, 1)
-corner_radius = 22
-shadow_offset = 6
+corner_radius = 16
+shadow_offset = 5
 
 [node name="ListScroll" type="ScrollContainer" parent="Center/Panel/Body"]
 unique_name_in_owner = true
@@ -109,7 +104,7 @@ follow_focus = true
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
-theme_override_constants/separation = 10
+theme_override_constants/separation = 8
 
 [node name="StatusLabel" type="Label" parent="Center/Panel/Body"]
 unique_name_in_owner = true

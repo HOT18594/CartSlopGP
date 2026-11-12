@@ -44,19 +44,14 @@ static func build(entry: Dictionary) -> Node3D:
 	# transparent/ghost vehicle while the collider still worked. Force every
 	# vehicle surface opaque and two-sided so the body is always visible.
 	_force_visible_materials(instance)
-	_hide_legacy_shadow_mesh(instance, scene_path)
 	return holder
 
 
-static func _hide_legacy_shadow_mesh(node: Node, scene_path: String) -> void:
-	## The Poly Pizza shopping-cart GLB contains a large grey duplicate mesh
-	## (Box055) used as a baked shadow. In the real-time preview and race it
-	## reads as a second transparent cart floating behind the red one.
-	if not scene_path.contains("shopping_cart"):
-		return
-	var shadow: Node = node.find_child("Box055", true, false)
-	if shadow is MeshInstance3D:
-		(shadow as MeshInstance3D).visible = false
+# NOTE: this used to hide "Box055" from the shopping-cart GLB, on the theory
+# that it was a baked shadow duplicate. It is not: Box055 is the cart's metal
+# push handle (a grip bar plus two angled supports). Hiding it left the cart
+# with no handle at all. Every part stays visible now; the material pass above
+# is what keeps them opaque.
 
 
 static func _force_visible_materials(node: Node) -> void:

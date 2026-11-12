@@ -1,47 +1,20 @@
-[gd_scene load_steps=7 format=3]
+[gd_scene load_steps=6 format=3]
 
 [ext_resource type="Theme" path="res://assets/ui/theme.tres" id="1"]
 [ext_resource type="Script" path="res://scripts/hud.gd" id="2"]
 [ext_resource type="Script" path="res://scripts/ui/speedometer.gd" id="3"]
 [ext_resource type="Script" path="res://scripts/ui/boost_meter.gd" id="4"]
 
-[sub_resource type="StyleBoxFlat" id="pill_light"]
-content_margin_left = 16.0
-content_margin_top = 6.0
-content_margin_right = 16.0
-content_margin_bottom = 6.0
-bg_color = Color(1, 1, 1, 1)
-border_width_left = 4
-border_width_top = 4
-border_width_right = 4
-border_width_bottom = 4
-border_color = Color(0.117647, 0.105882, 0.227451, 1)
-corner_radius_top_left = 18
-corner_radius_top_right = 18
-corner_radius_bottom_right = 18
-corner_radius_bottom_left = 18
-shadow_color = Color(0.07, 0.06, 0.15, 0.4)
-shadow_size = 0
-shadow_offset = Vector2(0, 6)
-
 [sub_resource type="StyleBoxFlat" id="pill_navy"]
-content_margin_left = 16.0
-content_margin_top = 6.0
-content_margin_right = 16.0
-content_margin_bottom = 6.0
-bg_color = Color(0.117647, 0.105882, 0.227451, 1)
-border_width_left = 4
-border_width_top = 4
-border_width_right = 4
-border_width_bottom = 4
-border_color = Color(1, 0.964706, 0.890196, 1)
-corner_radius_top_left = 18
-corner_radius_top_right = 18
-corner_radius_bottom_right = 18
-corner_radius_bottom_left = 18
-shadow_color = Color(0.07, 0.06, 0.15, 0.4)
-shadow_size = 0
-shadow_offset = Vector2(0, 6)
+content_margin_left = 18.0
+content_margin_top = 8.0
+content_margin_right = 18.0
+content_margin_bottom = 8.0
+bg_color = Color(0.117647, 0.105882, 0.227451, 0.82)
+corner_radius_top_left = 16
+corner_radius_top_right = 16
+corner_radius_bottom_right = 16
+corner_radius_bottom_left = 16
 
 [node name="HUD" type="Control"]
 layout_mode = 3
@@ -54,121 +27,6 @@ mouse_filter = 2
 theme = ExtResource("1")
 script = ExtResource("2")
 
-[node name="RaceBox" type="HBoxContainer" parent="."]
-layout_mode = 1
-anchors_preset = 0
-offset_left = 24.0
-offset_top = 20.0
-offset_right = 700.0
-offset_bottom = 128.0
-mouse_filter = 2
-theme_override_constants/separation = 8
-
-[node name="PositionBadge" type="PanelContainer" parent="RaceBox"]
-unique_name_in_owner = true
-visible = false
-layout_mode = 2
-size_flags_vertical = 4
-theme_override_styles/panel = SubResource("pill_navy")
-
-[node name="PosRow" type="HBoxContainer" parent="RaceBox/PositionBadge"]
-layout_mode = 2
-theme_override_constants/separation = 10
-
-[node name="PlaceLabel" type="Label" parent="RaceBox/PositionBadge/PosRow"]
-unique_name_in_owner = true
-layout_mode = 2
-theme_type_variation = &"TitleLabel"
-theme_override_colors/font_color = Color(1, 0.823529, 0.180392, 1)
-theme_override_colors/font_outline_color = Color(0.117647, 0.105882, 0.227451, 1)
-theme_override_constants/outline_size = 10
-theme_override_font_sizes/font_size = 38
-text = "1st"
-
-[node name="LapStack" type="VBoxContainer" parent="RaceBox"]
-layout_mode = 2
-size_flags_vertical = 4
-theme_override_constants/separation = 6
-
-[node name="LapBadge" type="PanelContainer" parent="RaceBox/LapStack"]
-unique_name_in_owner = true
-visible = false
-layout_mode = 2
-size_flags_horizontal = 0
-theme_override_styles/panel = SubResource("pill_light")
-
-[node name="LapRow" type="HBoxContainer" parent="RaceBox/LapStack/LapBadge"]
-layout_mode = 2
-theme_override_constants/separation = 10
-
-[node name="LapCaption" type="Label" parent="RaceBox/LapStack/LapBadge/LapRow"]
-layout_mode = 2
-theme_type_variation = &"TitleLabel"
-theme_override_colors/font_color = Color(0.117647, 0.105882, 0.227451, 1)
-theme_override_constants/outline_size = 0
-theme_override_font_sizes/font_size = 22
-text = "LAP"
-
-[node name="LapValue" type="Label" parent="RaceBox/LapStack/LapBadge/LapRow"]
-unique_name_in_owner = true
-layout_mode = 2
-theme_type_variation = &"TitleLabel"
-theme_override_colors/font_color = Color(0.117647, 0.105882, 0.227451, 1)
-theme_override_constants/outline_size = 0
-theme_override_font_sizes/font_size = 28
-text = "1 / 3"
-
-[node name="TimeBadge" type="PanelContainer" parent="RaceBox/LapStack"]
-unique_name_in_owner = true
-visible = false
-layout_mode = 2
-size_flags_horizontal = 0
-theme_override_styles/panel = SubResource("pill_navy")
-
-[node name="TimeRow" type="HBoxContainer" parent="RaceBox/LapStack/TimeBadge"]
-layout_mode = 2
-theme_override_constants/separation = 8
-
-[node name="TimeCaption" type="Label" parent="RaceBox/LapStack/TimeBadge/TimeRow"]
-layout_mode = 2
-theme_type_variation = &"TitleLabel"
-theme_override_colors/font_color = Color(1, 0.964706, 0.890196, 1)
-theme_override_constants/outline_size = 0
-theme_override_font_sizes/font_size = 14
-text = "TIME"
-
-[node name="TimeValue" type="Label" parent="RaceBox/LapStack/TimeBadge/TimeRow"]
-unique_name_in_owner = true
-custom_minimum_size = Vector2(78, 0)
-layout_mode = 2
-theme_type_variation = &"TitleLabel"
-theme_override_colors/font_color = Color(1, 0.823529, 0.180392, 1)
-theme_override_constants/outline_size = 0
-theme_override_font_sizes/font_size = 20
-text = "0:00.000"
-
-[node name="TimeDot" type="Label" parent="RaceBox/LapStack/TimeBadge/TimeRow"]
-layout_mode = 2
-theme_override_colors/font_color = Color(1, 0.964706, 0.890196, 0.7)
-theme_override_font_sizes/font_size = 16
-text = "·"
-
-[node name="BestCaption" type="Label" parent="RaceBox/LapStack/TimeBadge/TimeRow"]
-layout_mode = 2
-theme_type_variation = &"TitleLabel"
-theme_override_colors/font_color = Color(1, 0.964706, 0.890196, 0.8)
-theme_override_constants/outline_size = 0
-theme_override_font_sizes/font_size = 14
-text = "BEST"
-
-[node name="BestValue" type="Label" parent="RaceBox/LapStack/TimeBadge/TimeRow"]
-unique_name_in_owner = true
-custom_minimum_size = Vector2(62, 0)
-layout_mode = 2
-theme_override_colors/font_color = Color(1, 1, 1, 0.95)
-theme_override_font_sizes/font_size = 16
-text = "—"
-
 [node name="StatePill" type="PanelContainer" parent="."]
 visible = false
 layout_mode = 1
@@ -178,7 +36,7 @@ anchor_right = 0.5
 offset_left = -104.0
 offset_top = 18.0
 offset_right = 104.0
-offset_bottom = 58.0
+offset_bottom = 56.0
 grow_horizontal = 2
 theme_override_styles/panel = SubResource("pill_navy")
 
@@ -187,7 +45,7 @@ unique_name_in_owner = true
 layout_mode = 2
 theme_type_variation = &"TitleLabel"
 theme_override_colors/font_color = Color(1, 0.964706, 0.890196, 1)
-theme_override_font_sizes/font_size = 20
+theme_override_font_sizes/font_size = 18
 text = "DRIVING"
 horizontal_alignment = 1
 

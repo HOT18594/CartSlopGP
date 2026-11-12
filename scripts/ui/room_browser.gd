@@ -14,7 +14,6 @@ signal room_selected(room: Dictionary)
 signal closed
 signal host_requested(mode: String)
 
-const CANDY_BUTTON: String = "res://scripts/ui/candy_button.gd"
 const UiPalette := preload("res://scripts/ui/ui_palette.gd")
 const MAX_PLAYERS: int = 8
 
@@ -173,12 +172,7 @@ func _rebuild_list() -> void:
 		if not _matches(room):
 			continue
 		shown += 1
-		var row_button: Button = _room_row(room)
-		_list.add_child(row_button)
-		if row_button.disabled:
-			# candy_button applies its own disabled style on _ready; replace it
-			# with the readable lavender one after the row enters the tree.
-			_apply_soft_disabled(row_button)
+		_list.add_child(_room_row(room))
 	if shown > 0:
 		_set_state("idle", "%d ROOM%s  ·  TAB TO A ROOM, THEN PRESS ENTER" % [
 			shown, "" if shown == 1 else "S"], "", Callable())
@@ -206,16 +200,22 @@ func _room_row(room: Dictionary) -> Button:
 	var players: int = clampi(int(room.get("players", 1)), 0, MAX_PLAYERS)
 	var full: bool = players >= MAX_PLAYERS
 	var joinable: bool = (not is_lan or state == "lobby") and not full
-	var button := _candy("", UiPalette.CREAM, 60, 17)
-	button.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	# A room is a quiet tinted row, not a bordered pill: the gap between rows
+	# already separates them and the focus ring is the only outline.
+	var button := Button.new()
+	button.custom_minimum_size = Vector2(0, 56)
+	button.add_theme_stylebox_override("normal", _row_style(Color(UiPalette.CREAM, 0.60)))
+	button.add_theme_stylebox_override("hover", _row_style(Color(1, 1, 1, 0.95)))
+	button.add_theme_stylebox_override("pressed", _row_style(UiPalette.YELLOW))
+	button.add_theme_stylebox_override("disabled", _row_style(Color(0.84, 0.81, 0.89, 0.55)))
 	button.disabled = not joinable
+	UiKit.apply_focus_ring(button, UiKit.CORNER_RADIUS)
 	if full:
 		button.tooltip_text = "ROOM IS FULL"
 	elif not joinable:
 		button.tooltip_text = "ROOM IN PROGRESS"
 	else:
 		button.tooltip_text = "JOIN ROOM"
-	_apply_soft_disabled(button)
 	button.pressed.connect(_on_room_pressed.bind(room))
 
 	var row := HBoxContainer.new()
@@ -232,7 +232,7 @@ func _room_row(room: Dictionary) -> Button:
 	name_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	name_label.clip_text = true
 	name_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	name_label.add_theme_font_size_override("font_size", 22)
+	name_label.add_theme_font_size_override("font_size", 20)
 	name_label.add_theme_color_override("font_color", UiPalette.INK)
 	name_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	row.add_child(name_label)
@@ -263,9 +263,7 @@ func _row_badge(text: String, color: Color) -> PanelContainer:
 	badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var style := StyleBoxFlat.new()
 	style.bg_color = color
-	style.set_corner_radius_all(9)
-	style.set_border_width_all(2)
-	style.border_color = UiPalette.INK
+	style.set_corner_radius_all(10)
 	style.content_margin_left = 10
 	style.content_margin_right = 10
 	style.content_margin_top = 1
@@ -321,8 +319,8 @@ func _base_title() -> String:
 
 
 func _build_action_button() -> void:
-	_action_button = _candy("", UiPalette.YELLOW, 44, 16)
-	_action_button.custom_minimum_size = Vector2(240, 44)
+	_action_button = _candy("", UiPalette.YELLOW, 48, 16)
+	_action_button.custom_minimum_size = Vector2(220, 48)
 	_action_button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	_action_button.visible = false
 	_action_button.pressed.connect(_on_action_pressed)
@@ -374,10 +372,8 @@ func _style_scrollbar() -> void:
 	track.bg_color = Color(UiPalette.INK, 0.10)
 	track.set_corner_radius_all(7)
 	var grab := StyleBoxFlat.new()
-	grab.bg_color = UiPalette.BLUE
+	grab.bg_color = Color(UiPalette.BLUE, 0.75)
 	grab.set_corner_radius_all(7)
-	grab.set_border_width_all(2)
-	grab.border_color = UiPalette.INK
 	var grab_hover: StyleBoxFlat = grab.duplicate()
 	grab_hover.bg_color = UiPalette.BLUE.lightened(0.12)
 	bar.add_theme_stylebox_override("scroll", track)
@@ -387,27 +383,29 @@ func _style_scrollbar() -> void:
 
 
 func _apply_soft_disabled(button: Button) -> void:
+	## One quiet disabled tint. The old style stacked a 5 px outline and a
+	## drop shadow on top of the candy border, which read as a double border.
 	var style := StyleBoxFlat.new()
 	style.bg_color = Color("d8d3e4")
-	style.set_corner_radius_all(20)
-	style.set_border_width_all(5)
-	style.border_color = Color("4b4560")
-	style.shadow_color = Color(0.12, 0.10, 0.23, 0.30)
-	style.shadow_offset = Vector2(0, 4)
-	style.content_margin_left = 26
-	style.content_margin_right = 26
+	style.set_corner_radius_all(UiKit.CORNER_RADIUS)
+	style.content_margin_left = 22
+	style.content_margin_right = 22
 	style.content_margin_top = 10
 	style.content_margin_bottom = 10
 	button.add_theme_stylebox_override("disabled", style)
 
 
+func _row_style(bg: Color) -> StyleBoxFlat:
+	var style := StyleBoxFlat.new()
+	style.bg_color = bg
+	style.set_corner_radius_all(UiKit.CORNER_RADIUS)
+	style.content_margin_left = 18
+	style.content_margin_right = 18
+	style.content_margin_top = 8
+	style.content_margin_bottom = 8
+	style.anti_aliasing = true
+	return style
+
+
 func _candy(text: String, color: Color, height: int, font_size: int) -> Button:
-	var button := Button.new()
-	button.set_script(load(CANDY_BUTTON))
-	button.set("fill_color", color)
-	button.set("corner_radius", mini(int(height / 2), 28))
-	button.set("shadow_offset", clampi(int(height / 10), 3, 8))
-	button.text = text
-	button.custom_minimum_size = Vector2(0, height)
-	button.add_theme_font_size_override("font_size", font_size)
-	return button
+	return UiKit.tile(text, color, float(height), font_size)

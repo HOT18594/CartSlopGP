@@ -15,7 +15,6 @@ extends Control
 signal closed
 
 const CHANGELOG_PATH: String = "res://CHANGELOG.md"
-const CANDY_BUTTON := preload("res://scripts/ui/candy_button.gd")
 const UiAnim := preload("res://scripts/ui/ui_anim.gd")
 const UiPalette := preload("res://scripts/ui/ui_palette.gd")
 
@@ -30,7 +29,6 @@ const PANEL_MAX_WIDTH: float = 860.0
 const PANEL_MAX_HEIGHT: float = 620.0
 const PANEL_MARGIN_X: float = 120.0
 const PANEL_MARGIN_Y: float = 96.0
-const VERSION_BUTTON_WIDTH: float = 356.0
 const PHOTO_WIDTH: int = 380
 const PHOTO_HEIGHT: int = 214
 const PHOTO_ROOT: String = "res://assets/ui/art/changelog_"
@@ -41,7 +39,7 @@ const PHOTO_ROOT: String = "res://assets/ui/art/changelog_"
 @onready var _all_versions_button: Button = %AllVersionsButton
 @onready var _list_view: VBoxContainer = %ListView
 @onready var _detail_view: VBoxContainer = %DetailView
-@onready var _version_list: VBoxContainer = %VersionList
+@onready var _version_list: GridContainer = %VersionList
 @onready var _panel: PanelContainer = %Panel
 
 var _releases: Array[Dictionary] = []
@@ -128,21 +126,19 @@ func _build_version_list() -> void:
 	_release_buttons.clear()
 	var vp_w: float = get_viewport_rect().size.x
 	var card_w: float = minf(PANEL_MAX_WIDTH, maxf(320.0, vp_w - PANEL_MARGIN_X))
-	var button_w: float = maxf(200.0, minf(VERSION_BUTTON_WIDTH, card_w - 96.0))
+	# Two equal tiles per row, so a version is a block instead of one thin bar
+	# stretched across the whole card.
+	var button_w: float = maxf(160.0, (card_w - 120.0) * 0.5)
 	for i in _releases.size():
 		var release: Dictionary = _releases[i]
-		var button := Button.new()
-		button.script = CANDY_BUTTON
-		button.fill_color = UiPalette.BLUE if i % 2 == 0 else UiPalette.CYAN
-		button.corner_radius = 18
-		button.shadow_offset = 5
-		button.custom_minimum_size = Vector2(button_w, 52)
-		button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-		button.add_theme_font_size_override("font_size", 18)
+		var button := UiKit.tile("", UiPalette.BLUE if i % 2 == 0 else UiPalette.CYAN,
+			64.0, 17)
+		button.custom_minimum_size.x = button_w
+		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		var date_text: String = str(release.get("date", "")).strip_edges()
 		if date_text == "":
 			date_text = "DATE UNKNOWN"
-		button.text = "v%s     %s" % [str(release.get("version", "")), date_text]
+		button.text = "v%s  ·  %s" % [str(release.get("version", "")), date_text]
 		button.pressed.connect(_show_release.bind(i))
 		_version_list.add_child(button)
 		_release_buttons.append(button)
