@@ -1,11 +1,11 @@
 extends Node3D
-## MEADOW LOOP - a solo 3-lap race on a winding dirt track through a dense,
-## low-poly grassy forest. Built at runtime from one closed Catmull-Rom spline.
+## A solo 3-lap race on a closed circuit chosen from TrackDefs. Built at runtime
+## from one closed Catmull-Rom spline.
 ##
 ## Pipeline:
-##   spline -> road ribbon + curbs + invisible barrier walls + ground plane
+##   preset -> spline -> road ribbon + curbs + invisible barrier walls + ground
 ##          -> start/finish line + four sector gates
-##          -> Kenney Nature Kit foliage, merged into one MultiMesh per model
+##          -> map theme hook (res://scripts/minigames/maps/<id>_theme.gd)
 ##          -> physical AI rivals that drive the same vehicle as the player
 ##          -> lap/sector tracking, countdown, HUD badges and a candy result card
 ##
@@ -13,6 +13,7 @@ extends Node3D
 ## the sandbox uses. Nothing here touches multiplayer.
 
 const TrackSpline := preload("res://scripts/minigames/track_spline.gd")
+const TrackDefs := preload("res://scripts/minigames/track_defs.gd")
 const RaceAI := preload("res://scripts/minigames/race_ai.gd")
 const CART_SCENE := preload("res://scenes/player/cart_player.tscn")
 const VehicleCatalog := preload("res://scripts/vehicles/vehicle_catalog.gd")
@@ -129,6 +130,8 @@ const BOT_COLORS: Array[Color] = [
 enum Phase { COUNTDOWN, RACING, FINISHED }
 
 var _spline: RefCounted
+var _preset: Dictionary = {}
+var _preset_id: String = TrackDefs.DEFAULT_ID
 var _cart: CartPlayer
 var _hud: Node
 var _hud_time_accum: float = 0.0
@@ -266,46 +269,45 @@ func _exit_tree() -> void:
 
 
 func _ready() -> void:
-	_spline = TrackSpline.new()
+	# Decide the session type before building the map: multiplayer clients ask
+	# the host's session for the map they should be racing on.
+	_multiplayer = Network.is_session_active()
+	_is_host = Network.is_host
+	var map_id: String = GameSettings.selected_minigame
+	if _multiplayer and not _is_host and Network.session_minigame != "":
+		map_id = Network.session_minigame
+	_preset = TrackDefs.get_preset(map_id)
+	_preset_id = str(_preset.get("id", TrackDefs.DEFAULT_ID))
+	_spline = TrackSpline.new(_preset)
 	_track_points = _spline.points
 	_track_cumulative = _spline.cumulative
 	_track_total = maxf(_spline.total_length, 1.0)
 	var test_laps: String = OS.get_environment("CART_TEST_LAPS")
 	if test_laps.is_valid_int():
 		_total_laps = clampi(test_laps.to_int(), 1, 9)
-	_foliage_material = FoliageBaker.make_material()
 	CursorController.set_menu_mode(false)
 	_upgrade_graphics()
 
 	_cart = get_tree().get_first_node_in_group("player") as CartPlayer
 	_hud = $HUD
-	# The result card is built below, so decide the session type first. Without
-	# this, multiplayer showed RACE AGAIN (which is a no-op) and a solo-only
-	# back button.
-	_multiplayer = Network.is_session_active()
-	_is_host = Network.is_host
+	# The result card is built below, so the session type decides its buttons.
 	if _cart != null:
 		_base_max_speed = _cart.max_speed
 		_last_cart_pos = _cart.global_position
+		_cart.surface_grip = _surface_grip_for(START_DISTANCE)
 
 	_build_ground()
-	_build_hills()
 	_build_track()
 	_build_barriers()
 	_build_start_line()
 	_build_gates()
 	_build_start_lights()
-	_build_start_festival()
 	_build_boost_pads()
 	_build_ramps()
-	_build_grid()
-	_build_scenery()
 	_build_trackside_props()
-	_build_verge_details()
-	_build_corner_furniture()
-	_build_corner_hazards()
-	_build_track_fence()
-	_build_sponsor_boards()
+	# The meadow forest, horizon, grandstands and signs are map theme content
+	# now. The hook does nothing when this map has no theme yet.
+	_build_theme()
 	_build_rivals()
 	_build_overlay()
 	_start_ambience()
@@ -322,7 +324,7 @@ func _ready() -> void:
 		_effects.call("setup", _cart)
 		if not _cart.horn_requested.is_connected(_on_horn_requested):
 			_cart.horn_requested.connect(_on_horn_requested)
-		if Network.is_session_active():
+		if _multiplayer:
 			_setup_multiplayer()
 			_waiting_for_peers = true
 			_wait_elapsed = 0.0
@@ -333,12 +335,12 @@ func _ready() -> void:
 	_hud.call("set_race_time", 0.0, -1.0)
 	if not _waiting_for_peers:
 		_countdown_label.text = "3"
-		_toast("MEADOW LOOP  ·  3 LAPS", 2.2)
+		_toast("%s  ·  3 LAPS" % _race_title(), 2.2)
 
 
 func _upgrade_graphics() -> void:
-	# MEADOW LOOP keeps 4x MSAA; sky, sun, fog and post come from the shared
-	# VisualGrade so the race and the sandbox stay visually consistent.
+	# The race keeps 2x MSAA plus FXAA; sky, sun, fog and post come from the
+	# shared VisualGrade so every map stays visually consistent.
 	var viewport: Viewport = get_viewport()
 	if viewport != null:
 		# 2x MSAA plus FXAA antialiases the alpha-scissor foliage that MSAA
@@ -347,6 +349,43 @@ func _upgrade_graphics() -> void:
 		viewport.screen_space_aa = Viewport.SCREEN_SPACE_AA_FXAA
 	VisualGrade.apply($WorldEnvironment, "race")
 	VisualGrade.apply_sun($Sun)
+
+
+func _race_title() -> String:
+	return str(_preset.get("name", "RACE"))
+
+
+func _build_theme() -> void:
+	## Map-specific scenery lives in res://scripts/minigames/maps/<id>_theme.gd.
+	## The theme owns the meadow forest, the dockyard apron and the snow fields;
+	## a map without a theme simply runs the shared track and props.
+	var path: String = "res://scripts/minigames/maps/%s_theme.gd" % _preset_id
+	if not ResourceLoader.exists(path):
+		return
+	var theme_script: Script = load(path) as Script
+	if theme_script == null:
+		return
+	if theme_script.has_method("build"):
+		theme_script.call("build", self, _spline)
+
+
+func _surface_grip_for(distance: float) -> float:
+	## Grip multiplier at an arc-length position, sampled from the map data.
+	var total: float = maxf(_spline.total_length, 0.001)
+	return TrackDefs.grip_at(_preset, distance / total)
+
+
+func _update_surface_grip(player_s: float) -> void:
+	## Every physical cart samples its own part of the track, so a rival can be
+	## on the wet section while the player is still on dry asphalt. A ghost does
+	## not need it, but writing the field is harmless and keeps remote code paths
+	## identical if they ever gain physics.
+	if _cart != null:
+		_cart.surface_grip = _surface_grip_for(player_s)
+	for rival: Dictionary in _rivals:
+		var node: CartPlayer = rival["node"]
+		if is_instance_valid(node):
+			node.surface_grip = _surface_grip_for(float(rival.get("prev_s", 0.0)))
 
 
 func _track_transform(distance: float, lateral: float = 0.0, height: float = 0.2) -> Transform3D:
@@ -1654,6 +1693,7 @@ func _build_rivals() -> void:
 		label.position = Vector3(0.0, 2.2, 0.0)
 		rival.add_child(label)
 		rival.set_spawn_transform(spawn)
+		rival.surface_grip = _surface_grip_for(progress)
 		# Personality is drawn in the same order as before the AI rewrite, so a
 		# seeded field stays familiar. Skill sets the margins; the drawn line
 		# style, phase, aggression and lookahead trim make every driver follow a
@@ -1720,6 +1760,7 @@ func _reset_rival(index: int) -> void:
 	node.global_transform = spawn
 	node.reset_for_respawn()
 	node.velocity = Vector3.ZERO
+	node.surface_grip = _surface_grip_for(float(rival["progress"]))
 	rival["prev_s"] = _spline.wrap_distance(float(rival["progress"]))
 	rival["index"] = _track_index_at_distance(float(rival["progress"]))
 	rival["stuck"] = 0.0
@@ -1970,7 +2011,7 @@ func _build_overlay() -> void:
 	title_banner.add_child(_result_title)
 
 	_result_subtitle = Label.new()
-	_result_subtitle.text = "MEADOW LOOP  ·  %d LAPS" % _total_laps
+	_result_subtitle.text = "%s  ·  %d LAPS" % [_race_title(), _total_laps]
 	_result_subtitle.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_result_subtitle.add_theme_font_size_override("font_size", 14)
 	_result_subtitle.add_theme_color_override("font_color", UiPalette.MUTED)
@@ -3327,6 +3368,7 @@ func _tick_race(delta: float) -> void:
 		var max_step: float = _cart.velocity.length() * delta * 2.5 + 1.0
 		_unwrapped += clampf(step, -max_step, max_step)
 	_prev_s = s
+	_update_surface_grip(s)
 
 	var sector: int = clampi(int(s / (_spline.total_length / 4.0)), 0, 3)
 	_sector_flags |= 1 << sector
@@ -3706,7 +3748,7 @@ func _ordinal(place: int) -> String:
 func _on_race_again() -> void:
 	if _multiplayer:
 		return
-	SceneLoader.go_to(RACE_SCENE, "MEADOW LOOP", "GET READY")
+	SceneLoader.go_to(RACE_SCENE, _race_title(), "GET READY")
 
 
 func _on_back_to_lobby() -> void:

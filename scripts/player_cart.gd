@@ -72,6 +72,9 @@ const FALL_RESET_HEIGHT: float = -4.0
 @export var slip_grip_falloff_end: float = 10.0 ## Sideways speed (m/s) where grip falloff bottoms out.
 @export var slip_grip_falloff_min: float = 0.45 ## Fraction of lateral grip left at full slide (0-1).
 
+@export_group("Surface")
+@export_range(0.05, 2.0, 0.01) var surface_grip: float = 1.0 ## Grip multiplier from the surface under the cart (1.0 = dry road).
+
 @export_group("Steering & Air")
 @export var steering_speed: float = 2.6 ## Max yaw rate (radians/second).
 @export var high_speed_steering_scale: float = 0.65 ## Steering multiplier at top speed (0-1).
@@ -952,6 +955,9 @@ func _update_drive(delta: float, handbrake_held: bool) -> void:
 	# A cart roof is a flat CharacterBody floor, but it is not terrain: let the
 	# cart slide off instead of accelerating along another vehicle.
 	var grounded: bool = is_on_floor() and not _cart_roof_contact
+	# Surface grip scales lateral bite and longitudinal traction. At 1.0 every
+	# multiplication below is by exactly one, so dry-road handling is unchanged.
+	var grip_scale: float = clampf(surface_grip, 0.0, 2.0)
 	# The four-point probe set sees crests and cambers that the single engine
 	# floor normal smooths over. Fall back before the first probe pass.
 	var normal: Vector3 = get_floor_normal() if grounded else Vector3.UP
@@ -990,16 +996,17 @@ func _update_drive(delta: float, handbrake_held: bool) -> void:
 	if braking > 0.05 and fwd_speed > 0.5:
 		# Brake wins over throttle. Holding both should slow the kart, not
 		# cancel out and keep it accelerating.
-		fwd_speed = move_toward(fwd_speed, 0.0, brake_power * braking * delta)
+		fwd_speed = move_toward(fwd_speed, 0.0,
+			brake_power * braking * delta * grip_scale)
 	elif throttle > 0.05:
 		var accel_scale: float = clampf(1.0 - fwd_speed / maxf(eff_max_speed, 0.001), 0.25, 1.0)
 		fwd_speed = move_toward(fwd_speed, eff_max_speed,
-			eff_accel * accel_scale * throttle * delta)
+			eff_accel * accel_scale * throttle * delta * grip_scale)
 	elif braking > 0.05 and _reverse_hold >= 0.12:
 		fwd_speed = move_toward(fwd_speed, -reverse_speed,
-			acceleration * 0.6 * braking * delta)
+			acceleration * 0.6 * braking * delta * grip_scale)
 	else:
-		fwd_speed = move_toward(fwd_speed, 0.0, friction * delta)
+		fwd_speed = move_toward(fwd_speed, 0.0, friction * delta * grip_scale)
 	if grounded and throttle > 0.05:
 		# Arcade slope assist: a steep dome should be climbable, not turn the
 		# kart sideways or stall it against the face. Only add uphill force
@@ -1016,10 +1023,11 @@ func _update_drive(delta: float, handbrake_held: bool) -> void:
 	# The returned kick is folded into fwd_speed so the velocity rebuild below
 	# cannot discard it.
 	fwd_speed += _update_drift_boost(delta, grounded, lat_speed, handbrake_held)
-	var grip: float = lateral_grip
+	var grip: float = lateral_grip * grip_scale
 	if grounded and handbrake_held:
-		grip = drift_grip
-		fwd_speed = move_toward(fwd_speed, 0.0, brake_power * 0.4 * delta)
+		grip = drift_grip * grip_scale
+		fwd_speed = move_toward(fwd_speed, 0.0,
+			brake_power * 0.4 * delta * grip_scale)
 	if not grounded:
 		grip *= 0.25
 	else:

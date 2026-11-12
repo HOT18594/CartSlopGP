@@ -63,7 +63,11 @@ const RELAY_HTTP_TIMEOUT: float = 4.0
 ## CARTSLOP_RELAY can point a build at a different relay for testing.
 const DEFAULT_RELAY_SERVER: String = "68.204.45.1:42777"
 const ROOM_CODE_ALPHABET: String = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-const ALLOWED_SCENES: Array[String] = [GAME_SCENE, RACE_SCENE]
+const ALLOWED_SCENES: Array[String] = [
+	GAME_SCENE,
+	RACE_SCENE,
+	"res://scenes/minigames/cargo_rush.tscn",
+]
 const MAX_BOT_COUNT: int = 5
 const MAX_LOBBY_ENTRIES: int = 200
 const MAX_HTTP_BODY: int = 1024 * 1024

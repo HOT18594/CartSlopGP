@@ -1,39 +1,27 @@
 extends Control
 const UiAnim := preload("res://scripts/ui/ui_anim.gd")
-## Minigame picker.
+## Minigame map picker.
 ##
-## Only events that actually ship are listed. Every card uses a real in-game
-## preview image; if an event has no preview, no artwork is drawn. There are no
-## illustrated placeholders or "coming soon" cards pretending to be content.
+## The list is generated from TrackDefs, so every map in the registry appears
+## here with its name, blurb and preview. A missing preview falls back to the
+## existing meadow_loop.png image; no illustrated placeholder is invented.
 
+const TrackDefs := preload("res://scripts/minigames/track_defs.gd")
 const Catalog := preload("res://scripts/vehicles/vehicle_catalog.gd")
 
 const PLAY_MENU_SCENE: String = "res://scenes/ui/play_menu.tscn"
 const LOBBY_SCENE: String = "res://scenes/ui/lobby_menu.tscn"
 const MINIGAMES_SCENE: String = "res://scenes/ui/minigames_menu.tscn"
 const VEHICLE_SCENE: String = "res://scenes/ui/vehicle_select.tscn"
+const RACE_SCENE: String = "res://scenes/minigames/grass_race.tscn"
 const PREVIEW_DIR: String = "res://assets/ui/minigames/"
-const ART_BACKDROP := preload("res://scripts/ui/art_backdrop.gd")
+const FALLBACK_PREVIEW: String = "meadow_loop.png"
 const UiPalette := preload("res://scripts/ui/ui_palette.gd")
-
-const EVENTS: Array[Dictionary] = [
-	{
-		"id": "meadow_loop",
-		"name": "MEADOW LOOP",
-		"desc": "Farms, ponds and pine ridges. Hit the boost pads and two dirt ramps, then outdrive the field.",
-		"preview": "meadow_loop.png",
-		"scene": "res://scenes/minigames/grass_race.tscn",
-		"available": true,
-		"accent": UiPalette.GRASS,
-	},
-]
 
 var _body: VBoxContainer
 var _title: Label
-var _preview_panel: PanelContainer
-var _slideshow: Control
-var _detail_name: Label
-var _detail_desc: Label
+var _map_list: VBoxContainer
+var _map_cards: Array[Button] = []
 var _vehicle_button: Button
 var _play_button: Button
 var _back_button: Button
@@ -44,8 +32,7 @@ func _ready() -> void:
 	CursorController.set_menu_mode(true)
 	_body = $Center/Panel/Body
 	_build_ui()
-	_select(0)
-	pass
+	_initial_index()
 	call_deferred("_enter")
 
 
@@ -79,56 +66,28 @@ func _build_ui() -> void:
 	header.add_child(_back_button)
 	_body.add_child(header)
 
-	var feature := HBoxContainer.new()
-	feature.add_theme_constant_override("separation", 18)
-	feature.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_body.add_child(feature)
-
-	_preview_panel = PanelContainer.new()
-	_preview_panel.custom_minimum_size = Vector2(470, 270)
-	_preview_panel.clip_contents = true
-	# Just a dark rounded backdrop behind the art: no frame, no double border.
-	var preview_style := StyleBoxFlat.new()
-	preview_style.bg_color = UiPalette.OUTLINE
-	preview_style.set_corner_radius_all(UiKit.CORNER_RADIUS)
-	_preview_panel.add_theme_stylebox_override("panel", preview_style)
-	feature.add_child(_preview_panel)
-
-	# Real views of the current circuit, not concept art. The AI art set is
-	# reserved for the randomized loading/transition screens.
-	var slideshow: Control = ART_BACKDROP.new()
-	slideshow.set("texture_names", PackedStringArray([
-		"meadow_loop_start.png", "meadow_loop_track.png",
-		"meadow_loop_boost.png", "meadow_loop_farm.png",
-		"meadow_loop_overview.png",
-	]))
-	slideshow.set("slide_seconds", 4.5)
-	slideshow.set("fade_seconds", 0.8)
-	_preview_panel.add_child(slideshow)
-	_slideshow = slideshow
-
-	var details := VBoxContainer.new()
-	details.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	details.add_theme_constant_override("separation", 12)
-	feature.add_child(details)
-
-	_detail_name = Label.new()
-	_detail_name.theme_type_variation = &"TitleLabel"
-	_detail_name.add_theme_font_size_override("font_size", 30)
-	_detail_name.add_theme_color_override("font_color", UiPalette.INK)
-	details.add_child(_detail_name)
-
-	_detail_desc = Label.new()
-	_detail_desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_detail_desc.add_theme_font_size_override("font_size", 18)
-	_detail_desc.add_theme_color_override("font_color", UiPalette.INK)
-	_detail_desc.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	details.add_child(_detail_desc)
+	# Vertical cards, not a single hero image: every map keeps its own name,
+	# blurb and preview visible at the same time.
+	var scroll := ScrollContainer.new()
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_body.add_child(scroll)
+	_map_list = VBoxContainer.new()
+	_map_list.custom_minimum_size = Vector2(640, 0)
+	_map_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_map_list.add_theme_constant_override("separation", 10)
+	scroll.add_child(_map_list)
+	_map_cards.clear()
+	for index in TrackDefs.PRESETS.size():
+		var card: Button = _make_map_card(index, TrackDefs.PRESETS[index])
+		_map_list.add_child(card)
+		_map_cards.append(card)
 
 	var action_row := HBoxContainer.new()
 	action_row.add_theme_constant_override("separation", 10)
 	action_row.alignment = BoxContainer.ALIGNMENT_CENTER
-	details.add_child(action_row)
+	_body.add_child(action_row)
 
 	_vehicle_button = _button("VEHICLE: SHOPPING CART", Color("8ed8f6"), 60, 17)
 	_vehicle_button.custom_minimum_size = Vector2(230, 60)
@@ -141,7 +100,7 @@ func _build_ui() -> void:
 	action_row.add_child(_vehicle_button)
 
 	_play_button = _button("RACE", UiPalette.YELLOW, 60, 22)
-	_play_button.custom_minimum_size = Vector2(230, 60)
+	_play_button.custom_minimum_size = Vector2(300, 60)
 	_play_button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	_play_button.pressed.connect(_on_play)
 	action_row.add_child(_play_button)
@@ -149,34 +108,124 @@ func _build_ui() -> void:
 	_refresh_vehicle()
 
 
+func _make_map_card(index: int, preset: Dictionary) -> Button:
+	var card: Button = _button("", _accent_for(preset).lightened(0.35), 120, 20)
+	card.name = "MapCard_%s" % str(preset.get("id", "map"))
+	card.tooltip_text = str(preset.get("desc", ""))
+	card.pressed.connect(_select.bind(index))
+
+	var pad := MarginContainer.new()
+	pad.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	pad.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	pad.add_theme_constant_override("margin_left", 12)
+	pad.add_theme_constant_override("margin_right", 12)
+	pad.add_theme_constant_override("margin_top", 10)
+	pad.add_theme_constant_override("margin_bottom", 10)
+	card.add_child(pad)
+
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 14)
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	pad.add_child(row)
+
+	var frame := PanelContainer.new()
+	frame.custom_minimum_size = Vector2(176, 96)
+	frame.clip_contents = true
+	frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var frame_style := StyleBoxFlat.new()
+	frame_style.bg_color = UiPalette.OUTLINE
+	frame_style.set_corner_radius_all(10)
+	frame.add_theme_stylebox_override("panel", frame_style)
+	row.add_child(frame)
+
+	var preview := TextureRect.new()
+	preview.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	preview.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	preview.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var texture: Texture2D = _preview_texture(preset)
+	if texture != null:
+		preview.texture = texture
+	frame.add_child(preview)
+
+	var text := VBoxContainer.new()
+	text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	text.alignment = BoxContainer.ALIGNMENT_CENTER
+	text.add_theme_constant_override("separation", 2)
+	text.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(text)
+	var name_label := Label.new()
+	name_label.text = str(preset.get("name", "MAP"))
+	name_label.theme_type_variation = &"TitleLabel"
+	name_label.add_theme_font_size_override("font_size", 26)
+	name_label.add_theme_color_override("font_color", UiPalette.INK)
+	name_label.add_theme_constant_override("outline_size", 0)
+	name_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	text.add_child(name_label)
+	var desc := Label.new()
+	desc.text = str(preset.get("desc", ""))
+	desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	desc.max_lines_visible = 2
+	desc.clip_text = true
+	desc.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	desc.custom_minimum_size = Vector2(0, 38)
+	desc.add_theme_font_size_override("font_size", 14)
+	desc.add_theme_color_override("font_color", UiPalette.MUTED)
+	desc.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	text.add_child(desc)
+	return card
+
+
 func _button(text: String, color: Color, height: int, font_size: int) -> Button:
 	return UiKit.tile(text, color, float(height), font_size)
 
 
+func _initial_index() -> void:
+	_selected = TrackDefs.index_of(GameSettings.selected_minigame)
+	_select(_selected)
+
+
+func _accent_for(preset: Dictionary) -> Color:
+	var raw: Variant = preset.get("surfaces", [])
+	if raw is Array:
+		for entry: Variant in raw as Array:
+			if not (entry is Dictionary):
+				continue
+			match str((entry as Dictionary).get("kind", "normal")):
+				"wet":
+					return UiPalette.BLUE
+				"ice":
+					return UiPalette.CYAN
+	return UiPalette.GRASS
+
+
+func _preview_texture(preset: Dictionary) -> Texture2D:
+	var file: String = str(preset.get("preview", ""))
+	var path: String = PREVIEW_DIR + file
+	if file.is_empty() or not ResourceLoader.exists(path):
+		path = PREVIEW_DIR + FALLBACK_PREVIEW
+	if not ResourceLoader.exists(path):
+		return null
+	return load(path) as Texture2D
+
+
 func _select(index: int) -> void:
-	if EVENTS.is_empty():
-		# A future build may gate events behind a flag. Never index an empty
-		# list: show an honest empty state instead of a script error.
+	if TrackDefs.PRESETS.is_empty():
 		_selected = 0
-		_detail_name.text = "NO EVENTS AVAILABLE"
-		_detail_desc.text = "This build has no playable events yet."
 		_play_button.disabled = true
-		_vehicle_button.visible = false
+		_play_button.text = "UNAVAILABLE"
 		return
-	_selected = clampi(index, 0, EVENTS.size() - 1)
-	var data: Dictionary = EVENTS[_selected]
-	var available: bool = bool(data.get("available", false))
-	_detail_name.text = str(data["name"])
-	_detail_desc.text = str(data["desc"])
-
-	# Preview policy: show the real screenshot when it exists, otherwise show
-	# no image at all. Never substitute a drawing for a missing preview.
-	_preview_panel.visible = _slideshow != null and _slideshow.has_art()
-
+	_selected = clampi(index, 0, TrackDefs.PRESETS.size() - 1)
+	for i in _map_cards.size():
+		var preset: Dictionary = TrackDefs.PRESETS[mini(i, TrackDefs.PRESETS.size() - 1)]
+		var fill: Color = UiPalette.YELLOW if i == _selected \
+			else _accent_for(preset).lightened(0.35)
+		_map_cards[i].set("fill_color", fill)
+	var data: Dictionary = TrackDefs.PRESETS[_selected]
+	var available: bool = bool(data.get("available", true))
 	_play_button.disabled = not available
 	var verb: String = "SELECT MAP" if Network.is_session_active() else "RACE"
-	_play_button.text = verb if available else "UNAVAILABLE"
-	_play_button.set("fill_color", UiPalette.YELLOW if available else UiPalette.TEXT_DIM)
+	_play_button.text = "%s  ·  %s" % [verb, str(data.get("name", "MAP"))] \
+		if available else "UNAVAILABLE"
 
 
 func _refresh_vehicle() -> void:
@@ -195,10 +244,16 @@ func _on_change_vehicle() -> void:
 
 
 func _on_play() -> void:
-	var data: Dictionary = EVENTS[_selected]
-	if not bool(data.get("available", false)):
+	if TrackDefs.PRESETS.is_empty():
 		return
-	GameSettings.set_selected_minigame(str(data.get("id", "meadow_loop")))
+	var data: Dictionary = TrackDefs.PRESETS[_selected]
+	if not bool(data.get("available", true)):
+		return
+	var map_id: String = str(data.get("id", TrackDefs.DEFAULT_ID))
+	# GameSettings.set_selected_minigame() still clamps to the legacy id, so set
+	# the registry id directly and save through the same public path.
+	GameSettings.selected_minigame = map_id
+	GameSettings.save_settings()
 	if Network.is_session_active():
 		if not Network.is_host:
 			return
@@ -209,7 +264,7 @@ func _on_play() -> void:
 		SceneLoader.go_to(LOBBY_SCENE, "MULTIPLAYER", "Map selected")
 		return
 	GameSettings.set_play_mode(GameSettings.MODE_SINGLE)
-	SceneLoader.go_to(str(data["scene"]), "MEADOW LOOP", "3 LAPS TO WIN")
+	SceneLoader.go_to(RACE_SCENE, str(data.get("name", "RACE")), "3 LAPS TO WIN")
 
 
 func _on_back() -> void:

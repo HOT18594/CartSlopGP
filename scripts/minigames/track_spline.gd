@@ -1,19 +1,16 @@
 extends RefCounted
-## Closed Catmull-Rom centreline for the Meadow Loop race track.
+## Closed Catmull-Rom centreline for one race track.
 ##
 ## The loop is generated from a radial "wobbly ellipse" so it always winds but
 ## can never self-intersect. Everything downstream (road ribbon, barriers,
 ## checkpoints, rivals, scenery rejection) samples this one spline.
+##
+## Geometry comes from a TrackDefs preset. The no-argument constructor keeps
+## the original MEADOW LOOP layout by falling back to the default `circuit`
+## preset. Elevation is a periodic profile of {at, height} keys (at = lap
+## fraction), so a map can climb without changing its plan-view shape.
 
-const CONTROL_POINTS: int = 24
-const SAMPLES_PER_SEGMENT: int = 20
-const BASE_RADIUS: float = 64.0
-const LOBE_A: float = 0.24
-const LOBE_B: float = 0.045
-const LOBE_C: float = 0.022
-const LOBE_D: float = 0.09
-const STRETCH_X: float = 1.25
-const STRETCH_Z: float = 1.05
+const TrackDefs := preload("res://scripts/minigames/track_defs.gd")
 
 var points: PackedVector3Array = PackedVector3Array()
 var cumulative: PackedFloat32Array = PackedFloat32Array() ## Arc length up to point i.
@@ -21,26 +18,43 @@ var total_length: float = 0.0
 var _count: int = 0
 
 
-func _init() -> void:
-	var controls: Array[Vector3] = []
-	for i in CONTROL_POINTS:
-		var angle: float = TAU * float(i) / float(CONTROL_POINTS)
-		var radius: float = BASE_RADIUS * (1.0
-			+ LOBE_A * sin(3.0 * angle + 0.4)
-			+ LOBE_B * cos(5.0 * angle - 0.3)
-			+ LOBE_C * sin(6.0 * angle + 1.1)
-			+ LOBE_D * sin(2.0 * angle + 0.9))
-		controls.append(Vector3(
-			radius * cos(angle) * STRETCH_X, 0.0,
-			radius * sin(angle) * STRETCH_Z))
+func _init(preset: Dictionary = {}) -> void:
+	if preset.is_empty():
+		preset = TrackDefs.get_preset(TrackDefs.DEFAULT_ID)
+	var control_points: int = maxi(int(preset.get("control_points", 24)), 3)
+	var samples_per_segment: int = maxi(
+		int(preset.get("samples_per_segment", 20)), 1)
+	var base_radius: float = float(preset.get("base_radius", 64.0))
+	var lobe_a: float = float(preset.get("lobe_a", 0.24))
+	var lobe_b: float = float(preset.get("lobe_b", 0.045))
+	var lobe_c: float = float(preset.get("lobe_c", 0.022))
+	var lobe_d: float = float(preset.get("lobe_d", 0.09))
+	var stretch_x: float = float(preset.get("stretch_x", 1.25))
+	var stretch_z: float = float(preset.get("stretch_z", 1.05))
+	var profile: Variant = preset.get("elevation", [])
+	var elevation: Array = profile as Array if profile is Array else []
 
-	for i in CONTROL_POINTS:
-		var p0: Vector3 = controls[(i - 1 + CONTROL_POINTS) % CONTROL_POINTS]
+	var controls: Array[Vector3] = []
+	for i in control_points:
+		var angle: float = TAU * float(i) / float(control_points)
+		var radius: float = base_radius * (1.0
+			+ lobe_a * sin(3.0 * angle + 0.4)
+			+ lobe_b * cos(5.0 * angle - 0.3)
+			+ lobe_c * sin(6.0 * angle + 1.1)
+			+ lobe_d * sin(2.0 * angle + 0.9))
+		var height: float = _elevation_at(elevation,
+			float(i) / float(control_points))
+		controls.append(Vector3(
+			radius * cos(angle) * stretch_x, height,
+			radius * sin(angle) * stretch_z))
+
+	for i in control_points:
+		var p0: Vector3 = controls[(i - 1 + control_points) % control_points]
 		var p1: Vector3 = controls[i]
-		var p2: Vector3 = controls[(i + 1) % CONTROL_POINTS]
-		var p3: Vector3 = controls[(i + 2) % CONTROL_POINTS]
-		for j in SAMPLES_PER_SEGMENT:
-			var t: float = float(j) / float(SAMPLES_PER_SEGMENT)
+		var p2: Vector3 = controls[(i + 1) % control_points]
+		var p3: Vector3 = controls[(i + 2) % control_points]
+		for j in samples_per_segment:
+			var t: float = float(j) / float(samples_per_segment)
 			points.append(_catmull_rom(p0, p1, p2, p3, t))
 
 	_count = points.size()
@@ -50,6 +64,43 @@ func _init() -> void:
 		cumulative[i] = travelled
 		travelled += points[i].distance_to(points[(i + 1) % _count])
 	total_length = travelled
+
+
+## Height (metres) of the periodic elevation profile at `fraction` of the lap.
+## The keys are joined with a smoothstep so a profile of a few points still
+## reads as rolling ground rather than a chain of flat shelves. A profile
+## crossing 1.0 wraps back to its first key.
+func _elevation_at(profile: Array, fraction: float) -> float:
+	if profile.is_empty():
+		return 0.0
+	if profile.size() == 1:
+		var only: Variant = profile[0]
+		return float((only as Dictionary).get("height", 0.0)) \
+			if only is Dictionary else 0.0
+	var f: float = fposmod(fraction, 1.0)
+	var count: int = profile.size()
+	for i in count:
+		var a: Variant = profile[i]
+		var b: Variant = profile[(i + 1) % count]
+		if not (a is Dictionary) or not (b is Dictionary):
+			continue
+		var a_data: Dictionary = a as Dictionary
+		var b_data: Dictionary = b as Dictionary
+		var a_at: float = fposmod(float(a_data.get("at", 0.0)), 1.0)
+		var b_at: float = fposmod(float(b_data.get("at", 1.0)), 1.0)
+		var span: float = b_at - a_at
+		if span <= 0.0:
+			span += 1.0
+		var local: float = f - a_at
+		if local < 0.0:
+			local += 1.0
+		if local > span:
+			continue
+		var t: float = local / maxf(span, 0.0001)
+		t = t * t * (3.0 - 2.0 * t)
+		return lerpf(float(a_data.get("height", 0.0)),
+			float(b_data.get("height", 0.0)), t)
+	return 0.0
 
 
 func _catmull_rom(p0: Vector3, p1: Vector3, p2: Vector3, p3: Vector3, t: float) -> Vector3:
