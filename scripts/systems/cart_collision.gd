@@ -6,6 +6,15 @@ extends RefCounted
 ## its speed. Both helpers are static so the local controller, the AI and the
 ## host-side network resolver can share the exact same maths without adding
 ## another node to the scene tree.
+##
+## Ownership rule for multiplayer (kept here so every caller sees it):
+## - car-vs-car momentum is host-authoritative in a session; this solver is the
+##   single impulse implementation the host and every client use, so both sides
+##   agree on the exchange and the receiver only adds the host's delta-v once;
+## - solid props are static obstacles on every peer (a client freezes its prop
+##   bodies at the host's pose), so cart-vs-prop contact is resolved by each
+##   peer's own physics against the same shape. Only a pushed prop's motion is
+##   host-authoritative and it never travels through this solver.
 
 ## Mass used when a body does not expose get_mass(). Matches the cart reference.
 const DEFAULT_MASS: float = 1200.0
@@ -20,6 +29,14 @@ const MIN_CLOSING_SPEED: float = 0.001
 ## If an impulse would leave a previously moving cart parked, add a tiny
 ## equal/opposite separation impulse so the hit never reads as a dead stop.
 const MIN_KEEP_SPEED: float = 0.35
+## A contact speed above this is corruption, not driving: no cart in the game
+## can move faster than a boost cap of ~26 m/s plus a fall. Reading a bad body
+## velocity (NaN, 1e30) into the impulse maths would turn one contact into a
+## teleport, so both the read and the written result are bounded here.
+const MAX_BODY_SPEED: float = 64.0
+## Positional correction is only applied when the caller owns separation.
+## Keep a corrupt penetration from teleporting a body across the map.
+const MAX_SEPARATION_DEPTH: float = 2.5
 
 
 static func resolve_pair(a: Node3D, b: Node3D, contact_point: Vector3,
@@ -54,6 +71,7 @@ static func resolve_pair(a: Node3D, b: Node3D, contact_point: Vector3,
 	if not is_finite(inv_sum) or inv_sum <= 0.0:
 		return 0.0
 	var depth: float = penetration if is_finite(penetration) else 0.0
+	depth = clampf(depth, 0.0, MAX_SEPARATION_DEPTH)
 	if separate and depth > 0.0:
 		a.global_position -= n * (depth * inv_a / inv_sum)
 		b.global_position += n * (depth * inv_b / inv_sum)
@@ -139,22 +157,27 @@ static func _body_mass(body: Node3D) -> float:
 
 static func _body_velocity(body: Node3D) -> Vector3:
 	## Remote ghosts keep their authoritative motion in net_velocity; a local
-	## CharacterBody or RigidBody exposes it directly.
+	## CharacterBody or RigidBody exposes it directly. Every read is bounded, so
+	## a single corrupt body velocity can never decide an absurd impulse.
 	var remote_mode: Variant = body.get("remote_mode")
 	if remote_mode is bool and bool(remote_mode) \
 			and body.has_method("get_collision_velocity"):
 		var net_velocity: Variant = body.call("get_collision_velocity")
-		if net_velocity is Vector3 and (net_velocity as Vector3).is_finite():
-			return net_velocity as Vector3
+		if net_velocity is Vector3:
+			return _bounded_velocity(net_velocity as Vector3)
 	var velocity: Variant = body.get("velocity")
 	if velocity is Vector3:
-		var body_velocity: Vector3 = velocity as Vector3
-		return body_velocity if body_velocity.is_finite() else Vector3.ZERO
+		return _bounded_velocity(velocity as Vector3)
 	var linear_velocity: Variant = body.get("linear_velocity")
 	if linear_velocity is Vector3:
-		var body_linear: Vector3 = linear_velocity as Vector3
-		return body_linear if body_linear.is_finite() else Vector3.ZERO
+		return _bounded_velocity(linear_velocity as Vector3)
 	return Vector3.ZERO
+
+
+static func _bounded_velocity(value: Vector3) -> Vector3:
+	if not value.is_finite():
+		return Vector3.ZERO
+	return value.limit_length(MAX_BODY_SPEED)
 
 
 static func _set_body_velocity(body: Node3D, value: Vector3) -> void:
@@ -173,6 +196,12 @@ static func _apply_impulse(body: Node3D, impulse: Vector3,
 		contact_point: Vector3) -> void:
 	if not impulse.is_finite() or impulse.length_squared() < 0.000001:
 		return
+	var mass: float = _body_mass(body)
+	if not is_finite(mass) or mass <= 0.0:
+		return
+	var delta: Vector3 = impulse / mass
+	if not delta.is_finite():
+		return
 	if body is RigidBody3D:
 		# Applying at the contact point adds a physical spin; the linear part is
 		# still exactly impulse / mass. Wake a sleeping prop so a parked crate
@@ -181,5 +210,12 @@ static func _apply_impulse(body: Node3D, impulse: Vector3,
 		if rigid.sleeping:
 			rigid.sleeping = false
 		rigid.apply_impulse(impulse, contact_point - rigid.global_position)
+		var rigid_velocity: Vector3 = rigid.linear_velocity
+		if rigid_velocity.is_finite() and rigid_velocity.length_squared() \
+				> MAX_BODY_SPEED * MAX_BODY_SPEED:
+			rigid.linear_velocity = rigid_velocity.limit_length(MAX_BODY_SPEED)
 		return
-	_set_body_velocity(body, _body_velocity(body) + impulse / _body_mass(body))
+	var next_velocity: Vector3 = _body_velocity(body) + delta
+	if not next_velocity.is_finite():
+		return
+	_set_body_velocity(body, next_velocity.limit_length(MAX_BODY_SPEED))

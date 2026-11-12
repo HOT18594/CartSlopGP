@@ -75,6 +75,10 @@ const RelayTunnel := preload("res://scripts/net/relay_tunnel.gd")
 const SCENE_RETRY_INTERVAL: float = 5.0
 const SCENE_RETRY_MAX: int = 6
 const WORLD_BOUND_SQ: float = 5000.0 * 5000.0
+## Maximum believable body speed for solver input. The game's boost cap is
+## ~26 m/s; a larger finite value is corruption/desync and is clamped rather
+## than fed raw into an impulse (which would become a teleport-sized shove).
+const MAX_CART_SPEED: float = 64.0
 ## Pair keys pack two peer ids into one int: low id in the high word, high id
 ## in the low word. This avoids formatting a String per contacting pair per tick.
 const PAIR_ID_SHIFT: int = 32
@@ -138,6 +142,10 @@ var _scene_load_path: String = ""
 ## duplicate remote impacts while a state packet is still in flight.
 var _separation_ms: Dictionary = {}
 var _impact_ms: Dictionary = {}
+## Last finite, in-bounds contact pose per peer id. A corrupt or out-of-bounds
+## report is replaced from here (never silently dropped) before the car-vs-car
+## solver sees a position.
+var _last_good_position: Dictionary = {}
 ## Wall-clock stamp of the last stale-key sweep (see _prune_separation_ms).
 var _separation_prune_ms: int = 0
 var relay_base: String = ""
@@ -284,6 +292,7 @@ func clear_scene_ready() -> void:
 	_scene_retry_counts.clear()
 	_separation_ms.clear()
 	_impact_ms.clear()
+	_last_good_position.clear()
 	_scene_load_path = ""
 	if is_host:
 		scene_ready_peers[1] = true
@@ -300,9 +309,22 @@ func mark_peer_scene_ready(peer_id: int) -> void:
 
 
 func _cart_extents(cart: Node) -> Dictionary:
+	## Solver geometry must always be finite and positive, whatever a ghost's
+	## vehicle table says. Clamp to the catalog's real envelope, not to infinity.
+	var raw: Dictionary = {}
 	if cart.has_method("get_collision_extents"):
-		return cart.call("get_collision_extents")
-	return {"width": 1.50, "length": 2.26, "height": 1.70}
+		var value: Variant = cart.call("get_collision_extents")
+		if value is Dictionary:
+			raw = value as Dictionary
+	return {
+		"width": clampf(_finite_or(float(raw.get("width", 1.50)), 1.50), 0.5, 4.0),
+		"length": clampf(_finite_or(float(raw.get("length", 2.26)), 2.26), 1.0, 5.0),
+		"height": clampf(_finite_or(float(raw.get("height", 1.70)), 1.70), 0.5, 4.0),
+	}
+
+
+func _finite_or(value: float, fallback: float) -> float:
+	return value if is_finite(value) else fallback
 
 
 func _shared_collision_solver() -> Variant:
@@ -323,18 +345,20 @@ func _cart_velocity_value(cart: Node) -> Vector3:
 	if not (value is Vector3):
 		return Vector3.ZERO
 	var raw: Vector3 = value as Vector3
-	return raw if raw.is_finite() else Vector3.ZERO
+	return raw.limit_length(MAX_CART_SPEED) if raw.is_finite() else Vector3.ZERO
 
 
 func _collision_velocity_of(cart: Node) -> Vector3:
 	## Velocity used for the closing-speed test. A ghost advertises its
 	## authoritative net_velocity through get_collision_velocity(); a local
-	## body exposes its physics velocity directly.
+	## body exposes its physics velocity directly. Never return a value the
+	## solver can turn into an absurd impulse.
 	if cart.has_method("get_collision_velocity"):
 		var value: Variant = cart.call("get_collision_velocity")
 		if value is Vector3:
 			var velocity: Vector3 = value as Vector3
-			return velocity if velocity.is_finite() else Vector3.ZERO
+			return velocity.limit_length(MAX_CART_SPEED) \
+				if velocity.is_finite() else Vector3.ZERO
 	return _cart_velocity_value(cart)
 
 
@@ -354,6 +378,39 @@ func _pair_key(id_a: int, id_b: int) -> int:
 	## Stable pair key without a per-tick String allocation.
 	return (mini(id_a, id_b) << PAIR_ID_SHIFT) \
 		| (maxi(id_a, id_b) & PAIR_ID_MASK)
+
+
+func _contact_position(peer_id: int, cart: Node, rendered: Vector3) -> Vector3:
+	## Solver-safe contact pose, and the reason a bad packet does not drop a
+	## pair: an invalid raw value is replaced, never skipped.
+	## A remote ghost advertises its newest accepted packet in net_position;
+	## that is the freshest pose the host owns, so it wins over the lagging
+	## interpolated body. A local cart uses the body it is actually simulating.
+	## Fallback chain: newest packet -> rendered body -> last good pose ->
+	## deterministic spawn. The value that reaches the solver is always finite
+	## and inside the world; the raw value never is.
+	if cart.get("remote_mode") == true:
+		var net_value: Variant = cart.get("net_position")
+		if net_value is Vector3:
+			var net_position: Vector3 = net_value as Vector3
+			if net_position.is_finite() \
+					and net_position.length_squared() <= WORLD_BOUND_SQ:
+				_last_good_position[peer_id] = net_position
+				return net_position
+	if rendered.is_finite() and rendered.length_squared() <= WORLD_BOUND_SQ:
+		_last_good_position[peer_id] = rendered
+		return rendered
+	var cached: Variant = _last_good_position.get(peer_id)
+	if cached is Vector3:
+		var cached_position: Vector3 = cached as Vector3
+		if cached_position.is_finite() \
+				and cached_position.length_squared() <= WORLD_BOUND_SQ:
+			return cached_position
+	var spawn: Vector3 = spawn_position(peer_id)
+	if spawn.is_finite():
+		_last_good_position[peer_id] = spawn
+		return spawn
+	return Vector3.ZERO
 
 
 func _erase_peer_separation(peer_id: int) -> void:
@@ -420,15 +477,16 @@ func _obb_contact(offset: Vector3, yaw_a: float, yaw_b: float,
 
 func _swept_obb_contact(cart_a: Node, cart_b: Node, offset: Vector3,
 		ext_a: Dictionary, ext_b: Dictionary) -> Dictionary:
-	## Conservative swept fallback for a pair that moved through itself.
-	## A discrete overlap test misses two carts that swap sides between ticks:
-	## at 40 m/s each the pair closes 2.7 m per 60 Hz frame, more than the
-	## 2.26 m body length. Walk the pair backwards along this tick's relative
-	## motion and return the most recent overlapping sample. Four probes are
-	## enough because the sampled step is always shorter than a body.
+	## Conservative swept fallback for a pair that moved through itself between
+	## contact samples (a prediction correction or a long 20 Hz tick). Walk the
+	## pair backwards along this tick's relative motion and return the most
+	## recent overlapping sample. Normal driving keeps the discrete test
+	## sufficient; this only runs when that test found nothing.
 	var relative: Vector3 = _collision_velocity_of(cart_a) \
 		- _collision_velocity_of(cart_b)
 	relative.y = 0.0
+	if not relative.is_finite() or not offset.is_finite():
+		return {}
 	var ticks: float = float(Engine.physics_ticks_per_second)
 	if not is_finite(ticks) or ticks <= 0.0:
 		return {}
@@ -439,15 +497,21 @@ func _swept_obb_contact(cart_a: Node, cart_b: Node, offset: Vector3,
 	# tick's travel cannot have touched, so no probes are needed.
 	var reach: float = maxf(float(ext_a.get("length", 2.26)),
 		float(ext_a.get("width", 1.5))) \
-		+ maxf(float(ext_b.get("length", 2.26)), float(ext_b.get("width", 1.5))) \
+		+ maxf(float(ext_b.get("length", 2.26)),
+		float(ext_b.get("width", 1.5))) \
 		+ travel
 	if offset.length_squared() > reach * reach:
 		return {}
-	var step: Vector3 = relative / (ticks * 4.0)
+	var probes: int = 6
+	var step: Vector3 = relative / (ticks * float(probes))
 	var probe: Vector3 = offset
 	var yaw_a: float = cart_a.global_rotation.y
 	var yaw_b: float = cart_b.global_rotation.y
-	for i in 4:
+	if not is_finite(yaw_a):
+		yaw_a = 0.0
+	if not is_finite(yaw_b):
+		yaw_b = 0.0
+	for i in probes:
 		probe -= step
 		var contact: Dictionary = _obb_contact(
 			probe, yaw_a, yaw_b, ext_a, ext_b)
@@ -457,6 +521,8 @@ func _swept_obb_contact(cart_a: Node, cart_b: Node, offset: Vector3,
 		# contact. Once the pair has swapped sides the old normal points the
 		# wrong way, and the impulse would pull the two carts together.
 		var probe_normal: Vector3 = contact["normal"] as Vector3
+		if not probe_normal.is_finite():
+			continue
 		if offset.dot(probe_normal) <= 0.0:
 			return {}
 		return contact
@@ -467,6 +533,13 @@ func resolve_car_collisions(local_cart: Node, remotes: Dictionary) -> void:
 	## The host resolves every contact each physics tick. Momentum handles the
 	## impact; the physics engine owns positional separation and the shared
 	## solver owns the equal/opposite velocity exchange.
+	##
+	## Prop rule, explicit: solid props (crates) are STATIC obstacles on every
+	## peer - a client freezes its prop bodies at the host's pose. Both sides
+	## therefore run identical cart-vs-prop physics, so a client can never
+	## phase through a crate the host says it hit. This resolver owns only
+	## car-vs-car momentum; the host is authoritative for a pushed prop's
+	## motion, never for whether a solid crate blocks.
 	if not is_host or local_cart == null:
 		return
 	var solver: Variant = _shared_collision_solver()
@@ -475,162 +548,174 @@ func resolve_car_collisions(local_cart: Node, remotes: Dictionary) -> void:
 	_prune_separation_ms(now_ms)
 	var ids: Array = remotes.keys()
 	ids.sort()
-	# Build the pair list once; remotes.keys() used to be called twice and
-	# allocated a second array every physics tick.
-	var pairs: Array = []
+	# Host vs every remote, then remote vs remote. Iterating in place avoids
+	# the array-of-pairs allocation that used to run on every physics tick.
 	for peer_id: Variant in ids:
-		pairs.append([host_id, local_cart, int(peer_id), remotes[peer_id]])
+		_resolve_contact_pair(local_cart, host_id, local_cart, int(peer_id),
+			remotes[peer_id], solver, host_id, now_ms)
 	for i in ids.size():
 		for j in range(i + 1, ids.size()):
-			pairs.append([int(ids[i]), remotes[ids[i]], int(ids[j]), remotes[ids[j]]])
-	for pair: Array in pairs:
-		var id_a: int = int(pair[0])
-		var cart_a: Node = pair[1]
-		var id_b: int = int(pair[2])
-		var cart_b: Node = pair[3]
-		if cart_a == null or cart_b == null:
-			continue
-		# A finished or severed cart is not an obstacle. Its owner already set
-		# contact_enabled=false and layer 0; never resolve it here.
-		if cart_a.get("contact_enabled") == false:
-			continue
-		if cart_b.get("contact_enabled") == false:
-			continue
-		if id_a != host_id and not is_scene_ready(id_a):
-			continue
-		if id_b != host_id and not is_scene_ready(id_b):
-			continue
-		var pos_a: Vector3 = cart_a.global_position
-		var pos_b: Vector3 = cart_b.global_position
-		# A peer can send NaN/Inf or an absurd coordinate. Reject it before it
-		# can corrupt the lobby.
-		if not pos_a.is_finite() or not pos_b.is_finite():
-			continue
-		if pos_a.length_squared() > WORLD_BOUND_SQ or pos_b.length_squared() > WORLD_BOUND_SQ:
-			continue
-		var ext_a: Dictionary = _cart_extents(cart_a)
-		var ext_b: Dictionary = _cart_extents(cart_b)
-		var contact_height: float = maxf(
-			float(ext_a.get("height", 1.70)),
-			float(ext_b.get("height", 1.70)))
-		if absf(pos_b.y - pos_a.y) > contact_height * 0.95:
-			continue
-		var offset: Vector3 = pos_b - pos_a
-		offset.y = 0.0
-		var contact: Dictionary = _obb_contact(
-			offset, cart_a.global_rotation.y, cart_b.global_rotation.y,
-			ext_a, ext_b)
+			_resolve_contact_pair(local_cart, int(ids[i]), remotes[ids[i]],
+				int(ids[j]), remotes[ids[j]], solver, host_id, now_ms)
+
+
+func _resolve_contact_pair(local_cart: Node, id_a: int, cart_a: Node,
+		id_b: int, cart_b: Node, solver: Variant, host_id: int,
+		now_ms: int) -> void:
+	if cart_a == null or cart_b == null or id_a <= 0 or id_b <= 0:
+		return
+	# A finished or severed cart is not an obstacle by design; its owner set
+	# contact_enabled=false. This is an intentional non-contact, not the
+	# invalid-position fallback path below.
+	if cart_a.get("contact_enabled") == false \
+			or cart_b.get("contact_enabled") == false:
+		return
+	if id_a != host_id and not is_scene_ready(id_a):
+		return
+	if id_b != host_id and not is_scene_ready(id_b):
+		return
+	# Freshest safe poses. A NaN/Inf/out-of-bounds report falls back to the
+	# newest packet, the last good pose or the deterministic spawn - the pair
+	# is never silently dropped because one side sent a bad value.
+	var pos_a: Vector3 = _contact_position(id_a, cart_a, cart_a.global_position)
+	var pos_b: Vector3 = _contact_position(id_b, cart_b, cart_b.global_position)
+	var ext_a: Dictionary = _cart_extents(cart_a)
+	var ext_b: Dictionary = _cart_extents(cart_b)
+	var contact_height: float = maxf(
+		float(ext_a.get("height", 1.70)),
+		float(ext_b.get("height", 1.70)))
+	if absf(pos_b.y - pos_a.y) > contact_height * 0.95:
+		return
+	var offset: Vector3 = pos_b - pos_a
+	offset.y = 0.0
+	if not offset.is_finite():
+		return
+	var yaw_a: float = cart_a.global_rotation.y
+	var yaw_b: float = cart_b.global_rotation.y
+	if not is_finite(yaw_a):
+		yaw_a = 0.0
+	if not is_finite(yaw_b):
+		yaw_b = 0.0
+	var contact: Dictionary = _obb_contact(offset, yaw_a, yaw_b, ext_a, ext_b)
+	if contact.is_empty():
+		# Discrete overlap can miss a pair that crossed between samples (a
+		# prediction correction or a long 20 Hz tick). Probe the relative
+		# motion for the most recent overlapping sample.
+		contact = _swept_obb_contact(cart_a, cart_b, offset, ext_a, ext_b)
 		if contact.is_empty():
-			# A discrete overlap test can miss a fast pair entirely: two 40 m/s
-			# carts close 2.7 m per 60 Hz tick against a 2.26 m body. Probe the
-			# relative motion for the most recent overlapping sample.
-			contact = _swept_obb_contact(cart_a, cart_b, offset, ext_a, ext_b)
-			if contact.is_empty():
-				continue
-		var normal: Vector3 = contact["normal"]
-		var penetration: float = float(contact["penetration"])
-		var vel_a: Vector3 = _collision_velocity_of(cart_a)
-		var vel_b: Vector3 = _collision_velocity_of(cart_b)
-		if not vel_a.is_finite() or not vel_b.is_finite():
-			continue
-		var relative: Vector3 = vel_a - vel_b
-		var closing: float = maxf(relative.dot(normal), 0.0)
-		if not is_finite(closing):
-			continue
-		var pair_key: int = _pair_key(id_a, id_b)
-		if closing < 0.08:
-			# Resting overlap is positional, not an impact. The physics engine
-			# separates the bodies; rate-limit the solver's small resting
-			# impulse so a ghost parked against the host does not vibrate.
-			if penetration < 0.03:
-				continue
-			if now_ms - int(_separation_ms.get(pair_key, -1000)) < 120:
-				continue
-			_separation_ms[pair_key] = now_ms
-		else:
-			# One momentum impulse per pair per 100 ms. A late state packet can
-			# rewind the predicted ghost velocity below; without this guard
-			# the same impact fired on several consecutive ticks and sent the
-			# remote duplicate impulses (a momentum-conservation bug and a
-			# visible double bounce). Kept separate from the resting stamps so
-			# a resting pair still gets a full impact impulse when it is hit.
-			if now_ms - int(_impact_ms.get(pair_key, -1000)) < 100:
-				continue
-			_impact_ms[pair_key] = now_ms
-		if solver != null:
-			# The shared solver owns all impulse maths (including resting and
-			# friction rules) so the sandbox and the race respond identically.
-			# The physics engine already separated this pair, so pass
-			# separate=false: double separation was the visible jitter.
-			var contact_point: Vector3 = (pos_a + pos_b) * 0.5
-			var raw_a: Vector3 = _cart_velocity_value(cart_a)
-			var raw_b: Vector3 = _cart_velocity_value(cart_b)
-			var impulse_mag: float = float(solver.resolve_pair(cart_a, cart_b,
-				contact_point, normal, penetration, false))
-			# The solver returns the scalar impulse it just applied. Both
-			# owners get exactly that delta-v: the host directly, a remote
-			# through the existing RPC. Inferring the delta from the post-solve
-			# velocity was wrong for a ghost, because the solver measures a
-			# ghost against net_velocity while its raw property is scratch.
-			if impulse_mag > 0.0:
-				var impulse_dir: Vector3 = normal.normalized()
-				if id_a != host_id:
-					var delta_a: Vector3 = -impulse_dir \
-						* (impulse_mag / _cart_mass(cart_a))
-					if delta_a.is_finite() and delta_a.length_squared() > 0.000001:
-						local_cart.rpc_id(id_a, "_net_apply_car_impulse", delta_a)
-						# Predict the owner's velocity locally so the next tick's
-						# closing test does not fire the same impact again while
-						# its post-impact packet is still in flight.
-						cart_a.set("net_velocity",
-							(vel_a + delta_a).limit_length(60.0))
-				if id_b != host_id:
-					var delta_b: Vector3 = impulse_dir \
-						* (impulse_mag / _cart_mass(cart_b))
-					if delta_b.is_finite() and delta_b.length_squared() > 0.000001:
-						local_cart.rpc_id(id_b, "_net_apply_car_impulse", delta_b)
-						cart_b.set("net_velocity",
-							(vel_b + delta_b).limit_length(60.0))
-			# Restore the host-side scratch velocity the solver wrote. A remote
-			# owner receives the impulse above and keeps its own physics.
+			return
+	var normal: Vector3 = contact["normal"]
+	var penetration: float = float(contact["penetration"])
+	if not normal.is_finite() or normal.length_squared() < 0.0001 \
+			or not is_finite(penetration):
+		return
+	normal = normal.normalized()
+	penetration = clampf(penetration, 0.0, 2.5)
+	# A corrupt velocity is zeroed by _collision_velocity_of() and the pair
+	# still gets its resting/positional resolution; it is never a reason to
+	# drop the contact or to write the bad value into either body.
+	var vel_a: Vector3 = _collision_velocity_of(cart_a)
+	var vel_b: Vector3 = _collision_velocity_of(cart_b)
+	var relative: Vector3 = vel_a - vel_b
+	var closing: float = maxf(relative.dot(normal), 0.0)
+	if not is_finite(closing):
+		closing = 0.0
+	var pair_key: int = _pair_key(id_a, id_b)
+	if closing < 0.08:
+		# Resting overlap is positional, not an impact. The physics engine
+		# separates the bodies; rate-limit the solver's small resting
+		# impulse so a ghost parked against the host does not vibrate.
+		if penetration < 0.03:
+			return
+		if now_ms - int(_separation_ms.get(pair_key, -1000)) < 120:
+			return
+		_separation_ms[pair_key] = now_ms
+	else:
+		# One momentum impulse per pair per 100 ms. A late state packet can
+		# rewind the predicted ghost velocity below; without this guard
+		# the same impact fired on several consecutive ticks and sent the
+		# remote duplicate impulses (a momentum-conservation bug and a
+		# visible double bounce). Kept separate from the resting stamps so
+		# a resting pair still gets a full impact impulse when it is hit.
+		if now_ms - int(_impact_ms.get(pair_key, -1000)) < 100:
+			return
+		_impact_ms[pair_key] = now_ms
+	if solver != null:
+		# The shared solver owns all impulse maths (including resting and
+		# friction rules) so the sandbox and the race respond identically.
+		# The physics engine already separated this pair, so pass
+		# separate=false: double separation was the visible jitter.
+		var contact_point: Vector3 = (pos_a + pos_b) * 0.5
+		var raw_a: Vector3 = _cart_velocity_value(cart_a)
+		var raw_b: Vector3 = _cart_velocity_value(cart_b)
+		var impulse_mag: float = float(solver.resolve_pair(cart_a, cart_b,
+			contact_point, normal, penetration, false))
+		# The solver returns the scalar impulse it just applied. Both owners
+		# get exactly that delta-v: the host directly, a remote through the
+		# existing RPC. The remote applies it to its own local body once; its
+		# _process_collisions skips remote carts, so the local physics step
+		# cannot add a second exchange for the same contact.
+		if impulse_mag > 0.0:
+			var impulse_dir: Vector3 = normal.normalized()
 			if id_a != host_id:
-				cart_a.set("velocity", raw_a)
+				var delta_a: Vector3 = (-impulse_dir \
+					* (impulse_mag / _cart_mass(cart_a))).limit_length(
+					MAX_CART_SPEED)
+				if delta_a.is_finite() and delta_a.length_squared() > 0.000001:
+					local_cart.rpc_id(id_a, "_net_apply_car_impulse", delta_a)
+					# Predict the owner's velocity locally so the next tick's
+					# closing test does not fire the same impact again while
+					# its post-impact packet is still in flight.
+					cart_a.set("net_velocity",
+						(vel_a + delta_a).limit_length(MAX_CART_SPEED))
 			if id_b != host_id:
-				cart_b.set("velocity", raw_b)
-			continue
-		var mass_a: float = maxf(float(cart_a.call("get_mass")), 1.0)
-		var mass_b: float = maxf(float(cart_b.call("get_mass")), 1.0)
-		var inv_a: float = 1.0 / mass_a
-		var inv_b: float = 1.0 / mass_b
-		var impact_impulse: float = 1.18 * closing / (inv_a + inv_b)
-		var separation_speed: float = clampf(penetration * 5.0, 0.0, 1.2)
-		var normal_impulse: float = impact_impulse + separation_speed / (inv_a + inv_b)
-		var impulse_a: Vector3 = -normal * normal_impulse
-		var impulse_b: Vector3 = normal * normal_impulse
-		# Coulomb friction only applies to a real impact. Separation must not
-		# erase sideways sliding when two carts are grinding along together.
-		if closing > 0.02:
-			var tangent: Vector3 = relative - normal * relative.dot(normal)
-			var tangent_speed: float = tangent.length()
-			if tangent_speed > 0.02:
-				var tangent_dir: Vector3 = tangent / tangent_speed
-				var tangent_impulse: float = minf(tangent_speed / (inv_a + inv_b),
-					0.24 * impact_impulse)
-				impulse_a -= tangent_dir * tangent_impulse
-				impulse_b += tangent_dir * tangent_impulse
-		# Pre-1.6.0 fallback while the shared solver is unavailable: compute the
-		# raw momentum exchange here. apply_vehicle_impulse() only adds the
-		# delta-v; it no longer applies a second, smaller cap.
-		var delta_a: Vector3 = impulse_a / mass_a
-		var delta_b: Vector3 = impulse_b / mass_b
-		if id_a == host_id:
-			cart_a.call("apply_vehicle_impulse", delta_a)
-		else:
-			local_cart.rpc_id(id_a, "_net_apply_car_impulse", delta_a)
-		if id_b == host_id:
-			cart_b.call("apply_vehicle_impulse", delta_b)
-		else:
-			local_cart.rpc_id(id_b, "_net_apply_car_impulse", delta_b)
+				var delta_b: Vector3 = (impulse_dir \
+					* (impulse_mag / _cart_mass(cart_b))).limit_length(
+					MAX_CART_SPEED)
+				if delta_b.is_finite() and delta_b.length_squared() > 0.000001:
+					local_cart.rpc_id(id_b, "_net_apply_car_impulse", delta_b)
+					cart_b.set("net_velocity",
+						(vel_b + delta_b).limit_length(MAX_CART_SPEED))
+		# Restore the host-side scratch velocity the solver wrote. A remote
+		# owner receives the impulse above and keeps its own physics.
+		if id_a != host_id:
+			cart_a.set("velocity", raw_a)
+		if id_b != host_id:
+			cart_b.set("velocity", raw_b)
+		return
+	var mass_a: float = _cart_mass(cart_a)
+	var mass_b: float = _cart_mass(cart_b)
+	var inv_a: float = 1.0 / mass_a
+	var inv_b: float = 1.0 / mass_b
+	var impact_impulse: float = 1.18 * closing / (inv_a + inv_b)
+	var separation_speed: float = clampf(penetration * 5.0, 0.0, 1.2)
+	var normal_impulse: float = impact_impulse + separation_speed / (inv_a + inv_b)
+	var impulse_a: Vector3 = -normal * normal_impulse
+	var impulse_b: Vector3 = normal * normal_impulse
+	# Coulomb friction only applies to a real impact. Separation must not
+	# erase sideways sliding when two carts are grinding along together.
+	if closing > 0.02:
+		var tangent: Vector3 = relative - normal * relative.dot(normal)
+		var tangent_speed: float = tangent.length()
+		if tangent_speed > 0.02:
+			var tangent_dir: Vector3 = tangent / tangent_speed
+			var tangent_impulse: float = minf(tangent_speed / (inv_a + inv_b),
+				0.24 * impact_impulse)
+			impulse_a -= tangent_dir * tangent_impulse
+			impulse_b += tangent_dir * tangent_impulse
+	# Pre-1.6.0 fallback while the shared solver is unavailable: compute the
+	# raw momentum exchange here. apply_vehicle_impulse() is the receiver's
+	# single entry point and bounds the delta; this path only shapes it.
+	var delta_a: Vector3 = (impulse_a / mass_a).limit_length(MAX_CART_SPEED)
+	var delta_b: Vector3 = (impulse_b / mass_b).limit_length(MAX_CART_SPEED)
+	if id_a == host_id:
+		cart_a.call("apply_vehicle_impulse", delta_a)
+	else:
+		local_cart.rpc_id(id_a, "_net_apply_car_impulse", delta_a)
+	if id_b == host_id:
+		cart_b.call("apply_vehicle_impulse", delta_b)
+	else:
+		local_cart.rpc_id(id_b, "_net_apply_car_impulse", delta_b)
 
 
 func notify_scene_ready() -> void:
@@ -2118,6 +2203,7 @@ func _net_set_tag_color(peer_id: int, raw_hex: String) -> void:
 func _on_peer_disconnected(id: int) -> void:
 	scene_ready_peers.erase(id)
 	_erase_peer_separation(id)
+	_last_good_position.erase(id)
 	_scene_retry_counts.erase(id)
 	_left_scene_peers.erase(id)
 	player_names.erase(id)

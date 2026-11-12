@@ -20,6 +20,27 @@ const NET_CLOCK_RESET_MS: int = 60_000
 ## A peer that joins but never streams a state must not stay solid at its
 ## spawn point. Give the first packet a generous grace, then drop the body.
 const GHOST_STREAM_TIMEOUT_MS: int = 1500
+## How long a ghost that HAD streamed state stays solid at its last received
+## pose while packets are late. 250 ms used to make a real player intangible
+## during ordinary jitter - the phase-through the owner complained about. The
+## ghost freezes (no prediction) but keeps the GHOST layer for this window.
+const GHOST_STALE_SOLID_MS: int = GHOST_STREAM_TIMEOUT_MS
+## A ghost is placed by script, not by move_and_slide, so a large interpolation
+## step could jump it to the far side of a solid cart in one tick. Steps longer
+## than this are sliced and tested against PLAYER/GHOST bodies. Steady 60 Hz
+## motion stays well under the slice size, so a normal race pays nothing.
+const GHOST_MAX_STEP: float = 1.1
+## Single-tick travel guard. move_and_slide() already sweeps each collider
+## (measured: no pass-through through a 0.12 m wall, a 0.67 m crate or a 2.26 m
+## cart at 26.3 m/s at both 60 Hz and 20 Hz). This cap only catches a corrupted
+## solver/network velocity that would move more than a body length per tick -
+## a distance no collision response is designed around.
+const MAX_SINGLE_TICK_TRAVEL: float = 2.0
+## A finite but hostile/desynced network impulse must still land inside one
+## believable hit. The gameplay speed clamp then trims the horizontal result.
+const MAX_NET_IMPULSE: float = 64.0
+const MAX_NET_VERTICAL_IMPULSE: float = 8.0
+const WORLD_BOUND_SQ: float = 5000.0 * 5000.0
 
 signal net_push_requested(prop: Node, direction: Vector3, kick: float)
 signal horn_requested()
@@ -208,6 +229,10 @@ var _ground_support: Array[bool] = [false, false, false, false]
 var _ground_heights: Array[float] = [0.0, 0.0, 0.0, 0.0]
 
 var _spawn_transform: Transform3D = Transform3D.IDENTITY
+## Last finite, in-bounds pose. A corrupt body transform is recovered here
+## instead of being fed to move_and_slide or the wheel raycasts.
+var _last_safe_position: Vector3 = Vector3.ZERO
+var _last_safe_yaw: float = 0.0
 var _frame_start_velocity: Vector3 = Vector3.ZERO
 var _prev_velocity: Vector3 = Vector3.ZERO
 var _input_locked_now: bool = false
@@ -292,6 +317,8 @@ func _ready() -> void:
 		_spawn_transform = spawn_point.global_transform
 	else:
 		_spawn_transform = global_transform
+	_last_safe_position = global_position
+	_last_safe_yaw = rotation.y
 	_capture_base_stats()
 	var entry: Dictionary = _apply_vehicle_visual()
 	_apply_vehicle_stats(entry)
@@ -380,10 +407,14 @@ func set_net_state(position: Vector3, yaw: float, sent_ms: int,
 	## so an out-of-order datagram can never drag the ghost backwards.
 	if not position.is_finite() or not is_finite(yaw) or not velocity.is_finite():
 		return false
-	if position.length_squared() > 5000.0 * 5000.0:
+	if position.length_squared() > WORLD_BOUND_SQ:
 		return false
 	if sent_ms < 0:
 		return false
+	# Keep the ghost's heading finite and small: yaw is used by the host OBB
+	# resolver and by lerp_angle, and an absurd-but-finite heading must not
+	# wind up in either.
+	yaw = wrapf(yaw, -PI, PI)
 	if _net_has_sample and sent_ms <= _net_sample_ms:
 		# A single spoofed 9e9 stamp used to make every later packet look
 		# stale, freezing this ghost forever. A huge backwards jump is a clock
@@ -419,7 +450,7 @@ func set_net_state(position: Vector3, yaw: float, sent_ms: int,
 	net_velocity = velocity.limit_length(60.0)
 	if snap:
 		global_position = position
-		rotation.y = yaw
+		rotation.y = wrapf(yaw, -PI, PI)
 		reset_physics_interpolation()
 	contact_enabled = not race_finished
 	# Publish solidity with the packet instead of waiting for the next
@@ -472,15 +503,21 @@ func set_ai_controls(throttle: float, brake: float, steer: float,
 
 
 func _update_remote_state(delta: float) -> void:
+	var now: int = Time.get_ticks_msec()
 	if not _net_has_sample:
 		# A peer that connected but has not streamed yet is not an obstacle;
 		# after the grace period stop pretending it is a parked kart.
-		if Time.get_ticks_msec() - _net_last_receive_ms > GHOST_STREAM_TIMEOUT_MS:
+		if now - _net_last_receive_ms > GHOST_STREAM_TIMEOUT_MS:
 			contact_enabled = false
 			collision_layer = 0
 		return
-	var now: int = Time.get_ticks_msec()
-	# Cap prediction at 100 ms; 250 ms at 45 m/s was an 11 m overshoot.
+	if not _net_sample_position.is_finite():
+		# Only a corrupt pipeline can get here (set_net_state validates), but a
+		# bad stored sample must never move the ghost or keep it solid.
+		_net_has_sample = false
+		contact_enabled = false
+		collision_layer = 0
+		return
 	var sample_seconds: float = maxf(float(_net_sample_ms - _net_sample_prev_ms), 1.0) / 1000.0
 	var velocity: Vector3 = net_velocity
 	if velocity.length_squared() < 0.01:
@@ -491,24 +528,64 @@ func _update_remote_state(delta: float) -> void:
 	var yaw_delta: float = wrapf(_net_sample_yaw - _net_sample_prev_yaw, -PI, PI)
 	var yaw_rate: float = clampf(yaw_delta / sample_seconds, -8.0, 8.0)
 	var age_ms: int = maxi(now - _net_last_receive_ms, 0)
+	# Cap prediction at 100 ms; 250 ms at 45 m/s was an 11 m overshoot.
 	var predict_ms: float = clampf(float(age_ms), 0.0, 100.0)
 	var target: Vector3 = _net_sample_position + velocity * (predict_ms / 1000.0)
 	var target_yaw: float = _net_sample_yaw + yaw_rate * (predict_ms / 1000.0)
-	if age_ms > 250:
-		# Stale ghost: freeze and stop being a contact target. Keeping it solid
-		# made a disconnected peer a permanent invisible wall.
+	if not target.is_finite() or not is_finite(target_yaw):
 		target = _net_sample_position
 		target_yaw = _net_sample_yaw
 		velocity = Vector3.ZERO
-		contact_enabled = false
-	else:
-		contact_enabled = not race_finished
-	collision_layer = 0 if (not contact_enabled) or race_finished \
-		else CollisionLayers.GHOST
+	var stale: bool = age_ms > 250
+	if stale:
+		# Late packet: freeze the ghost at its last authoritative pose instead
+		# of extrapolating, but keep it SOLID until the stream timeout. The
+		# host owns the momentum exchange; a client must never phase through a
+		# peer because its local prediction ran out of data.
+		target = _net_sample_position
+		target_yaw = _net_sample_yaw
+		velocity = Vector3.ZERO
+	contact_enabled = not race_finished and age_ms <= GHOST_STALE_SOLID_MS
+	collision_layer = 0 if not contact_enabled else CollisionLayers.GHOST
+	if not global_position.is_finite():
+		# A NaN pose must not survive into the next interpolation or the layer
+		# bookkeeping that makes the ghost solid.
+		global_position = target
+		rotation.y = target_yaw
+		reset_physics_interpolation()
+		return
 	var blend: float = 1.0 - exp(-16.0 * delta)
-	global_position = global_position.lerp(target, blend)
+	# The ghost is script-placed, so a big prediction correction could hop it
+	# straight through a local cart. Slice only the long steps; normal motion
+	# takes the cheap single-lerp path.
+	_move_ghost_towards(target, blend)
 	rotation.y = lerp_angle(rotation.y, target_yaw, blend)
 	net_velocity = velocity
+
+
+func _move_ghost_towards(target: Vector3, blend: float) -> void:
+	var current: Vector3 = global_position
+	var next: Vector3 = current.lerp(target, blend)
+	if not next.is_finite():
+		return
+	var motion: Vector3 = next - current
+	var distance: float = motion.length()
+	if distance <= GHOST_MAX_STEP:
+		global_position = next
+		return
+	var steps: int = mini(int(ceil(distance / GHOST_MAX_STEP)), 12)
+	var slice: Vector3 = motion / float(steps)
+	# A ghost keeps mask 0 so the world can never push it. Borrow the cart
+	# layers for the slice test only: this is a client-side visual guarantee
+	# that the ghost never teleports through another player between packets;
+	# the host still owns the actual impulse.
+	var saved_mask: int = collision_mask
+	collision_mask = CollisionLayers.PLAYER | CollisionLayers.GHOST
+	for i in steps:
+		if test_move(global_transform, slice):
+			break
+		global_position += slice
+	collision_mask = saved_mask
 
 
 func set_vehicle_id(vehicle_id: String) -> void:
@@ -587,17 +664,24 @@ func apply_vehicle_bump(normal: Vector3, push: float) -> void:
 
 func apply_vehicle_impulse(impulse: Vector3) -> void:
 	## Host-resolved momentum impulse for a two-body car collision.
-	if remote_mode or not impulse.is_finite():
+	if remote_mode or not is_inside_tree() or not impulse.is_finite():
 		return
-	# The shared solver already scaled the impulse by mass and turned it into
-	# a delta-v. Re-clamping it here (the old 6.5 m/s cap) truncated heavy hits
-	# and made remote carts conserve less momentum than locals. Only reject
-	# numerical noise; _clamp_horizontal_speed() remains the gameplay cap.
+	if impulse.length_squared() < 0.0001:
+		return
+	# The shared solver already scaled the impulse by mass and turned it into a
+	# delta-v, so the gameplay cap must not truncate heavy hits. This is not a
+	# gameplay cap: it only stops a corrupt/desynced value from moving the body
+	# further in one tick than any collider can be swept across. The horizontal
+	# clamp below keeps the same top speed the local controller enforces.
+	impulse = impulse.limit_length(MAX_NET_IMPULSE)
+	impulse.y = clampf(impulse.y, -MAX_NET_VERTICAL_IMPULSE,
+		MAX_NET_VERTICAL_IMPULSE)
 	if impulse.length_squared() < 0.0001:
 		return
 	velocity += impulse
 	if not velocity.is_finite():
 		velocity = Vector3.ZERO
+	_clamp_horizontal_speed()
 	_impact_timer = maxf(_impact_timer, 0.08)
 	_susp_vel += minf(impulse.length() * 0.03, 0.30)
 	var strength: float = impulse.length()
@@ -656,9 +740,12 @@ func apply_bump(impulse: Vector3, duration: float) -> void:
 func _net_apply_car_impulse(impulse: Vector3) -> void:
 	## Sent from the host's local cart; its path matches every client's local
 	## cart, so the correction lands on the cart that actually owns the physics.
-	if remote_mode or not impulse.is_finite():
+	## Symmetric by construction: the host applied the very same delta-v to its
+	## own body from the shared solver, and the client's local _process_collisions
+	## skips remote carts, so the local physics step never adds a second impulse.
+	if remote_mode or not is_inside_tree() or not impulse.is_finite():
 		return
-	# No second cap here: apply_vehicle_impulse() is the single entry point and
+	# apply_vehicle_impulse() is the single entry point; it bounds the value and
 	# the shared solver already owns the impulse scale.
 	apply_vehicle_impulse(impulse)
 
@@ -796,6 +883,7 @@ func _physics_process(delta: float) -> void:
 	if remote_mode:
 		_update_remote_state(delta)
 		return
+	_sanitize_local_state()
 	_impact_timer = maxf(_impact_timer - delta, 0.0)
 	# The bump penalty is both decremented and bounded by a wall-clock
 	# deadline. If physics stops (race finished, scene change, node paused)
@@ -829,6 +917,12 @@ func _physics_process(delta: float) -> void:
 		_apply_steering(steer_input, delta)
 		velocity.y -= gravity * (extra_fall_gravity if velocity.y < 0.0 else 1.0) * delta
 	_prev_velocity = velocity
+	# move_and_slide() sweeps the compound body along this tick's motion, so a
+	# 20 Hz step longer than the thinnest collider still cannot tunnel. The two
+	# guards here only bound a corrupt solver/network velocity to a believable
+	# single-tick distance before the sweep runs.
+	_clamp_horizontal_speed()
+	_limit_single_tick_travel(delta)
 	move_and_slide()
 	_clamp_horizontal_speed()
 	_process_collisions()
@@ -1141,7 +1235,13 @@ func _process_collisions() -> void:
 
 
 func _is_solid_prop(node: Node) -> bool:
-	## Crates advertise SOLID_PROP in their collision layer; cones do not.
+	## Solid-prop rule in a session (same rule on host and client): crates
+	## advertise SOLID_PROP, so they are STATIC obstacles in every peer's own
+	## physics world. A client freezes them at the host's authoritative pose;
+	## both sides resolve cart-vs-crate with the identical shape, so a client
+	## can never disagree with the host about driving through one. Only the
+	## crate's pushed motion comes from the host's prop sync - never the pass-
+	## through test. Cones stay on PROP and never block the kart.
 	var body: CollisionObject3D = node as CollisionObject3D
 	return body != null and (body.collision_layer & CollisionLayers.SOLID_PROP) != 0
 
@@ -1154,8 +1254,11 @@ func _on_push_sensor_body_entered(body: Node3D) -> void:
 
 
 func _push_prop(prop: RigidBody3D) -> void:
-	## Props live on their own collision layer, so they never block the kart.
-	## The sensor pops them away with an upward, spinning impulse instead.
+	## The sensor pops pushables away with an upward, spinning impulse. Cones
+	## are non-blocking, but crates are also SOLID_PROP and still stop the kart
+	## through the normal physics contact; the push only moves them.
+	## A client sends the request and lets the host own the resulting motion,
+	## but its own crate stays a solid static obstacle until that sync arrives.
 	var id: int = prop.get_instance_id()
 	var now_s: float = Time.get_ticks_msec() / 1000.0
 	if now_s - float(_push_cooldowns.get(id, -10000.0)) < 0.12:
@@ -1188,6 +1291,44 @@ func _clamp_horizontal_speed() -> void:
 		horizontal = horizontal.normalized() * cap
 		velocity.x = horizontal.x
 		velocity.z = horizontal.y
+
+
+func _sanitize_local_state() -> void:
+	## Reject a corrupt body pose before it can reach move_and_slide, the wheel
+	## raycasts or the host's contact list. A bad remote value is stopped at the
+	## RPC boundary too; this is the last line of defence for the local body.
+	var current: Vector3 = global_position
+	if not current.is_finite() or current.length_squared() > WORLD_BOUND_SQ:
+		var recovery: Vector3 = _last_safe_position
+		if not recovery.is_finite() or recovery.length_squared() > WORLD_BOUND_SQ:
+			recovery = _spawn_transform.origin
+		global_position = recovery
+		velocity = Vector3.ZERO
+		_frame_start_velocity = Vector3.ZERO
+		_prev_velocity = Vector3.ZERO
+		reset_physics_interpolation()
+	else:
+		_last_safe_position = current
+	if not is_finite(rotation.y):
+		rotation.y = _last_safe_yaw
+	else:
+		_last_safe_yaw = rotation.y
+
+
+func _limit_single_tick_travel(delta: float) -> void:
+	## Bound one tick's motion to less than a cart length. The physics engine
+	## already sweeps, so this never fires in normal play (26.3 m/s is 0.44 m at
+	## 60 Hz); it exists so a finite-but-corrupt 200 m/s solver value cannot
+	## cover a whole prop in one move_and_slide call.
+	if not is_finite(delta) or delta <= 0.0:
+		return
+	var max_speed_now: float = MAX_SINGLE_TICK_TRAVEL / delta
+	var speed_sq: float = velocity.length_squared()
+	if not is_finite(speed_sq):
+		velocity = Vector3.ZERO
+		return
+	if speed_sq > max_speed_now * max_speed_now:
+		velocity = velocity * (max_speed_now / sqrt(speed_sq))
 
 
 func _update_boost(delta: float, held: bool) -> void:
@@ -1460,12 +1601,27 @@ func _cache_wheel_offsets() -> void:
 
 
 func _sample_wheel_supports() -> void:
+	## Four-point terrain probe. These rays only shape the visual/gravity
+	## support plane; the solid body still moves with the swept capsule, so a
+	## ramp can never be tunnelled. Guard the ray origins anyway: a NaN origin
+	## would make the physics server reject the query every tick.
 	var space_state: PhysicsDirectSpaceState3D = get_world_3d().direct_space_state
 	var base: Vector3 = global_position
 	var normal_sum: Vector3 = Vector3.ZERO
 	_support_count = 0
+	if not base.is_finite() \
+			or absf(global_transform.basis.determinant()) < 0.0001:
+		_ground_normal = Vector3.UP
+		for i in 4:
+			_ground_support[i] = false
+			_ground_heights[i] = 0.0
+		return
 	for i in 4:
 		var origin: Vector3 = base + global_transform.basis * _wheel_offsets[i] + Vector3.UP * ground_probe_height
+		if not origin.is_finite():
+			_ground_support[i] = false
+			_ground_heights[i] = 0.0
+			continue
 		_wheel_query.from = origin
 		_wheel_query.to = origin + Vector3.DOWN * ground_probe_length
 		var hit: Dictionary = space_state.intersect_ray(_wheel_query)
@@ -1474,7 +1630,7 @@ func _sample_wheel_supports() -> void:
 		if hit.is_empty():
 			continue
 		var normal: Vector3 = hit.normal as Vector3
-		if normal.y < 0.45:
+		if not normal.is_finite() or normal.y < 0.45:
 			continue
 		_ground_support[i] = true
 		_ground_heights[i] = (hit.position as Vector3).y - base.y
@@ -1575,6 +1731,8 @@ func reset_for_respawn() -> void:
 	var keep: Transform3D = global_transform
 	_reset_cart(false)
 	global_transform = keep
+	_last_safe_position = keep.origin
+	_last_safe_yaw = keep.basis.get_euler().y
 	# Respawn revives a racing cart, never a finished one: a crossed cart must
 	# stay intangible for the rest of the race.
 	contact_enabled = not race_finished
@@ -1586,6 +1744,8 @@ func reset_for_respawn() -> void:
 func _reset_cart(restore_props: bool = true) -> void:
 	velocity = Vector3.ZERO
 	global_transform = _spawn_transform
+	_last_safe_position = global_transform.origin
+	_last_safe_yaw = global_transform.basis.get_euler().y
 	reset_physics_interpolation()
 	_mesh_root.scale = Vector3.ONE
 	_mesh_root.rotation = Vector3.ZERO

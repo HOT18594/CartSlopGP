@@ -1,16 +1,17 @@
 extends Control
 const UiAnim := preload("res://scripts/ui/ui_anim.gd")
-## Multiplayer lobby. Two clear doors when idle, one room card when connected.
+## Multiplayer lobby. One segmented control splits the page into two modes:
 ##
 ##   header: title / back
 ##   profile row: name + tag colour (idle only, compact)
-##   idle: HOST card (online primary + LAN secondary)
-##         JOIN card (code + JOIN primary + browse/LAN secondaries)
+##   idle: HOST | JOIN segmented control
+##         HOST: one BOTS slider + two equal host tiles (LAN / ONLINE)
+##         JOIN: one code field + equal JOIN / SEARCH tiles
 ##   room: real code + COPY/LEAVE, 8 player slots, host settings, START
 ##   client: title LOBBY, real code, read-only setup summary
 ##
-## Room lists never dump into the page. Both FIND LAN ROOMS and BROWSE
-## ONLINE ROOMS open the searchable RoomBrowser popup instead.
+## Room lists never dump into the page. SEARCH opens the RoomBrowser popup in
+## merged mode: one list, LAN rooms first, every row badged LAN or ONLINE.
 
 const PLAY_MENU_SCENE: String = "res://scenes/ui/play_menu.tscn"
 const MINIGAMES_SCENE: String = "res://scenes/ui/minigames_menu.tscn"
@@ -19,14 +20,13 @@ const LOBBY_SCENE: String = "res://scenes/ui/lobby_menu.tscn"
 const ROOM_BROWSER_SCENE: String = "res://scenes/ui/room_browser.tscn"
 const Catalog := preload("res://scripts/vehicles/vehicle_catalog.gd")
 const UiPalette := preload("res://scripts/ui/ui_palette.gd")
+const FOCUS_SLIDER := preload("res://scripts/ui/focus_slider.gd")
 
 const SERVER_DOWN: String = "Game server is down. Try again later."
 const OFFLINE_TEXT: String = "Online play is unavailable right now. LAN play still works."
 const LEAVE_WARNING: String = "Leaving will close the room for everyone."
 const MAX_SLOTS: int = 8
 
-const BOT_LABELS: PackedStringArray = ["NONE", "1", "2", "3", "4", "5"]
-const BOT_VALUES: Array[int] = [0, 1, 2, 3, 4, 5]
 const TAG_COLORS: Array[Dictionary] = [
 	{"name": "YELLOW", "hex": "ffd22e"},
 	{"name": "CREAM", "hex": "fff6e3"},
@@ -52,12 +52,16 @@ var _idle_box: VBoxContainer
 var _offline_banner: PanelContainer
 var _offline_label: Label
 var _retry_button: Button
+var _mode_switch: Button
+var _host_page: VBoxContainer
+var _join_page: VBoxContainer
+var _bots_slider: HSlider
+var _bots_value_label: Label
 var _room_box: VBoxContainer
 var _join_input: LineEdit
 var _join_button: Button
 var _join_status: Label
 var _lan_button: Button
-var _lan_scan_button: Button
 var _browse_button: Button
 var _host_pi_button: Button
 var _host_card: VBoxContainer
@@ -70,18 +74,20 @@ var _players_box: VBoxContainer
 var _players_header: Label
 var _config_box: VBoxContainer
 var _settings_row: GridContainer
-var _setting_views: Dictionary = {} ## key -> Button
+var _setting_views: Dictionary = {} ## key -> Button / Control
 var _summary: Label
 var _client_note: Label
 var _start_button: Button
 var _game_pill: Button
-var _bots_pill: Button
+var _room_bots_slider: HSlider
+var _room_bots_value_label: Label
 var _map_button: Button
 var _vehicle_button: Button
 var _visibility_pill: Button
 var _visibility_box: VBoxContainer
 var _browser: Control
-var _browser_mode: String = "online"
+var _browser_mode: String = "all"
+var _mode: String = "host"
 var _tag_swatch_buttons: Dictionary = {} ## hex -> Button
 var _state: String = "idle"
 var _server_checked: bool = false
@@ -131,11 +137,44 @@ func _enter() -> void:
 
 
 func _focus_idle() -> void:
-	## Idle lobby: the keyboard lands on the primary door.
+	## Idle lobby: land on the main action of whichever mode is showing.
+	_focus_mode()
+
+
+func _focus_mode() -> void:
+	if _mode == "join":
+		if _join_input != null and _join_input.editable:
+			MenuNav.focus(_join_input)
+		elif _join_button != null and not _join_button.disabled:
+			MenuNav.focus(_join_button)
+		elif _browse_button != null:
+			MenuNav.focus(_browse_button)
+		return
 	if _host_pi_button != null and not _host_pi_button.disabled:
 		MenuNav.focus(_host_pi_button)
 	elif _lan_button != null:
 		MenuNav.focus(_lan_button)
+	elif _bots_slider != null:
+		MenuNav.focus(_bots_slider)
+
+
+func _set_mode(mode: String, move_focus: bool = true) -> void:
+	## One page at a time. Hiding a page never clears the code field, so typed
+	## input survives a trip through HOST and back.
+	_mode = "join" if mode == "join" else "host"
+	if _host_page != null:
+		_host_page.visible = _mode == "host"
+	if _join_page != null:
+		_join_page.visible = _mode == "join"
+	if _mode_switch != null:
+		_mode_switch.call("set_index", 1 if _mode == "join" else 0)
+	MenuNav.refresh()
+	if move_focus and _state == "idle":
+		_focus_mode()
+
+
+func _on_mode_changed(value: Variant) -> void:
+	_set_mode(str(value))
 
 
 func _focus_host() -> void:
@@ -210,16 +249,9 @@ func _heading(text: String) -> Label:
 	return label
 
 
-func _vertical_spacer() -> Control:
-	var spacer := Control.new()
-	spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	return spacer
-
-
 func _card(parent: Node) -> VBoxContainer:
-	## Tinted rounded block, no outline: the gap between the two doors is what
-	## separates them, so a card never draws a frame of its own.
+	## Tinted rounded block, no outline: the page gap separates modes and the
+	## block groups one mode's controls, so a card never draws a frame itself.
 	var panel := PanelContainer.new()
 	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var style := StyleBoxFlat.new()
@@ -253,6 +285,63 @@ func _soft_disabled_style() -> StyleBoxFlat:
 func _apply_soft_disabled(button: Button) -> void:
 	if button != null:
 		button.add_theme_stylebox_override("disabled", _soft_disabled_style())
+
+
+func _bots_text(total: int) -> String:
+	return "%d BOT%s" % [total, "" if total == 1 else "S"]
+
+
+func _make_bots_slider(start: int) -> HSlider:
+	## Real slider, integer steps 0-5. FocusSlider supplies the focus ring and
+	## keyboard/gamepad left/right handling; the shoulder buttons are wired in
+	## _on_slider_shoulder because this project maps no shoulder menu action.
+	var slider := HSlider.new()
+	slider.set_script(FOCUS_SLIDER)
+	slider.min_value = 0.0
+	slider.max_value = 5.0
+	slider.step = 1.0
+	slider.value = clampf(float(start), 0.0, 5.0)
+	slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	slider.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	slider.custom_minimum_size = Vector2(240, 40)
+	slider.tooltip_text = "How many AI carts join the room. Left/right or L1/R1 changes it."
+	slider.value_changed.connect(_on_bots_slider_value)
+	slider.gui_input.connect(func(event: InputEvent) -> void:
+		_on_slider_shoulder(event, slider))
+	return slider
+
+
+func _bots_value() -> Label:
+	var label := Label.new()
+	label.custom_minimum_size = Vector2(116, 0)
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	label.add_theme_font_size_override("font_size", 22)
+	label.add_theme_color_override("font_color", UiPalette.INK)
+	label.text = _bots_text(GameSettings.effective_bot_count())
+	return label
+
+
+func _on_slider_shoulder(event: InputEvent, slider: HSlider) -> void:
+	## L1/R1 nudge the focused bots slider one step. Godot's slider already
+	## consumes the d-pad, so only the shoulder buttons are handled here.
+	if slider == null or not slider.has_focus():
+		return
+	if not (event is InputEventJoypadButton):
+		return
+	var button := event as InputEventJoypadButton
+	if not button.pressed:
+		return
+	var direction: int = 0
+	if button.button_index == JOY_BUTTON_LEFT_SHOULDER:
+		direction = -1
+	elif button.button_index == JOY_BUTTON_RIGHT_SHOULDER:
+		direction = 1
+	if direction == 0:
+		return
+	slider.value = clampf(slider.value + float(direction) * maxf(slider.step, 1.0),
+		slider.min_value, slider.max_value)
+	slider.accept_event()
 
 
 # --------------------------------------------------------------------------
@@ -342,62 +431,114 @@ func _on_browser_closed() -> void:
 
 func _build_idle() -> void:
 	_idle_box = VBoxContainer.new()
-	_idle_box.add_theme_constant_override("separation", 12)
+	_idle_box.add_theme_constant_override("separation", UiKit.SPACING)
 	_idle_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_body.add_child(_idle_box)
 
 	_build_offline_banner()
 
-	var cards := HBoxContainer.new()
-	cards.add_theme_constant_override("separation", 18)
-	cards.alignment = BoxContainer.ALIGNMENT_CENTER
-	cards.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_idle_box.add_child(cards)
+	# The segmented control is the only thing both modes share. Only the
+	# selected page is visible; the switch itself is one focus stop.
+	var mode_row := HBoxContainer.new()
+	mode_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	mode_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_idle_box.add_child(mode_row)
+	_mode_switch = UiKit.segmented(PackedStringArray(["HOST", "JOIN"]),
+		["host", "join"], 0, 170.0, 54.0)
+	_mode_switch.set_meta("nav_default", true)
+	_mode_switch.tooltip_text = "HOST: open a room.  JOIN: use a code or search."
+	_mode_switch.connect("option_changed", _on_mode_changed)
+	mode_row.add_child(_mode_switch)
 
-	var host_col: VBoxContainer = _card(cards)
-	host_col.alignment = BoxContainer.ALIGNMENT_BEGIN
+	_host_page = VBoxContainer.new()
+	_host_page.add_theme_constant_override("separation", UiKit.SPACING)
+	_host_page.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_idle_box.add_child(_host_page)
+	_build_host_page()
+
+	_join_page = VBoxContainer.new()
+	_join_page.add_theme_constant_override("separation", UiKit.SPACING)
+	_join_page.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_idle_box.add_child(_join_page)
+	_build_join_page()
+
+	_set_mode("host", false)
+
+
+func _build_host_page() -> void:
+	var host_col: VBoxContainer = _card(_host_page)
+	host_col.add_theme_constant_override("separation", UiKit.SPACING)
 	host_col.add_child(_heading("HOST A ROOM"))
-	# Host door has fewer actions; two equal spacers keep the heading aligned
-	# with the join card while its buttons sit balanced in the leftover height.
-	host_col.add_child(_vertical_spacer())
-	_host_pi_button = _candy("CREATE ONLINE ROOM", UiPalette.YELLOW, 56, 18)
-	_host_pi_button.custom_minimum_size.x = 0
-	_host_pi_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_host_pi_button.tooltip_text = "Open a public online room. You get a 5-letter code to share."
-	_host_pi_button.pressed.connect(_on_host_pi)
-	host_col.add_child(_host_pi_button)
-	_apply_soft_disabled(_host_pi_button)
-	_lan_button = _candy("HOST LAN ROOM", UiPalette.BLUE, 48, 15)
-	_lan_button.custom_minimum_size.x = 0
+
+	# BOTS: one real slider, integer steps 0-5, live value on the right. It
+	# writes the same field the old pills used (GameSettings.set_bot_total),
+	# which Network.host_game() reads when it opens the session.
+	var bots_row := HBoxContainer.new()
+	bots_row.add_theme_constant_override("separation", UiKit.SPACING)
+	host_col.add_child(bots_row)
+	var bots_caption: Label = _caption("BOTS")
+	bots_caption.custom_minimum_size = Vector2(64, 0)
+	bots_caption.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	bots_row.add_child(bots_caption)
+	_bots_slider = _make_bots_slider(GameSettings.effective_bot_count())
+	bots_row.add_child(_bots_slider)
+	_bots_value_label = _bots_value()
+	bots_row.add_child(_bots_value_label)
+
+	# Two equal doors: the choice is LAN or ONLINE, nothing below it.
+	var actions := HBoxContainer.new()
+	actions.add_theme_constant_override("separation", UiKit.SPACING)
+	actions.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	host_col.add_child(actions)
+	_lan_button = _candy("HOST ON LAN", UiPalette.BLUE, 64, 19)
 	_lan_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_lan_button.tooltip_text = "Host on this Wi-Fi. Friends on the same network find it automatically."
 	_lan_button.pressed.connect(_on_host_lan)
-	host_col.add_child(_lan_button)
-	host_col.add_child(_vertical_spacer())
+	actions.add_child(_lan_button)
+	_host_pi_button = _candy("HOST ONLINE", UiPalette.YELLOW, 64, 19)
+	_host_pi_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_host_pi_button.tooltip_text = "Open a public online room. You get a 5-letter code to share."
+	_host_pi_button.pressed.connect(_on_host_pi)
+	actions.add_child(_host_pi_button)
+	_apply_soft_disabled(_host_pi_button)
 
-	var join_col: VBoxContainer = _card(cards)
-	join_col.alignment = BoxContainer.ALIGNMENT_BEGIN
+
+func _build_join_page() -> void:
+	var join_col: VBoxContainer = _card(_join_page)
+	join_col.add_theme_constant_override("separation", UiKit.SPACING)
 	join_col.add_child(_heading("JOIN A ROOM"))
 	_join_input = LineEdit.new()
 	_join_input.placeholder_text = "5-LETTER CODE"
 	_join_input.max_length = 5
 	_join_input.alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_join_input.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_join_input.custom_minimum_size = Vector2(0, 46)
+	_join_input.custom_minimum_size = Vector2(0, 52)
 	_join_input.add_theme_font_size_override("font_size", 22)
-	_join_input.tooltip_text = "Type the room code the host shared with you."
+	_join_input.tooltip_text = "Type the room code the host shared with you, or press SEARCH."
 	# UiKit would flatten this field back to 50 px / 18 px; keep the big code.
 	_join_input.set_meta("skip_kit", true)
+	UiKit.apply_focus_ring(_join_input, 14)
 	_join_input.text_changed.connect(_on_code_typed)
 	_join_input.text_submitted.connect(func(_t: String) -> void: _on_join_pressed())
 	join_col.add_child(_join_input)
-	_join_button = _candy("JOIN", UiPalette.YELLOW, 56, 20)
-	_join_button.custom_minimum_size.x = 0
+
+	# JOIN and SEARCH are peers: two equal tiles, never a stretched bar.
+	var actions := HBoxContainer.new()
+	actions.add_theme_constant_override("separation", UiKit.SPACING)
+	actions.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	join_col.add_child(actions)
+	_join_button = _candy("JOIN", UiPalette.YELLOW, 60, 20)
 	_join_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_join_button.tooltip_text = "Join the room for the code above."
 	_join_button.pressed.connect(_on_join)
-	join_col.add_child(_join_button)
+	actions.add_child(_join_button)
 	_apply_soft_disabled(_join_button)
+	_browse_button = _candy("SEARCH", UiPalette.CYAN, 60, 20)
+	_browse_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_browse_button.tooltip_text = "Scan LAN rooms and public online rooms in one list."
+	_browse_button.pressed.connect(_on_search)
+	actions.add_child(_browse_button)
+
 	_join_status = Label.new()
 	_join_status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_join_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -405,23 +546,6 @@ func _build_idle() -> void:
 	_join_status.add_theme_font_size_override("font_size", 13)
 	_join_status.add_theme_color_override("font_color", UiPalette.RED)
 	join_col.add_child(_join_status)
-	var search_row := HBoxContainer.new()
-	search_row.add_theme_constant_override("separation", 18)
-	search_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_idle_box.add_child(search_row)
-	_browse_button = _candy("SEARCH ONLINE", UiPalette.BLUE, 48, 16)
-	_browse_button.custom_minimum_size.x = 0
-	_browse_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_browse_button.tooltip_text = "Browse public online rooms and join with one click."
-	_browse_button.pressed.connect(_on_browse)
-	search_row.add_child(_browse_button)
-	_apply_soft_disabled(_browse_button)
-	_lan_scan_button = _candy("SEARCH LAN", UiPalette.CYAN, 48, 16)
-	_lan_scan_button.custom_minimum_size.x = 0
-	_lan_scan_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_lan_scan_button.tooltip_text = "Look for rooms hosted on this Wi-Fi network."
-	_lan_scan_button.pressed.connect(_on_lan_scan)
-	search_row.add_child(_lan_scan_button)
 
 
 func _build_offline_banner() -> void:
@@ -528,8 +652,8 @@ func _build_room() -> void:
 	_config_box.add_theme_constant_override("separation", UiKit.SPACING_TIGHT)
 	_room_box.add_child(_config_box)
 	_config_box.add_child(_section("HOST SETTINGS"))
-	# Two equal columns of larger blocks instead of four narrow pills: MODE and
-	# BOTS are tile strips, MAP and CAR are full-width action tiles.
+	# Two equal columns of larger blocks instead of four narrow pills: MODE is
+	# a tile strip, BOTS is a slider, MAP and CAR are full-width action tiles.
 	_settings_row = GridContainer.new()
 	_settings_row.columns = 2
 	_settings_row.add_theme_constant_override("h_separation", UiKit.SPACING)
@@ -541,9 +665,19 @@ func _build_room() -> void:
 	_game_pill.connect("option_changed", func(value: Variant) -> void: _on_game_mode(str(value)))
 	_settings_row.add_child(_setting_box("MODE", "mode", _game_pill, UiPalette.YELLOW, false))
 
-	_bots_pill = _pill(BOT_LABELS, BOT_VALUES, GameSettings.effective_bot_count(), 68.0)
-	_bots_pill.connect("option_changed", _on_bots_changed)
-	_settings_row.add_child(_setting_box("BOTS", "bots", _bots_pill, UiPalette.GRASS, false))
+	_room_bots_slider = _make_bots_slider(GameSettings.effective_bot_count())
+	_room_bots_slider.custom_minimum_size = Vector2(120, 34)
+	_room_bots_slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var bots_cell := HBoxContainer.new()
+	bots_cell.add_theme_constant_override("separation", UiKit.SPACING_TIGHT)
+	bots_cell.custom_minimum_size = Vector2(0, 48)
+	bots_cell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	bots_cell.add_child(_room_bots_slider)
+	_room_bots_value_label = _bots_value()
+	_room_bots_value_label.custom_minimum_size = Vector2(86, 0)
+	_room_bots_value_label.add_theme_font_size_override("font_size", 16)
+	bots_cell.add_child(_room_bots_value_label)
+	_settings_row.add_child(_setting_box("BOTS", "bots", bots_cell, UiPalette.GRASS))
 
 	_map_button = _candy("", UiPalette.CREAM, 48, 15)
 	_map_button.tooltip_text = "CHOOSE MAP"
@@ -578,7 +712,7 @@ func _build_room() -> void:
 	_room_box.add_child(_client_note)
 
 
-func _setting_box(label_text: String, key: String, control: Button, accent: Color,
+func _setting_box(label_text: String, key: String, control: Control, accent: Color,
 		expand: bool = true) -> VBoxContainer:
 	var box := VBoxContainer.new()
 	box.add_theme_constant_override("separation", 4)
@@ -597,19 +731,21 @@ func _setting_box(label_text: String, key: String, control: Button, accent: Colo
 	return box
 
 
-func _decorate_setting(control: Button, key: String, _accent: Color) -> void:
-	## The value is the button, not a second tiny badge layered on top of it.
-	for state: String in ["font_color", "font_hover_color", "font_pressed_color",
-			"font_focus_color", "font_disabled_color"]:
-		control.add_theme_color_override(state, UiPalette.INK)
-	control.add_theme_font_size_override("font_size", 17)
+func _decorate_setting(control: Control, key: String, _accent: Color) -> void:
+	## The value is the control itself, not a second tiny badge layered on top.
+	if control is Button:
+		var button := control as Button
+		for state: String in ["font_color", "font_hover_color", "font_pressed_color",
+				"font_focus_color", "font_disabled_color"]:
+			button.add_theme_color_override(state, UiPalette.INK)
+		button.add_theme_font_size_override("font_size", 17)
 	_setting_views[key] = control
 
 
 func _set_badge(key: String, text: String, _color: Color) -> void:
-	var control: Button = _setting_views.get(key)
-	if control != null:
-		control.text = text
+	var control: Control = _setting_views.get(key)
+	if control is Button:
+		(control as Button).text = text
 
 
 func _on_name_focus(focused: bool) -> void:
@@ -630,6 +766,16 @@ func _process(delta: float) -> void:
 
 # --------------------------------------------------------------------------
 # room browser
+
+
+func _on_search() -> void:
+	## One scan covers both sources. The browser merges LAN first, then online,
+	## and badges every row so the player knows what they are joining.
+	if Network.join_pending:
+		_set_status("A join is already in progress.")
+		return
+	_browser_mode = "all"
+	_browser.call("open", "all")
 
 
 func _on_lan_scan() -> void:
@@ -676,7 +822,10 @@ func _on_room_selected(room: Dictionary) -> void:
 	if Network.join_pending:
 		_set_status("A join is already in progress.")
 		return
-	if _browser_mode == "lan":
+	# The merged browser tags each row with its source; single-source opens
+	# fall back to the mode the lobby asked for.
+	var source: String = str(room.get("_source", _browser_mode))
+	if source == "lan":
 		Network.join_lan_room(room)
 		return
 	# Public rooms are joined from the row itself; no code is shown or typed.
@@ -714,7 +863,7 @@ func _on_server_status(online: bool, detail: String) -> void:
 
 func _set_server_status(online: bool, detail: String) -> void:
 	# Players do not need a server status light. Online means nothing is shown.
-	# Offline gets one warm banner above the two doors, after the check finishes.
+	# Offline gets one warm banner above the mode switch, after the check finishes.
 	if detail == "checking":
 		return
 	_server_checked = true
@@ -724,9 +873,6 @@ func _set_server_status(online: bool, detail: String) -> void:
 	if _join_input != null:
 		_join_input.editable = online
 		_join_input.focus_mode = Control.FOCUS_ALL if online else Control.FOCUS_NONE
-	if _browse_button != null:
-		_browse_button.disabled = not online
-		_apply_soft_disabled(_browse_button)
 	if _host_pi_button != null:
 		_host_pi_button.disabled = not online
 		_apply_soft_disabled(_host_pi_button)
@@ -749,6 +895,10 @@ func _set_state(state: String) -> void:
 	_idle_box.visible = idle
 	_room_box.visible = not idle
 	_profile_row.visible = idle
+	if _host_page != null:
+		_host_page.visible = _mode == "host"
+	if _join_page != null:
+		_join_page.visible = _mode == "join"
 	_config_box.visible = state == "host"
 	_start_button.visible = state == "host"
 	_visibility_box.visible = state == "host"
@@ -763,11 +913,11 @@ func _set_state(state: String) -> void:
 		_code_label.text = "-----"
 		# Re-arm the online doors after a session ends. Before the first probe
 		# finishes (_server_checked false) they stay live instead of reading
-		# broken for several seconds.
+		# broken for several seconds. SEARCH stays live offline: it also scans
+		# LAN rooms, which need no server.
 		if _server_checked:
 			var online: bool = Network.server_online
 			_join_button.disabled = not online
-			_browse_button.disabled = not online
 			_host_pi_button.disabled = not online
 			_join_input.editable = online
 			_join_input.focus_mode = Control.FOCUS_ALL if online else Control.FOCUS_NONE
@@ -786,8 +936,7 @@ func _refresh_config() -> void:
 	var mode: String = Network.session_mode if active else GameSettings.multiplayer_mode
 	_game_pill.call("set_index", 0 if mode == GameSettings.GAME_SANDBOX else 1)
 	var bots: int = Network.session_bot_count if active else GameSettings.effective_bot_count()
-	bots = clampi(bots, 0, BOT_LABELS.size() - 1)
-	_bots_pill.call("set_index", bots)
+	_set_bots_views(clampi(bots, 0, 5))
 	var map_id: String = Network.session_minigame if active and Network.is_host \
 		else GameSettings.selected_minigame
 	var map_text: String = GameSettings.minigame_name(map_id) \
@@ -1080,13 +1229,31 @@ func _on_game_mode(mode: String) -> void:
 	_refresh_config()
 
 
-func _on_bots_changed(value: Variant) -> void:
-	if not Network.is_host:
-		return
-	GameSettings.set_bot_total(int(value))
-	Network.configure_session(GameSettings.multiplayer_mode,
-		GameSettings.bots_enabled, GameSettings.effective_bot_count())
-	_refresh_config()
+func _on_bots_slider_value(value: float) -> void:
+	## Same contract the old BOTS pill used: GameSettings.set_bot_total() is the
+	## field Network.host_game() reads, and a live host also re-broadcasts the
+	## session config so clients see the new count.
+	var total: int = clampi(int(round(value)), 0, 5)
+	GameSettings.set_bot_total(total)
+	_set_bots_views(total)
+	if Network.is_host:
+		Network.configure_session(GameSettings.multiplayer_mode,
+			GameSettings.bots_enabled, GameSettings.effective_bot_count())
+	_refresh_summary()
+
+
+func _set_bots_views(total: int) -> void:
+	## Keep the two sliders (idle host page and in-room host settings) and
+	## their live labels on the same value without re-emitting value_changed.
+	var clean: int = clampi(total, 0, 5)
+	if _bots_slider != null:
+		_bots_slider.set_value_no_signal(float(clean))
+	if _room_bots_slider != null:
+		_room_bots_slider.set_value_no_signal(float(clean))
+	if _bots_value_label != null:
+		_bots_value_label.text = _bots_text(clean)
+	if _room_bots_value_label != null:
+		_room_bots_value_label.text = _bots_text(clean)
 
 
 func _on_choose_map() -> void:

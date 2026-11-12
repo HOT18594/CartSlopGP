@@ -1617,6 +1617,9 @@ func _build_rivals() -> void:
 	var boost_hi: Array[float] = [0.55, 0.85, 1.00]
 	var aggr_lo: Array[float] = [0.15, 0.35, 0.60]
 	var aggr_hi: Array[float] = [0.40, 0.70, 1.00]
+	# One seeded offset rotates the field through the four lines, so even the
+	# first five rivals never share a single centreline.
+	var line_offset: int = rng.randi_range(0, RaceAI.LINE_COUNT - 1)
 	for i in count:
 		var lane: float = [-2.5, 2.5, 0.0, -1.2, 1.2][i % 5]
 		var progress: float = START_DISTANCE + 5.0 + float(i) * 4.5
@@ -1652,17 +1655,23 @@ func _build_rivals() -> void:
 		rival.add_child(label)
 		rival.set_spawn_transform(spawn)
 		# Personality is drawn in the same order as before the AI rewrite, so a
-		# seeded field stays familiar. Skill is the only thing the driver uses
-		# to vary its margins; lane only spreads the pack across the road.
+		# seeded field stays familiar. Skill sets the margins; the drawn line
+		# style, phase, aggression and lookahead trim make every driver follow a
+		# different line and apply throttle and brakes differently.
 		var skill: float = rng.randf_range(skill_lo[difficulty], skill_hi[difficulty])
 		var lookahead: float = rng.randf_range(0.82, 1.18)
 		var boost_bias: float = rng.randf_range(boost_lo[difficulty], boost_hi[difficulty])
 		var aggression: float = rng.randf_range(aggr_lo[difficulty], aggr_hi[difficulty])
 		var phase: float = rng.randf() * TAU
+		# Rotate through the four lines instead of drawing independently: a
+		# five-bot field always shows at least four different racing lines, and
+		# the seeded offset still changes who gets which line.
+		var line_style: int = (i + line_offset) % RaceAI.LINE_COUNT
 		var driver: RaceAI = null
 		if authority:
 			driver = RaceAI.new(_spline, ROAD_HALF)
-			driver.configure(skill, lane * 0.25, boost_bias, rival.max_speed)
+			driver.configure(skill, lane * 0.25, boost_bias, rival.max_speed,
+				line_style, phase, aggression, lookahead)
 			driver.set_obstacles(_trackside_solids)
 		_rivals.append({
 			"node": rival,

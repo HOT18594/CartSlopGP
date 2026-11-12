@@ -6,15 +6,15 @@ extends Node3D
 ## no overlapping ground/lathe/pavement trimeshes to fling carts. The bowl is a
 ## smooth rolled depression, the drift ring is a low dome with broad marked
 ## entries that return to grade with NO vertical step, and the mesa, highline
-## summit, ramps and causeway are all baked into that same surface. Only convex
-## props, the solid perimeter wall, guardrails and the safety net use separate
-## collision bodies. Everything decorative is visual only.
+## summit, ramps and causeway are all baked into that same surface. Convex props,
+## park furniture, the solid perimeter wall, guardrails and the safety net use
+## separate collision bodies. Soft cover stays visual only.
 ##
 ## Around that surface sit two layers of scenery:
 ##   - the park itself: a carved pond with a shoreline, paddock fences, an
-##     entrance gate, lamp posts, hay bales, tyre stacks, crates, boulder
-##     outcrops, bushes, flowers and wind-blown grass tufts, all placed in the
-##     pockets the driving lines never reach;
+##     entrance gate, lamp posts, hay bales, tyre stacks, crates, bushes,
+##     flowers and wind-blown grass tufts, all placed in the pockets the
+##     driving lines never reach;
 ##   - a layered horizon: three noise-displaced ridgelines, flat-topped buttes,
 ##     a conifer belt and the shared backdrop mountains. That replaces the old
 ##     ring of sphere domes, merges into two draw calls and fades into distance
@@ -24,6 +24,7 @@ const FoliageBaker := preload("res://scripts/minigames/foliage_baker.gd")
 const RealisticTree := preload("res://scripts/minigames/realistic_tree.gd")
 const Backdrop := preload("res://scripts/systems/backdrop.gd")
 const UiPalette := preload("res://scripts/ui/ui_palette.gd")
+const CollisionLayers := preload("res://scripts/systems/collision_layers.gd")
 const BOOST_PAD_SCENE: String = "res://scenes/track/boost_pad.tscn"
 const CONE_MODEL: String = "res://assets/models/kenney_car-kit/Models/GLB format/cone.glb"
 const CRATE_MODEL: String = "res://assets/models/kenney_car-kit/Models/GLB format/box.glb"
@@ -87,8 +88,8 @@ var _rubber_mat: StandardMaterial3D
 var _water_mat: StandardMaterial3D
 var _hay_mat: ShaderMaterial
 
-# Merge buffers: fences, the gate, lamps, buttes, ridges and boulders are all
-# appended here and flushed as one mesh per material.
+# Merge buffers: fences, the gate, lamps, ridges and buttes are all appended
+# here and flushed as one mesh per material.
 var _geo_v := PackedVector3Array()
 var _geo_n := PackedVector3Array()
 var _geo_c := PackedColorArray()
@@ -498,7 +499,7 @@ func _terrain() -> void:
 	# Safety net well below the bowl floor; no overlap with the terrain.
 	var body := StaticBody3D.new()
 	body.name = "GroundNet"
-	body.collision_layer = 1
+	body.collision_layer = CollisionLayers.WORLD
 	body.collision_mask = 0
 	var box := BoxShape3D.new()
 	box.size = Vector3(FIELD * 2.0, 2.0, FIELD * 2.0)
@@ -544,7 +545,7 @@ func _outfield_mesh() -> ArrayMesh:
 # --------------------------------------------------------------------------
 # merged geometry kit
 #
-# Fences, gates, lamps, buttes, ridgelines and boulders are all built from flat
+# Fences, gates, lamps, buttes and ridgelines are all built from flat triangles
 # triangles appended to one scratch buffer and flushed as a single mesh, so a
 # few hundred pieces of scenery still cost one draw call per material.
 
@@ -587,7 +588,7 @@ func _geo_commit(node_name: String, material: Material, shadows: bool) -> void:
 
 ## Flat-shaded triangle, visible from the `facing` side. Godot's front faces are
 ## clockwise, so the winding has to be picked as well as the normal: a mirrored
-## index order would leave rock and butte faces culled or lit from behind.
+## index order would leave butte faces culled or lit from behind.
 func _geo_tri(a: Vector3, b: Vector3, c: Vector3, color: Color,
 		facing: Vector3 = Vector3.UP) -> void:
 	var normal: Vector3 = (c - a).cross(b - a)
@@ -698,7 +699,7 @@ func _ground_point(flat: Vector3) -> Vector3:
 	return Vector3(flat.x, _terrain_h(flat.x, flat.z), flat.z)
 
 
-## Deterministic 0..1 hash for rock wobble and per-face shade variation.
+## Deterministic 0..1 hash for butte rim wobble.
 func _hash01(value: int) -> float:
 	var v: float = sin(float(value) * 12.9898) * 43758.5453
 	return v - floor(v)
@@ -761,11 +762,29 @@ func _static_faces(body_name: String, faces: PackedVector3Array) -> void:
 	shape.backface_collision = true
 	var body := StaticBody3D.new()
 	body.name = body_name
-	body.collision_layer = 1
+	body.collision_layer = CollisionLayers.WORLD
 	body.collision_mask = 0
 	var collision := CollisionShape3D.new()
 	collision.shape = shape
 	body.add_child(collision)
+	add_child(body)
+
+
+## One WORLD-layer body for a merged visual batch. `shapes` holds
+## [Shape3D, Transform3D] pairs in park space, so a whole fence run, a gate or
+## a hay field costs one body instead of one node per post or bale.
+func _solid_batch(body_name: String, shapes: Array) -> void:
+	if shapes.is_empty():
+		return
+	var body := StaticBody3D.new()
+	body.name = body_name
+	body.collision_layer = CollisionLayers.WORLD
+	body.collision_mask = 0
+	for entry: Array in shapes:
+		var collision := CollisionShape3D.new()
+		collision.shape = entry[0] as Shape3D
+		collision.transform = entry[1] as Transform3D
+		body.add_child(collision)
 	add_child(body)
 
 
@@ -864,7 +883,7 @@ func _jump_lane() -> void:
 		roller.position = Vector3(0.0, 0.0, z)
 		add_child(roller)
 		var body := StaticBody3D.new()
-		body.collision_layer = 1
+		body.collision_layer = CollisionLayers.WORLD
 		body.collision_mask = 0
 		var shape := CylinderShape3D.new()
 		shape.radius = 0.35
@@ -894,7 +913,7 @@ func _wedge(body_name: String, at: Vector3, size: Vector3, angle_deg: float,
 	add_child(instance)
 	var body := StaticBody3D.new()
 	body.name = body_name
-	body.collision_layer = 1
+	body.collision_layer = CollisionLayers.WORLD
 	body.collision_mask = 0
 	var shape := BoxShape3D.new()
 	shape.size = size
@@ -908,6 +927,12 @@ func _wedge(body_name: String, at: Vector3, size: Vector3, angle_deg: float,
 
 func _boost_pad(at: Vector3) -> void:
 	var pad: Node3D = (load(BOOST_PAD_SCENE) as PackedScene).instantiate()
+	# The shared scene's FloatStrip is a single unshaded quad hanging a metre
+	# over the pad. In the open park it reads as floating geometry, so the
+	# ground chevrons and the puff carry the pad instead.
+	var float_strip: Node = pad.get_node_or_null("FloatStrip")
+	if float_strip != null:
+		float_strip.free()
 	pad.position = at
 	add_child(pad)
 
@@ -942,7 +967,7 @@ func _tire_stack(at: Vector3) -> void:
 	_tyre_stacks += 1
 	var body := StaticBody3D.new()
 	body.name = "TireStack_%d" % _tyre_stacks
-	body.collision_layer = 1
+	body.collision_layer = CollisionLayers.WORLD
 	body.collision_mask = 0
 	var shape := CylinderShape3D.new()
 	shape.radius = 0.6
@@ -975,7 +1000,7 @@ func _flush_tire_stacks() -> void:
 func _barrier(at: Vector3, yaw_deg: float) -> void:
 	var body := StaticBody3D.new()
 	body.name = "Barrier"
-	body.collision_layer = 1
+	body.collision_layer = CollisionLayers.WORLD
 	body.collision_mask = 0
 	var shape := BoxShape3D.new()
 	shape.size = Vector3(4.0, 0.7, 0.5)
@@ -998,10 +1023,11 @@ func _barrier(at: Vector3, yaw_deg: float) -> void:
 # --------------------------------------------------------------------------
 # park furniture: pond, fences, gate, lamps and hay
 #
-# Every piece here is decoration and carries NO collision: the merged meshes
-# are visual only, so a stray kart can never snag a fence post. Everything is
-# placed in the paddocks between the ring road and the wall, or against the
-# wall itself, which keeps it all clear of the driving lines.
+# The water sheet and soft planting stay visual; every solid piece of furniture
+# gets a matching WORLD-layer body. Fences, gate, lamps and bales are still one
+# merged visual batch each, and their collision is one StaticBody3D with simple
+# shapes per batch, so a kart can neither drive through them nor pay an extra
+# node per post.
 
 
 func _park_furniture() -> void:
@@ -1018,9 +1044,9 @@ func _park_furniture() -> void:
 	_flush_tire_stacks()
 
 
-## Water sheet + shoreline planting. The basin itself is carved by `_pond_h`
-## through `_terrain_h`, so the collision mesh already agrees with the shore;
-## only the flat water disc and the ground cover are added here.
+## Flat water sheet for the carved basin. The basin itself is carved by
+## `_pond_h` through `_terrain_h`, so the collision mesh already agrees with the
+## shore; water stays soft, and this only adds the sheet you see.
 func _pond() -> void:
 	var sheet_mesh := CylinderMesh.new()
 	sheet_mesh.top_radius = POND_WATER_R
@@ -1035,19 +1061,6 @@ func _pond() -> void:
 	sheet.position = Vector3(POND_CENTER.x, POND_LEVEL, POND_CENTER.y)
 	sheet.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(sheet)
-	# A ring of shore stones straddling the waterline: it hides the 2 cm lip
-	# where the flat water sheet meets the curved bank and gives the pond an
-	# edge you can read from the track.
-	_geo_begin()
-	var stone := Color(0.58, 0.56, 0.52)
-	for i in 11:
-		var angle: float = TAU * float(i) / 11.0 + 0.15
-		var point: Vector3 = Vector3(POND_CENTER.x + cos(angle) * (POND_WATER_R - 0.15),
-			0.0, POND_CENTER.y + sin(angle) * (POND_WATER_R - 0.15))
-		point = _ground_point(point)
-		_geo_box(Transform3D(Basis(Vector3.UP, angle + PI * 0.5),
-			point + Vector3.UP * 0.05), Vector3(1.4, 0.3, 0.8), stone)
-	_geo_commit("PondStones", _vertex_mat, false)
 
 
 ## Post-and-rail paddock fencing: two runs close the pond off from the ring
@@ -1056,21 +1069,24 @@ func _paddock_fence() -> void:
 	_geo_begin()
 	var wood := Color(0.62, 0.47, 0.33)
 	var dark := Color(0.47, 0.35, 0.25)
+	var solids: Array = []
 	# Both runs stay outside the 52-58 m ring and outside the pond basin, so no
 	# post ever stands on a driving line.
-	_fence_run(Vector3(-66.0, 0.0, -38.0), Vector3(-58.0, 0.0, -38.0), 2.6, wood)
-	_fence_run(Vector3(-53.0, 0.0, -38.0), Vector3(-49.0, 0.0, -38.0), 2.6, wood)
-	_fence_run(Vector3(-38.0, 0.0, -66.0), Vector3(-38.0, 0.0, -50.0), 2.6, wood)
-	_fence_run(Vector3(44.0, 0.0, 44.0), Vector3(44.0, 0.0, 66.0), 2.8, dark)
-	_fence_run(Vector3(44.0, 0.0, 44.0), Vector3(66.0, 0.0, 44.0), 2.8, dark)
-	# Field gate hung open at the pond run's gap: two leaves, no collision.
-	_gate_leaf(Vector3(-58.0, 0.0, -38.0), -0.7, 2.6, dark)
-	_gate_leaf(Vector3(-53.0, 0.0, -38.0), PI + 0.7, 2.6, dark)
+	_fence_run(Vector3(-66.0, 0.0, -38.0), Vector3(-58.0, 0.0, -38.0), 2.6, wood, solids)
+	_fence_run(Vector3(-53.0, 0.0, -38.0), Vector3(-49.0, 0.0, -38.0), 2.6, wood, solids)
+	_fence_run(Vector3(-38.0, 0.0, -66.0), Vector3(-38.0, 0.0, -50.0), 2.6, wood, solids)
+	_fence_run(Vector3(44.0, 0.0, 44.0), Vector3(44.0, 0.0, 66.0), 2.8, dark, solids)
+	_fence_run(Vector3(44.0, 0.0, 44.0), Vector3(66.0, 0.0, 44.0), 2.8, dark, solids)
+	# Field gate hung open at the pond run's gap: two leaves, both solid.
+	_gate_leaf(Vector3(-58.0, 0.0, -38.0), -0.7, 2.6, dark, solids)
+	_gate_leaf(Vector3(-53.0, 0.0, -38.0), PI + 0.7, 2.6, dark, solids)
 	_geo_commit("PaddockFence", _vertex_mat, false)
+	_solid_batch("PaddockFenceCollision", solids)
 
 
 ## One post-and-rail run between two flat points, following the terrain height.
-func _fence_run(from: Vector3, to: Vector3, spacing: float, color: Color) -> void:
+func _fence_run(from: Vector3, to: Vector3, spacing: float, color: Color,
+		solids: Array) -> void:
 	var delta: Vector3 = to - from
 	var length: float = delta.length()
 	if length < 0.5:
@@ -1087,10 +1103,21 @@ func _fence_run(from: Vector3, to: Vector3, spacing: float, color: Color) -> voi
 		for height: float in [0.46, 0.94]:
 			_geo_beam(points[i] + Vector3.UP * height,
 				points[i + 1] + Vector3.UP * height, 0.09, 0.11, color)
+	# One box per run matches the whole post-and-rail bay. These paddock runs
+	# are flat, so the barrier never floats or sinks at either end.
+	var a: Vector3 = _ground_point(from)
+	var b: Vector3 = _ground_point(to)
+	var flat := Vector3(b.x - a.x, 0.0, b.z - a.z)
+	var shape := BoxShape3D.new()
+	shape.size = Vector3(0.22, 1.3, flat.length())
+	var centre: Vector3 = (a + b) * 0.5 + Vector3.UP * 0.65
+	solids.append([shape, Transform3D(Basis(Vector3.UP, atan2(flat.x, flat.z)),
+		centre)])
 
 
 ## A hung gate leaf: frame, two braces and three palings, all in one batch.
-func _gate_leaf(hinge: Vector3, yaw: float, width: float, color: Color) -> void:
+func _gate_leaf(hinge: Vector3, yaw: float, width: float, color: Color,
+		solids: Array) -> void:
 	var base: Vector3 = _ground_point(hinge)
 	var basis := Basis(Vector3.UP, yaw)
 	var post_color: Color = color.darkened(0.2)
@@ -1102,17 +1129,24 @@ func _gate_leaf(hinge: Vector3, yaw: float, width: float, color: Color) -> void:
 	for i in 3:
 		var at: Vector3 = base + basis * Vector3(width * (0.25 + float(i) * 0.25), 0.0, 0.0)
 		_geo_box(Transform3D(basis, at + Vector3.UP * 0.64), Vector3(0.1, 1.15, 0.07), color)
+	# The leaf gets its own thin box, so the open gate gap stays clear.
+	var panel := BoxShape3D.new()
+	panel.size = Vector3(width, 1.3, 0.18)
+	solids.append([panel, Transform3D(basis,
+		base + basis * Vector3(width * 0.5, 0.65, 0.0))])
 
 
 ## Gatehouse on the start straight. The pilasters cap 0.6 m over the wall and
 ## lean 0.25 m proud of its face, but only into the last 25 cm of the apron:
 ## a kart's own body is already stopped by the wall before it can touch them.
+## Their matching boxes sit in one body so the gate is never a visual shell.
 func _entrance_gate() -> void:
 	_geo_begin()
 	var stone := Color(0.70, 0.68, 0.62)
 	var stone_dark := Color(0.51, 0.50, 0.47)
 	var timber := Color(0.50, 0.35, 0.24)
 	var deck: float = _terrain_h(0.0, 69.0)
+	var solids: Array = []
 	for side: float in [-1.0, 1.0]:
 		var x: float = side * 9.4
 		_geo_box(Transform3D(Basis.IDENTITY, Vector3(x, deck + 3.3, 69.45)),
@@ -1121,6 +1155,10 @@ func _entrance_gate() -> void:
 			Vector3(1.8, 0.6, 1.1), stone_dark)
 		_geo_box(Transform3D(Basis.IDENTITY, Vector3(x, deck + 6.75, 69.4)),
 			Vector3(1.8, 0.32, 1.15), stone_dark)
+		var pillar := BoxShape3D.new()
+		pillar.size = Vector3(1.8, 6.6, 1.1)
+		solids.append([pillar, Transform3D(Basis.IDENTITY,
+			Vector3(x, deck + 3.3, 69.35))])
 	_geo_beam(Vector3(-9.4, deck + 5.15, 69.45), Vector3(9.4, deck + 5.15, 69.45),
 		0.75, 0.55, timber)
 	# Upper beam clears the yellow wall coping at 5.65-6.0 m.
@@ -1134,12 +1172,15 @@ func _entrance_gate() -> void:
 	_geo_box(Transform3D(Basis.IDENTITY, Vector3(0.0, deck + 4.3, 69.16)),
 		Vector3(5.4, 0.9, 0.12), Color(0.36, 0.42, 0.30))
 	_geo_commit("EntranceGate", _vertex_mat, false)
+	_solid_batch("EntranceGateCollision", solids)
 
 
-## Lamp standards around the wall verge, well outside the ring road.
+## Lamp standards around the wall verge, well outside the ring road. Their
+## collision is a single box per post, merged into one body.
 func _lamp_posts() -> void:
 	_geo_begin()
 	var glow_positions: Array[Vector3] = []
+	var solids: Array = []
 	var metal := Color(0.25, 0.27, 0.30)
 	var offsets: Array[float] = [-56.0, -28.0, 0.0, 28.0, 56.0]
 	var spots: Array[Vector3] = []
@@ -1161,7 +1202,12 @@ func _lamp_posts() -> void:
 		_geo_box(Transform3D(Basis.IDENTITY, base + Vector3.UP * 4.34),
 			Vector3(0.54, 0.13, 0.54), metal)
 		glow_positions.append(base + Vector3.UP * 4.16)
+		var post_shape := BoxShape3D.new()
+		post_shape.size = Vector3(0.24, 4.4, 0.24)
+		solids.append([post_shape, Transform3D(Basis.IDENTITY,
+			base + Vector3.UP * 2.2)])
 	_geo_commit("LampPosts", _vertex_mat, false)
+	_solid_batch("LampPostCollision", solids)
 	if glow_positions.is_empty():
 		return
 	_geo_begin()
@@ -1175,7 +1221,7 @@ func _lamp_posts() -> void:
 	_geo_commit("LampHeads", glow, false)
 
 
-## Straw bales in the south-east paddock: one MultiMesh, no collision.
+## Straw bales in the south-east paddock: one MultiMesh plus one merged body.
 func _hay_bales() -> void:
 	var bale := CylinderMesh.new()
 	bale.top_radius = 0.62
@@ -1190,11 +1236,17 @@ func _hay_bales() -> void:
 		Vector2(-63.0, -42.0), Vector2(-65.5, -44.0), Vector2(-60.5, -41.5),
 	]
 	var transforms: Array = []
+	var solids: Array = []
 	for spot: Vector2 in spots:
 		var point := Vector3(spot.x, _terrain_h(spot.x, spot.y) + 0.62, spot.y)
 		var basis := Basis(Vector3.UP, _rng.randf() * TAU) * Basis(Vector3.RIGHT, PI * 0.5)
 		transforms.append(Transform3D(basis, point))
+		var shape := CylinderShape3D.new()
+		shape.radius = 0.62
+		shape.height = 1.28
+		solids.append([shape, Transform3D(basis, point)])
 	_batch("HayBales", _mesh_to_array(bale), _hay_mat, transforms, false)
+	_solid_batch("HayBaleCollision", solids)
 
 
 # --------------------------------------------------------------------------
@@ -1206,7 +1258,7 @@ func _perimeter() -> void:
 	# and the ridgelines behind it do that job now, with real silhouettes.
 	var wall_body := StaticBody3D.new()
 	wall_body.name = "ParkWall"
-	wall_body.collision_layer = 1
+	wall_body.collision_layer = CollisionLayers.WORLD
 	wall_body.collision_mask = 0
 	var wall_mat := StandardMaterial3D.new()
 	wall_mat.albedo_color = Color(0.52, 0.55, 0.58)
@@ -1299,7 +1351,7 @@ func _rail(from: Vector3, to: Vector3) -> void:
 	mesh.position = Vector3(0.0, rail_h * 0.5, 0.0)
 	root.add_child(mesh)
 	var body := StaticBody3D.new()
-	body.collision_layer = 1
+	body.collision_layer = CollisionLayers.WORLD
 	body.collision_mask = 0
 	var shape := BoxShape3D.new()
 	shape.size = box.size
@@ -1349,8 +1401,8 @@ func _cone(prop_name: String, at: Vector3) -> void:
 	var body := RigidBody3D.new()
 	body.name = prop_name
 	body.add_to_group("pushable")
-	body.collision_layer = 4
-	body.collision_mask = 5
+	body.collision_layer = CollisionLayers.PROP
+	body.collision_mask = CollisionLayers.WORLD | CollisionLayers.PROP
 	body.mass = 0.35
 	# Cones are light and numerous; full CCD here is wasted physics work.
 	body.continuous_cd = false
@@ -1377,8 +1429,8 @@ func _crate(prop_name: String, at: Vector3) -> void:
 	body.add_to_group("pushable")
 	# Crates are heavy and solid: the kart cannot drive through one, and the
 	# push sensor still launches it. Cones stay on the non-blocking PROP layer.
-	body.collision_layer = 4 | 16
-	body.collision_mask = 5
+	body.collision_layer = CollisionLayers.PROP | CollisionLayers.SOLID_PROP
+	body.collision_mask = CollisionLayers.WORLD | CollisionLayers.PROP
 	body.mass = 0.8
 	body.continuous_cd = true
 	body.physics_material_override = _prop_physics()
@@ -1445,8 +1497,8 @@ func _blocked(point: Vector3, margin: float) -> bool:
 	return false
 
 
-## The start apron is 34 m wide, so the verge rings must stay out of it: a
-## boulder or bush on the grid square is exactly where a kart is placed.
+## The start apron is 34 m wide, so the verge rings must stay out of it: a bush
+## on the grid square is exactly where a kart is placed.
 func _on_apron(p: Vector2) -> bool:
 	return absf(p.x) < 20.0 and p.y > 49.0
 
@@ -1458,7 +1510,6 @@ func _scenery() -> void:
 	_bushes(foliage)
 	_flowers(foliage)
 	_grass_tufts()
-	_rocks()
 
 
 ## Mixed broadleaf/conifer belt beyond the wall. Clusters read as woodland far
@@ -1653,94 +1704,6 @@ func _grass_tufts() -> void:
 func _grass_transform(point: Vector3) -> Transform3D:
 	return Transform3D(Basis(Vector3.UP, _rng.randf() * TAU)
 		.scaled(Vector3.ONE * _rng.randf_range(0.6, 1.35)), point)
-
-
-## Boulders: two faceted rock meshes instanced everywhere the park needs rock.
-## Shore stones, corner outcrops, the wall verge and the outfield scree at the
-## foot of the ridgelines all share the same two draw calls.
-func _rocks() -> void:
-	var xf_a: Array = []
-	var xf_b: Array = []
-	# Pond shore, some half in the water.
-	for i in 14:
-		var angle: float = TAU * float(i) / 14.0 + _rng.randf_range(-0.15, 0.15)
-		var radius: float = _rng.randf_range(6.4, 10.2)
-		var point := Vector3(POND_CENTER.x + cos(angle) * radius, 0.0,
-			POND_CENTER.y + sin(angle) * radius)
-		point.y = _terrain_h(point.x, point.z)
-		_add_rock(xf_a, xf_b, point, _rng.randf_range(0.5, 1.25))
-	# Corner outcrops, tucked into the paddocks. The centres are far enough out
-	# that the 6 m jitter can never reach the ring road.
-	var outcrops: Array[Vector2] = [
-		Vector2(48.0, -52.0), Vector2(-48.0, 50.0),
-		Vector2(60.0, 32.0), Vector2(-62.0, 26.0),
-	]
-	for centre: Vector2 in outcrops:
-		for i in 6:
-			var offset := Vector2(_rng.randf_range(-6.0, 6.0), _rng.randf_range(-6.0, 6.0))
-			var point := Vector3(centre.x + offset.x, 0.0, centre.y + offset.y)
-			point.y = _terrain_h(point.x, point.z)
-			_add_rock(xf_a, xf_b, point, _rng.randf_range(0.9, 2.2))
-	# Wall verge.
-	for i in 26:
-		var angle: float = TAU * float(i) / 26.0 + _rng.randf_range(-0.08, 0.08)
-		var radius: float = _rng.randf_range(63.5, 67.5)
-		var point := Vector3(cos(angle) * radius, 0.0, sin(angle) * radius)
-		if _on_apron(Vector2(point.x, point.z)):
-			continue
-		if point.distance_to(Vector3(POND_CENTER.x, 0.0, POND_CENTER.y)) < POND_R + 1.0:
-			continue
-		point.y = _terrain_h(point.x, point.z)
-		_add_rock(xf_a, xf_b, point, _rng.randf_range(0.5, 1.4))
-	# Scree at the foot of the near ridgeline (outfield, visual only).
-	for i in 30:
-		var angle: float = TAU * _rng.randf()
-		var radius: float = _rng.randf_range(110.0, 145.0)
-		var point := Vector3(cos(angle) * radius, -0.1, sin(angle) * radius)
-		_add_rock(xf_a, xf_b, point, _rng.randf_range(1.2, 2.8))
-	_batch("ParkBoulders", _rock_mesh(1337, 9, 5), _vertex_mat, xf_a, false)
-	_batch("ParkStones", _rock_mesh(2711, 8, 4), _vertex_mat, xf_b, false)
-
-
-func _add_rock(xf_a: Array, xf_b: Array, point: Vector3, scale: float) -> void:
-	var basis := Basis(Vector3.UP, _rng.randf() * TAU)
-	basis = basis.scaled(Vector3(scale, scale * _rng.randf_range(0.6, 0.95), scale))
-	var xform := Transform3D(basis, point + Vector3.UP * scale * 0.35)
-	if _rng.randf() < 0.5:
-		xf_a.append(xform)
-	else:
-		xf_b.append(xform)
-
-
-## Faceted boulder: a UV sphere pushed around by a hash, then flat-shaded.
-## ~90 triangles, so a hundred of them is cheaper than one tree.
-func _rock_mesh(seed_value: int, radial: int, rings: int) -> ArrayMesh:
-	_geo_begin()
-	var points: Array[Vector3] = []
-	for ring in rings + 1:
-		var phi: float = PI * float(ring) / float(rings)
-		for j in radial:
-			var theta: float = TAU * float(j) / float(radial)
-			var dir := Vector3(sin(phi) * cos(theta), cos(phi),
-				sin(phi) * sin(theta))
-			var wobble: float = 0.74 + 0.34 * _hash01(seed_value + ring * 31 + j * 7)
-			points.append(dir * wobble)
-	var base := Color(0.53, 0.52, 0.47)
-	for ring in rings:
-		for j in radial:
-			var jn: int = (j + 1) % radial
-			var a: int = ring * radial + j
-			var b: int = ring * radial + jn
-			var c: int = (ring + 1) * radial + j
-			var d: int = (ring + 1) * radial + jn
-			var shade: float = 0.84 + 0.30 * _hash01(seed_value + ring * 17 + j * 53)
-			var color := Color(base.r * shade, base.g * shade, base.b * shade)
-			# The mesh is centred on the origin, so the centroid is the way out.
-			_geo_tri(points[a], points[b], points[c], color,
-				(points[a] + points[b] + points[c]) / 3.0)
-			_geo_tri(points[b], points[d], points[c], color,
-				(points[b] + points[d] + points[c]) / 3.0)
-	return _geo_mesh()
 
 
 ## One material per foliage card sheet, shared by every instance of that layer.
@@ -1951,7 +1914,7 @@ func _sign(text: String, at: Vector3, color: Color, scale: float,
 	var board_h: float = 1.5 if gantry else 1.1
 	var solid := StaticBody3D.new()
 	solid.name = "SignCollision"
-	solid.collision_layer = 1
+	solid.collision_layer = CollisionLayers.WORLD
 	solid.collision_mask = 0
 	root.add_child(solid)
 	for x in [-post_x, post_x]:
