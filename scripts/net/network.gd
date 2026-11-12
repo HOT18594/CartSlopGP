@@ -817,8 +817,9 @@ func _use_default_public_relay() -> bool:
 	if text == "" and OS.has_feature("web"):
 		# The hosted page and the game API share an origin, so the browser build
 		# must talk to the server that served it rather than a baked-in address.
-		# That keeps LAN play and any mirror working without a rebuild.
-		var origin: String = str(JavaScriptBridge.eval("location.host", true)).strip_edges()
+		# location.origin keeps the scheme, which matters behind a TLS tunnel:
+		# an https page must use 443, not the game's usual 42777.
+		var origin: String = str(JavaScriptBridge.eval("location.origin", true)).strip_edges()
 		if origin != "":
 			text = origin
 	if text == "":
@@ -828,7 +829,7 @@ func _use_default_public_relay() -> bool:
 	var secure: bool = text.to_lower().begins_with("https://")
 	var rest: String = text.trim_prefix("https://").trim_prefix("http://").trim_suffix("/")
 	var host: String = rest.get_slice("/", 0)
-	var port: int = 42777
+	var port: int = 443 if secure else 42777
 	if host.contains(":"):
 		var parts: PackedStringArray = host.split(":")
 		host = parts[0]

@@ -30,6 +30,7 @@ UiKit="*res://scripts/ui/ui_kit.gd"
 MenuNav="*res://scripts/ui/menu_nav.gd"
 Network="*res://scripts/net/network.gd"
 SceneLoader="*res://scenes/ui/scene_loader.tscn"
+WebQuality="*res://scripts/systems/web_quality.gd"
 
 [display]
 
