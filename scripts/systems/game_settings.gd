@@ -23,6 +23,20 @@ const CONN_PI: String = "pi"
 ## Kept as an alias for older saved settings and scripts.
 const CONN_ONLINE: String = CONN_PI
 const TrackDefs := preload("res://scripts/minigames/track_defs.gd")
+const VehicleCatalog := preload("res://scripts/vehicles/vehicle_catalog.gd")
+
+## The scene whose rules make the racing class active. Kept as a constant so
+## any future racing scene only needs the list extended, not the checks copied.
+const RACING_SCENES: PackedStringArray = [
+	"res://scenes/minigames/grass_race.tscn",
+]
+## Hand-built events that are not races. Even in a MINIGAMES session they keep
+## the sandbox roster, so the minigame_vehicle getter must not hand them a race
+## car just because the session mode is GAME_MINIGAMES.
+const NON_RACING_SCENES: PackedStringArray = [
+	"res://scenes/minigames/cargo_rush.tscn",
+	"res://scenes/minigames/meadow_lobby.tscn",
+]
 
 @export_range(0.0, 1.0, 0.01) var master_volume: float = 0.8
 @export_range(0.0, 1.0, 0.01) var music_volume: float = 0.75
@@ -59,7 +73,28 @@ const QUALITY_SCALES: PackedFloat32Array = [0.72, 0.92, 1.0]
 @export var player_name: String = "PLAYER" ## Name shown in multiplayer lobbies.
 @export_range(0, 2) var minigame_difficulty: int = 1
 @export_range(3, 7, 2) var minigame_rounds: int = 3
-@export var minigame_vehicle: String = "shopping_cart"
+## Racing-class build. Kept apart from the sandbox and minigame cars so picking
+## a race car never changes what SANDBOX or CARGO RUSH spawns.
+var racing_vehicle: String = VehicleCatalog.DEFAULT_RACING_ID
+var racing_build: Dictionary = {} ## Four allocation keys; empty = balanced default.
+## Backing store for the exported minigame car. The property below resolves to
+## the racing car only while a racing scene or racing garage is active, which is
+## how grass_race.gd reuses its existing `minigame_vehicle` read without a
+## second vehicle channel, while cargo_rush.gd keeps seeing the normal car.
+var _minigame_vehicle: String = "shopping_cart"
+## grass_race.gd temporarily writes the racing car into selected_vehicle while
+## it runs. A settings save from the pause menu must still persist the SANDBOX
+## choice, so keep the last authoritative sandbox pick here.
+var _sandbox_vehicle: String = "shopping_cart"
+
+@export var minigame_vehicle: String = "shopping_cart":
+	get:
+		if racing_mode_active():
+			return racing_vehicle if VehicleCatalog.is_racing_id(racing_vehicle) \
+				else VehicleCatalog.DEFAULT_RACING_ID
+		return _minigame_vehicle
+	set(value):
+		_minigame_vehicle = value
 @export var player_tag_color: String = "ffd22e" ## Name tag colour, RRGGBB hex.
 
 @export_group("Session")
@@ -508,6 +543,69 @@ static func sanitize_name(raw_name: String) -> String:
 
 func set_selected_vehicle(vehicle_id: String) -> void:
 	selected_vehicle = vehicle_id
+	_sandbox_vehicle = vehicle_id
+	save_settings()
+
+
+# --------------------------------------------------------------------------
+# racing class
+
+
+func _current_scene_path() -> String:
+	var tree: SceneTree = Engine.get_main_loop() as SceneTree
+	if tree == null or tree.current_scene == null:
+		return ""
+	return tree.current_scene.scene_file_path
+
+
+func racing_scene_active() -> bool:
+	## True while a scene whose rules are racing is current. grass_race.gd reads
+	## minigame_vehicle from _enter_tree, before the first physics tick, so this
+	## has to work from the scene path alone.
+	return RACING_SCENES.has(_current_scene_path())
+
+
+func racing_mode_active() -> bool:
+	## Whether the vehicle picker should offer the racing class instead of the
+	## sandbox roster. A live race wins; a live cargo arena always loses. The
+	## multiplayer MINIGAMES lobby always starts a race, and the single-player
+	## MINIGAMES garage restores either a race map or a cargo theme.
+	if racing_scene_active():
+		return true
+	if NON_RACING_SCENES.has(_current_scene_path()):
+		return false
+	if play_mode == MODE_MULTIPLAYER:
+		return multiplayer_mode == GAME_MINIGAMES
+	if vehicle_edit_minigame:
+		return not TrackDefs.has_theme_id(selected_minigame)
+	return false
+
+
+func racing_vehicle_id() -> String:
+	## Always a real racing chassis id, even after a corrupt save.
+	if VehicleCatalog.is_racing_id(racing_vehicle):
+		return racing_vehicle
+	return VehicleCatalog.DEFAULT_RACING_ID
+
+
+func racing_allocation() -> Dictionary:
+	## The live four-stat build. An untouched install gets the balanced default
+	## rather than an all-zero car.
+	if racing_build.is_empty():
+		return VehicleCatalog.default_allocation()
+	return VehicleCatalog.sanitize_allocation(racing_build)
+
+
+func set_racing_vehicle(vehicle_id: String) -> void:
+	racing_vehicle = vehicle_id if VehicleCatalog.is_racing_id(vehicle_id) \
+		else VehicleCatalog.DEFAULT_RACING_ID
+	save_settings()
+
+
+func set_racing_allocation(allocation: Dictionary) -> void:
+	## Saves the build only, never the car currently selected for SANDBOX or a
+	## non-racing minigame. Old saves simply fall back to the balanced default.
+	racing_build = VehicleCatalog.sanitize_allocation(allocation)
 	save_settings()
 
 
@@ -588,10 +686,22 @@ func load_settings() -> void:
 	drift_toggle = _cfg_bool(config, "gameplay", "drift_toggle", drift_toggle)
 	stick_deadzone = _cfg_num(config, "gameplay", "stick_deadzone", stick_deadzone, 0.0, 0.4)
 	selected_vehicle = _cfg_str(config, "gameplay", "vehicle", selected_vehicle)
+	_sandbox_vehicle = selected_vehicle
 	player_name = sanitize_name(_cfg_str(config, "gameplay", "player_name", player_name))
 	minigame_difficulty = _cfg_int(config, "gameplay", "minigame_difficulty", minigame_difficulty, 0, 2)
 	minigame_rounds = _cfg_int(config, "gameplay", "minigame_rounds", minigame_rounds, 3, 7)
-	minigame_vehicle = _cfg_str(config, "gameplay", "minigame_vehicle", minigame_vehicle)
+	minigame_vehicle = _cfg_str(config, "gameplay", "minigame_vehicle", _minigame_vehicle)
+	# Racing class is a separate save block. A missing block (every save made
+	# before this feature) keeps the balanced build without touching any
+	# existing setting.
+	var saved_racing: String = _cfg_str(config, "racing", "vehicle",
+		VehicleCatalog.DEFAULT_RACING_ID)
+	racing_vehicle = saved_racing if VehicleCatalog.is_racing_id(saved_racing) \
+		else VehicleCatalog.DEFAULT_RACING_ID
+	racing_build = {}
+	var saved_build: Variant = config.get_value("racing", "allocation", {})
+	if saved_build is Dictionary and not (saved_build as Dictionary).is_empty():
+		racing_build = VehicleCatalog.sanitize_allocation(saved_build as Dictionary)
 	var tag: String = _cfg_str(config, "gameplay", "tag_color", player_tag_color)
 	tag = tag.strip_edges().trim_prefix("#").to_lower()
 	if _valid_hex6(tag):
@@ -651,11 +761,16 @@ func save_settings() -> void:
 	config.set_value("gameplay", "drift_toggle", drift_toggle)
 	config.set_value("gameplay", "stick_deadzone", stick_deadzone)
 	config.set_value("ui", "custom_cursor", custom_cursor)
-	config.set_value("gameplay", "vehicle", selected_vehicle)
+	# Always persist the last authoritative sandbox pick. grass_race.gd and
+	# cargo_rush.gd both swap selected_vehicle for their own scene, and a save
+	# from their pause menu must not make that swap the SANDBOX car.
+	config.set_value("gameplay", "vehicle", _sandbox_vehicle)
 	config.set_value("gameplay", "player_name", player_name)
 	config.set_value("gameplay", "minigame_difficulty", minigame_difficulty)
 	config.set_value("gameplay", "minigame_rounds", minigame_rounds)
-	config.set_value("gameplay", "minigame_vehicle", minigame_vehicle)
+	config.set_value("gameplay", "minigame_vehicle", _minigame_vehicle)
+	config.set_value("racing", "vehicle", racing_vehicle_id())
+	config.set_value("racing", "allocation", racing_allocation())
 	config.set_value("gameplay", "tag_color", player_tag_color)
 	config.set_value("session", "play_mode", play_mode)
 	config.set_value("session", "multiplayer_mode", multiplayer_mode)

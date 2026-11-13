@@ -13,6 +13,7 @@ extends Node3D
 ## the sandbox uses. Nothing here touches multiplayer.
 
 const TrackSpline := preload("res://scripts/minigames/track_spline.gd")
+const KenneyTiles := preload("res://scripts/minigames/tiles/kenney_tiles.gd")
 const TrackDefs := preload("res://scripts/minigames/track_defs.gd")
 const RaceAI := preload("res://scripts/minigames/race_ai.gd")
 const CART_SCENE := preload("res://scenes/player/cart_player.tscn")
@@ -280,7 +281,15 @@ func _ready() -> void:
 		map_id = Network.session_map_id
 	_preset = TrackDefs.get_preset(map_id)
 	_preset_id = str(_preset.get("id", TrackDefs.DEFAULT_ID))
-	_spline = TrackSpline.new(_preset)
+	# Cartoon maps are Kenney tile grids: the engine builds the road, its
+	# colliders and returns the centreline the race, AI and server contracts use.
+	# Older free-form presets still fall back to the spline builder.
+	var grid_rows: PackedStringArray = TrackDefs.grid_of(_preset)
+	if grid_rows.size() > 0:
+		_spline = KenneyTiles.build(self, grid_rows,
+			{"id": TrackDefs.theme_id_of(_preset)})
+	else:
+		_spline = TrackSpline.new(_preset)
 	_track_points = _spline.points
 	_track_cumulative = _spline.cumulative
 	_track_total = maxf(_spline.total_length, 1.0)

@@ -42,6 +42,6 @@ shadow_enabled = true
 directional_shadow_max_distance = 120.0
 
 [node name="CartPlayer" parent="." instance=ExtResource("2_cart")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.35, 40.5)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.35, 44.5)
 
 [node name="PauseMenu" parent="." instance=ExtResource("3_pause")]

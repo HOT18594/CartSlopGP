@@ -4,9 +4,11 @@ const UiAnim := preload("res://scripts/ui/ui_anim.gd")
 ## screen. Cycles through the catalog with a live spinning 3D preview and a
 ## garage-relative stat sheet.
 ##
-## Stats no longer show raw numbers. Each row is a 10-block bar normalised
-## against the whole catalog, so the sheet reads at a glance and stays aligned
-## no matter which car is selected.
+## The sandbox roster keeps the 10-block comparison bars. Racing modes instead
+## get the Kenney racing class: four chassis with a 12-point build, live composed
+## readouts and a per-player colour that travels on the existing tag channel.
+## Stats are normalised against the whole catalog (or the racing build range) so
+## the sheet reads at a glance no matter which car is selected.
 
 const StatBar := preload("res://scripts/ui/stat_bar.gd")
 const Catalog := preload("res://scripts/vehicles/vehicle_catalog.gd")
@@ -27,6 +29,28 @@ var STATS: Array[Dictionary] = [
 	{"key": "push", "label": "PUSH", "color": UiPalette.YELLOW_DARK},
 ]
 
+## Racing rows are both the point spender and the composed physics readout, so
+## the screen never shows a number the car does not actually use.
+const RACING_STATS: Array[Dictionary] = [
+	{"key": "top_speed", "label": "TOP SPEED"},
+	{"key": "accel", "label": "ACCELERATION"},
+	{"key": "grip", "label": "GRIP / HANDLING"},
+	{"key": "weight", "label": "WEIGHT"},
+]
+
+## Same swatches as the multiplayer lobby's TAG picker. The racing car reuses
+## the per-peer tag colour, so the palette is deliberately identical.
+const RACE_COLORS: Array[Dictionary] = [
+	{"name": "YELLOW", "hex": "ffd22e"},
+	{"name": "CREAM", "hex": "fff6e3"},
+	{"name": "CYAN", "hex": "45b6f0"},
+	{"name": "GREEN", "hex": "4cd964"},
+	{"name": "PINK", "hex": "f26ca7"},
+	{"name": "RED", "hex": "ff4d4d"},
+	{"name": "ORANGE", "hex": "ff9f43"},
+	{"name": "PURPLE", "hex": "a06cff"},
+]
+
 @onready var _model_root: Node3D = %ModelRoot
 @onready var _camera: Camera3D = %PreviewCamera
 @onready var _name_label: Label = %NameLabel
@@ -44,6 +68,14 @@ var _stat_bars: Dictionary = {}
 var _tag_label: Label
 var _ranges: Dictionary = {}
 var _time: float = 0.0
+## Racing branch. Empty on the sandbox path, where all of this stays unused.
+var _racing: bool = false
+var _allocation: Dictionary = {}
+var _alloc_points: Dictionary = {}
+var _alloc_readouts: Dictionary = {}
+var _alloc_minus: Dictionary = {}
+var _alloc_plus: Dictionary = {}
+var _color_buttons: Dictionary = {}
 
 
 func _ready() -> void:
@@ -53,8 +85,16 @@ func _ready() -> void:
 	if GameSettings.vehicle_return_scene != "":
 		_drive_button.text = "SAVE & RETURN"
 	_back_button.pressed.connect(_on_back)
-	_entries = Catalog.all()
-	_ranges = Catalog.stat_ranges()
+	# The racing class is only offered when the chosen mode is racing; every
+	# other entry point (SANDBOX, cargo garage) keeps the original roster.
+	_racing = GameSettings.racing_mode_active()
+	if _racing:
+		_entries = Catalog.racing_all()
+		_ranges = Catalog.racing_stat_ranges()
+		_allocation = GameSettings.racing_allocation()
+	else:
+		_entries = Catalog.all()
+		_ranges = Catalog.stat_ranges()
 	if _entries.is_empty():
 		# Never leave the player on a dead screen.
 		_name_label.text = "NO VEHICLES AVAILABLE"
@@ -66,11 +106,28 @@ func _ready() -> void:
 		MenuNav.refresh()
 		MenuNav.focus(_back_button)
 		return
-	_build_stats()
-	var current_id: String = GameSettings.minigame_vehicle if GameSettings.vehicle_edit_minigame \
-		else GameSettings.selected_vehicle
-	_current = clampi(Catalog.index_of(current_id), 0, _entries.size() - 1)
-	_camera.look_at_from_position(Vector3(2.4, 1.6, -3.3), Vector3(0.0, 0.55, 0.0), Vector3.UP)
+	if _racing:
+		_build_racing_stats()
+	else:
+		_build_stats()
+	var current_id: String = ""
+	if _racing:
+		current_id = GameSettings.racing_vehicle_id()
+	elif GameSettings.vehicle_edit_minigame:
+		current_id = GameSettings.minigame_vehicle
+	else:
+		current_id = GameSettings.selected_vehicle
+	_current = _entry_index(current_id)
+	if _racing:
+		# The allocation rows need more vertical room than eight comparison
+		# bars, so the preview loses a little height and the camera steps back.
+		var preview := $Center/Panel/Body/ViewportContainer as SubViewportContainer
+		preview.custom_minimum_size = Vector2(470, 150)
+		_camera.look_at_from_position(Vector3(2.8, 1.8, -3.8),
+			Vector3(0.0, 0.45, 0.0), Vector3.UP)
+	else:
+		_camera.look_at_from_position(Vector3(2.4, 1.6, -3.3),
+			Vector3(0.0, 0.55, 0.0), Vector3.UP)
 	_light_preview()
 	_prev_button.pressed.connect(_step.bind(-1))
 	_next_button.pressed.connect(_step.bind(1))
@@ -196,21 +253,278 @@ func _build_stats() -> void:
 		_stat_bars[str(stat["key"])] = bar
 
 
-func _show_current() -> void:
+func _build_racing_stats() -> void:
+	## The racing sheet is the allocator: each row spends points and reads the
+	## composed value the physics will use. One accent (yellow), rounded 16,
+	## no rules, and every +/- is a normal focus stop for MenuNav.
+	var body: VBoxContainer = $Center/Panel/Body
+	_tag_label = Label.new()
+	_tag_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_tag_label.add_theme_font_size_override("font_size", 16)
+	_tag_label.add_theme_color_override("font_color", UiPalette.BLUE_DARK)
+	body.add_child(_tag_label)
+	body.move_child(_tag_label, _index_label.get_index() + 1)
+
+	var rows := VBoxContainer.new()
+	rows.name = "AllocationRows"
+	rows.add_theme_constant_override("separation", 4)
+	body.add_child(rows)
+	body.move_child(rows, _tag_label.get_index() + 1)
+
+	for stat: Dictionary in RACING_STATS:
+		var key: String = str(stat["key"])
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 8)
+		rows.add_child(row)
+
+		var label := Label.new()
+		label.text = str(stat["label"])
+		label.custom_minimum_size = Vector2(112, 0)
+		label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		label.add_theme_font_size_override("font_size", 15)
+		label.add_theme_color_override("font_color", UiPalette.INK)
+		row.add_child(label)
+
+		var minus := _stepper_button("−", "Take one point from " + label.text)
+		minus.pressed.connect(_adjust_stat.bind(key, -1))
+		row.add_child(minus)
+
+		var points := Label.new()
+		points.custom_minimum_size = Vector2(28, 0)
+		points.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		points.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		points.add_theme_font_size_override("font_size", 19)
+		points.add_theme_color_override("font_color", UiPalette.INK)
+		points.text = "0"
+		row.add_child(points)
+
+		var plus := _stepper_button("+", "Spend one point on " + label.text)
+		plus.pressed.connect(_adjust_stat.bind(key, 1))
+		row.add_child(plus)
+
+		var readout := Label.new()
+		readout.custom_minimum_size = Vector2(94, 0)
+		readout.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		readout.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		readout.add_theme_font_size_override("font_size", 15)
+		readout.add_theme_color_override("font_color", UiPalette.BODY_BLUE)
+		readout.text = ""
+		row.add_child(readout)
+
+		var bar := StatBar.new()
+		bar.fill_color = UiPalette.YELLOW
+		bar.bar_height = 16.0
+		bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(bar)
+
+		_alloc_points[key] = points
+		_alloc_readouts[key] = readout
+		_alloc_minus[key] = minus
+		_alloc_plus[key] = plus
+		_stat_bars[key] = bar
+
+	var color_row := HBoxContainer.new()
+	color_row.name = "ColorRow"
+	color_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	color_row.add_theme_constant_override("separation", 8)
+	body.add_child(color_row)
+	body.move_child(color_row, rows.get_index() + 1)
+	var color_caption := Label.new()
+	color_caption.text = "CAR COLOUR"
+	color_caption.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	color_caption.add_theme_font_size_override("font_size", 15)
+	color_caption.add_theme_color_override("font_color", UiPalette.INK)
+	color_row.add_child(color_caption)
+	for swatch: Dictionary in RACE_COLORS:
+		var hex: String = str(swatch["hex"])
+		var button := _color_swatch(hex, str(swatch["name"]))
+		button.pressed.connect(_on_color_picked.bind(hex))
+		color_row.add_child(button)
+		_color_buttons[hex] = button
+	_refresh_color_swatches()
+
+	var action: Control = body.get_node("ActionRow") as Control
+	var spacer := Control.new()
+	spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	spacer.custom_minimum_size = Vector2(0, 8)
+	body.add_child(spacer)
+	body.move_child(spacer, action.get_index())
+
+
+func _stepper_button(glyph: String, tooltip: String) -> Button:
+	## Compact, focusable +/- tile. UiKit adds the shared yellow ring; the fill
+	## stays the single accent so the rows do not turn into a colour chart.
+	var button := Button.new()
+	button.text = glyph
+	button.tooltip_text = tooltip
+	button.custom_minimum_size = Vector2(40, 34)
+	button.add_theme_font_size_override("font_size", 20)
+	button.add_theme_color_override("font_color", UiPalette.INK)
+	button.add_theme_color_override("font_hover_color", UiPalette.INK)
+	button.add_theme_color_override("font_pressed_color", UiPalette.INK)
+	button.add_theme_color_override("font_disabled_color", UiPalette.MUTED)
+	button.add_theme_stylebox_override("normal", _stepper_style(UiPalette.YELLOW))
+	button.add_theme_stylebox_override("hover",
+		_stepper_style(UiPalette.YELLOW.lightened(0.14)))
+	button.add_theme_stylebox_override("pressed",
+		_stepper_style(UiPalette.YELLOW.darkened(0.10)))
+	button.add_theme_stylebox_override("disabled",
+		_stepper_style(Color("cfc9da")))
+	return button
+
+
+func _stepper_style(fill: Color) -> StyleBoxFlat:
+	var style := StyleBoxFlat.new()
+	style.bg_color = fill
+	style.set_corner_radius_all(UiKit.CORNER_RADIUS)
+	style.set_border_width_all(3)
+	style.border_color = UiPalette.INK
+	style.content_margin_left = 0.0
+	style.content_margin_right = 0.0
+	style.content_margin_top = 0.0
+	style.content_margin_bottom = 0.0
+	style.anti_aliasing = true
+	return style
+
+
+func _color_swatch(hex: String, color_name: String) -> Button:
+	## A colour chip, not a text pill: the fill is the choice and the yellow
+	## border/scale marks the selected chip. skip_kit keeps the kit from
+	## stretching it into a 56 px action button while still giving it the ring.
+	var button := Button.new()
+	button.set_meta("skip_kit", true)
+	button.custom_minimum_size = Vector2(44, 44)
+	button.tooltip_text = "%s CAR COLOUR" % color_name
+	var normal := StyleBoxFlat.new()
+	normal.bg_color = Color(hex)
+	normal.set_corner_radius_all(UiKit.CORNER_RADIUS)
+	normal.set_border_width_all(3)
+	normal.border_color = UiPalette.INK
+	normal.anti_aliasing = true
+	button.add_theme_stylebox_override("normal", normal)
+	var hover: StyleBoxFlat = normal.duplicate() as StyleBoxFlat
+	hover.bg_color = Color(hex).lightened(0.12)
+	button.add_theme_stylebox_override("hover", hover)
+	button.add_theme_stylebox_override("pressed", hover)
+	button.resized.connect(func() -> void:
+		button.pivot_offset = button.size * 0.5)
+	return button
+
+
+func _refresh_color_swatches() -> void:
+	var selected: String = GameSettings.player_tag_color
+	for hex: String in _color_buttons:
+		var button: Button = _color_buttons[hex]
+		var normal: StyleBoxFlat = button.get_theme_stylebox("normal") as StyleBoxFlat
+		if normal != null:
+			normal.set_border_width_all(6 if hex == selected else 3)
+			normal.border_color = UiPalette.YELLOW if hex == selected \
+				else UiPalette.INK
+		button.scale = Vector2.ONE * (1.10 if hex == selected else 1.0)
+
+
+func _on_color_picked(hex: String) -> void:
+	## Reuses the existing per-peer tag-colour channel: Network relays it to
+	## every peer, and the same colour paints the name tag and the car body.
+	if Network.is_session_active():
+		Network.set_local_tag_color(hex)
+	else:
+		GameSettings.set_player_tag_color(hex)
+	_refresh_color_swatches()
+	_show_current(false)
+
+
+func _adjust_stat(key: String, direction: int) -> void:
+	if not _racing or _entries.is_empty():
+		return
+	var points: int = int(_allocation.get(key, 0))
+	var total: int = Catalog.allocation_total(_allocation)
+	if direction > 0:
+		if points >= Catalog.RACING_STAT_MAX or total >= Catalog.RACING_STAT_POINTS:
+			return
+	elif points <= 0:
+		return
+	_allocation[key] = points + direction
+	_fill_racing_stats(_composed_current())
+
+
+func _entry_index(id: String) -> int:
+	for index in _entries.size():
+		if str(_entries[index].get("id", "")) == id:
+			return index
+	return 0
+
+
+func _composed_current() -> Dictionary:
+	if _entries.is_empty():
+		return {}
+	var base: Dictionary = _entries[_current]
+	if not _racing:
+		return base
+	return Catalog.compose_racing_entry(str(base.get("id", "")), _allocation,
+		GameSettings.tag_color())
+
+
+func _racing_value(key: String, value: float) -> String:
+	match key:
+		"top_speed":
+			return "%d KM/H" % roundi(value)
+		"accel":
+			return "%.1f" % value
+		"grip":
+			return "%.2f" % value
+		"weight":
+			return "%d KG" % roundi(value)
+	return "%.2f" % value
+
+
+func _fill_racing_stats(entry: Dictionary) -> void:
+	var total: int = Catalog.allocation_total(_allocation)
+	var left: int = maxi(Catalog.RACING_STAT_POINTS - total, 0)
+	_tag_label.text = "RACE CLASS  ·  %d OF %d POINTS LEFT" % [left,
+		Catalog.RACING_STAT_POINTS]
+	var values: Dictionary = Catalog.stats_for(entry)
+	for stat: Dictionary in RACING_STATS:
+		var key: String = str(stat["key"])
+		var points: int = int(_allocation.get(key, 0))
+		var points_label: Label = _alloc_points[key] as Label
+		points_label.text = str(points)
+		var readout: Label = _alloc_readouts[key] as Label
+		readout.text = _racing_value(key, float(values.get(key, 0.0)))
+		var bar: StatBar = _stat_bars[key] as StatBar
+		bar.set_ratio(Catalog.stat_ratio(entry, key, _ranges) * 0.94 + 0.06)
+		var minus: Button = _alloc_minus[key] as Button
+		minus.disabled = points <= 0
+		var plus: Button = _alloc_plus[key] as Button
+		plus.disabled = points >= Catalog.RACING_STAT_MAX \
+			or total >= Catalog.RACING_STAT_POINTS
+
+
+func _show_current(animate: bool = true) -> void:
 	if _holder != null:
+		# Detach before queue_free so the incoming model can take the
+		# VehicleVisual name this frame; a one-frame overlap also z-fights.
+		_model_root.remove_child(_holder)
 		_holder.queue_free()
 		_holder = null
-	var entry: Dictionary = _entries[_current]
+	var entry: Dictionary = _composed_current()
 	_holder = VehicleVisual.build(entry)
 	_model_root.add_child(_holder)
-	_holder.scale = Vector3.ONE * 0.86
-	var tween: Tween = _holder.create_tween()
-	tween.tween_property(_holder, "scale", Vector3.ONE, 0.32) \
-		.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	if animate:
+		_holder.scale = Vector3.ONE * 0.86
+		var tween: Tween = _holder.create_tween()
+		tween.tween_property(_holder, "scale", Vector3.ONE, 0.32) \
+			.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	else:
+		_holder.scale = Vector3.ONE
 	_name_label.text = str(entry.get("name", ""))
 	_index_label.text = "%d / %d" % [_current + 1, _entries.size()]
 	UiAnim.fade_in(_name_label, 0.20)
-	_fill_stats(entry)
+	if _racing:
+		_fill_racing_stats(entry)
+	else:
+		_fill_stats(entry)
 
 
 func _fill_stats(entry: Dictionary) -> void:
@@ -230,10 +544,16 @@ func _step(direction: int) -> void:
 
 
 func _on_drive() -> void:
+	if _entries.is_empty():
+		return
 	var vehicle_id: String = str(_entries[_current].get("id", Catalog.DEFAULT_ID))
 	# A minigame/lobby pick must not silently overwrite the player's Sandbox
-	# car, and a Sandbox pick must not overwrite the race car.
-	if GameSettings.vehicle_edit_minigame:
+	# car, and a Sandbox pick must not overwrite the race car. The racing build
+	# has its own save block, so cargo and sandbox keep their old rosters.
+	if _racing:
+		GameSettings.set_racing_vehicle(vehicle_id)
+		GameSettings.set_racing_allocation(_allocation)
+	elif GameSettings.vehicle_edit_minigame:
 		GameSettings.set_minigame_options(GameSettings.minigame_difficulty,
 			GameSettings.minigame_rounds, vehicle_id)
 	else:

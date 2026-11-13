@@ -1,27 +1,29 @@
 extends RefCounted
-## The three CARGO RUSH arena skins, chosen by theme id.
+## The three CARGO RUSH cartoon arena skins, chosen by theme id.
 ##
-## A theme owns the ground scans, the yard dressing behind the walls, the
-## present art and the grip rule of the arena. The footprint, the handling
-## loop, the bases and every rule are identical for every theme, so a skin can
-## never change the game - only how it looks and how much grip a kart gets.
+## A skin owns the palette, the grip rule and the flat ground markings of the
+## arena. The footprint, the bases, the barrier ring, the prop layout and every
+## rule are identical for every theme, so a skin can never change the game - only
+## how it looks and how much grip a kart gets.
 ##
-## Textures are the CC0 Poly Haven scans already in the project. A source
-## checkout that has not run the importer yet cannot load the JPGs, so every
-## material falls back to a flat tint instead of spraying resource errors.
+## Art is the CC0 Kenney kits only: racing kit barriers / stands / lights /
+## flags, nature kit trees and rocks, car kit crate. The GLBs ship without
+## collision, so every solid piece placed here gets a real WORLD collider built
+## from its measured AABB. There are no photographic textures anywhere: floors
+## and paint are flat colours, and the Kenney GLBs keep their own flat materials.
 ##
-## Every solid piece built here (containers, bales, gift piles, trees, rocks,
-## stumps) carries a real collider on CollisionLayers.WORLD. Ground hazards
-## (ice, mud, wet patches) are floor markings, not props: they are visible
-## discs that only change the karts' grip.
+## Present art is a Kenney crate with a flat ribbon and bow. A present is a
+## pickup, never a solid prop, so it carries no body at all.
 
 const CollisionLayers := preload("res://scripts/systems/collision_layers.gd")
 const SceneryKit := preload("res://scripts/minigames/scenery/scenery_kit.gd")
 const PropBatch := preload("res://scripts/minigames/scenery/prop_batch.gd")
-const FoliageBaker := preload("res://scripts/minigames/foliage_baker.gd")
 
-const PBR_SHADER: String = "res://assets/materials/ground_pbr.gdshader"
-const PBR_TEX: String = "res://assets/textures/polyhaven/"
+const RACING_ROOT: String = "res://assets/models/kenney_racing_kit/Models/GLTF format/"
+const NATURE_ROOT: String = "res://assets/models/kenney_nature_kit/Models/GLTF format/"
+const CAR_ROOT: String = "res://assets/models/kenney_car-kit/Models/GLB format/"
+const CRATE_MODEL: String = "box"
+
 const DEFAULT_ID: String = "dockyard"
 const THEME_IDS: PackedStringArray = ["dockyard", "farmyard", "snowfield"]
 
@@ -30,83 +32,93 @@ const ICE_GRIP: float = 0.34
 const ICE_SPIN: float = 2.4
 ## Soft mud: a noticeable slide without the spin.
 const MUD_GRIP: float = 0.72
-## Wet asphalt: the dockyard's only real drop.
+## Wet paint: the dockyard's only real drop.
 const WET_GRIP: float = 0.84
 
-## Present collider / pickup footprint, shared by every theme. A present never
-## blocks a kart: it is picked up, not pushed, so it carries no body at all.
-const PRESENT_EXTENTS: Vector3 = Vector3(0.92, 0.76, 0.92)
+## Present art. Pickups never block a kart.
+const CRATE_SCALE: float = 1.8
+const HAZARD_RADIUS: float = 5.4
+
+## Nature scale, matching the 16 m arena lattice.
+const TREE_SCALE: float = 7.2
+const BUSH_SCALE: float = 4.8
+const ROCK_SCALE: float = 5.2
+
+## Same layout for every skin: a 16 m lattice ring outside the barrier.
+const TREE_RING: Array[Vector2] = [
+	Vector2(-80.0, -80.0), Vector2(80.0, -80.0),
+	Vector2(-80.0, 80.0), Vector2(80.0, 80.0),
+	Vector2(-80.0, -48.0), Vector2(80.0, -48.0),
+	Vector2(-80.0, 16.0), Vector2(80.0, 16.0),
+	Vector2(-80.0, 48.0), Vector2(80.0, 48.0),
+	Vector2(-64.0, -80.0), Vector2(-32.0, -80.0), Vector2(0.0, -80.0),
+	Vector2(32.0, -80.0), Vector2(64.0, -80.0),
+	Vector2(-64.0, 80.0), Vector2(-32.0, 80.0), Vector2(0.0, 80.0),
+	Vector2(32.0, 80.0), Vector2(64.0, 80.0),
+]
+const BUSH_SPOTS: Array[Vector2] = [
+	Vector2(-64.0, -32.0), Vector2(64.0, -32.0),
+	Vector2(-64.0, 32.0), Vector2(64.0, 32.0),
+	Vector2(-32.0, -64.0), Vector2(32.0, -64.0),
+	Vector2(-32.0, 64.0), Vector2(32.0, 64.0),
+]
+const ROCK_SPOTS: Array[Vector2] = [
+	Vector2(-64.0, -48.0), Vector2(64.0, -48.0),
+	Vector2(-64.0, 48.0), Vector2(64.0, 48.0),
+	Vector2(-48.0, -64.0), Vector2(48.0, -64.0),
+	Vector2(-48.0, 64.0), Vector2(48.0, 64.0),
+]
 
 const THEMES: Dictionary = {
 	"dockyard": {
 		"id": "dockyard",
 		"name": "DOCKYARD",
-		"blurb": "WET CONCRETE",
+		"blurb": "WET PAINT",
 		"teams": ["DOCK CREW", "HARBOUR RATS"],
 		"sky_top": Color(0.16, 0.47, 0.70),
 		"sky_horizon": Color(0.72, 0.85, 0.92),
 		"ground_bottom": Color(0.15, 0.24, 0.29),
 		"fog_color": Color(0.70, 0.82, 0.89),
 		"fog_density": 0.0026,
-		"floor": ["asphalt_01_diff", "asphalt_01_nor", "asphalt_01_rough"],
-		"floor_tint": Color(0.78, 0.83, 0.88),
-		"floor_uv": 0.20,
-		"floor_detail": 0.12,
-		"floor_macro": 0.04,
-		"floor_roughness": 0.34,
-		"apron": ["concrete_floor_worn_001_diff", "concrete_floor_worn_001_nor",
-			"concrete_floor_worn_001_rough"],
-		"apron_tint": Color(0.90, 0.90, 0.87),
-		"apron_uv": 0.14,
-		"apron_roughness": 0.42,
-		"dirt": ["asphalt_02_diff", "asphalt_02_nor", "asphalt_02_rough"],
-		"dirt_tint": Color(0.62, 0.58, 0.52),
-		"dirt_uv": 0.26,
-		"dirt_roughness": 0.88,
-		"skid_tint": Color(0.30, 0.32, 0.34),
+		"ground": Color("3d6b7c"),
+		"ground_alt": Color("46788a"),
+		"paint": Color("f5ecd7"),
+		"paint_alt": Color("e8c34a"),
 		"grip": 0.94,
-		"present_kind": "parcel",
-		"present_label": "SHRINK-WRAPPED PARCELS",
+		"present_kind": "crate",
+		"present_label": "SHRINK-WRAPPED CRATES",
+		"present_accent": Color("f4c542"),
 		"hazard_label": "WET PATCHES  ·  LIGHT SLIDE",
-		"foliage_tint": Color(0.72, 0.82, 0.72),
-		"bark_tint": Color(0.86, 0.80, 0.70),
+		"tree_model": "tree_default",
+		"tree_scale": 1.0,
 		"hazard": {"kind": "wet", "grip": WET_GRIP, "spin": 0.0,
-			"tint": Color(0.42, 0.52, 0.60), "spots": [
-				Vector2(9.0, -10.0), Vector2(-14.0, -3.0)]},
-		"yard": "containers",
+			"tint": Color(0.30, 0.50, 0.60), "spots": [
+				Vector2(16.0, 32.0), Vector2(-16.0, -32.0)]},
 	},
 	"farmyard": {
 		"id": "farmyard",
 		"name": "FARMYARD",
-		"blurb": "SOFT DIRT",
+		"blurb": "SOFT MUD",
 		"teams": ["PADDOCK POSSE", "BARN RAIDERS"],
 		"sky_top": Color(0.23, 0.55, 0.78),
 		"sky_horizon": Color(0.85, 0.89, 0.76),
 		"ground_bottom": Color(0.32, 0.27, 0.16),
 		"fog_color": Color(0.84, 0.86, 0.72),
 		"fog_density": 0.0018,
-		"floor": ["grass_diff", "grass_nor", "grass_rough"],
-		"floor_tint": Color(0.86, 0.90, 0.72),
-		"floor_uv": 0.18,
-		"floor_detail": 0.16,
-		"floor_macro": 0.05,
-		"floor_roughness": 0.90,
-		"apron": [],
-		"dirt": ["dirt_diff", "dirt_nor", "dirt_rough"],
-		"dirt_tint": Color(0.92, 0.84, 0.70),
-		"dirt_uv": 0.22,
-		"dirt_roughness": 0.94,
-		"skid_tint": Color(0.52, 0.44, 0.30),
+		"ground": Color("6f9a4a"),
+		"ground_alt": Color("7ca855"),
+		"paint": Color("f5ecd7"),
+		"paint_alt": Color("f2b134"),
 		"grip": 0.86,
-		"present_kind": "basket",
-		"present_label": "PRODUCE BASKETS",
+		"present_kind": "crate",
+		"present_label": "PRODUCE CRATES",
+		"present_accent": Color("e4572e"),
 		"hazard_label": "MUD PATCHES  ·  SOFT SLIDE",
-		"foliage_tint": Color(0.88, 1.0, 0.74),
-		"bark_tint": Color(1.0, 0.94, 0.84),
+		"tree_model": "tree_oak",
+		"tree_scale": 0.95,
 		"hazard": {"kind": "mud", "grip": MUD_GRIP, "spin": 0.0,
 			"tint": Color(0.44, 0.34, 0.20), "spots": [
-				Vector2(12.0, -8.0), Vector2(-10.0, -16.0)]},
-		"yard": "bales",
+				Vector2(16.0, 32.0), Vector2(-16.0, -32.0)]},
 	},
 	"snowfield": {
 		"id": "snowfield",
@@ -118,30 +130,25 @@ const THEMES: Dictionary = {
 		"ground_bottom": Color(0.72, 0.80, 0.88),
 		"fog_color": Color(0.88, 0.93, 0.98),
 		"fog_density": 0.0030,
-		"floor": ["snow_02_diff", "snow_02_nor", "snow_02_rough"],
-		"floor_tint": Color(0.94, 0.97, 1.0),
-		"floor_uv": 0.22,
-		"floor_detail": 0.08,
-		"floor_macro": 0.03,
-		"floor_roughness": 0.55,
-		"apron": [],
-		"dirt": ["snow_02_diff", "snow_02_nor", "snow_02_rough"],
-		"dirt_tint": Color(0.82, 0.88, 0.96),
-		"dirt_uv": 0.20,
-		"dirt_roughness": 0.60,
-		"skid_tint": Color(0.66, 0.76, 0.86),
+		"ground": Color("dfeef5"),
+		"ground_alt": Color("c9e2ee"),
+		"paint": Color("f7fbff"),
+		"paint_alt": Color("2e86ab"),
 		"grip": 0.90,
 		"present_kind": "gift",
 		"present_label": "WRAPPED GIFTS",
+		"present_accent": Color("e23b4e"),
 		"hazard_label": "ICE PATCHES  ·  SPIN OUT",
-		"foliage_tint": Color(0.90, 0.96, 1.0),
-		"bark_tint": Color(0.84, 0.86, 0.90),
+		"tree_model": "tree_pineTallA",
+		"tree_scale": 1.0,
 		"hazard": {"kind": "ice", "grip": ICE_GRIP, "spin": ICE_SPIN,
 			"tint": Color(0.36, 0.58, 0.74), "spots": [
-				Vector2(10.0, -12.0), Vector2(-13.0, -6.0)]},
-		"yard": "gifts",
+				Vector2(16.0, 32.0), Vector2(-16.0, -32.0)]},
 	},
 }
+
+static var _model_cache: Dictionary = {}
+static var _paint_cache: Dictionary = {}
 
 
 ## Every theme id in registry order.
@@ -186,73 +193,112 @@ static func present_label(theme: Dictionary) -> String:
 	return str(theme.get("present_label", "PRESENTS"))
 
 
-## Ground material for the arena floor (the asphalt/snow/grass outside the
-## painted apron). Uses the Poly Haven scans when the importer has produced
-## them, and a flat tint otherwise.
+# --------------------------------------------------------------------------
+# materials
+#
+# Floors and paint are flat StandardMaterial3D colours. Nothing here loads a
+# photographic texture, which is what keeps the cartoon read consistent.
+
+## Flat ground material for the arena floor.
 static func floor_material(theme: Dictionary) -> Material:
-	var files: Array = _string_list(theme.get("floor", []))
-	return _pbr_material(files, theme.get("floor_tint", Color.WHITE) as Color,
-		float(theme.get("floor_uv", 1.0)),
-		float(theme.get("floor_detail", 0.1)),
-		float(theme.get("floor_macro", 0.04)),
-		float(theme.get("floor_roughness", 0.7)))
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = theme.get("ground", Color("3d6b7c")) as Color
+	mat.roughness = 1.0
+	mat.metallic = 0.0
+	mat.specular_mode = BaseMaterial3D.SPECULAR_DISABLED
+	return mat
 
 
-## Worn-concrete apron laid over the playfield; null when the theme has none.
+## Flat inner apron; the arena paints its own checkerboard over it, so this is
+## only a fallback for callers that want a solid slab.
 static func apron_material(theme: Dictionary) -> Material:
-	var files: Array = _string_list(theme.get("apron", []))
-	if files.is_empty():
-		return null
-	return _pbr_material(files, theme.get("apron_tint", Color.WHITE) as Color,
-		float(theme.get("apron_uv", 0.2)), 0.12, 0.04,
-		float(theme.get("apron_roughness", 0.5)))
+	return flat_material(theme.get("ground_alt", Color("46788a")) as Color)
 
 
-## Surface of the dirt strip: the one piece of the layout that changes look and
-## grip with the theme.
+## Flat colour of the dirt/yard strip. Kept for API compatibility.
 static func dirt_material(theme: Dictionary) -> Material:
-	var files: Array = _string_list(theme.get("dirt", []))
-	return _pbr_material(files, theme.get("dirt_tint", Color(0.6, 0.5, 0.35)),
-		float(theme.get("dirt_uv", 0.22)), 0.14, 0.05,
-		float(theme.get("dirt_roughness", 0.92)))
+	return flat_material((theme.get("hazard", {}) as Dictionary)
+		.get("tint", Color("6b4a2a")) as Color)
 
 
-## Flat painted colour of the skidpad.
+## Flat painted colour of the skidpad. Kept for API compatibility.
 static func skid_material(theme: Dictionary) -> Material:
+	return flat_material(theme.get("ground_alt", Color("c9e2ee")) as Color)
+
+
+## One shared flat material per colour, so paint does not make a material per
+## quad and every floor marking stays unlit and bold.
+static func flat_material(colour: Color, unshaded: bool = true) -> StandardMaterial3D:
+	var key: String = "%s/%s" % [colour.to_html(), str(unshaded)]
+	if _paint_cache.has(key):
+		return _paint_cache[key] as StandardMaterial3D
 	var mat := StandardMaterial3D.new()
-	mat.albedo_color = theme.get("skid_tint", Color(0.32, 0.34, 0.36)) as Color
-	mat.roughness = 0.82
+	mat.albedo_color = colour
+	mat.roughness = 1.0
 	mat.metallic = 0.0
+	mat.specular_mode = BaseMaterial3D.SPECULAR_DISABLED
+	if unshaded:
+		mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	_paint_cache[key] = mat
 	return mat
 
 
-## The present meshes for a theme, in cycle order.
-static func present_meshes(theme: Dictionary) -> Array[Mesh]:
-	match str(theme.get("present_kind", "parcel")):
-		"basket":
-			return _basket_meshes()
-		"gift":
-			return _gift_meshes()
-	return _parcel_meshes()
+## The present meshes for a theme, in cycle order. Legacy accessor: the live
+## mode instantiates the Kenney crate directly through build_present().
+static func present_meshes(_theme: Dictionary) -> Array[Mesh]:
+	var meshes: Array[Mesh] = []
+	var info: Dictionary = model_info(CRATE_MODEL)
+	if not bool(info.get("ok", false)):
+		return meshes
+	for part: Dictionary in info.get("parts", []) as Array:
+		var mesh: Mesh = part.get("mesh") as Mesh
+		if mesh != null:
+			meshes.append(mesh)
+	return meshes
 
 
-## One shared vertex-coloured material for every present.
-static func present_material(theme: Dictionary) -> Material:
-	var mat := StandardMaterial3D.new()
-	mat.vertex_color_use_as_albedo = true
-	mat.albedo_color = Color.WHITE
-	mat.metallic = 0.0
-	mat.roughness = 0.42 if str(theme.get("present_kind", "parcel")) == "gift" else 0.72
-	# A soft self-glow keeps a present readable against snow and asphalt alike.
-	mat.emission_enabled = true
-	mat.emission = Color(1.0, 0.86, 0.52)
-	mat.emission_energy_multiplier = 0.16
-	return mat
+## Legacy material accessor. The crate keeps its own Kenney texture.
+static func present_material(_theme: Dictionary) -> Material:
+	return flat_material(Color.WHITE)
 
 
 ## Warm gold used by the pickup ring and the pad spotlights.
 static func accent() -> Color:
 	return Color(1.0, 0.82, 0.28)
+
+
+# --------------------------------------------------------------------------
+# present art
+
+## Adds one Kenney crate plus a flat ribbon and bow under `root`.
+static func build_present(root: Node3D, theme: Dictionary, index: int) -> void:
+	if root == null:
+		return
+	var crate: Node3D = place_model(root, CRATE_MODEL, Vector3.ZERO,
+		float(index) * 0.7, Vector3.ONE * CRATE_SCALE, "Crate")
+	if crate == null:
+		return
+	var accent_colour: Color = theme.get("present_accent", accent()) as Color
+	var batch := PropBatch.new()
+	var height: float = CRATE_SCALE * 0.715
+	var span: float = CRATE_SCALE * 0.715 + 0.06
+	batch.add_box(Transform3D(Basis.IDENTITY, Vector3(0.0, height * 0.5, 0.0)),
+		Vector3(0.17, height, span), accent_colour)
+	batch.add_box(Transform3D(Basis.IDENTITY, Vector3(0.0, height * 0.5, 0.0)),
+		Vector3(span, height, 0.17), accent_colour)
+	batch.add_box(Transform3D(Basis(Vector3.UP, 0.0),
+		Vector3(0.0, height + 0.05, 0.0)), Vector3(span * 0.9, 0.12, 0.14),
+		accent_colour.darkened(0.12))
+	for side: float in [-1.0, 1.0]:
+		batch.add_box(Transform3D(Basis(Vector3.BACK, side * 0.42),
+			Vector3(side * 0.18, height + 0.15, 0.0)),
+			Vector3(0.34, 0.13, 0.20), accent_colour)
+	var ribbon := MeshInstance3D.new()
+	ribbon.name = "Ribbon"
+	ribbon.mesh = batch.build()
+	ribbon.material_override = SceneryKit.vertex_material()
+	ribbon.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	root.add_child(ribbon)
 
 
 # --------------------------------------------------------------------------
@@ -262,9 +308,7 @@ static func accent() -> Color:
 ## hazard zones: [{centre: Vector3, radius: float, grip: float, spin: float}].
 ##
 ## `arena` carries the layout the theme must dress around:
-##   half        - half the playfield width (the wall sits here)
-##   loop_centre - centre of the handling loop
-##   loop_extent - half extents of the loop in x/z
+##   half        - half the playfield width (the barrier sits here)
 ##   base_pads   - the two base centres
 static func build_scenery(root: Node3D, theme: Dictionary, arena: Dictionary,
 		stats: Dictionary) -> Array[Dictionary]:
@@ -273,360 +317,92 @@ static func build_scenery(root: Node3D, theme: Dictionary, arena: Dictionary,
 		return hazards
 	var half: float = float(arena.get("half", 56.0))
 	_scatter_nature(root, theme, half, stats)
-	_build_yard(root, theme, half, stats)
-	hazards = _build_hazards(root, theme, arena)
+	hazards = _build_hazards(root, theme)
 	return hazards
-
-
-# --------------------------------------------------------------------------
-# materials
-
-
-static func _pbr_material(files: Array, tint: Color, uv_scale: float,
-		detail: float, macro: float, roughness_min: float) -> Material:
-	if files.size() < 3 or not ResourceLoader.exists(PBR_SHADER):
-		return _flat_material(tint, maxf(roughness_min, 0.6))
-	var diffuse: Texture2D = _texture(str(files[0]))
-	var normal: Texture2D = _texture(str(files[1]))
-	var rough: Texture2D = _texture(str(files[2]))
-	if diffuse == null or normal == null or rough == null:
-		return _flat_material(tint, maxf(roughness_min, 0.6))
-	var mat := ShaderMaterial.new()
-	mat.shader = load(PBR_SHADER) as Shader
-	mat.set_shader_parameter("albedo_tex", diffuse)
-	mat.set_shader_parameter("normal_tex", normal)
-	mat.set_shader_parameter("rough_tex", rough)
-	mat.set_shader_parameter("uv_scale", uv_scale)
-	mat.set_shader_parameter("tint", tint)
-	mat.set_shader_parameter("detail_strength", detail)
-	mat.set_shader_parameter("macro_variation", macro)
-	mat.set_shader_parameter("roughness_min", roughness_min)
-	return mat
-
-
-static func _flat_material(tint: Color, roughness: float) -> Material:
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = tint
-	mat.roughness = clampf(roughness, 0.2, 1.0)
-	mat.metallic = 0.0
-	return mat
-
-
-static func _texture(name_without_extension: String) -> Texture2D:
-	var path: String = PBR_TEX + name_without_extension + ".jpg"
-	if not ResourceLoader.exists(path):
-		return null
-	return load(path) as Texture2D
-
-
-static func _string_list(raw: Variant) -> Array:
-	var out: Array = []
-	if raw is Array:
-		for entry: Variant in raw as Array:
-			out.append(str(entry))
-	return out
-
-
-# --------------------------------------------------------------------------
-# nature ring beyond the wall
-
-## One entry per baked model. `solid` pieces get a collider on the WORLD layer
-## so nothing outside the fence is drive-through decoration either.
-const NATURE_SPECS: Array[Dictionary] = [
-	{"model": "tree_pineTallA", "count": 84, "min_scale": 1.30,
-		"max_scale": 2.30, "solid": "trunk", "radius": 0.55, "height": 5.4},
-	{"model": "plant_bushLarge", "count": 46, "min_scale": 1.10,
-		"max_scale": 2.10, "solid": "none", "radius": 0.6, "height": 1.6},
-	{"model": "rock_largeA", "count": 26, "min_scale": 1.00,
-		"max_scale": 2.20, "solid": "box", "radius": 1.0, "height": 1.2},
-	{"model": "rock_smallA", "count": 26, "min_scale": 0.90,
-		"max_scale": 1.80, "solid": "box", "radius": 0.5, "height": 0.5},
-	{"model": "stump_round", "count": 12, "min_scale": 1.00,
-		"max_scale": 1.60, "solid": "trunk", "radius": 0.5, "height": 0.8},
-	{"model": "log", "count": 8, "min_scale": 1.10,
-		"max_scale": 1.90, "solid": "box", "radius": 0.8, "height": 0.7},
-	{"model": "grass_large", "count": 70, "min_scale": 0.90,
-		"max_scale": 1.80, "solid": "none", "radius": 0.4, "height": 0.6},
-]
 
 
 static func _scatter_nature(root: Node3D, theme: Dictionary, half: float,
 		stats: Dictionary) -> void:
-	## Trees, rocks and grass in a wide ring outside the wall. The ring starts
-	## 7 m behind the fence, so every prop is visible from the cockpit but none
-	## of it can ever be driven into - and each solid piece still carries a
-	## collider, because a fence is not an excuse for drive-through scenery.
-	var material: StandardMaterial3D = FoliageBaker.make_material()
-	var solid := _solid_root(root, "NatureCollision")
-	var rng := RandomNumberGenerator.new()
-	rng.seed = 90210 + int(half)
-	var inner: float = half + 7.0
-	var outer: float = half + 40.0
-	var foliage: Color = theme.get("foliage_tint", Color(0.9, 1.0, 0.9)) as Color
-	var bark: Color = theme.get("bark_tint", Color(1.0, 0.95, 0.88)) as Color
-	for spec: Dictionary in NATURE_SPECS:
-		var model: String = str(spec["model"])
-		var mesh: ArrayMesh = FoliageBaker.bake(model)
-		if mesh == null:
+	## Trees, bushes and rocks on a 16 m ring outside the barrier. The ring is
+	## the same for every skin; only the tree species follows the palette.
+	## Every trunk and rock carries a WORLD collider.
+	var tree_model: String = str(theme.get("tree_model", "tree_default"))
+	var tree_scale: float = float(theme.get("tree_scale", 1.0)) * TREE_SCALE
+	var tree_transforms: Array = []
+	for index in TREE_RING.size():
+		var spot: Vector2 = TREE_RING[index]
+		if absf(spot.x) < half + 4.0 and absf(spot.y) < half + 4.0:
 			continue
-		var bounds: AABB = mesh.get_aabb()
-		var sink: float = bounds.position.y
-		var transforms: Array = []
-		var colours: Array = []
-		var is_tree: bool = model.begins_with("tree") or model.begins_with("plant")
-		var count: int = int(spec["count"])
-		for i in count:
-			var spot: Vector2 = _ring_point(rng, inner, outer, half)
-			var scale: float = rng.randf_range(float(spec["min_scale"]),
-				float(spec["max_scale"]))
-			var basis: Basis = Basis(Vector3.UP, rng.randf() * TAU) \
-				.scaled(Vector3.ONE * scale)
-			var position := Vector3(spot.x, -sink * scale - 0.05, spot.y)
-			transforms.append(Transform3D(basis, position))
-			var tint: Color = foliage if is_tree else bark
-			var shade: float = rng.randf_range(0.82, 1.08)
-			colours.append(Color(tint.r * shade, tint.g * shade,
-				tint.b * shade))
-			_add_nature_collider(solid, spec, Vector3(spot.x, 0.0, spot.y),
-				scale)
-		if transforms.is_empty():
-			continue
-		var instance: MultiMeshInstance3D = FoliageBaker.create_instances(
-			mesh, material, transforms, false, colours)
-		instance.name = "Nature_" + model
-		SceneryKit.set_view(instance, 0.0, 320.0)
-		root.add_child(instance)
-		SceneryKit.bump(stats, "objects", transforms.size())
-		SceneryKit.bump(stats, "draw_calls")
+		var scale: float = tree_scale * (0.86
+			+ 0.28 * fposmod(float(index) * 0.61803398875, 1.0))
+		tree_transforms.append(fit_transform(tree_model,
+			Vector3(spot.x, 0.0, spot.y), float(index) * 1.7,
+			Vector3.ONE * scale, true))
+		var tree_size: Vector3 = scaled_size(tree_model, Vector3.ONE * scale,
+			true)
+		add_cylinder_collider(_nature_body(root), Vector3(spot.x, 0.0, spot.y),
+			0.12 * scale, maxf(tree_size.y, 1.0))
+	SceneryKit.bump(stats, "objects", tree_transforms.size())
+	SceneryKit.bump(stats, "draw_calls")
+	batch_model(root, tree_model, tree_transforms, "TreeRing", true, true)
+	if not _model_exists(tree_model, true):
+		push_warning("CargoTheme: missing tree model " + tree_model)
+
+	var bush_transforms: Array = []
+	for index in BUSH_SPOTS.size():
+		var spot: Vector2 = BUSH_SPOTS[index]
+		var scale: float = BUSH_SCALE * (0.9
+			+ 0.2 * fposmod(float(index) * 0.41421356237, 1.0))
+		bush_transforms.append(fit_transform("plant_bushLarge",
+			Vector3(spot.x, 0.0, spot.y), float(index) * 2.3,
+			Vector3.ONE * scale, true))
+	SceneryKit.bump(stats, "objects", bush_transforms.size())
+	SceneryKit.bump(stats, "draw_calls")
+	batch_model(root, "plant_bushLarge", bush_transforms, "Bushes", true, true)
+
+	var rock_transforms: Array = []
+	for index in ROCK_SPOTS.size():
+		var spot: Vector2 = ROCK_SPOTS[index]
+		var scale: float = ROCK_SCALE * (0.9
+			+ 0.2 * fposmod(float(index) * 0.73205080756, 1.0))
+		rock_transforms.append(fit_transform("rock_largeA",
+			Vector3(spot.x, 0.0, spot.y), float(index) * 1.1,
+			Vector3.ONE * scale, true))
+		var rock_size: Vector3 = scaled_size("rock_largeA",
+			Vector3.ONE * scale, true)
+		add_box_collider(_nature_body(root),
+			Transform3D(Basis(Vector3.UP, float(index) * 1.1),
+				Vector3(spot.x, 0.0, spot.y)
+					+ Vector3.UP * (rock_size.y * 0.5)),
+			Vector3(maxf(rock_size.x, 0.4), maxf(rock_size.y, 0.4),
+				maxf(rock_size.z, 0.4)))
+	SceneryKit.bump(stats, "objects", rock_transforms.size())
+	SceneryKit.bump(stats, "draw_calls")
+	batch_model(root, "rock_largeA", rock_transforms, "Rocks", true, true)
 	SceneryKit.bump(stats, "solid_bodies")
 
 
-static func _ring_point(rng: RandomNumberGenerator, inner: float,
-		outer: float, half: float) -> Vector2:
-	## Rejection-sample a square ring so the tree line is even on all four
-	## sides instead of bunching at the corners.
-	var limit: float = outer
-	for _attempt in 8:
-		var point := Vector2(rng.randf_range(-limit, limit),
-			rng.randf_range(-limit, limit))
-		if absf(point.x) < inner and absf(point.y) < inner:
-			continue
-		if absf(point.x) > limit or absf(point.y) > limit:
-			continue
-		return point
-	var angle: float = rng.randf() * TAU
-	var radius: float = rng.randf_range(inner, outer)
-	return Vector2(cos(angle) * radius, sin(angle) * radius) \
-		.clamp(Vector2(-outer, -outer), Vector2(outer, outer))
+static func _nature_body(root: Node3D) -> StaticBody3D:
+	var existing: Node = root.get_node_or_null("NatureCollision")
+	if existing is StaticBody3D:
+		return existing as StaticBody3D
+	return solid_root(root, "NatureCollision")
 
 
-static func _add_nature_collider(body: StaticBody3D, spec: Dictionary,
-		position: Vector3, scale: float) -> void:
-	var kind: String = str(spec.get("solid", "none"))
-	if kind == "none":
-		return
-	var radius: float = float(spec.get("radius", 0.5)) * scale
-	var height: float = float(spec.get("height", 1.0)) * scale
-	var collision := CollisionShape3D.new()
-	if kind == "trunk":
-		var shape := CylinderShape3D.new()
-		shape.radius = maxf(radius, 0.2)
-		shape.height = maxf(height, 0.6)
-		collision.shape = shape
-		collision.position = position + Vector3.UP * (shape.height * 0.5)
-	else:
-		var shape := BoxShape3D.new()
-		shape.size = Vector3(radius * 2.0, maxf(height, 0.4), radius * 2.0)
-		collision.shape = shape
-		collision.position = position + Vector3.UP * (shape.size.y * 0.5)
-	body.add_child(collision)
-
-
-# --------------------------------------------------------------------------
-# yard dressing inside the wall
-
-static func _build_yard(root: Node3D, theme: Dictionary, half: float,
-		stats: Dictionary) -> void:
-	var body := _solid_root(root, "YardProps")
-	match str(theme.get("yard", "containers")):
-		"bales":
-			_build_bales(root, body, half, stats)
-		"gifts":
-			_build_gift_piles(root, body, half, stats)
-		_:
-			_build_containers(root, body, half, stats)
-
-
-static func _build_containers(root: Node3D, body: StaticBody3D, half: float,
-		stats: Dictionary) -> void:
-	## Two rows of shipping containers stacked against the side walls. They sit
-	## 3.5 m inside the fence, behind the dirt strip and the jump lane, so the
-	## playfield stays open while the horizon reads as a working dock.
-	var mesh := BoxMesh.new()
-	mesh.size = Vector3.ONE
-	var transforms: Array = []
-	var colours: Array = []
-	var paints: Array[Color] = [
-		Color(0.16, 0.42, 0.50), Color(0.56, 0.22, 0.18),
-		Color(0.20, 0.32, 0.54), Color(0.30, 0.34, 0.36),
-		Color(0.62, 0.38, 0.14), Color(0.18, 0.45, 0.38),
-	]
-	var side: float = half - 3.5
-	for wall: float in [-1.0, 1.0]:
-		for i in 6:
-			var z: float = -30.0 + float(i) * 12.0
-			var yaw: float = PI * 0.5
-			var size := Vector3(11.0, 2.7, 4.4)
-			var position := Vector3(wall * side, size.y * 0.5, z)
-			transforms.append(Transform3D(Basis(Vector3.UP, yaw).scaled(size),
-				position))
-			colours.append(paints[(i + (1 if wall > 0.0 else 0)) % paints.size()])
-			_add_box_collider(body, Transform3D(Basis(Vector3.UP, yaw), position),
-				size)
-		for i in 4:
-			var x: float = -34.0 + float(i) * 22.0
-			if absf(x) < 14.0:
-				continue
-			var size := Vector3(10.0, 2.7, 4.4)
-			var position := Vector3(x, size.y * 0.5, wall * side)
-			transforms.append(Transform3D(Basis.IDENTITY.scaled(size), position))
-			colours.append(paints[(i + 2) % paints.size()])
-			_add_box_collider(body, Transform3D(Basis.IDENTITY, position), size)
-	if transforms.is_empty():
-		return
-	var instance := SceneryKit.multimesh(mesh,
-		SceneryKit.instance_material(0.82), transforms, "ShippingContainers",
-		false, colours)
-	SceneryKit.set_view(instance, 0.0, 260.0)
-	root.add_child(instance)
-	SceneryKit.bump(stats, "objects", transforms.size())
-	SceneryKit.bump(stats, "draw_calls")
-
-
-static func _build_bales(root: Node3D, body: StaticBody3D, half: float,
-		stats: Dictionary) -> void:
-	## Round hay bales along the fence, with a few square bales stacked behind.
-	var bale := CylinderMesh.new()
-	bale.top_radius = 0.85
-	bale.bottom_radius = 0.85
-	bale.height = 1.55
-	bale.radial_segments = 12
-	bale.rings = 1
-	var transforms: Array = []
-	var colours: Array = []
-	var side: float = half - 4.0
-	var lying := Basis(Vector3(0.0, 0.0, 1.0), PI * 0.5)
-	for wall: float in [-1.0, 1.0]:
-		for i in 8:
-			var z: float = -32.0 + float(i) * 9.0
-			var position := Vector3(wall * side, 0.85, z)
-			var yaw: float = 0.0 if i % 2 == 0 else PI * 0.5
-			transforms.append(Transform3D(Basis(Vector3.UP, yaw) * lying,
-				position))
-			colours.append(Color(0.84, 0.73, 0.38) if i % 3 != 0
-				else Color(0.72, 0.60, 0.28))
-			_add_box_collider(body, Transform3D(Basis(Vector3.UP, yaw), position),
-				Vector3(1.8, 1.7, 1.8))
-	var box := BoxMesh.new()
-	box.size = Vector3.ONE
-	var stacks: Array = []
-	var stack_colours: Array = []
-	for wall: float in [-1.0, 1.0]:
-		for i in 4:
-			var x: float = -30.0 + float(i) * 20.0
-			if absf(x) < 14.0:
-				continue
-			var size := Vector3(2.4, 1.25, 1.7)
-			var base := Vector3(x, 0.0, wall * (half - 3.6))
-			stacks.append(Transform3D(Basis.IDENTITY.scaled(size),
-				base + Vector3.UP * (size.y * 0.5)))
-			stacks.append(Transform3D(
-				Basis(Vector3.UP, 0.16).scaled(size),
-				base + Vector3.UP * (size.y * 1.5 + 0.02)))
-			stack_colours.append(Color(0.78, 0.66, 0.32))
-			stack_colours.append(Color(0.86, 0.74, 0.38))
-			_add_box_collider(body, Transform3D(Basis.IDENTITY,
-				base + Vector3.UP * (size.y * 0.5)), size)
-			_add_box_collider(body, Transform3D(Basis.IDENTITY,
-				base + Vector3.UP * (size.y * 1.5 + 0.02)), size)
-	if not transforms.is_empty():
-		var hay := SceneryKit.multimesh(bale,
-			SceneryKit.instance_material(0.98), transforms, "RoundBales",
-			false, colours)
-		SceneryKit.set_view(hay, 0.0, 240.0)
-		root.add_child(hay)
-		SceneryKit.bump(stats, "objects", transforms.size())
-		SceneryKit.bump(stats, "draw_calls")
-	if not stacks.is_empty():
-		var crates := SceneryKit.multimesh(box,
-			SceneryKit.instance_material(0.95), stacks, "SquareBales",
-			false, stack_colours)
-		SceneryKit.set_view(crates, 0.0, 240.0)
-		root.add_child(crates)
-		SceneryKit.bump(stats, "objects", stacks.size())
-		SceneryKit.bump(stats, "draw_calls")
-
-
-static func _build_gift_piles(root: Node3D, body: StaticBody3D, half: float,
-		stats: Dictionary) -> void:
-	## Wrapped gift piles waiting for the race, stacked against the fence.
-	var mesh := BoxMesh.new()
-	mesh.size = Vector3.ONE
-	var transforms: Array = []
-	var colours: Array = []
-	var wrappers: Array[Color] = [
-		Color(0.86, 0.20, 0.24), Color(0.20, 0.48, 0.84),
-		Color(0.22, 0.62, 0.38), Color(0.88, 0.62, 0.18),
-		Color(0.62, 0.28, 0.72),
-	]
-	var side: float = half - 4.0
-	var index: int = 0
-	for wall: float in [-1.0, 1.0]:
-		for i in 7:
-			var z: float = -30.0 + float(i) * 10.0
-			var base := Vector3(wall * side, 0.0, z)
-			var size := Vector3(2.0, 1.35, 1.8) if i % 2 == 0 \
-				else Vector3(1.5, 1.6, 1.5)
-			var yaw: float = float(i) * 0.4
-			transforms.append(Transform3D(Basis(Vector3.UP, yaw).scaled(size),
-				base + Vector3.UP * (size.y * 0.5)))
-			colours.append(wrappers[index % wrappers.size()])
-			_add_box_collider(body, Transform3D(Basis(Vector3.UP, yaw),
-				base + Vector3.UP * (size.y * 0.5)), size)
-			index += 1
-			if i % 2 == 0:
-				var top := Vector3(1.2, 0.95, 1.1)
-				transforms.append(Transform3D(
-					Basis(Vector3.UP, yaw + 0.5).scaled(top),
-					base + Vector3.UP * (size.y + top.y * 0.5)))
-				colours.append(wrappers[index % wrappers.size()])
-				_add_box_collider(body, Transform3D(Basis(Vector3.UP, yaw + 0.5),
-					base + Vector3.UP * (size.y + top.y * 0.5)), top)
-				index += 1
-	if transforms.is_empty():
-		return
-	var instance := SceneryKit.multimesh(mesh,
-		SceneryKit.instance_material(0.90), transforms, "GiftPiles",
-		false, colours)
-	SceneryKit.set_view(instance, 0.0, 240.0)
-	root.add_child(instance)
-	SceneryKit.bump(stats, "objects", transforms.size())
-	SceneryKit.bump(stats, "draw_calls")
+static func _model_exists(model: String, nature: bool = false) -> bool:
+	return ResourceLoader.exists(_model_path(model, nature))
 
 
 # --------------------------------------------------------------------------
 # grip hazards
 
-static func _build_hazards(root: Node3D, theme: Dictionary,
-		arena: Dictionary) -> Array[Dictionary]:
+static func _build_hazards(root: Node3D, theme: Dictionary) -> Array[Dictionary]:
 	## Visible floor markings that change grip. They carry no collider: a wet
 	## patch is not a prop, and a kart must be able to drive through it.
 	var hazards: Array[Dictionary] = []
 	var data: Dictionary = theme.get("hazard", {}) as Dictionary
 	if data.is_empty():
 		return hazards
-	var centre: Vector3 = arena.get("loop_centre", Vector3.ZERO) as Vector3
-	var radius: float = 5.4
 	var grip: float = float(data.get("grip", 0.8))
 	var spin: float = float(data.get("spin", 0.0))
 	var tint: Color = data.get("tint", Color(0.4, 0.5, 0.6)) as Color
@@ -636,11 +412,11 @@ static func _build_hazards(root: Node3D, theme: Dictionary,
 		if not (raw is Vector2):
 			continue
 		var offset: Vector2 = raw as Vector2
-		var spot := Vector3(centre.x + offset.x, 0.0, centre.z + offset.y)
-		_add_hazard_disc(root, spot, radius, tint, kind)
+		var spot := Vector3(offset.x, 0.0, offset.y)
+		_add_hazard_disc(root, spot, HAZARD_RADIUS, tint, kind)
 		hazards.append({
 			"centre": spot,
-			"radius": radius,
+			"radius": HAZARD_RADIUS,
 			"grip": grip,
 			"spin": spin,
 		})
@@ -660,10 +436,10 @@ static func _add_hazard_disc(root: Node3D, centre: Vector3, radius: float,
 	rim.mesh = disc
 	var mat := StandardMaterial3D.new()
 	mat.albedo_color = tint.darkened(0.18)
-	mat.roughness = 0.08 if kind == "ice" else 0.35
-	mat.metallic = 0.0
-	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	mat.albedo_color.a = 0.72
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.roughness = 0.35
+	mat.metallic = 0.0
 	if kind == "ice":
 		mat.emission_enabled = true
 		mat.emission = Color(0.16, 0.36, 0.50)
@@ -695,101 +471,200 @@ static func _add_hazard_disc(root: Node3D, centre: Vector3, radius: float,
 
 
 # --------------------------------------------------------------------------
-# present meshes
+# Kenney model plumbing
+#
+# Measured once per GLB and cached: AABB in model space plus the mesh parts and
+# their node transforms. `fit_transform` centres a model on its plan-view AABB
+# and sits its bottom on the requested point, so placement never depends on the
+# export pivot. None of the Kenney GLBs ships collision; callers add it.
 
-static func _parcel_meshes() -> Array[Mesh]:
-	## Shrink-wrapped parcel with two cross straps and a fragile label.
-	var meshes: Array[Mesh] = []
-	var kraft: Array[Color] = [Color(0.74, 0.58, 0.38), Color(0.66, 0.50, 0.32)]
-	var tape: Array[Color] = [Color(0.94, 0.86, 0.56), Color(0.82, 0.30, 0.24)]
-	for i in 2:
-		var batch := PropBatch.new()
-		batch.add_box(Transform3D(Basis.IDENTITY, Vector3.ZERO),
-			PRESENT_EXTENTS, kraft[i])
-		batch.add_box(Transform3D(Basis.IDENTITY, Vector3.ZERO),
-			Vector3(0.16, PRESENT_EXTENTS.y + 0.03, PRESENT_EXTENTS.z + 0.03),
-			tape[i])
-		batch.add_box(Transform3D(Basis.IDENTITY, Vector3.ZERO),
-			Vector3(PRESENT_EXTENTS.x + 0.03, PRESENT_EXTENTS.y + 0.03, 0.16),
-			tape[i])
-		batch.add_box(Transform3D(Basis.IDENTITY,
-			Vector3(0.0, 0.02, PRESENT_EXTENTS.z * 0.5 + 0.01)),
-			Vector3(0.46, 0.26, 0.03), Color(0.95, 0.93, 0.86))
-		meshes.append(batch.build())
-	return meshes
-
-
-static func _basket_meshes() -> Array[Mesh]:
-	## Wicker basket with produce on top and a cloth band.
-	var meshes: Array[Mesh] = []
-	var wicker: Array[Color] = [Color(0.66, 0.46, 0.24), Color(0.58, 0.40, 0.20)]
-	var produce: Array[Color] = [Color(0.30, 0.58, 0.22), Color(0.88, 0.44, 0.18)]
-	for i in 2:
-		var batch := PropBatch.new()
-		batch.add_box(Transform3D(Basis.IDENTITY, Vector3.ZERO),
-			Vector3(PRESENT_EXTENTS.x, 0.50, PRESENT_EXTENTS.z), wicker[i])
-		for side: float in [-1.0, 1.0]:
-			batch.add_box(Transform3D(Basis.IDENTITY,
-				Vector3(side * (PRESENT_EXTENTS.x * 0.5 - 0.03),
-					0.10, 0.0)),
-				Vector3(0.08, 0.46, PRESENT_EXTENTS.z + 0.02),
-				wicker[i].darkened(0.14))
-		# Three produce cylinders poking over the rim.
-		for k in 3:
-			var angle: float = TAU * float(k) / 3.0 + float(i) * 0.5
-			batch.add_cylinder(Transform3D(Basis.IDENTITY,
-				Vector3(cos(angle) * 0.22, 0.32, sin(angle) * 0.22)),
-				0.16, 0.22, 8, produce[(k + i) % produce.size()])
-		batch.add_box(Transform3D(Basis.IDENTITY, Vector3(0.0, 0.12, 0.0)),
-			Vector3(PRESENT_EXTENTS.x + 0.02, 0.10,
-				PRESENT_EXTENTS.z + 0.02), Color(0.92, 0.84, 0.60))
-		meshes.append(batch.build())
-	return meshes
+## Measured AABB and mesh parts of a Kenney GLB. Returns {ok, path, aabb,
+## center: Vector2, size: Vector3, parts: Array[{mesh, transform}]}.
+static func model_info(model: String, nature: bool = false) -> Dictionary:
+	var path: String = _model_path(model, nature)
+	if _model_cache.has(path):
+		return _model_cache[path] as Dictionary
+	var info: Dictionary = {"ok": false, "path": path}
+	if not ResourceLoader.exists(path):
+		push_warning("CargoTheme: missing model " + path)
+		_model_cache[path] = info
+		return info
+	var packed: PackedScene = load(path) as PackedScene
+	if packed == null:
+		push_warning("CargoTheme: cannot load " + path)
+		_model_cache[path] = info
+		return info
+	var root: Node = packed.instantiate()
+	var aabb: AABB = _aabb(root, Transform3D.IDENTITY)
+	var parts: Array = []
+	_collect_parts(root, Transform3D.IDENTITY, parts)
+	root.free()
+	info["ok"] = true
+	info["aabb"] = aabb
+	info["center"] = Vector2((aabb.position.x + aabb.end.x) * 0.5,
+		(aabb.position.z + aabb.end.z) * 0.5)
+	info["size"] = aabb.size
+	info["parts"] = parts
+	_model_cache[path] = info
+	return info
 
 
-static func _gift_meshes() -> Array[Mesh]:
-	## Wrapped gift box with a ribbon cross and a two-loop bow.
-	var meshes: Array[Mesh] = []
-	var paper: Array[Color] = [Color(0.84, 0.20, 0.24), Color(0.20, 0.46, 0.82),
-		Color(0.24, 0.60, 0.36)]
-	var ribbon: Array[Color] = [Color(0.98, 0.90, 0.42),
-		Color(0.98, 0.90, 0.42), Color(0.94, 0.44, 0.56)]
-	for i in 3:
-		var batch := PropBatch.new()
-		batch.add_box(Transform3D(Basis.IDENTITY, Vector3.ZERO),
-			PRESENT_EXTENTS, paper[i])
-		batch.add_box(Transform3D(Basis.IDENTITY, Vector3.ZERO),
-			Vector3(0.18, PRESENT_EXTENTS.y + 0.02, PRESENT_EXTENTS.z + 0.02),
-			ribbon[i])
-		batch.add_box(Transform3D(Basis.IDENTITY, Vector3.ZERO),
-			Vector3(PRESENT_EXTENTS.x + 0.02, 0.18, PRESENT_EXTENTS.z + 0.02),
-			ribbon[i])
-		for side: float in [-1.0, 1.0]:
-			batch.add_box(Transform3D(Basis(Vector3.UP, side * 0.5),
-				Vector3(side * 0.15, PRESENT_EXTENTS.y * 0.5 + 0.09, 0.0)),
-				Vector3(0.30, 0.13, 0.18), ribbon[i].darkened(0.10))
-		meshes.append(batch.build())
-	return meshes
+## Transform that places `model` at `at`, yawed and scaled, bottom on the
+## ground and plan-view centre on `at`.
+static func fit_transform(model: String, at: Vector3, yaw: float,
+		scale: Vector3, nature: bool = false) -> Transform3D:
+	var info: Dictionary = model_info(model, nature)
+	if not bool(info.get("ok", false)):
+		return Transform3D(Basis(Vector3.UP, yaw).scaled(scale), at)
+	var center: Vector2 = info["center"]
+	var aabb: AABB = info["aabb"]
+	var yaw_basis := Basis(Vector3.UP, yaw)
+	var basis: Basis = yaw_basis * Basis.IDENTITY.scaled(scale)
+	var center_m := Vector3(center.x * scale.x, 0.0, center.y * scale.z)
+	var lift: float = -aabb.position.y * scale.y
+	return Transform3D(basis, at - yaw_basis * center_m + Vector3.UP * lift)
+
+
+## Scaled size of a model in metres.
+static func scaled_size(model: String, scale: Vector3,
+		nature: bool = false) -> Vector3:
+	var info: Dictionary = model_info(model, nature)
+	if not bool(info.get("ok", false)):
+		return Vector3(0.1, 0.1, 0.1)
+	return (info["aabb"] as AABB).size * scale
+
+
+## Instantiates one Kenney model as a child of `parent` and returns it.
+static func place_model(parent: Node3D, model: String, at: Vector3, yaw: float,
+		scale: Vector3, node_name: String, nature: bool = false) -> Node3D:
+	if parent == null:
+		return null
+	var info: Dictionary = model_info(model, nature)
+	if not bool(info.get("ok", false)):
+		return null
+	var packed: PackedScene = load(str(info["path"])) as PackedScene
+	if packed == null:
+		return null
+	var node: Node3D = packed.instantiate() as Node3D
+	if node == null:
+		return null
+	node.name = node_name
+	node.transform = fit_transform(model, at, yaw, scale, nature)
+	parent.add_child(node)
+	return node
+
+
+## One MultiMesh per mesh part for every repeated model instance.
+static func batch_model(parent: Node3D, model: String, transforms: Array,
+		node_name: String, cast_shadow: bool = true,
+		nature: bool = false) -> void:
+	if parent == null or transforms.is_empty():
+		return
+	var info: Dictionary = model_info(model, nature)
+	if not bool(info.get("ok", false)):
+		return
+	var parts: Array = info.get("parts", []) as Array
+	for part_index in parts.size():
+		var part: Dictionary = parts[part_index]
+		var mesh: Mesh = part.get("mesh") as Mesh
+		var local: Transform3D = part.get("transform", Transform3D.IDENTITY) \
+			as Transform3D
+		if mesh == null:
+			continue
+		var multi := MultiMesh.new()
+		multi.transform_format = MultiMesh.TRANSFORM_3D
+		multi.mesh = mesh
+		multi.instance_count = transforms.size()
+		for index in transforms.size():
+			multi.set_instance_transform(index,
+				(transforms[index] as Transform3D) * local)
+		var instance := MultiMeshInstance3D.new()
+		instance.name = node_name if parts.size() == 1 \
+			else "%s_%d" % [node_name, part_index]
+		instance.multimesh = multi
+		instance.cast_shadow = \
+			GeometryInstance3D.SHADOW_CASTING_SETTING_ON if cast_shadow \
+			else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		parent.add_child(instance)
 
 
 # --------------------------------------------------------------------------
-# helpers
+# colliders
 
-
-static func _solid_root(root: Node3D, node_name: String) -> StaticBody3D:
+## Creates a WORLD static body under `parent`.
+static func solid_root(parent: Node3D, node_name: String) -> StaticBody3D:
 	var body := StaticBody3D.new()
 	body.name = node_name
 	body.collision_layer = CollisionLayers.WORLD
 	body.collision_mask = 0
-	root.add_child(body)
+	parent.add_child(body)
 	return body
 
 
-static func _add_box_collider(body: StaticBody3D, xform: Transform3D,
+## Adds a box collider to `body`.
+static func add_box_collider(body: StaticBody3D, xform: Transform3D,
 		size: Vector3) -> void:
+	if body == null:
+		return
 	var shape := BoxShape3D.new()
 	shape.size = size
 	var collision := CollisionShape3D.new()
 	collision.shape = shape
 	collision.transform = xform
 	body.add_child(collision)
+
+
+## Adds a vertical cylinder collider standing on `point`.
+static func add_cylinder_collider(body: StaticBody3D, point: Vector3,
+		radius: float, height: float) -> void:
+	if body == null:
+		return
+	var shape := CylinderShape3D.new()
+	shape.radius = maxf(radius, 0.05)
+	shape.height = maxf(height, 0.1)
+	var collision := CollisionShape3D.new()
+	collision.shape = shape
+	collision.position = point + Vector3.UP * (shape.height * 0.5)
+	body.add_child(collision)
+
+
+# --------------------------------------------------------------------------
+# measurement
+
+static func _model_path(model: String, nature: bool = false) -> String:
+	if nature:
+		return NATURE_ROOT + model + ".glb"
+	if model == CRATE_MODEL:
+		return CAR_ROOT + model + ".glb"
+	return RACING_ROOT + model + ".glb"
+
+
+static func _aabb(node: Node, xform: Transform3D) -> AABB:
+	var local: Transform3D = xform
+	if node is Node3D:
+		local = xform * (node as Node3D).transform
+	var result := AABB()
+	var found: bool = false
+	if node is MeshInstance3D:
+		var instance: MeshInstance3D = node as MeshInstance3D
+		if instance.mesh != null:
+			result = local * instance.mesh.get_aabb()
+			found = true
+	for child: Node in node.get_children():
+		var child_box: AABB = _aabb(child, local)
+		if child is MeshInstance3D:
+			result = result.merge(child_box) if found else child_box
+			found = true
+	return result
+
+
+static func _collect_parts(node: Node, xform: Transform3D, parts: Array) -> void:
+	var local: Transform3D = xform
+	if node is Node3D:
+		local = xform * (node as Node3D).transform
+	if node is MeshInstance3D:
+		var instance: MeshInstance3D = node as MeshInstance3D
+		if instance.mesh != null:
+			parts.append({"mesh": instance.mesh, "transform": local})
+	for child: Node in node.get_children():
+		_collect_parts(child, local, parts)

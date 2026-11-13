@@ -11,6 +11,31 @@ extends RefCounted
 const DEFAULT_ID: String = "shopping_cart"
 const REFERENCE_MASS: float = 1200.0
 
+## Racing class. The Kenney racing-kit cars are only offered in racing modes;
+## the sandbox roster above stays exactly as it is. A racing entry is a base
+## chassis: the player spends RACING_STAT_POINTS across four stats and the
+## composition below rewrites the same catalog fields the physics already reads.
+const DEFAULT_RACING_ID: String = "race_car_red"
+const RACING_STAT_POINTS: int = 12
+const RACING_STAT_MAX: int = 6
+const RACING_STAT_KEYS: PackedStringArray = [
+	"top_speed", "accel", "grip", "weight",
+]
+## A fresh racing build is balanced so a player who never opens the screen still
+## gets a complete, valid allocation.
+const RACING_DEFAULT_ALLOCATION: Dictionary = {
+	"top_speed": 3, "accel": 3, "grip": 3, "weight": 3,
+}
+## Per-point effect on the composed catalog fields. Top speed is m/s, accel is
+## engine_power at REFERENCE_MASS, grip is the handling multiplier, and weight
+## is ballast in kg (heavier cars launch slower but shove props harder).
+const RACING_SPEED_PER_POINT: float = 0.45
+const RACING_POWER_PER_POINT: float = 1.05
+const RACING_GRIP_PER_POINT: float = 0.028
+const RACING_STEER_PER_POINT: float = 0.010
+const RACING_MASS_PER_POINT: float = 24.0
+const RACING_PUSH_PER_POINT: float = 0.030
+
 ## Keys used by the vehicle-picker comparison bars. Keep display order here.
 const STAT_KEYS: PackedStringArray = [
 	"top_speed", "accel", "weight", "grip",
@@ -209,6 +234,142 @@ const VEHICLES: Array[Dictionary] = [
 	},
 ]
 
+## The four Kenney racing-kit cars. Footprint values were measured from the
+## GLB AABBs and the wheel nodes: raw length 1.346 m, width 0.729 m, height
+## 0.397 m, wheelbase 0.801 m, track 0.410 m. The build below scales the model
+## to a 2.55 m catalog length and derives every other side from that same
+## uniform scale, so the visual and the collider stay on the shared contract.
+## Paint is surface 1 of the "body" mesh on every one of the four models.
+const RACING_VEHICLES: Array[Dictionary] = [
+	{
+		"id": "race_car_red",
+		"name": "RED RACER",
+		"scene": "res://assets/models/kenney_racing_kit/Models/GLTF format/raceCarRed.glb",
+		"length": 2.55,
+		"width": 1.38,
+		"height": 0.75,
+		"wheelbase": 1.52,
+		"track": 0.78,
+		"yaw": 180.0,
+		"mass": 760.0,
+		"max_speed": 29.0,
+		"engine_power": 26.0,
+		"push_accel": 15.0,
+		"grip": 1.12,
+		"steering": 1.08,
+		"push_scale": 0.88,
+		"smoke": 0.95,
+		"skid_width": 0.235,
+		"skid_side": 0.66,
+		"skid_back": 0.84,
+		"loop_sound": "res://assets/audio/sfx/engines/sports_loop.wav",
+		"loop_pitch": 1.05,
+		"loop_pitch_span": 0.90,
+		"loop_idle": true,
+		"has_engine": true,
+		"racing": true,
+		"paint_node": "body",
+		"paint_surface": 1,
+		"base_paint": Color("f59c9b"),
+	},
+	{
+		"id": "race_car_green",
+		"name": "GREEN RACER",
+		"scene": "res://assets/models/kenney_racing_kit/Models/GLTF format/raceCarGreen.glb",
+		"length": 2.55,
+		"width": 1.38,
+		"height": 0.75,
+		"wheelbase": 1.52,
+		"track": 0.78,
+		"yaw": 180.0,
+		"mass": 780.0,
+		"max_speed": 28.0,
+		"engine_power": 25.0,
+		"push_accel": 15.0,
+		"grip": 1.22,
+		"steering": 1.12,
+		"push_scale": 0.91,
+		"smoke": 0.90,
+		"skid_width": 0.225,
+		"skid_side": 0.66,
+		"skid_back": 0.84,
+		"loop_sound": "res://assets/audio/sfx/engines/sports_loop.wav",
+		"loop_pitch": 1.00,
+		"loop_pitch_span": 0.85,
+		"loop_idle": true,
+		"has_engine": true,
+		"racing": true,
+		"paint_node": "body",
+		"paint_surface": 1,
+		"base_paint": Color("95c5af"),
+	},
+	{
+		"id": "race_car_orange",
+		"name": "ORANGE RACER",
+		"scene": "res://assets/models/kenney_racing_kit/Models/GLTF format/raceCarOrange.glb",
+		"length": 2.55,
+		"width": 1.38,
+		"height": 0.75,
+		"wheelbase": 1.52,
+		"track": 0.78,
+		"yaw": 180.0,
+		"mass": 720.0,
+		"max_speed": 28.0,
+		"engine_power": 29.0,
+		"push_accel": 15.0,
+		"grip": 1.08,
+		"steering": 1.04,
+		"push_scale": 0.84,
+		"smoke": 1.0,
+		"skid_width": 0.245,
+		"skid_side": 0.66,
+		"skid_back": 0.84,
+		"loop_sound": "res://assets/audio/sfx/engines/sports_loop.wav",
+		"loop_pitch": 1.10,
+		"loop_pitch_span": 0.95,
+		"loop_idle": true,
+		"has_engine": true,
+		"racing": true,
+		"paint_node": "body",
+		"paint_surface": 1,
+		"base_paint": Color("fbdd8b"),
+	},
+	{
+		"id": "race_car_white",
+		"name": "WHITE RACER",
+		"scene": "res://assets/models/kenney_racing_kit/Models/GLTF format/raceCarWhite.glb",
+		"length": 2.55,
+		"width": 1.38,
+		"height": 0.75,
+		"wheelbase": 1.52,
+		"track": 0.78,
+		"yaw": 180.0,
+		"mass": 740.0,
+		"max_speed": 31.0,
+		"engine_power": 24.0,
+		"push_accel": 15.0,
+		"grip": 1.04,
+		"steering": 1.02,
+		"push_scale": 0.86,
+		"smoke": 0.85,
+		"skid_width": 0.220,
+		"skid_side": 0.66,
+		"skid_back": 0.84,
+		"loop_sound": "res://assets/audio/sfx/engines/sports_loop.wav",
+		"loop_pitch": 1.12,
+		"loop_pitch_span": 1.00,
+		"loop_idle": true,
+		"has_engine": true,
+		"racing": true,
+		"paint_node": "body",
+		"paint_surface": 1,
+		"base_paint": Color("f9f9fb"),
+	},
+]
+
+## Alias for readers that look for the class by name. Same read-only list.
+const RACING_CLASS: Array[Dictionary] = RACING_VEHICLES
+
 
 static func stats_for(entry: Dictionary) -> Dictionary:
 	## The single source of truth for the numbers behind the stat bars.
@@ -255,18 +416,166 @@ static func stat_ratio(entry: Dictionary, key: String, ranges: Dictionary) -> fl
 	return clampf((value - low) / (high - low), 0.0, 1.0)
 
 
+static func racing_stat_ranges() -> Dictionary:
+	## Min/max for the four allocatable racing stats. Each stat moves
+	## independently, so probing the chassis at zero and at the per-stat cap
+	## covers the full range a composed entry can reach without simulating play.
+	var ranges: Dictionary = {}
+	for key: String in STAT_KEYS:
+		ranges[key] = {"min": INF, "max": -INF}
+	var variants: Array[Dictionary] = [sanitize_allocation({})]
+	for stat_key: String in RACING_STAT_KEYS:
+		var allocation: Dictionary = {}
+		for other: String in RACING_STAT_KEYS:
+			allocation[other] = 0
+		allocation[stat_key] = RACING_STAT_MAX
+		variants.append(allocation)
+	for base: Dictionary in RACING_VEHICLES:
+		var id: String = str(base.get("id", ""))
+		for allocation: Dictionary in variants:
+			var values: Dictionary = stats_for(compose_racing_entry(id, allocation))
+			for key: String in STAT_KEYS:
+				var value: float = float(values.get(key, 0.0))
+				var slot: Dictionary = ranges[key]
+				slot["min"] = minf(float(slot["min"]), value)
+				slot["max"] = maxf(float(slot["max"]), value)
+	return ranges
+
+
+static func default_allocation() -> Dictionary:
+	## A mutable copy of the balanced build, safe for callers to edit.
+	return RACING_DEFAULT_ALLOCATION.duplicate()
+
+
 static func all() -> Array[Dictionary]:
+	## The sandbox roster. Racing cars are deliberately separate so every
+	## existing picker, save and spawn keeps its old list.
 	return VEHICLES
 
 
+static func racing_all() -> Array[Dictionary]:
+	## The four racing-class chassis, in catalog order.
+	return RACING_VEHICLES
+
+
+static func is_racing_id(id: String) -> bool:
+	## True only for a real id in RACING_VEHICLES. Paths and sandbox ids are
+	## never accepted, so a saved string cannot smuggle another model in.
+	for entry: Dictionary in RACING_VEHICLES:
+		if str(entry.get("id", "")) == id:
+			return true
+	return false
+
+
+static func racing_find(id: String) -> Dictionary:
+	for entry: Dictionary in RACING_VEHICLES:
+		if str(entry.get("id", "")) == id:
+			return entry
+	return {}
+
+
+static func racing_index_of(id: String) -> int:
+	for index in RACING_VEHICLES.size():
+		if str(RACING_VEHICLES[index].get("id", "")) == id:
+			return index
+	return 0
+
+
+static func _allocation_points(raw: Dictionary, key: String) -> int:
+	## Read one allocation value defensively: wrong types and NaN/Inf become 0
+	## and every value is clamped to a spendable range.
+	var value: Variant = raw.get(key, 0)
+	var kind: int = typeof(value)
+	if kind != TYPE_INT and kind != TYPE_FLOAT:
+		return 0
+	var number: float = float(value)
+	if not is_finite(number):
+		return 0
+	return clampi(int(number), 0, RACING_STAT_MAX)
+
+
+static func sanitize_allocation(raw: Dictionary) -> Dictionary:
+	## Always returns all four keys, each 0..RACING_STAT_MAX, and trims
+	## over-budget saves deterministically from weight backwards.
+	var clean: Dictionary = {}
+	var total: int = 0
+	for key: String in RACING_STAT_KEYS:
+		var points: int = _allocation_points(raw, key)
+		clean[key] = points
+		total += points
+	if total > RACING_STAT_POINTS:
+		for index in range(RACING_STAT_KEYS.size() - 1, -1, -1):
+			var key: String = RACING_STAT_KEYS[index]
+			while total > RACING_STAT_POINTS and int(clean[key]) > 0:
+				clean[key] = int(clean[key]) - 1
+				total -= 1
+	return clean
+
+
+static func allocation_total(allocation: Dictionary) -> int:
+	var total: int = 0
+	for key: String in RACING_STAT_KEYS:
+		total += _allocation_points(allocation, key)
+	return total
+
+
+static func compose_racing_entry(id: String, allocation: Dictionary,
+		tint: Color = Color(0, 0, 0, 0)) -> Dictionary:
+	## Turn a chassis id plus a point spend into a normal catalog entry. Every
+	## field player_cart.gd and vehicle_visual.gd already read is preserved; only
+	## mass, engine_power, max_speed, grip, steering and push_scale are rewritten
+	## from the four allocation axes, so the physics shape is unchanged.
+	var base: Dictionary = racing_find(id)
+	if base.is_empty():
+		return {}
+	var clean: Dictionary = sanitize_allocation(allocation)
+	var entry: Dictionary = base.duplicate(true)
+	entry["max_speed"] = float(base.get("max_speed", 0.0)) \
+		+ RACING_SPEED_PER_POINT * float(clean["top_speed"])
+	entry["engine_power"] = float(base.get("engine_power", 0.0)) \
+		+ RACING_POWER_PER_POINT * float(clean["accel"])
+	entry["grip"] = float(base.get("grip", 1.0)) \
+		+ RACING_GRIP_PER_POINT * float(clean["grip"])
+	entry["steering"] = float(base.get("steering", 1.0)) \
+		+ RACING_STEER_PER_POINT * float(clean["grip"])
+	entry["mass"] = float(base.get("mass", 0.0)) \
+		+ RACING_MASS_PER_POINT * float(clean["weight"])
+	entry["push_scale"] = float(base.get("push_scale", 1.0)) \
+		+ RACING_PUSH_PER_POINT * float(clean["weight"])
+	entry["racing_allocation"] = clean
+	if tint.a > 0.0:
+		entry["tint_color"] = tint
+	return entry
+
+
+static func tinted_racing_entry(id: String, tint: Color) -> Dictionary:
+	## Base chassis plus a paint tint only. Remote ghosts use this: their
+	## collider mass/dimensions must come from the shared chassis, not from the
+	## local player's point spend.
+	var base: Dictionary = racing_find(id)
+	if base.is_empty():
+		return {}
+	var entry: Dictionary = base.duplicate(true)
+	if tint.a > 0.0:
+		entry["tint_color"] = tint
+	return entry
+
+
 static func find(id: String) -> Dictionary:
+	## Sandbox roster first (unchanged order), then the racing class. Callers
+	## that need to distinguish the two use is_racing_id().
 	for entry: Dictionary in VEHICLES:
+		if str(entry.get("id", "")) == id:
+			return entry
+	for entry: Dictionary in RACING_VEHICLES:
 		if str(entry.get("id", "")) == id:
 			return entry
 	return {}
 
 
 static func index_of(id: String) -> int:
+	## Sandbox roster index only. Racing cars have their own list and index
+	## helper so a sandbox picker can never point at the wrong array.
 	for index in VEHICLES.size():
 		if str(VEHICLES[index].get("id", "")) == id:
 			return index

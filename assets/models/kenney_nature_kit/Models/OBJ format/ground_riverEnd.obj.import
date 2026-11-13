@@ -1,0 +1,25 @@
+[remap]
+
+importer="wavefront_obj"
+importer_version=1
+type="Mesh"
+uid="uid://c5sky6wucv1bs"
+path="res://.godot/imported/ground_riverEnd.obj-69bf969a2568f18f5b7af3d8ee1b3b2c.mesh"
+
+[deps]
+
+files=["res://.godot/imported/ground_riverEnd.obj-69bf969a2568f18f5b7af3d8ee1b3b2c.mesh"]
+
+source_file="res://assets/models/kenney_nature_kit/Models/OBJ format/ground_riverEnd.obj"
+dest_files=["res://.godot/imported/ground_riverEnd.obj-69bf969a2568f18f5b7af3d8ee1b3b2c.mesh", "res://.godot/imported/ground_riverEnd.obj-69bf969a2568f18f5b7af3d8ee1b3b2c.mesh"]
+
+[params]
+
+generate_tangents=true
+generate_lods=true
+generate_shadow_mesh=true
+generate_lightmap_uv2=false
+generate_lightmap_uv2_texel_size=0.2
+scale_mesh=Vector3(1, 1, 1)
+offset_mesh=Vector3(0, 0, 0)
+force_disable_mesh_compression=false

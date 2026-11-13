@@ -1,20 +1,18 @@
 extends Node3D
-## CARGO RUSH: a two-team present relay in a compact arena.
+## CARGO RUSH: a two-team present relay in a compact cartoon arena.
 ##
-## Presents spawn at points of interest all over the yard - on the handling
-## loop, under the start gantry, by the grandstands, on the skidpad, down the
-## jump lane, on the dirt strip and between the chicane barriers. A kart stops
-## on a present and HOLDS the interact action for three seconds to load it,
-## then drives it home and the present drops the moment the kart touches its
-## own base pad. First team to BASE_TARGET deliveries wins; a five minute cap
-## with a tied score goes to sudden-death overtime.
+## Presents sit on the 16 m lattice all over the yard. A kart stops on one and
+## HOLDS the interact action for three seconds to load it, then drives it home
+## and the present drops the moment the kart touches its own base pad. First
+## team to BASE_TARGET deliveries wins; a five minute cap with a tied score
+## goes to sudden-death overtime.
 ##
-## The arena is one shared layout for every theme: a kerbed and armco'd
-## handling loop, a start gantry, two grandstands, floodlights, distance
-## boards, tyre walls, marshal posts, a fenced perimeter with catch fencing
-## and banners, and a tree line behind the fence. cargo_rush_theme.gd owns the
-## ground scans, the present art, the yard dressing and the grip rule, so a
-## skin can never change the layout or the rules.
+## The arena is one shared layout for every theme: a flat checkerboard floor,
+## a Kenney barrierWall ring, two painted base pads with kit flags, Kenney
+## grandstands, floodlights, banner towers and a nature tree line outside the
+## fence. cargo_rush_theme.gd owns the flat palette, the present art, the tree
+## ring and the grip rule, so a skin can never change the layout or the rules.
+## No photographic texture is referenced anywhere.
 ##
 ## Solo play is the local kart against the sandbox AI carts. Each rival reuses
 ## scripts/ai/sandbox_bot.gd as its driver and runs a four-state relay machine
@@ -26,7 +24,11 @@ extends Node3D
 ## present snapshots at 10 Hz, peers freeze their copy and ask the host to
 ## start or stop a hold. Carts stream peer-to-peer through the host relay and
 ## scores, clock and phase are replicated as absolute values. The hold action
-## is read from the InputMap, never from a hard-coded key.
+## is read from the InputMap on every peer, never from a hard-coded key.
+##
+## The headless self-test (CART_CARGO_SELFTEST=1) prints one line per step:
+## select a present, drive to it, hold three seconds, pick it up, drive it to
+## the team base and watch the score increment. It exits non-zero on failure.
 
 const CART_SCENE := preload("res://scenes/player/cart_player.tscn")
 const SandboxBot := preload("res://scripts/ai/sandbox_bot.gd")
@@ -34,8 +36,6 @@ const CargoTheme := preload("res://scripts/minigames/cargo_rush_theme.gd")
 const VehicleCatalog := preload("res://scripts/vehicles/vehicle_catalog.gd")
 const CollisionLayers := preload("res://scripts/systems/collision_layers.gd")
 const VisualGrade := preload("res://scripts/systems/visual_grade.gd")
-const RacingKit := preload("res://scripts/minigames/racing_kit.gd")
-const TrackSpline := preload("res://scripts/minigames/track_spline.gd")
 const SceneryKit := preload("res://scripts/minigames/scenery/scenery_kit.gd")
 const PropBatch := preload("res://scripts/minigames/scenery/prop_batch.gd")
 const UiPalette := preload("res://scripts/ui/ui_palette.gd")
@@ -67,36 +67,23 @@ const TEAM_COUNT: int = 2
 const CORNER_RADIUS: int = 16 ## One radius for every HUD tile, per the UI kit.
 const TEAM_COLORS: Array[Color] = [UiPalette.BLUE, UiPalette.RED]
 
-## Arena footprint. The wall sits exactly on ARENA_HALF.
+## Arena footprint. The barrier inner face sits exactly on ARENA_HALF.
+## The whole yard is a 16 m lattice: cell centres are multiples of TILE_SIZE
+## from the arena centre, so every prop is placed by the same rule.
+const TILE_SIZE: float = 16.0
 const ARENA_HALF: float = 56.0
-const WALL_HEIGHT: float = 3.4
-const WALL_THICKNESS: float = 1.0
 const FLOOR_SIZE: float = 170.0
-const BASE_Z: Array[float] = [44.0, -44.0]
+const BASE_Z: Array[float] = [48.0, -48.0]
 const PAD_HALF: Vector2 = Vector2(8.0, 5.0)
 
-## The handling loop. Same generator the race uses, sized for a compact yard.
-const LOOP_PRESET: Dictionary = {
-	"control_points": 20,
-	"samples_per_segment": 8,
-	"base_radius": 21.0,
-	"lobe_a": 0.15,
-	"lobe_b": 0.030,
-	"lobe_c": 0.012,
-	"lobe_d": 0.055,
-	"stretch_x": 1.32,
-	"stretch_z": 0.74,
-	"elevation": [],
-}
-## Barrier runs: four spans of the lap with a gate between them, so a kart can
-## always get on and off the loop. Fractions of the lap.
-const LOOP_RUN_STARTS: Array[float] = [0.03, 0.28, 0.53, 0.78]
-const LOOP_RUN_SPAN: float = 0.19
-## Solid pieces around the loop, at lap fractions.
-const TYRE_WALL_SPOTS: Array[float] = [0.14, 0.40, 0.65, 0.90]
-const STAND_SPOTS: Array[float] = [0.34, 0.60]
-const BOARD_SPOTS: Array[float] = [0.23, 0.73]
-const GANTRY_SPOT: float = 0.10
+## Kenney kit pieces used by the shared layout.
+const BARRIER_MODEL: String = "barrierWall"
+const GRANDSTAND_MODEL: String = "grandStand"
+const LIGHT_MODEL: String = "lightPostLarge"
+const BANNER_MODEL_RED: String = "bannerTowerRed"
+const BANNER_MODEL_GREEN: String = "bannerTowerGreen"
+const FLAG_MODEL_RED: String = "flagRed"
+const FLAG_MODEL_GREEN: String = "flagGreen"
 
 ## Present rules.
 const PRESENT_COUNT: int = 7
@@ -109,15 +96,44 @@ const PRESENT_FLOAT: float = 0.78
 const CARRY_OFFSET := Transform3D(Basis.IDENTITY, Vector3(0.0, 1.02, -1.48))
 const POINT_CLEARANCE: float = 1.0
 
-## POI grip zones that belong to the shared layout rather than the theme.
-const DIRT_RECT := Rect2(39.0, -18.0, 10.0, 36.0)
-const DIRT_GRIP: float = 0.78
-const SKID_CENTRE := Vector2(-22.0, 28.0)
-const SKID_RADIUS: float = 8.0
-const SKID_GRIP: float = 0.70
-## Chicane: two parallel barrier walls with a present in the gap.
-const CHICANE_X: float = 20.0
-const CHICANE_Z: float = 26.0
+## The present lattice. Every point is a cell centre, well clear of the base
+## pads and the barrier ring, so a kart can reach it from any direction.
+const PRESENT_SPOTS: Array[Vector3] = [
+	Vector3(0.0, 0.0, 0.0),
+	Vector3(0.0, 0.0, -32.0),
+	Vector3(16.0, 0.0, 16.0),
+	Vector3(-16.0, 0.0, 16.0),
+	Vector3(16.0, 0.0, -16.0),
+	Vector3(-16.0, 0.0, -16.0),
+	Vector3(32.0, 0.0, 0.0),
+	Vector3(-32.0, 0.0, 0.0),
+	Vector3(32.0, 0.0, 32.0),
+	Vector3(-32.0, 0.0, 32.0),
+	Vector3(32.0, 0.0, -32.0),
+	Vector3(-32.0, 0.0, -32.0),
+	Vector3(0.0, 0.0, 32.0),
+]
+
+## Grandstand / floodlight / banner positions, all on the same lattice.
+const GRANDSTAND_SPOTS: Array[Vector3] = [
+	Vector3(64.0, 0.0, 0.0), Vector3(-64.0, 0.0, 0.0),
+]
+const GRANDSTAND_SCALE: float = TILE_SIZE * 0.75
+const LIGHT_SPOTS: Array[Vector3] = [
+	Vector3(64.0, 0.0, 64.0), Vector3(-64.0, 0.0, 64.0),
+	Vector3(64.0, 0.0, -64.0), Vector3(-64.0, 0.0, -64.0)
+]
+const BANNER_SPOTS: Array[Vector3] = [
+	Vector3(0.0, 0.0, 64.0), Vector3(0.0, 0.0, -64.0)
+]
+## Base flags flank each pad on the 16 m lattice, two per team.
+const BASE_FLAG_OFFSET := Vector2(16.0, 0.0)
+
+## Headless delivery proof.
+const SELFTEST_SPAWN := Vector3(0.0, 0.35, -40.0)
+const SELFTEST_APPROACH: float = 3.0
+const SELFTEST_HOLD_TIMEOUT: float = 7.0
+const SELFTEST_DRIVE_TIMEOUT: float = 14.0
 
 const CART_SYNC_INTERVAL: float = 0.05
 const PRESENT_SYNC_INTERVAL: float = 0.10
@@ -147,22 +163,19 @@ var _team_names: PackedStringArray = PackedStringArray()
 var _hazards: Array[Dictionary] = []
 var _stats: Dictionary = {"objects": 0, "draw_calls": 0, "solid_bodies": 0}
 
-var _loop_spline: RefCounted
 var _pads: Array[Vector3] = []
 var _pad_visuals: Array[MeshInstance3D] = []
 var _pad_labels: Array[Label3D] = []
 var _pillar_labels: Array[Label3D] = []
 var _pillars: Array[Node3D] = []
 var _floor: MeshInstance3D
-var _apron: MeshInstance3D
-var _dirt_plane: MeshInstance3D
-var _skid_plane: MeshInstance3D
+var _checker: MultiMeshInstance3D
+var _paint_lines: MeshInstance3D
+var _centre_ring: MeshInstance3D
 
 var _present_points: Array[Dictionary] = []
 var _presents: Array[Dictionary] = []
 var _present_nodes: Array[Dictionary] = []
-var _present_meshes: Array[Mesh] = []
-var _present_material: Material
 var _ring_material: StandardMaterial3D
 var _ring_colour: Color = Color(1.0, 0.86, 0.35, 0.95)
 var _point_cursor: int = 0
@@ -173,6 +186,8 @@ var _hold_state: Dictionary = {} ## holder key -> {index, time}
 var _claims: Dictionary = {} ## present index -> holder key
 var _client_holds: Dictionary = {} ## peer id -> {index, holding, ms}
 var _hold_send_timer: float = 0.0
+var _hold_sent_index: int = -1
+var _hold_sent_holding: bool = false
 var _carry_saved: Dictionary = {} ## cart instance id -> {max_speed, acceleration}
 
 var _cart: CartPlayer
@@ -211,6 +226,9 @@ var _debug_timer: float = 0.0
 var _selftest_collected: int = 0
 var _selftest_deliveries: int = 0
 var _selftest_cycle: bool = false
+var _selftest_bot: Dictionary = {}
+var _selftest_cart: CartPlayer
+var _selftest_present: int = -1
 
 var _canvas: CanvasLayer
 var _hud_root: Control
@@ -359,21 +377,21 @@ func _upgrade_graphics() -> void:
 
 
 # --------------------------------------------------------------------------
-# arena: ground, perimeter and the handling loop
+# arena: ground, barrier ring and dressing
 
 
 func _build_arena() -> void:
 	_build_ground()
 	_build_perimeter()
-	_build_loop()
-	_build_jump_lane()
-	_build_dirt_strip()
-	_build_skidpad()
-	_build_chicane()
+	_build_markings()
+	_build_grandstands()
 	_build_floodlights()
+	_build_banners()
 
 
 func _build_ground() -> void:
+	## One flat floor, one collider and a bold 16 m checkerboard. The checker is
+	## a single MultiMesh with per-instance flat colours: no texture, one draw.
 	_floor = MeshInstance3D.new()
 	_floor.name = "ArenaFloor"
 	var plane := PlaneMesh.new()
@@ -393,501 +411,176 @@ func _build_ground() -> void:
 	ground.add_child(collision)
 	add_child(ground)
 
-	# Worn concrete over the playfield. Themes without an apron scan simply
-	# leave the floor scan showing.
-	_apron = MeshInstance3D.new()
-	_apron.name = "ArenaApron"
-	var slab := PlaneMesh.new()
-	slab.size = Vector2(ARENA_HALF * 2.0, ARENA_HALF * 2.0)
-	_apron.mesh = slab
-	_apron.position = Vector3(0.0, 0.012, 0.0)
-	add_child(_apron)
-	_apron.visible = false
+	var tile := PlaneMesh.new()
+	tile.size = Vector2(TILE_SIZE, TILE_SIZE)
+	var transforms: Array = []
+	var colours: Array = []
+	for ix in range(-3, 4):
+		for iz in range(-3, 4):
+			transforms.append(Transform3D(Basis.IDENTITY,
+				Vector3(float(ix) * TILE_SIZE, 0.014, float(iz) * TILE_SIZE)))
+			colours.append(_checker_colour(ix, iz))
+	_checker = SceneryKit.multimesh(tile,
+		SceneryKit.instance_material(1.0), transforms, "ArenaChecker", false,
+		colours)
+	add_child(_checker)
+	SceneryKit.bump(_stats, "draw_calls")
+	SceneryKit.bump(_stats, "objects", transforms.size())
+
+
+func _checker_colour(ix: int, iz: int) -> Color:
+	var even: bool = (ix + iz) % 2 == 0
+	return _theme.get("ground" if even else "ground_alt",
+		Color("3d6b7c")) as Color
+
+
+func _refresh_checker() -> void:
+	if _checker == null or _checker.multimesh == null:
+		return
+	var multi: MultiMesh = _checker.multimesh
+	for index in multi.instance_count:
+		var ix: int = (index / 7) - 3
+		var iz: int = (index % 7) - 3
+		multi.set_instance_color(index, _checker_colour(ix, iz))
 
 
 func _build_perimeter() -> void:
-	## One merged wall mesh and one static body. The inner face is exactly at
-	## ARENA_HALF, so the playable rectangle matches the visible wall. Catch
-	## fencing, banners and a painted band make the fence read as a circuit
-	## boundary rather than an invisible box.
-	var body := StaticBody3D.new()
-	body.name = "ArenaWalls"
-	body.collision_layer = CollisionLayers.WORLD
-	body.collision_mask = 0
-	add_child(body)
-	var batch := PropBatch.new()
-	var span: float = ARENA_HALF * 2.0 + WALL_THICKNESS * 2.0
-	var concrete := Color(0.56, 0.57, 0.58)
-	var accent := Color(0.42, 0.44, 0.48)
-	var steel := Color(0.29, 0.32, 0.36)
-	for side: float in [-1.0, 1.0]:
-		var z_centre: float = side * (ARENA_HALF + WALL_THICKNESS * 0.5)
-		var x_centre: float = side * (ARENA_HALF + WALL_THICKNESS * 0.5)
-		batch.add_box(Transform3D(Basis.IDENTITY,
-			Vector3(0.0, WALL_HEIGHT * 0.5, z_centre)),
-			Vector3(span, WALL_HEIGHT, WALL_THICKNESS), concrete)
-		batch.add_box(Transform3D(Basis.IDENTITY,
-			Vector3(0.0, WALL_HEIGHT - 0.10, z_centre)),
-			Vector3(span, 0.20, WALL_THICKNESS + 0.08), accent)
-		batch.add_box(Transform3D(Basis.IDENTITY,
-			Vector3(x_centre, WALL_HEIGHT * 0.5, 0.0)),
-			Vector3(WALL_THICKNESS, WALL_HEIGHT, span), concrete)
-		batch.add_box(Transform3D(Basis.IDENTITY,
-			Vector3(x_centre, WALL_HEIGHT - 0.10, 0.0)),
-			Vector3(WALL_THICKNESS + 0.08, 0.20, span), accent)
-		_add_wall_shape(body, Vector3(0.0, WALL_HEIGHT * 0.5, z_centre),
-			Vector3(span, WALL_HEIGHT, WALL_THICKNESS))
-		_add_wall_shape(body, Vector3(x_centre, WALL_HEIGHT * 0.5, 0.0),
-			Vector3(WALL_THICKNESS, WALL_HEIGHT, span))
-	# Painted hazard band along the bottom of the wall.
-	for side: float in [-1.0, 1.0]:
-		batch.add_box(Transform3D(Basis.IDENTITY,
-			Vector3(0.0, 0.24, side * (ARENA_HALF - 0.02))),
-			Vector3(span, 0.24, 0.05), UiPalette.YELLOW)
-		batch.add_box(Transform3D(Basis.IDENTITY,
-			Vector3(side * (ARENA_HALF - 0.02), 0.24, 0.0)),
-			Vector3(0.05, 0.24, span), UiPalette.YELLOW)
-	# Fence posts along the top of the wall.
-	for side: float in [-1.0, 1.0]:
-		for i in 15:
-			var along: float = -ARENA_HALF + 4.0 + float(i) * 7.7
-			batch.add_box(Transform3D(Basis.IDENTITY,
-				Vector3(along, WALL_HEIGHT + 1.5, side * ARENA_HALF)),
-				Vector3(0.16, 3.0, 0.16), steel)
-			batch.add_box(Transform3D(Basis.IDENTITY,
-				Vector3(side * ARENA_HALF, WALL_HEIGHT + 1.5, along)),
-				Vector3(0.16, 3.0, 0.16), steel)
-	var visual := MeshInstance3D.new()
-	visual.name = "ArenaWallsVisual"
-	visual.mesh = batch.build()
-	visual.material_override = SceneryKit.vertex_material()
-	visual.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	add_child(visual)
-	SceneryKit.bump(_stats, "draw_calls")
-
-	# Catch fencing: one instanced bar mesh for the whole perimeter.
-	var bars: Array = []
-	var step: float = 0.62
-	var count: int = int((ARENA_HALF * 2.0) / step)
-	for i in count:
-		var along: float = -ARENA_HALF + float(i) * step
-		bars.append(Transform3D(Basis.IDENTITY,
-			Vector3(along, WALL_HEIGHT + 1.55, -ARENA_HALF)))
-		bars.append(Transform3D(Basis.IDENTITY,
-			Vector3(along, WALL_HEIGHT + 1.55, ARENA_HALF)))
-		bars.append(Transform3D(Basis.IDENTITY,
-			Vector3(-ARENA_HALF, WALL_HEIGHT + 1.55, along)))
-		bars.append(Transform3D(Basis.IDENTITY,
-			Vector3(ARENA_HALF, WALL_HEIGHT + 1.55, along)))
-	var bar_mesh := BoxMesh.new()
-	bar_mesh.size = Vector3(0.045, 2.9, 0.045)
-	var fence := SceneryKit.multimesh(bar_mesh,
-		SceneryKit.instance_material(0.95), bars, "CatchFence", false)
-	SceneryKit.set_view(fence, 0.0, 110.0)
-	add_child(fence)
-	SceneryKit.bump(_stats, "draw_calls")
-
-	# Sponsor hoardings on the inside face of the fence.
-	var board_batch := PropBatch.new()
-	var texts: PackedStringArray = ["CART SLOP GP", "GRIP TAPE", "TURBO TEA",
-		"SLOP ENERGY", "BIG HAT CO", "MEADOW TYRES"]
-	var colours: Array[Color] = [Color("2e86ab"), Color("e4572e"),
-		Color("f6c945"), Color("3fa34d"), Color("b84a9c"), Color("c9553f")]
-	for i in 6:
-		var side: float = 1.0 if i % 2 == 0 else -1.0
-		var along: float = -34.0 + float(i / 2) * 34.0
-		var spot := Vector3(along, 1.55, side * (ARENA_HALF - 0.06))
-		var yaw: float = PI if side < 0.0 else 0.0
-		board_batch.add_box(Transform3D(Basis(Vector3.UP, yaw),
-			spot + Vector3(0.0, 0.0, side * 0.06)),
-			Vector3(7.0, 1.15, 0.10), colours[i])
-		var label := Label3D.new()
-		label.name = "Hoard_%02d" % i
-		label.text = texts[i]
-		label.font = load(TITLE_FONT)
-		label.font_size = 72
-		label.pixel_size = 0.0092
-		label.outline_size = 10
-		label.outline_modulate = UiPalette.OUTLINE
-		label.modulate = UiPalette.CREAM
-		label.position = spot + Vector3(0.0, 0.0, -side * 0.06)
-		label.rotation.y = yaw + PI
-		add_child(label)
-		SceneryKit.bump(_stats, "objects")
-	var boards := MeshInstance3D.new()
-	boards.name = "Hoardings"
-	boards.mesh = board_batch.build()
-	boards.material_override = SceneryKit.vertex_material()
-	boards.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	add_child(boards)
-	SceneryKit.bump(_stats, "draw_calls")
-	SceneryKit.bump(_stats, "solid_bodies")
-
-
-func _add_wall_shape(body: StaticBody3D, position: Vector3, size: Vector3) -> void:
-	var shape := BoxShape3D.new()
-	shape.size = size
-	var collision := CollisionShape3D.new()
-	collision.shape = shape
-	collision.position = position
-	body.add_child(collision)
-
-
-func _build_loop() -> void:
-	## The handling loop: kerbs on both edges, armco in four runs with a gate
-	## between them, tyre walls, grandstands, the start gantry, distance boards
-	## and marshal posts. Every solid piece is on CollisionLayers.WORLD.
-	_loop_spline = TrackSpline.new(LOOP_PRESET)
-	var total: float = _loop_spline.total_length
-	RacingKit.kerbs(self, _loop_spline, 0.0, total, 1.0, Color("c23a2c"))
-	RacingKit.kerbs(self, _loop_spline, 0.0, total, -1.0, Color("e8e2d2"))
-	SceneryKit.bump(_stats, "draw_calls", 2)
-	SceneryKit.bump(_stats, "objects", 2)
-	for start: float in LOOP_RUN_STARTS:
-		var from_d: float = total * start
-		var to_d: float = total * (start + LOOP_RUN_SPAN)
-		RacingKit.barriers(self, _loop_spline, from_d, to_d, 1.0)
-		RacingKit.barriers(self, _loop_spline, from_d, to_d, -1.0)
-		SceneryKit.bump(_stats, "draw_calls", 2)
-		SceneryKit.bump(_stats, "objects", 2)
-		SceneryKit.bump(_stats, "solid_bodies", 2)
-	for index in TYRE_WALL_SPOTS.size():
-		var side: float = _outside_side(total * TYRE_WALL_SPOTS[index])
-		RacingKit.tyre_wall(self, _loop_spline, total * TYRE_WALL_SPOTS[index],
-			side, 12.0)
-		SceneryKit.bump(_stats, "draw_calls")
-		SceneryKit.bump(_stats, "objects", 33)
-		SceneryKit.bump(_stats, "solid_bodies")
-	for spot: float in STAND_SPOTS:
-		RacingKit.grandstand(self, _loop_spline, total * spot,
-			_outside_side(total * spot))
-		SceneryKit.bump(_stats, "draw_calls", 3)
-		SceneryKit.bump(_stats, "objects", 6)
-		SceneryKit.bump(_stats, "solid_bodies")
-	RacingKit.start_gantry(self, _loop_spline, total * GANTRY_SPOT)
-	SceneryKit.bump(_stats, "draw_calls", 2)
-	SceneryKit.bump(_stats, "objects", 3)
-	SceneryKit.bump(_stats, "solid_bodies")
-	for index in BOARD_SPOTS.size():
-		var distance: float = total * BOARD_SPOTS[index]
-		RacingKit.distance_board(self, _loop_spline, distance,
-			"CARGO RUSH" if index == 0 else "BASE")
-		SceneryKit.bump(_stats, "draw_calls", 2)
-		SceneryKit.bump(_stats, "objects", 2)
-		SceneryKit.bump(_stats, "solid_bodies")
-	_build_marshal_posts(total)
-	_build_loop_tyre_bundles(total)
-
-
-func _outside_side(distance: float) -> float:
-	## Which side of the loop is the outside at `distance`, using the same
-	## signed turn test racing_kit uses.
-	if _loop_spline == null:
-		return 1.0
-	var before: float = _loop_spline.yaw_at(distance - 6.0)
-	var after: float = _loop_spline.yaw_at(distance + 6.0)
-	return 1.0 if angle_difference(before, after) > 0.0 else -1.0
-
-
-func _build_marshal_posts(total: float) -> void:
-	## Six marshal huts on the outside of the loop. One merged mesh, one static
-	## body with a box per hut: a real obstacle, not a painting.
-	var body := StaticBody3D.new()
-	body.name = "MarshalPosts"
-	body.collision_layer = CollisionLayers.WORLD
-	body.collision_mask = 0
-	add_child(body)
-	var batch := PropBatch.new()
-	var hut := Color(0.86, 0.84, 0.74)
-	var roof := Color(0.74, 0.28, 0.22)
-	var yellow := Color(0.95, 0.76, 0.18)
-	for i in 6:
-		var fraction: float = 0.055 + float(i) * 0.165
-		var distance: float = total * fraction
-		var side: float = _outside_side(distance)
-		var frame: Dictionary = _loop_spline.sample(distance)
-		var position: Vector3 = (frame["position"] as Vector3) \
-			+ (frame["right"] as Vector3) * (side * 9.4)
-		var yaw: float = _loop_spline.yaw_at(distance)
-		var root := Transform3D(Basis(Vector3.UP, yaw), position)
-		batch.add_box(root * Transform3D(Basis.IDENTITY,
-			Vector3(0.0, 1.05, 0.0)), Vector3(2.0, 2.1, 1.7), hut)
-		batch.add_box(root * Transform3D(Basis.IDENTITY,
-			Vector3(0.0, 2.22, 0.0)), Vector3(2.4, 0.18, 2.1), roof)
-		batch.add_box(root * Transform3D(Basis.IDENTITY,
-			Vector3(0.0, 1.55, -0.86)), Vector3(1.2, 0.7, 0.06), Color(0.18, 0.22, 0.26))
-		batch.add_box(root * Transform3D(Basis.IDENTITY,
-			Vector3(1.25, 2.6, 0.0)), Vector3(0.08, 3.2, 0.08), Color(0.3, 0.32, 0.36))
-		batch.add_box(root * Transform3D(Basis.IDENTITY,
-			Vector3(1.25, 3.9, 0.0)), Vector3(0.9, 0.55, 0.04), yellow)
-		var shape := BoxShape3D.new()
-		shape.size = Vector3(2.2, 2.4, 1.9)
-		var collision := CollisionShape3D.new()
-		collision.shape = shape
-		collision.transform = root * Transform3D(Basis.IDENTITY,
-			Vector3(0.0, 1.2, 0.0))
-		body.add_child(collision)
-		SceneryKit.bump(_stats, "objects", 5)
-	var visual := MeshInstance3D.new()
-	visual.name = "MarshalHuts"
-	visual.mesh = batch.build()
-	visual.material_override = SceneryKit.vertex_material()
-	visual.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	add_child(visual)
-	SceneryKit.bump(_stats, "draw_calls")
-	SceneryKit.bump(_stats, "solid_bodies")
-
-
-func _build_loop_tyre_bundles(total: float) -> void:
-	## Bundles of spare tyres stacked at the gate mouths, so every entry to the
-	## loop reads as a working service road. Solid on WORLD.
-	var body := StaticBody3D.new()
-	body.name = "TyreBundles"
-	body.collision_layer = CollisionLayers.WORLD
-	body.collision_mask = 0
-	add_child(body)
+	## A closed ring of Kenney barrierWall pieces, 7 per side on the 16 m
+	## lattice. The visual inner face is exactly ARENA_HALF and four continuous
+	## WORLD boxes match it, so the playable rectangle is the visible one.
+	var size: Vector3 = CargoTheme.scaled_size(BARRIER_MODEL,
+		Vector3.ONE * TILE_SIZE)
+	var depth: float = maxf(size.z, 0.1)
+	var height: float = maxf(size.y, 0.1)
 	var transforms: Array = []
-	var colours: Array = []
-	for start: float in LOOP_RUN_STARTS:
-		var distance: float = total * (start + LOOP_RUN_SPAN + 0.03)
-		var frame: Dictionary = _loop_spline.sample(distance)
-		for side: float in [-1.0, 1.0]:
-			var position: Vector3 = (frame["position"] as Vector3) \
-				+ (frame["right"] as Vector3) * (side * 7.6)
-			for level in 2:
-				transforms.append(Transform3D(Basis.IDENTITY,
-					position + Vector3.UP * (0.16 + float(level) * 0.32)))
-				colours.append(Color(0.08, 0.08, 0.10) if level == 0
-					else Color(0.76, 0.23, 0.18))
-			var shape := BoxShape3D.new()
-			shape.size = Vector3(1.4, 0.64, 1.4)
-			var collision := CollisionShape3D.new()
-			collision.shape = shape
-			collision.position = position + Vector3.UP * 0.32
-			body.add_child(collision)
-			SceneryKit.bump(_stats, "objects", 2)
-	if transforms.is_empty():
-		body.queue_free()
-		return
-	var mesh := CylinderMesh.new()
-	mesh.top_radius = 0.48
-	mesh.bottom_radius = 0.48
-	mesh.height = 0.30
-	mesh.radial_segments = 12
-	mesh.rings = 1
-	var tyres := SceneryKit.multimesh(mesh,
-		SceneryKit.instance_material(0.98), transforms, "TyreBundles", false,
-		colours)
-	SceneryKit.set_view(tyres, 0.0, 200.0)
-	add_child(tyres)
-	SceneryKit.bump(_stats, "draw_calls")
-	SceneryKit.bump(_stats, "solid_bodies")
-
-
-func _build_jump_lane() -> void:
-	## A straight kicker lane along the south apron: a paved lane, two ramps and
-	## marker cones. The ramps are real drivable wedges with concave colliders.
-	var lane := MeshInstance3D.new()
-	lane.name = "JumpLane"
-	var plane := PlaneMesh.new()
-	plane.size = Vector2(84.0, 10.0)
-	lane.mesh = plane
-	lane.position = Vector3(0.0, 0.02, -30.0)
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = Color(0.38, 0.40, 0.43)
-	mat.roughness = 0.88
-	lane.material_override = mat
-	add_child(lane)
-	SceneryKit.bump(_stats, "draw_calls")
-	_add_ramp(Vector3(-12.0, 0.0, -30.0), -PI * 0.5, 6.0, 9.0, 0.72)
-	_add_ramp(Vector3(8.0, 0.0, -30.0), -PI * 0.5, 6.0, 9.0, 0.72)
-	# Cones line the lane. They sit on the non-blocking PROP layer, so a kart
-	# can clip one without being stopped.
-	var cone_transforms: Array = []
-	var cone_colours: Array = []
-	for i in 12:
-		var x: float = -36.0 + float(i) * 6.5
-		for side: float in [-1.0, 1.0]:
-			cone_transforms.append(Transform3D(Basis.IDENTITY,
-				Vector3(x, 0.0, -30.0 + side * 4.6)))
-			cone_colours.append(Color(0.94, 0.44, 0.12))
-	var cone := CylinderMesh.new()
-	cone.top_radius = 0.05
-	cone.bottom_radius = 0.24
-	cone.height = 0.62
-	cone.radial_segments = 8
-	cone.rings = 1
-	var cones := SceneryKit.multimesh(cone,
-		SceneryKit.instance_material(0.85), cone_transforms, "LaneCones", false,
-		cone_colours)
-	SceneryKit.set_view(cones, 0.0, 120.0)
-	add_child(cones)
-	SceneryKit.bump(_stats, "draw_calls")
-	SceneryKit.bump(_stats, "objects", cone_transforms.size())
-
-
-func _add_ramp(centre: Vector3, yaw: float, width: float, length: float,
-		height: float) -> void:
-	## A wedge that rises from +Z to a lip at -Z in local space, with a vertical
-	## back face. The mesh and the concave collider share the same corners, so
-	## the kart drives up exactly what it can see.
-	var root := Transform3D(Basis(Vector3.UP, yaw), centre)
-	var half_w: float = width * 0.5
-	var half_l: float = length * 0.5
-	var entry_l := Vector3(-half_w, 0.0, half_l)
-	var entry_r := Vector3(half_w, 0.0, half_l)
-	var lip_l := Vector3(-half_w, height, -half_l)
-	var lip_r := Vector3(half_w, height, -half_l)
-	var foot_l := Vector3(-half_w, 0.0, -half_l)
-	var foot_r := Vector3(half_w, 0.0, -half_l)
-	var batch := PropBatch.new()
-	var deck := Color(0.52, 0.54, 0.56)
-	var stripe := Color(0.95, 0.76, 0.18)
-	batch.add_quad(root * entry_l, root * entry_r, root * lip_r, root * lip_l, deck)
-	batch.add_quad(root * lip_l, root * lip_r, root * foot_r, root * foot_l,
-		deck.darkened(0.18))
-	batch.add_triangle(root * entry_l, root * lip_l, root * foot_l, deck.darkened(0.08))
-	batch.add_triangle(root * entry_r, root * foot_r, root * lip_r, deck.darkened(0.08))
-	batch.add_quad(root * (lip_l + Vector3(0.0, 0.02, -0.55)),
-		root * (lip_r + Vector3(0.0, 0.02, -0.55)),
-		root * (lip_r + Vector3(0.0, -0.22, -0.55)),
-		root * (lip_l + Vector3(0.0, -0.22, -0.55)), stripe)
-	var visual := MeshInstance3D.new()
-	visual.name = "Ramp"
-	visual.mesh = batch.build()
-	visual.material_override = SceneryKit.vertex_material()
-	visual.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	add_child(visual)
-	var body := StaticBody3D.new()
-	body.name = "RampCollision"
-	body.collision_layer = CollisionLayers.WORLD
-	body.collision_mask = 0
-	add_child(body)
-	var faces := PackedVector3Array([
-		root * entry_l, root * entry_r, root * lip_r,
-		root * entry_l, root * lip_r, root * lip_l,
-		root * lip_l, root * lip_r, root * foot_r,
-		root * lip_l, root * foot_r, root * foot_l,
-		root * entry_l, root * lip_l, root * foot_l,
-		root * entry_r, root * foot_r, root * lip_r,
-	])
-	var shape := ConcavePolygonShape3D.new()
-	shape.set_faces(faces)
-	shape.backface_collision = true
-	var collision := CollisionShape3D.new()
-	collision.shape = shape
-	body.add_child(collision)
-	SceneryKit.bump(_stats, "draw_calls")
-	SceneryKit.bump(_stats, "objects", 2)
-	SceneryKit.bump(_stats, "solid_bodies")
-
-
-func _build_dirt_strip() -> void:
-	_dirt_plane = MeshInstance3D.new()
-	_dirt_plane.name = "DirtStrip"
-	var plane := PlaneMesh.new()
-	plane.size = Vector2(DIRT_RECT.size.x, DIRT_RECT.size.y)
-	_dirt_plane.mesh = plane
-	_dirt_plane.position = Vector3(DIRT_RECT.position.x + DIRT_RECT.size.x * 0.5,
-		0.03, DIRT_RECT.position.y + DIRT_RECT.size.y * 0.5)
-	add_child(_dirt_plane)
-	# Marker posts on the strip edges.
-	var batch := PropBatch.new()
 	for side: float in [-1.0, 1.0]:
-		for i in 6:
-			var z: float = -16.0 + float(i) * 6.5
-			batch.add_box(Transform3D(Basis.IDENTITY,
-				Vector3(DIRT_RECT.position.x + (0.0 if side < 0.0
-					else DIRT_RECT.size.x), 0.45, z)),
-				Vector3(0.16, 0.9, 0.16), Color(0.92, 0.80, 0.42))
-	var posts := MeshInstance3D.new()
-	posts.name = "DirtMarkers"
-	posts.mesh = batch.build()
-	posts.material_override = SceneryKit.vertex_material()
-	posts.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	add_child(posts)
-	SceneryKit.bump(_stats, "draw_calls")
-	SceneryKit.bump(_stats, "objects", 12)
-
-
-func _build_skidpad() -> void:
-	_skid_plane = MeshInstance3D.new()
-	_skid_plane.name = "Skidpad"
-	var disc := CylinderMesh.new()
-	disc.top_radius = SKID_RADIUS
-	disc.bottom_radius = SKID_RADIUS
-	disc.height = 0.05
-	disc.radial_segments = 36
-	disc.rings = 1
-	_skid_plane.mesh = disc
-	_skid_plane.position = Vector3(SKID_CENTRE.x, 0.035, SKID_CENTRE.y)
-	add_child(_skid_plane)
-	# A white rim and four cones mark the pad.
-	var rim := MeshInstance3D.new()
-	rim.name = "SkidpadRim"
-	var ring := CylinderMesh.new()
-	ring.top_radius = SKID_RADIUS + 0.5
-	ring.bottom_radius = SKID_RADIUS + 0.5
-	ring.height = 0.03
-	ring.radial_segments = 36
-	ring.rings = 1
-	rim.mesh = ring
-	rim.position = Vector3(SKID_CENTRE.x, 0.02, SKID_CENTRE.y)
-	var rim_mat := StandardMaterial3D.new()
-	rim_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	rim_mat.albedo_color = UiPalette.CREAM
-	rim.material_override = rim_mat
-	rim.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	add_child(rim)
-	SceneryKit.bump(_stats, "draw_calls", 2)
-
-
-func _build_chicane() -> void:
-	## Two short parallel barrier walls on the north-east apron with a present
-	## slot between them: the "between the barriers" point of interest.
-	var body := StaticBody3D.new()
-	body.name = "Chicane"
-	body.collision_layer = CollisionLayers.WORLD
-	body.collision_mask = 0
-	add_child(body)
-	var batch := PropBatch.new()
-	var steel := Color(0.29, 0.32, 0.36)
-	var cream := Color(0.90, 0.86, 0.76)
-	for side: float in [-1.0, 1.0]:
-		var x: float = CHICANE_X + side * 3.2
 		for i in 7:
-			var z: float = CHICANE_Z - 6.0 + float(i) * 2.0
-			batch.add_box(Transform3D(Basis.IDENTITY, Vector3(x, 0.62, z)),
-				Vector3(0.18, 1.24, 2.0),
-				steel if i % 2 == 0 else cream)
-		var shape := BoxShape3D.new()
-		shape.size = Vector3(0.30, 1.24, 14.0)
-		var collision := CollisionShape3D.new()
-		collision.shape = shape
-		collision.position = Vector3(x, 0.62, CHICANE_Z)
-		body.add_child(collision)
-	var visual := MeshInstance3D.new()
-	visual.name = "ChicaneWalls"
-	visual.mesh = batch.build()
-	visual.material_override = SceneryKit.vertex_material()
-	visual.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	add_child(visual)
+			var along: float = -ARENA_HALF + TILE_SIZE * (float(i) + 0.5)
+			transforms.append(CargoTheme.fit_transform(BARRIER_MODEL,
+				Vector3(along, 0.0, side * (ARENA_HALF + depth * 0.5)),
+				0.0, Vector3.ONE * TILE_SIZE))
+			transforms.append(CargoTheme.fit_transform(BARRIER_MODEL,
+				Vector3(side * (ARENA_HALF + depth * 0.5), 0.0, along),
+				PI * 0.5, Vector3.ONE * TILE_SIZE))
+	var body: StaticBody3D = CargoTheme.solid_root(self, "ArenaBarrierCollision")
+	var span: float = ARENA_HALF * 2.0 + depth * 2.0
+	for side: float in [-1.0, 1.0]:
+		CargoTheme.add_box_collider(body, Transform3D(Basis.IDENTITY,
+			Vector3(0.0, height * 0.5,
+				side * (ARENA_HALF + depth * 0.5))),
+			Vector3(span, height, depth))
+		CargoTheme.add_box_collider(body, Transform3D(Basis.IDENTITY,
+			Vector3(side * (ARENA_HALF + depth * 0.5), height * 0.5, 0.0)),
+			Vector3(depth, height, span))
+	CargoTheme.batch_model(self, BARRIER_MODEL, transforms, "BarrierRing", true)
 	SceneryKit.bump(_stats, "draw_calls")
-	SceneryKit.bump(_stats, "objects", 14)
+	SceneryKit.bump(_stats, "objects", transforms.size())
+	SceneryKit.bump(_stats, "solid_bodies")
+
+
+func _build_markings() -> void:
+	## Flat paint only: boundary stripes, a centre cross and a ring. None of it
+	## collides, because a line on the floor is not a prop.
+	_paint_lines = MeshInstance3D.new()
+	_paint_lines.name = "FloorPaint"
+	_paint_lines.material_override = SceneryKit.vertex_material()
+	_paint_lines.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(_paint_lines)
+
+	_centre_ring = MeshInstance3D.new()
+	_centre_ring.name = "CentreRing"
+	var torus := TorusMesh.new()
+	torus.inner_radius = 7.4
+	torus.outer_radius = 8.4
+	torus.rings = 48
+	torus.ring_segments = 6
+	_centre_ring.mesh = torus
+	_centre_ring.scale = Vector3(1.0, 0.03, 1.0)
+	_centre_ring.position = Vector3(0.0, 0.026, 0.0)
+	_centre_ring.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(_centre_ring)
+	_refresh_markings()
+	SceneryKit.bump(_stats, "draw_calls", 2)
+	SceneryKit.bump(_stats, "objects", 6)
+
+
+func _refresh_markings() -> void:
+	## The paint is theme-coloured, so a late client theme change rebuilds the
+	## merged floor mesh instead of leaving the previous skin's stripes behind.
+	if _paint_lines == null or _centre_ring == null:
+		return
+	var paint: Color = _theme.get("paint", UiPalette.CREAM) as Color
+	var accent: Color = _theme.get("paint_alt", UiPalette.YELLOW) as Color
+	var batch := PropBatch.new()
+	for side: float in [-1.0, 1.0]:
+		batch.add_box(Transform3D(Basis.IDENTITY,
+			Vector3(0.0, 0.022, side * (ARENA_HALF - 2.0))),
+			Vector3(ARENA_HALF * 2.0 - 4.0, 0.04, 0.7), paint)
+		batch.add_box(Transform3D(Basis.IDENTITY,
+			Vector3(side * (ARENA_HALF - 2.0), 0.022, 0.0)),
+			Vector3(0.7, 0.04, ARENA_HALF * 2.0 - 4.0), paint)
+	batch.add_box(Transform3D(Basis.IDENTITY, Vector3(0.0, 0.024, 0.0)),
+		Vector3(2.2, 0.04, 18.0), accent)
+	batch.add_box(Transform3D(Basis.IDENTITY, Vector3(0.0, 0.026, 0.0)),
+		Vector3(18.0, 0.04, 2.2), accent)
+	_paint_lines.mesh = batch.build()
+	_centre_ring.material_override = CargoTheme.flat_material(accent)
+
+
+func _build_grandstands() -> void:
+	## Two Kenney grandstands outside the barrier, facing the arena. The whole
+	## footprint is one WORLD box: a real obstacle, never drive-through dressing.
+	var body: StaticBody3D = CargoTheme.solid_root(self, "GrandstandCollision")
+	for index in GRANDSTAND_SPOTS.size():
+		var spot: Vector3 = GRANDSTAND_SPOTS[index]
+		var yaw: float = -PI * 0.5 if spot.x < 0.0 else PI * 0.5
+		if CargoTheme.place_model(self, GRANDSTAND_MODEL, spot, yaw,
+				Vector3.ONE * GRANDSTAND_SCALE,
+				"Grandstand_%d" % index) == null:
+			continue
+		var size: Vector3 = CargoTheme.scaled_size(GRANDSTAND_MODEL,
+			Vector3.ONE * GRANDSTAND_SCALE)
+		CargoTheme.add_box_collider(body, Transform3D(Basis(Vector3.UP, yaw),
+			spot + Vector3.UP * (size.y * 0.5)), size)
+		SceneryKit.bump(_stats, "objects")
+		SceneryKit.bump(_stats, "draw_calls")
 	SceneryKit.bump(_stats, "solid_bodies")
 
 
 func _build_floodlights() -> void:
-	var spots: Array[Vector3] = [
-		Vector3(-40.0, 0.0, 40.0), Vector3(40.0, 0.0, 40.0),
-		Vector3(-40.0, 0.0, -40.0), Vector3(40.0, 0.0, -40.0),
-		Vector3(-13.0, 0.0, 52.0), Vector3(13.0, 0.0, -52.0),
-	]
-	for spot: Vector3 in spots:
-		RacingKit.floodlight(self, spot)
-		SceneryKit.bump(_stats, "draw_calls", 2)
-		SceneryKit.bump(_stats, "objects", 7)
-		SceneryKit.bump(_stats, "solid_bodies")
+	## Four Kenney light posts on the corner cells outside the barrier. Each
+	## pole is solid on WORLD with a cylinder collider.
+	var body: StaticBody3D = CargoTheme.solid_root(self, "LightCollision")
+	for index in LIGHT_SPOTS.size():
+		var spot: Vector3 = LIGHT_SPOTS[index]
+		if CargoTheme.place_model(self, LIGHT_MODEL, spot, 0.0,
+				Vector3.ONE * TILE_SIZE, "Floodlight_%d" % index) == null:
+			continue
+		var size: Vector3 = CargoTheme.scaled_size(LIGHT_MODEL,
+			Vector3.ONE * TILE_SIZE)
+		CargoTheme.add_cylinder_collider(body, spot, 1.0, size.y)
+		SceneryKit.bump(_stats, "objects")
+		SceneryKit.bump(_stats, "draw_calls")
+	SceneryKit.bump(_stats, "solid_bodies")
+
+
+func _build_banners() -> void:
+	## Team-coloured Kenney banner towers behind each base, outside the wall.
+	var body: StaticBody3D = CargoTheme.solid_root(self, "BannerCollision")
+	for index in BANNER_SPOTS.size():
+		var spot: Vector3 = BANNER_SPOTS[index]
+		var model: String = BANNER_MODEL_GREEN if index == 0 else BANNER_MODEL_RED
+		var yaw: float = 0.0 if spot.z > 0.0 else PI
+		if CargoTheme.place_model(self, model, spot, yaw,
+				Vector3.ONE * TILE_SIZE, "Banner_%d" % index) == null:
+			continue
+		var size: Vector3 = CargoTheme.scaled_size(model,
+			Vector3.ONE * TILE_SIZE)
+		CargoTheme.add_box_collider(body, Transform3D(Basis(Vector3.UP, yaw),
+			spot + Vector3.UP * (size.y * 0.5)), size)
+		SceneryKit.bump(_stats, "objects")
+		SceneryKit.bump(_stats, "draw_calls")
+	SceneryKit.bump(_stats, "solid_bodies")
 
 
 # --------------------------------------------------------------------------
@@ -947,36 +640,30 @@ func _build_bases() -> void:
 
 
 func _build_base_structures(team: int, centre: Vector3) -> void:
-	## Flag poles and the scoreboard pillar. Both are solid on WORLD, so a kart
-	## cannot drive through its own base furniture.
+	## Kenney flags on the pad corners and the scoreboard pillar. Every pole and
+	## the pillar are solid on WORLD, so a kart cannot drive through base
+	## furniture.
 	var outward: float = signf(BASE_Z[team])
 	var body := StaticBody3D.new()
 	body.name = "BaseSolids_%d" % team
 	body.collision_layer = CollisionLayers.WORLD
 	body.collision_mask = 0
 	add_child(body)
-	var batch := PropBatch.new()
 	var colour: Color = TEAM_COLORS[team]
-	var pole := Color(0.32, 0.34, 0.38)
+	var flag_model: String = FLAG_MODEL_GREEN if team == 0 else FLAG_MODEL_RED
+	var flag_scale: Vector3 = Vector3.ONE * 8.0
 	for side: float in [-1.0, 1.0]:
-		var pole_pos := Vector3(side * (PAD_HALF.x - 0.6), 0.0,
-			centre.z + outward * (PAD_HALF.y - 0.4))
-		batch.add_cylinder(Transform3D(Basis.IDENTITY,
-			pole_pos + Vector3.UP * 2.4), 0.09, 4.8, 8, pole)
-		batch.add_box(Transform3D(Basis(Vector3.UP, PI * 0.5),
-			pole_pos + Vector3.UP * 3.9 + Vector3(0.0, 0.0, 0.75)),
-			Vector3(1.5, 1.0, 0.05), colour)
-		batch.add_box(Transform3D(Basis.IDENTITY,
-			pole_pos + Vector3.UP * 4.7), Vector3(0.3, 0.3, 0.3),
-			UiPalette.YELLOW)
-		var pole_shape := CylinderShape3D.new()
-		pole_shape.radius = 0.16
-		pole_shape.height = 4.8
-		var pole_collision := CollisionShape3D.new()
-		pole_collision.shape = pole_shape
-		pole_collision.position = pole_pos + Vector3.UP * 2.4
-		body.add_child(pole_collision)
-		SceneryKit.bump(_stats, "objects", 3)
+		var flag_pos := Vector3(side * BASE_FLAG_OFFSET.x, 0.0,
+			centre.z + outward * BASE_FLAG_OFFSET.y)
+		var flag_yaw: float = -PI * 0.5 * outward
+		if CargoTheme.place_model(self, flag_model, flag_pos, flag_yaw,
+				flag_scale, "BaseFlag_%d_%d" % [team, int(side)]) != null:
+			var flag_size: Vector3 = CargoTheme.scaled_size(flag_model,
+				flag_scale)
+			CargoTheme.add_cylinder_collider(body, flag_pos, 0.35,
+				flag_size.y)
+			SceneryKit.bump(_stats, "objects")
+			SceneryKit.bump(_stats, "draw_calls")
 
 	var pillar_pos := Vector3(0.0, 0.0, centre.z + outward * (PAD_HALF.y + 1.6))
 	var pillar := Node3D.new()
@@ -999,12 +686,14 @@ func _build_base_structures(team: int, centre: Vector3) -> void:
 	pillar_mesh.mesh = pillar_batch.build()
 	pillar_mesh.material_override = SceneryKit.vertex_material()
 	pillar.add_child(pillar_mesh)
+	# The pillar is solid: the shape belongs to the team's WORLD static body,
+	# not to the Node3D visual, or it would never enter the physics world.
 	var pillar_shape := BoxShape3D.new()
 	pillar_shape.size = Vector3(1.3, 5.2, 1.3)
 	var pillar_collision := CollisionShape3D.new()
 	pillar_collision.shape = pillar_shape
-	pillar_collision.position = Vector3(0.0, 2.6, 0.0)
-	pillar.add_child(pillar_collision)
+	pillar_collision.position = pillar_pos + Vector3.UP * 2.6
+	body.add_child(pillar_collision)
 	_pillars.append(pillar)
 
 	for side: float in [-1.0, 1.0]:
@@ -1068,24 +757,13 @@ func _apply_theme() -> void:
 	add_child(_theme_root)
 	var arena := {
 		"half": ARENA_HALF,
-		"loop_centre": Vector3.ZERO,
-		"loop_extent": Vector2(34.0, 15.0),
 		"base_pads": _pads,
 	}
 	_hazards = CargoTheme.build_scenery(_theme_root, _theme, arena, _stats)
 	if _floor != null:
 		_floor.material_override = CargoTheme.floor_material(_theme)
-	var apron: Material = CargoTheme.apron_material(_theme)
-	if _apron != null:
-		_apron.visible = apron != null
-		if apron != null:
-			_apron.material_override = apron
-	if _dirt_plane != null:
-		_dirt_plane.material_override = CargoTheme.dirt_material(_theme)
-	if _skid_plane != null:
-		_skid_plane.material_override = CargoTheme.skid_material(_theme)
-	_present_meshes = CargoTheme.present_meshes(_theme)
-	_present_material = CargoTheme.present_material(_theme)
+	_refresh_checker()
+	_refresh_markings()
 	_apply_sky()
 	_refresh_present_visuals()
 
@@ -1113,42 +791,17 @@ func _apply_sky() -> void:
 
 
 func _build_present_pool() -> void:
-	## Collect every point of interest, then build one reusable present node per
-	## slot. Nothing is placed in the world until the race starts, so a client
-	## never shows a present the host has not spawned.
+	## Build one reusable present node per slot on the 16 m lattice. Nothing is
+	## placed in the world until the race starts, so a client never shows a
+	## present the host has not spawned.
 	_present_points.clear()
-	var total: float = _loop_spline.total_length if _loop_spline != null else 1.0
-	for fraction: float in [0.12, 0.44, 0.74]:
-		var frame: Dictionary = _loop_spline.sample(total * fraction)
-		_add_present_point(frame["position"] as Vector3, "handling loop")
-	var gantry: Dictionary = _loop_spline.sample(total * GANTRY_SPOT)
-	_add_present_point(gantry["position"] as Vector3, "under the gantry")
-	for spot: float in STAND_SPOTS:
-		var distance: float = total * spot
-		var side: float = _outside_side(distance)
-		var frame: Dictionary = _loop_spline.sample(distance)
-		var position: Vector3 = (frame["position"] as Vector3) \
-			+ (frame["right"] as Vector3) * (side * 3.8)
-		_add_present_point(position, "near the stands")
-	_add_present_point(Vector3(SKID_CENTRE.x, 0.0, SKID_CENTRE.y), "skidpad")
-	_add_present_point(Vector3(SKID_CENTRE.x + 4.0, 0.0, SKID_CENTRE.y + 2.0),
-		"skidpad")
-	_add_present_point(Vector3(-30.0, 0.0, -30.0), "jump lane")
-	_add_present_point(Vector3(24.0, 0.0, -30.0), "jump lane")
-	_add_present_point(Vector3(44.0, 0.0, 6.0), "dirt strip")
-	_add_present_point(Vector3(43.0, 0.0, -10.0), "dirt strip")
-	_add_present_point(Vector3(CHICANE_X, 0.0, CHICANE_Z - 2.0),
-		"between barriers")
-	if _selftest:
-		# Three presents, all within reach of the south base, so the scripted
-		# fifteen seconds can actually prove a full bot cycle.
-		_present_points.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
-			return _planar_distance(a["position"] as Vector3, _pads[1]) \
-				< _planar_distance(b["position"] as Vector3, _pads[1]))
-		while _present_points.size() > 3:
-			_present_points.pop_back()
-	var count: int = _present_points.size() if _selftest else PRESENT_COUNT
-	for i in count:
+	for spot: Vector3 in PRESENT_SPOTS:
+		_add_present_point(spot, "lattice")
+	_ring_material = StandardMaterial3D.new()
+	_ring_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	_ring_material.vertex_color_use_as_albedo = true
+	_ring_material.cull_mode = BaseMaterial3D.CULL_DISABLED
+	for i in PRESENT_COUNT:
 		_presents.append({
 			"point": -1,
 			"position": Vector3.ZERO,
@@ -1156,7 +809,6 @@ func _build_present_pool() -> void:
 			"carrier": 0,
 			"respawn": 0.0,
 			"hold": 0.0,
-			"mesh": i % maxi(_present_meshes.size(), 1),
 		})
 		_present_nodes.append(_build_present_node(i))
 
@@ -1173,12 +825,7 @@ func _build_present_node(index: int) -> Dictionary:
 	root.name = "Present_%02d" % index
 	root.visible = false
 	add_child(root)
-	var mesh := MeshInstance3D.new()
-	mesh.name = "Gift"
-	if not _present_meshes.is_empty():
-		mesh.mesh = _present_meshes[index % _present_meshes.size()]
-	mesh.material_override = _present_material
-	root.add_child(mesh)
+	CargoTheme.build_present(root, _theme, index)
 	var halo := MeshInstance3D.new()
 	halo.name = "Halo"
 	var disc := CylinderMesh.new()
@@ -1192,7 +839,8 @@ func _build_present_node(index: int) -> Dictionary:
 	halo_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	halo_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	halo_mat.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
-	halo_mat.albedo_color = Color(1.0, 0.84, 0.32, 0.30)
+	var accent: Color = _theme.get("present_accent", CargoTheme.accent()) as Color
+	halo_mat.albedo_color = Color(accent.r, accent.g, accent.b, 0.30)
 	halo.material_override = halo_mat
 	halo.position = Vector3(0.0, -0.70, 0.0)
 	halo.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
@@ -1207,7 +855,6 @@ func _build_present_node(index: int) -> Dictionary:
 	root.add_child(ring)
 	return {
 		"root": root,
-		"mesh": mesh,
 		"halo": halo,
 		"ring": ring,
 		"ring_mesh": ring_mesh,
@@ -1216,13 +863,24 @@ func _build_present_node(index: int) -> Dictionary:
 
 
 func _refresh_present_visuals() -> void:
+	## Rebuild the Kenney crate and ribbon when a client receives a new theme.
+	var accent: Color = _theme.get("present_accent", CargoTheme.accent()) as Color
+	_ring_colour = Color(accent.r, accent.g, accent.b, 0.95)
 	for i in _present_nodes.size():
 		var node: Dictionary = _present_nodes[i]
-		var mesh: MeshInstance3D = node["mesh"] as MeshInstance3D
-		if mesh == null or _present_meshes.is_empty():
+		var root: Node3D = node.get("root") as Node3D
+		if root == null:
 			continue
-		mesh.mesh = _present_meshes[i % _present_meshes.size()]
-		mesh.material_override = _present_material
+		for child: Node in root.get_children():
+			if child.name == "Crate" or child.name == "Ribbon":
+				child.queue_free()
+		CargoTheme.build_present(root, _theme, i)
+		var halo: MeshInstance3D = node.get("halo") as MeshInstance3D
+		if halo != null:
+			var mat: StandardMaterial3D = halo.material_override \
+				as StandardMaterial3D
+			if mat != null:
+				mat.albedo_color = Color(accent.r, accent.g, accent.b, 0.30)
 
 
 func _start_presents() -> void:
@@ -1638,7 +1296,7 @@ func _build_bots() -> void:
 
 func _bot_count() -> int:
 	if _selftest:
-		return 2
+		return 1
 	if _multiplayer:
 		return clampi(Network.session_bot_count, 0, BOT_MAX)
 	return clampi(maxi(GameSettings.effective_bot_count(), BOT_MIN), BOT_MIN, BOT_MAX)
@@ -1670,16 +1328,10 @@ func _spawn_bot(index: int, ghost: bool) -> void:
 	cart.name = "CargoBot_%d" % (index + 1)
 	var team: int = _bot_team(index)
 	var spawn: Vector3 = _bot_spawn(index)
-	if _selftest and index == 0 and not _present_points.is_empty():
-		# Put the first bot within sight of the nearest present so the fifteen
-		# second self-test can prove the full pickup-carry-deliver cycle. The
-		# present pool is spawned later, so the authored point is the anchor.
-		var target: Vector3 = _present_points[0]["position"] as Vector3
-		var to_base: Vector3 = _pads[team] - target
-		to_base.y = 0.0
-		if to_base.length_squared() < 0.1:
-			to_base = Vector3.FORWARD
-		spawn = target + to_base.normalized() * 7.0
+	if _selftest and index == 0:
+		# The proof bot starts on a lattice cell in the open south half, with a
+		# clear straight line to every nearby present and to its own base.
+		spawn = SELFTEST_SPAWN
 	cart.position = spawn
 	cart.rotation.y = atan2(-(spawn.x - _pads[team].x), -(spawn.z - _pads[team].z))
 	if not ghost:
@@ -1718,6 +1370,7 @@ func _spawn_bot(index: int, ghost: bool) -> void:
 		"seek_time": 0.0,
 		"hold_time": 0.0,
 		"carry_time": 0.0,
+		"selftest": _selftest and index == 0,
 	})
 
 
@@ -1781,6 +1434,10 @@ func _tick_bots(delta: float) -> void:
 		return
 	for index in _bots.size():
 		var entry: Dictionary = _bots[index]
+		if bool(entry.get("selftest", false)):
+			# The headless proof drives this cart step by step in
+			# _run_self_test; normal relay AI must not fight it.
+			continue
 		var cart: CartPlayer = entry.get("cart") as CartPlayer
 		var ai: SandboxBot = entry.get("ai") as SandboxBot
 		if cart == null or not is_instance_valid(cart) or ai == null:
@@ -1913,7 +1570,16 @@ func _bot_release(entry: Dictionary, key: int) -> void:
 
 
 func _bot_stop(cart: CartPlayer) -> void:
-	cart.set_ai_controls(0.0, 1.0, 0.0)
+	## Hold the brake only while there is forward speed. A held brake below the
+	## reverse threshold starts backing the kart up after 0.12 s, which used to
+	## make a bot drift off a present while it was loading it.
+	if cart == null or not is_instance_valid(cart):
+		return
+	var speed: float = Vector2(cart.velocity.x, cart.velocity.z).length()
+	if speed > 0.8:
+		cart.set_ai_controls(0.0, 1.0, 0.0)
+	else:
+		cart.set_ai_controls(0.0, 0.0, 0.0)
 
 
 func _bot_drive(cart: CartPlayer, ai: SandboxBot, target: Vector3,
@@ -2004,6 +1670,9 @@ func _start_race() -> void:
 	_phase = Phase.RACING
 	_remaining = _match_length
 	_overtime = false
+	_hold_sent_index = -1
+	_hold_sent_holding = false
+	_hold_send_timer = 0.0
 	if _countdown_label != null:
 		_countdown_label.visible = false
 	_set_cart_active(true)
@@ -2097,15 +1766,24 @@ func _winner() -> int:
 
 
 func _tick_local_input(delta: float) -> void:
+	## This runs on every peer, host or client, and always reads the local
+	## InputMap. A client therefore presses E on its own machine and sends the
+	## hold request to the host; the key is never host-only.
 	if _cart == null or not is_instance_valid(_cart):
 		return
 	var carrying: int = _carried_by(_local_key())
 	if carrying >= 0:
+		# The host slows its authoritative ghost; a client must apply the same
+		# carry penalty to its own physical kart or it would drive at full speed.
+		if _multiplayer and not _is_host:
+			_apply_carry_slow(_cart)
 		_local_hold_index = -1
 		_local_holding = false
 		_local_hold_time = 0.0
 		_send_hold_request(-1, false, delta)
 		return
+	if _multiplayer and not _is_host:
+		_restore_carry_slow(_cart)
 	var nearest: int = _nearest_present(_cart)
 	_local_hold_index = nearest
 	_local_holding = nearest >= 0 and Input.is_action_pressed(INTERACT_ACTION)
@@ -2128,15 +1806,32 @@ func _local_hold_progress(index: int) -> float:
 
 
 func _send_hold_request(index: int, holding: bool, delta: float) -> void:
+	## Client-only side of the hold. The request is unreliable and repeated at
+	## 10 Hz while E is down; the host times it out after 500 ms, so a dropped
+	## packet cannot leave a phantom hold running.
 	if not _multiplayer or _is_host:
 		return
+	if not holding:
+		# Send the release exactly once; the host times out a dropped release.
+		if not _hold_sent_holding:
+			return
+		_hold_sent_holding = false
+		_hold_sent_index = -1
+		_hold_send_timer = 0.0
+		if Network.is_scene_ready(1):
+			rpc_id(1, "_net_hold_request", -1, false)
+		return
+	if index != _hold_sent_index:
+		_hold_sent_index = index
+		_hold_send_timer = 0.0
 	_hold_send_timer -= delta
-	if _hold_send_timer > 0.0 and holding:
+	if _hold_send_timer > 0.0:
 		return
 	_hold_send_timer = HOLD_REQUEST_INTERVAL
+	_hold_sent_holding = true
 	if not Network.is_scene_ready(1):
 		return
-	rpc_id(1, "_net_hold_request", index, holding)
+	rpc_id(1, "_net_hold_request", index, true)
 
 
 func _carried_by(key: int) -> int:
@@ -2168,13 +1863,6 @@ func _apply_theme_grip(delta: float) -> void:
 			if offset.length_squared() <= radius * radius:
 				grip = minf(grip, float(zone.get("grip", grip)))
 				spin = maxf(spin, float(zone.get("spin", 0.0)))
-		# The dirt strip and the skidpad are part of the shared layout.
-		var flat := Vector2(cart.global_position.x, cart.global_position.z)
-		if DIRT_RECT.has_point(flat):
-			grip = minf(grip, DIRT_GRIP)
-		var skid := flat.distance_to(SKID_CENTRE)
-		if skid <= SKID_RADIUS:
-			grip = minf(grip, SKID_GRIP)
 		cart.surface_grip = clampf(grip, 0.2, 1.5)
 		if spin <= 0.0 or not cart.is_on_floor():
 			continue
@@ -2876,6 +2564,9 @@ func _net_hold_request(present_index: int, holding: bool) -> void:
 		"holding": holding,
 		"ms": Time.get_ticks_msec(),
 	}
+	if _debug:
+		print("CARGO_DEBUG client_hold peer=%d present=%d holding=%s"
+			% [sender, present_index, str(holding)])
 
 
 @rpc("any_peer", "reliable")
@@ -3073,6 +2764,15 @@ func _probe_structure() -> void:
 			missing += 1
 		if body.collision_layer != CollisionLayers.WORLD:
 			world_ok = false
+	var orphan_shapes: int = 0
+	for node in find_children("*", "CollisionShape3D", true, false):
+		var parent: Node = node.get_parent()
+		if not (parent is CollisionObject3D):
+			orphan_shapes += 1
+	var crates: int = find_children("Crate", "Node3D", true, false).size()
+	var stands: int = find_children("Grandstand_*", "Node3D", true, false).size()
+	var lights: int = find_children("Floodlight_*", "Node3D", true, false).size()
+	var banners: int = find_children("Banner_*", "Node3D", true, false).size()
 	var blocked: int = 0
 	for point: Dictionary in _present_points:
 		var spot: Vector3 = point["position"] as Vector3
@@ -3081,11 +2781,14 @@ func _probe_structure() -> void:
 		blocked += 1
 		print("CARGO_DEBUG blocked_point poi=%s at=(%.1f,%.1f)"
 			% [str(point.get("poi", "?")), spot.x, spot.z])
-	print("CARGO_DEBUG structure solids=%d missing_shapes=%d world_layer_ok=%s "
-		% [solids, missing, str(world_ok)]
-		+ "points=%d blocked_points=%d objects=%d draw_calls=%d hazards=%d"
-		% [_present_points.size(), blocked, int(_stats.get("objects", 0)),
-		int(_stats.get("draw_calls", 0)), _hazards.size()])
+	print("CARGO_DEBUG structure solids=%d missing_shapes=%d orphan_shapes=%d "
+		% [solids, missing, orphan_shapes]
+		+ "world_layer_ok=%s points=%d blocked_points=%d objects=%d "
+		% [str(world_ok), _present_points.size(), blocked,
+		int(_stats.get("objects", 0))]
+		+ "draw_calls=%d hazards=%d crates=%d stands=%d lights=%d banners=%d"
+		% [int(_stats.get("draw_calls", 0)), _hazards.size(), crates, stands,
+		lights, banners])
 
 
 # --------------------------------------------------------------------------
@@ -3116,26 +2819,190 @@ func _on_main_menu() -> void:
 
 
 func _run_self_test() -> void:
-	## Boots the real arena with three presents and two bots, then ticks fifteen
-	## seconds of simulated play and reports what actually happened: presents
-	## collected, deliveries scored and whether a bot completed a full
-	## pickup-carry-deliver cycle. Run with CART_CARGO_SELFTEST=1; the scene
-	## quits itself when finished.
+	## Runs the real mode with one scripted bot and prints every relay step.
+	## The bot uses the live hold/carry/delivery systems, not a shortcut: it
+	## selects through _bot_choose, stops on the present, waits out the real
+	## three second hold, carries the present and watches the score increment.
+	## Run with CART_CARGO_SELFTEST=1. Exit code 0 means the loop passed.
 	var started: int = Time.get_ticks_msec()
-	for _frame in 900:
+	print("CARGO_SELFTEST step=boot theme=%s presents=%d bots=%d action=%s key=%s"
+		% [_theme_id, _presents.size(), _bots.size(), INTERACT_ACTION,
+		_interact_key_name()])
+	var wait: int = 300
+	while (_phase != Phase.RACING or _presents.is_empty() or _bots.is_empty()) \
+			and wait > 0:
 		await get_tree().physics_frame
 		if not is_inside_tree():
 			return
+		wait -= 1
+	if _bots.is_empty() or _presents.is_empty():
+		_fail_selftest("arena did not start")
+		return
+	_selftest_bot = _bots[0]
+	_selftest_cart = _selftest_bot.get("cart") as CartPlayer
+	if _selftest_cart == null or not is_instance_valid(_selftest_cart):
+		_fail_selftest("selftest bot has no cart")
+		return
+	_bot_choose(0, _selftest_bot, _selftest_cart)
+	_selftest_present = int(_selftest_bot.get("present", -1))
+	if _selftest_present < 0 or _selftest_present >= _presents.size():
+		_fail_selftest("bot could not select a present")
+		return
+	var present: Dictionary = _presents[_selftest_present]
+	if int(present["state"]) != PRESENT_AVAILABLE:
+		_fail_selftest("selected present is not available")
+		return
+	var target: Vector3 = present["position"] as Vector3
+	print("CARGO_SELFTEST step=select present=%d poi=%s target=(%.1f,%.1f)"
+		% [_selftest_present, str(_present_points[int(present["point"])]["poi"]),
+		target.x, target.z])
+	_face_target(_selftest_cart, target)
+	print("CARGO_SELFTEST step=drive target=(%.1f,%.1f) gap=%.1f"
+		% [target.x, target.z,
+		_planar_distance(_selftest_cart.global_position, target)])
+	var reached: bool = await _selftest_drive_to(target, SELFTEST_APPROACH,
+		SELFTEST_DRIVE_TIMEOUT)
+	if not reached:
+		_fail_selftest("bot did not reach the present")
+		return
+	print("CARGO_SELFTEST step=arrive gap=%.1f speed=%.1f"
+		% [_planar_distance(_selftest_cart.global_position, target),
+		Vector2(_selftest_cart.velocity.x, _selftest_cart.velocity.z).length()])
+	_bot_stop(_selftest_cart)
+	_selftest_bot["state"] = BOT_HOLD
+	_selftest_bot["present"] = _selftest_present
+	_selftest_bot["hold_time"] = 0.0
+	print("CARGO_SELFTEST step=hold present=%d seconds=%.1f"
+		% [_selftest_present, HOLD_SECONDS])
+	var held: bool = await _selftest_wait_for_pickup()
+	if not held:
+		_fail_selftest("three second hold did not load the present")
+		return
+	print("CARGO_SELFTEST step=pickup collected=%d present_state=%d"
+		% [_selftest_collected, int(_presents[_selftest_present]["state"])])
+	_selftest_bot["state"] = BOT_CARRY
+	_selftest_bot["carry_time"] = 0.0
+	var team: int = int(_selftest_bot.get("team", 1))
+	var score_before: int = _score[team]
+	var base: Vector3 = _pads[team]
+	print("CARGO_SELFTEST step=carry team=%d base=(%.1f,%.1f) score=%d-%d"
+		% [team, base.x, base.z, _score[0], _score[1]])
+	var delivered: bool = await _selftest_drive_until_score(base, score_before)
+	if not delivered:
+		_fail_selftest("carried present never reached the base pad")
+		return
 	var seconds: float = float(Time.get_ticks_msec() - started) / 1000.0
-	print("CARGO_SELFTEST presents=%d bots=%d collected=%d deliveries=%d "
-		% [_presents.size(), _bots.size(), _selftest_collected,
-		_selftest_deliveries]
-		+ "score=%d-%d bot_cycle=%s phase=%d sim=%.1fs"
-		% [_score[0], _score[1], str(_selftest_cycle), int(_phase), seconds])
-	print("CARGO_SELFTEST theme=%s objects=%d draw_calls=%d holds=%d"
+	print("CARGO_SELFTEST step=deliver score=%d-%d deliveries=%d cycle=%s"
+		% [_score[0], _score[1], _selftest_deliveries,
+		str(_selftest_cycle)])
+	print("CARGO_SELFTEST step=stats theme=%s objects=%d draw_calls=%d hazards=%d"
 		% [_theme_id, int(_stats.get("objects", 0)),
-		int(_stats.get("draw_calls", 0)), _hold_state.size()])
+		int(_stats.get("draw_calls", 0)), _hazards.size()])
+	print("CARGO_SELFTEST step=pass collected=%d deliveries=%d sim=%.1fs"
+		% [_selftest_collected, _selftest_deliveries, seconds])
 	get_tree().quit()
+
+
+func _fail_selftest(reason: String) -> void:
+	print("CARGO_SELFTEST step=fail reason=%s" % reason)
+	print("CARGO_SELFTEST step=result FAIL collected=%d deliveries=%d score=%d-%d"
+		% [_selftest_collected, _selftest_deliveries, _score[0], _score[1]])
+	get_tree().quit(1)
+
+
+func _face_target(cart: CartPlayer, target: Vector3) -> void:
+	if cart == null or not is_instance_valid(cart):
+		return
+	var offset: Vector3 = target - cart.global_position
+	offset.y = 0.0
+	if offset.length_squared() <= 0.01:
+		return
+	cart.rotation.y = atan2(-offset.x, -offset.z)
+
+
+func _selftest_steer(target: Vector3) -> void:
+	## Direct short-range steering for the proof bot. The arena is open, so a
+	## simple heading controller is enough; it slows before the target so the
+	## three second hold starts inside the pickup radius.
+	var cart: CartPlayer = _selftest_cart
+	if cart == null or not is_instance_valid(cart):
+		return
+	var local: Vector3 = cart.to_local(Vector3(target.x, cart.global_position.y,
+		target.z))
+	var distance: float = Vector2(local.x, local.z).length()
+	var steer: float = clampf(atan2(-local.x, -local.z) * 2.2, -1.0, 1.0)
+	var speed: float = Vector2(cart.velocity.x, cart.velocity.z).length()
+	var desired: float = clampf(distance * 1.1, 2.5, 13.0)
+	var throttle: float = 1.0 if speed < desired else 0.0
+	var brake: float = 0.0
+	if speed > desired + 0.5:
+		brake = clampf((speed - desired) / 4.0, 0.0, 1.0)
+	if distance < 4.0:
+		# Creep the last metres instead of braking to a stop outside the pickup
+		# radius. Below 2.4 m, coasting friction parks the kart.
+		throttle = 0.35 if distance > 2.4 else 0.0
+		brake = 0.4 if speed > 2.5 else 0.0
+	cart.set_ai_controls(throttle, brake, steer, false)
+
+
+func _selftest_drive_to(target: Vector3, arrive: float,
+		timeout: float) -> bool:
+	var frames: int = maxi(int(timeout * 60.0), 1)
+	for _frame in frames:
+		await get_tree().physics_frame
+		if not is_inside_tree() or not is_instance_valid(_selftest_cart):
+			return false
+		if _planar_distance(_selftest_cart.global_position, target) <= arrive:
+			_bot_stop(_selftest_cart)
+			return true
+		_selftest_steer(target)
+	return false
+
+
+func _selftest_wait_for_pickup() -> bool:
+	var frames: int = maxi(int(SELFTEST_HOLD_TIMEOUT * 60.0), 1)
+	var last_half: int = -1
+	for _frame in frames:
+		await get_tree().physics_frame
+		if not is_inside_tree() or not is_instance_valid(_selftest_cart):
+			return false
+		var present: Dictionary = _presents[_selftest_present]
+		var state: int = int(present["state"])
+		if state == PRESENT_CARRIED \
+				and int(present["carrier"]) == _bot_key(0):
+			return true
+		if state != PRESENT_AVAILABLE:
+			return false
+		var hold: float = float(present["hold"])
+		var half: int = int(hold * 2.0)
+		if half > last_half:
+			last_half = half
+			print("CARGO_SELFTEST step=hold progress=%.1f/%.1f"
+				% [hold, HOLD_SECONDS])
+		var spot: Vector3 = present["position"] as Vector3
+		if _planar_distance(_selftest_cart.global_position, spot) \
+				> PICK_RADIUS - 0.4:
+			_selftest_steer(spot)
+		else:
+			_bot_stop(_selftest_cart)
+	return false
+
+
+func _selftest_drive_until_score(base: Vector3, score_before: int) -> bool:
+	var team: int = int(_selftest_bot.get("team", 1))
+	var frames: int = maxi(int(SELFTEST_DRIVE_TIMEOUT * 60.0), 1)
+	for _frame in frames:
+		await get_tree().physics_frame
+		if not is_inside_tree() or not is_instance_valid(_selftest_cart):
+			return false
+		if _score[team] > score_before:
+			_bot_stop(_selftest_cart)
+			return true
+		var present: Dictionary = _presents[_selftest_present]
+		if int(present["state"]) != PRESENT_CARRIED:
+			return _score[team] > score_before
+		_selftest_steer(base)
+	return false
 
 
 # --------------------------------------------------------------------------

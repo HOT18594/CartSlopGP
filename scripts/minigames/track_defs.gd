@@ -1,33 +1,42 @@
 extends RefCounted
 ## Registry of every selectable race map and minigame.
 ##
-## A race map is a tile map: `tiles` lists the modular track tiles in lap order,
-## each with the grid cell and quarter-turn rotation it sits on, plus optional
-## hook/surface overrides. TrackSpline turns that list into the closed centreline
-## and the tile library (scripts/minigames/maps/tiles/) builds the road, kerbs,
-## barriers, fencing, grandstands, signage, pit complex, foliage and haze from
-## the same list. Editing a map is editing this array.
+## A race map is a Kenney grid map: `grid` is the ASCII tile layout drawn
+## top-down on a 16 m lattice (see scripts/minigames/tiles/kenney_tiles.gd) and
+## `theme_id` names the cartoon theme that dresses it. The engine turns the
+## characters into a closed centreline, the road meshes and the road colliders;
+## the theme adds barriers, stands, lights, signage and foliage.
 ##
-## `kind` is `map` for a tile circuit and `minigame` for a hand-built scene. A
+## Grid legend: S straight, L left corner, R right corner, C crossing, W wide
+## sweeper, B bump, J jump ramp, P pit straight, E pit entry, G pit garage,
+## X empty. A cell is 16 m. Every drivable cell must be on one closed loop.
+##
+## Theme contract (created by the map agents, not this file):
+##   # res://scripts/minigames/maps/<id>_theme.gd
+##   static func build(race: Node3D, spline) -> void
+## The theme calls tile_kit.* for dressing and returns nothing. The race scene
+## builds the grid once with
+##   KenneyTiles.build(race, TrackDefs.grid_of(preset),
+##       {"id": TrackDefs.theme_id_of(preset)})
+## and hands the returned grid spline to that build() call.
+##
+## `kind` is `map` for a grid circuit and `minigame` for a hand-built scene. A
 ## minigame also carries the `scene` the menu loads and its selectable theme
 ## variants; the chosen theme id is kept in GameSettings.selected_minigame, the
 ## exact field cargo_rush.gd reads.
 ##
-## `elevation` is an array of {at, height} keys. `at` is a lap fraction in
-## 0..1 and `height` is metres above the flat world plane. A single key (or an
-## empty array) means a flat lap. A jump tile adds its own crest on top.
+## `surfaces` is an array of {kind, from, to} lap-fraction spans used by the
+## registry-level grip model and the menu accent. The grid engine is dry tarmac;
+## a map that wants ice or wet sections lists them here. Kinds are `normal`,
+## `wet` and `ice`.
 ##
-## `surfaces` is an array of {kind, from, to} spans, also in lap fractions, used
-## by the menu accent. The live grip model derives its spans from the tiles
-## themselves (TileLayout.surfaces), so a wet or ice section always matches the
-## tile that carries it. Kinds are `normal`, `wet` and `ice`.
-##
-## `theme` is the script grass_race loads for the map's scenery pass, `ground`
-## configures the world plane texture and `preview` is the menu image.
+## `preview` is the menu image under res://assets/ui/minigames/. `palette` is
+## the flat cartoon palette the theme reads (ground, sky, haze); it never names
+## a texture.
 
 const KIND_MAP: String = "map"
 const KIND_MINIGAME: String = "minigame"
-const DEFAULT_ID: String = "circuit"
+const DEFAULT_ID: String = "stadium"
 
 ## Grip multiplier applied by CartPlayer.surface_grip for each surface kind.
 ## 1.0 leaves the dry-road handling untouched.
@@ -37,34 +46,27 @@ const SURFACE_GRIPS: Dictionary = {
 	"ice": 0.40,
 }
 
-const TILE_THEME: String = "res://scripts/minigames/maps/tiles/"
+## Folder the map agents put their theme scripts in.
+const THEME_ROOT: String = "res://scripts/minigames/maps/"
 
 const PRESETS: Array[Dictionary] = [
 	{
-		"id": "circuit",
+		"id": "stadium",
 		"kind": KIND_MAP,
 		"name": "STADIUM CIRCUIT",
-		"desc": "Tight stadium loop: pit straight, split apron, chicane and four kerbed corners. Grandstands, catch fencing and floodlights on every side.",
+		"desc": "Tight cartoon stadium loop on a 16 m grid: pit straight, two long straights, a crossing and four kerbed corners. Grandstands, catch fencing and floodlights on every side.",
 		"preview": "meadow_loop.png",
-		"theme": TILE_THEME + "theme_stadium.gd",
-		# 14 tiles on a 26 m grid, 156 x 81 m footprint, ~448 m lap.
-		"tiles": [
-			{"id": "start", "at": [1, 0], "rot": 0,
-				"hooks": ["start", "grandstand"], "side": -1.0},
-			{"id": "pit", "at": [2, 0], "rot": 0},
-			{"id": "split", "at": [4, 0], "rot": 0},
-			{"id": "corner", "at": [6, 0], "rot": 0, "hooks": ["grandstand"]},
-			{"id": "straight", "at": [6, 1], "rot": 1},
-			{"id": "straight", "at": [6, 2], "rot": 1},
-			{"id": "corner", "at": [6, 3], "rot": 1, "hooks": ["grandstand"]},
-			{"id": "chicane", "at": [5, 3], "rot": 2},
-			{"id": "long", "at": [3, 3], "rot": 2, "hooks": ["grandstand"],
-				"side": 1.0},
-			{"id": "straight", "at": [1, 3], "rot": 2},
-			{"id": "corner", "at": [0, 3], "rot": 2, "hooks": ["grandstand"]},
-			{"id": "straight", "at": [0, 2], "rot": 3},
-			{"id": "straight", "at": [0, 1], "rot": 3},
-			{"id": "corner", "at": [0, 0], "rot": 3},
+		"theme": THEME_ROOT + "stadium_theme.gd",
+		"theme_id": "stadium",
+		"grid": [
+			"XXXXXXXXXXXX",
+			"XRSSPEEGSSRX",
+			"XSXXXXXXXXSX",
+			"XBXXXXXXXXJX",
+			"XSXXXXXXXXSX",
+			"XSXXXXXXXXSX",
+			"XRSSCSJBSSRX",
+			"XXXXXXXXXXXX",
 		],
 		"elevation": [
 			{"at": 0.0, "height": 0.0},
@@ -72,109 +74,75 @@ const PRESETS: Array[Dictionary] = [
 		"surfaces": [
 			{"kind": "normal", "from": 0.0, "to": 1.0},
 		],
-		"ground": {
-			"diff": "grass_diff", "nor": "grass_nor", "rough": "grass_rough",
-			"uv_scale": 140.0, "tint": Color(0.72, 0.88, 0.65),
-			"detail": 0.10, "macro": 0.05,
+		"palette": {
+			"ground": Color("6fae4a"), "sky": Color("bfe9ff"),
+			"haze": Color("cfe8d4"), "kerb": Color("c23a2c"),
 		},
 	},
 	{
 		"id": "dockyard",
 		"kind": KIND_MAP,
 		"name": "DOCKYARD QUAY",
-		"desc": "Technical quay loop: hairpin, wet chicane, mirrored quay corner and container yards. Worn concrete, tyre walls and floodlights over the water.",
-		"preview": "dockyard.png",
-		"theme": TILE_THEME + "theme_dockyard.gd",
-		# 15 tiles, 130 x 104 m footprint, ~437 m lap.
-		"tiles": [
-			{"id": "start", "at": [1, 0], "rot": 0,
-				"hooks": ["start", "grandstand"], "side": -1.0},
-			{"id": "pit", "at": [2, 0], "rot": 0},
-			{"id": "straight", "at": [4, 0], "rot": 0},
-			{"id": "hairpin", "at": [5, 0], "rot": 0},
-			{"id": "chicane", "at": [4, 1], "rot": 2, "surface": "wet"},
-			{"id": "corner", "at": [2, 1], "rot": 2, "mirror": true,
-				"surface": "wet"},
-			{"id": "straight", "at": [2, 2], "rot": 1, "surface": "wet",
-				"hooks": ["grandstand"], "side": -1.0},
-			{"id": "straight", "at": [2, 3], "rot": 1, "hooks": ["containers"],
-				"side": 1.0},
-			{"id": "corner", "at": [2, 4], "rot": 1, "hooks": ["grandstand"]},
-			{"id": "straight", "at": [1, 4], "rot": 2},
-			{"id": "corner", "at": [0, 4], "rot": 2},
-			{"id": "straight", "at": [0, 3], "rot": 3},
-			{"id": "straight", "at": [0, 2], "rot": 3, "hooks": ["grandstand"],
-				"side": -1.0},
-			{"id": "straight", "at": [0, 1], "rot": 3, "hooks": ["containers"],
-				"side": -1.0},
-			{"id": "corner", "at": [0, 0], "rot": 3},
+		"desc": "Technical cartoon quay loop: an inset chicane, a wet middle sector and a long container-yard straight. Flat concrete, tyre walls and floodlights over the water.",
+		"preview": "meadow_loop.png",
+		"theme": THEME_ROOT + "dockyard_theme.gd",
+		"theme_id": "dockyard",
+		"grid": [
+			"XXXXXXXXXXXXXXX",
+			"XXXXXXXXXXXXXXX",
+			"XXRSSRXXRSSSRXX",
+			"XXSXXLSSLXXXSXX",
+			"XXSXXXXXXXXXSXX",
+			"XXSXXXXXXXXXSXX",
+			"XXSXXXXXXXXXSXX",
+			"XXRSSSSSSSSSRXX",
+			"XXXXXXXXXXXXXXX",
+			"XXXXXXXXXXXXXXX",
 		],
 		"elevation": [
 			{"at": 0.0, "height": 0.0},
 		],
 		"surfaces": [
-			{"kind": "normal", "from": 0.0, "to": 0.33},
-			{"kind": "wet", "from": 0.33, "to": 0.62},
-			{"kind": "normal", "from": 0.62, "to": 1.0},
+			{"kind": "normal", "from": 0.0, "to": 0.30},
+			{"kind": "wet", "from": 0.30, "to": 0.58},
+			{"kind": "normal", "from": 0.58, "to": 1.0},
 		],
-		"ground": {
-			"diff": "concrete_floor_worn_001_diff",
-			"nor": "concrete_floor_worn_001_nor",
-			"rough": "concrete_floor_worn_001_rough",
-			"uv_scale": 120.0, "tint": Color(0.70, 0.70, 0.68),
-			"detail": 0.12, "macro": 0.06,
+		"palette": {
+			"ground": Color("7d8b93"), "sky": Color("c4d6dd"),
+			"haze": Color("aebfc7"), "kerb": Color("e8c34a"),
 		},
 	},
 	{
 		"id": "glacier",
 		"kind": KIND_MAP,
 		"name": "GLACIER PASS",
-		"desc": "Fast alpine loop: long straights, a wide ice sweeper and one big crest jump. Snow banks, pines and cold haze beyond the catch fence.",
-		"preview": "glacier.png",
-		"theme": TILE_THEME + "theme_glacier.gd",
-		# 16 tiles, 182 x 104 m footprint, ~539 m lap.
-		"tiles": [
-			{"id": "start", "at": [1, 0], "rot": 0,
-				"hooks": ["start", "grandstand"], "side": -1.0},
-			{"id": "pit", "at": [2, 0], "rot": 0},
-			{"id": "long", "at": [4, 0], "rot": 0, "hooks": ["grandstand"],
-				"side": -1.0},
-			{"id": "straight", "at": [6, 0], "rot": 0},
-			{"id": "corner", "at": [7, 0], "rot": 0, "hooks": ["grandstand"]},
-			{"id": "straight", "at": [7, 1], "rot": 1, "surface": "ice"},
-			{"id": "straight", "at": [7, 2], "rot": 1, "surface": "ice"},
-			{"id": "sweeper", "at": [7, 3], "rot": 1, "surface": "ice",
-				"hooks": ["grandstand"]},
-			{"id": "jump", "at": [5, 4], "rot": 2},
-			{"id": "long", "at": [3, 4], "rot": 2, "surface": "ice",
-				"hooks": ["grandstand"], "side": 1.0},
-			{"id": "straight", "at": [1, 4], "rot": 2},
-			{"id": "corner", "at": [0, 4], "rot": 2},
-			{"id": "straight", "at": [0, 3], "rot": 3},
-			{"id": "straight", "at": [0, 2], "rot": 3},
-			{"id": "straight", "at": [0, 1], "rot": 3},
-			{"id": "corner", "at": [0, 0], "rot": 3},
+		"desc": "Fast cartoon alpine loop: two wide sweepers, long straights, a bump and a big crest jump. Snow banks, pines and cold flat haze beyond the catch fence.",
+		"preview": "meadow_loop.png",
+		"theme": THEME_ROOT + "glacier_theme.gd",
+		"theme_id": "glacier",
+		"grid": [
+			"XXXXXXXXXXXXXX",
+			"XWSSSJSSSSPPWX",
+			"XSXXXXXXXXXXSX",
+			"XSXXXXXXXXXXSX",
+			"XSXXXXXXXXXXSX",
+			"XSXXXXXXXXXXSX",
+			"XRSBSSSSBSSSRX",
+			"XXXXXXXXXXXXXX",
 		],
 		"elevation": [
 			{"at": 0.0, "height": 0.0},
-			{"at": 0.18, "height": 1.3},
-			{"at": 0.36, "height": 0.5},
-			{"at": 0.50, "height": 2.0},
-			{"at": 0.64, "height": 3.2},
-			{"at": 0.78, "height": 1.4},
-			{"at": 0.90, "height": 2.8},
 		],
 		"surfaces": [
-			{"kind": "normal", "from": 0.0, "to": 0.33},
-			{"kind": "ice", "from": 0.33, "to": 0.54},
-			{"kind": "normal", "from": 0.54, "to": 0.63},
-			{"kind": "ice", "from": 0.63, "to": 0.73},
-			{"kind": "normal", "from": 0.73, "to": 1.0},
+			{"kind": "normal", "from": 0.0, "to": 0.28},
+			{"kind": "ice", "from": 0.28, "to": 0.52},
+			{"kind": "normal", "from": 0.52, "to": 0.66},
+			{"kind": "ice", "from": 0.66, "to": 0.80},
+			{"kind": "normal", "from": 0.80, "to": 1.0},
 		],
-		"ground": {
-			"diff": "snow_02_diff", "nor": "snow_02_nor",
-			"rough": "snow_02_rough", "uv_scale": 160.0,
-			"tint": Color(0.96, 0.98, 1.0), "detail": 0.08, "macro": 0.04,
+		"palette": {
+			"ground": Color("e8f1f7"), "sky": Color("e6f2fa"),
+			"haze": Color("dbe8ef"), "kerb": Color("2e86ab"),
 		},
 	},
 	{
@@ -183,7 +151,7 @@ const PRESETS: Array[Dictionary] = [
 		"name": "CARGO RUSH",
 		"desc": "Two-team 90 second scramble: shove cargo crates into your delivery pad.",
 		"preview": "cargo_rush.png",
-		# Not a tile map: the menu loads this scene directly, and the chosen
+		# Not a grid map: the menu loads this scene directly, and the chosen
 		# theme id travels in GameSettings.selected_minigame (cargo_rush.gd
 		# resolves it with CargoTheme.resolve, online via session_minigame).
 		"scene": "res://scenes/minigames/cargo_rush.tscn",
@@ -201,8 +169,10 @@ const PRESETS: Array[Dictionary] = [
 ]
 
 ## Legacy ids that still resolve to a race map, so old saves keep working.
+## Chains are resolved until they land on a live preset id.
 const LEGACY_IDS: Dictionary = {
 	"meadow_loop": "circuit",
+	"circuit": "stadium",
 	"alpine": "glacier",
 	"alpine_slide": "glacier",
 }
@@ -222,7 +192,7 @@ static func kind_of(preset: Dictionary) -> String:
 	return str(preset.get("kind", KIND_MAP))
 
 
-## True when `preset` is a tile race map that grass_race can build.
+## True when `preset` is a grid race map that the tile engine can build.
 static func is_map(preset: Dictionary) -> bool:
 	return kind_of(preset) == KIND_MAP
 
@@ -230,6 +200,31 @@ static func is_map(preset: Dictionary) -> bool:
 ## True when `preset` is a hand-built minigame scene.
 static func is_minigame(preset: Dictionary) -> bool:
 	return kind_of(preset) == KIND_MINIGAME
+
+
+## ASCII grid rows for a grid map, or an empty array for a minigame.
+static func grid_of(preset: Dictionary) -> PackedStringArray:
+	var raw: Variant = preset.get("grid", PackedStringArray())
+	if raw is PackedStringArray:
+		return raw as PackedStringArray
+	if raw is Array:
+		var rows := PackedStringArray()
+		for row: Variant in raw as Array:
+			rows.append(str(row))
+		return rows
+	return PackedStringArray()
+
+
+## Cartoon theme id a grid map's theme script reads. Falls back to the map id.
+static func theme_id_of(preset: Dictionary) -> String:
+	return str(preset.get("theme_id", preset.get("id", DEFAULT_ID)))
+
+
+## Path of the theme script grass_race loads for a map. Empty for a minigame.
+static func theme_path_of(preset: Dictionary) -> String:
+	if is_minigame(preset):
+		return ""
+	return str(preset.get("theme", THEME_ROOT + theme_id_of(preset) + "_theme.gd"))
 
 
 ## Selectable theme ids for a minigame, in menu order. Empty for a map.
@@ -282,12 +277,25 @@ static func has_theme_id(id: String) -> bool:
 	return false
 
 
+## Follows LEGACY_IDS until the id stops changing.
+static func _resolve(id: String) -> String:
+	var key: String = id
+	for _hop in LEGACY_IDS.size() + 1:
+		if not LEGACY_IDS.has(key):
+			return key
+		var next: String = str(LEGACY_IDS[key])
+		if next == key:
+			return key
+		key = next
+	return key
+
+
 ## The race map for `id`, or the first map when the id is unknown. Legacy ids
-## (`meadow_loop`, `alpine`) map to their replacement so old saves keep working.
-## Minigames and their theme ids are never returned here: grass_race must not try
-## to build a spline from the cargo arena's theme selection.
+## (`meadow_loop`, `circuit`, `alpine`) map to their replacement so old saves
+## keep working. Minigames and their theme ids are never returned here:
+## grass_race must not try to build a grid from the cargo arena's theme.
 static func get_preset(id: String) -> Dictionary:
-	var key: String = str(LEGACY_IDS.get(id, id))
+	var key: String = _resolve(id)
 	for preset: Dictionary in PRESETS:
 		if is_map(preset) and str(preset.get("id", "")) == key:
 			return preset
@@ -301,7 +309,7 @@ static func get_preset(id: String) -> Dictionary:
 ## maps back to the card that owns it, which is how the menu restores the
 ## cargo rush selection from GameSettings.selected_minigame.
 static func index_of(id: String) -> int:
-	var key: String = str(LEGACY_IDS.get(id, id))
+	var key: String = _resolve(id)
 	for index in PRESETS.size():
 		if str(PRESETS[index].get("id", "")) == key:
 			return index
@@ -312,9 +320,9 @@ static func index_of(id: String) -> int:
 
 
 ## Surface kind at a lap fraction. `lap_fraction` may be any real value; it is
-## wrapped into 0..1. Spans that cross the start line are supported. This is the
-## registry-level answer used by the menu and by anything without a spline; the
-## race itself asks TileLayout so the spans can never drift from the tiles.
+## wrapped into 0..1. Spans that cross the start line are supported. The grid
+## engine is dry tarmac; wet and ice sections are declared here and the race
+## reads them through grip_at().
 static func surface_at(preset: Dictionary, lap_fraction: float) -> String:
 	var fraction: float = fposmod(lap_fraction, 1.0)
 	var raw: Variant = preset.get("surfaces", [])

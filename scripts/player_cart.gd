@@ -6,6 +6,13 @@ const VehicleVisual := preload("res://scripts/vehicles/vehicle_visual.gd")
 const CollisionLayers := preload("res://scripts/systems/collision_layers.gd")
 const CartCollisionSystem := preload("res://scripts/systems/cart_collision.gd")
 const REFERENCE_MASS: float = 1200.0 ## Mass at which `engine_power` is quoted.
+## AI and remote bot carts have no tag colour, so they cycle a fixed palette by
+## their field index. The peer id offset matches grass_race.gd's bot ghosts.
+const BOT_PEER_BASE: int = 1000
+const BOT_TINTS: Array[Color] = [
+	Color("f2545b"), Color("4fbf52"), Color("45b6f0"),
+	Color("ff9f43"), Color("f26ca7"), Color("38d6f0"),
+]
 ## A bump only ever adds a shove; these bounds keep it from turning into a
 ## launch and from taking steering away for longer than it reads on screen.
 const BUMP_MAX_IMPULSE: float = 9.0
@@ -203,6 +210,10 @@ var _profile_height: float = 1.70
 var _profile_contact_radius: float = 1.25
 var _profile_push_scale: float = 1.0
 var _base_stats: Dictionary = {} ## Pristine export values for vehicle re-application.
+## The catalog id currently on the mesh, kept so a tag-colour change can rebuild
+## only the paint without re-reading the selection.
+var _current_vehicle_id: String = ""
+var _applied_tint: Color = Color(0, 0, 0, 0)
 
 var _boost_regen_timer: float = 0.0
 var _pad_burst_timer: float = 0.0
@@ -323,6 +334,10 @@ func _ready() -> void:
 	_last_safe_position = global_position
 	_last_safe_yaw = rotation.y
 	_capture_base_stats()
+	# Remote paint follows the per-peer tag colour; rebuild only when it really
+	# changed, and never during the per-frame path.
+	if not Network.tag_colors_changed.is_connected(_on_tag_colors_changed):
+		Network.tag_colors_changed.connect(_on_tag_colors_changed)
 	var entry: Dictionary = _apply_vehicle_visual()
 	_apply_vehicle_stats(entry)
 	if _feedback != null:
@@ -597,13 +612,14 @@ func set_vehicle_id(vehicle_id: String) -> void:
 	var entry: Dictionary = VehicleCatalog.find(vehicle_id)
 	if entry.is_empty():
 		return
+	_current_vehicle_id = str(entry.get("id", ""))
 	_profile_mass = maxf(float(entry.get("mass", REFERENCE_MASS)), 1.0)
 	# The host's OBB resolver reads these extents for every ghost. Without
 	# refreshing them here a remote truck was resolved as the default 1.5 x
 	# 2.26 body, so its bumper passed through cars and it could shove cars it
 	# was not touching.
 	_apply_vehicle_dimensions(entry)
-	_apply_vehicle_visual_for(entry)
+	_apply_vehicle_visual_for(_visual_entry(entry))
 	_resize_collision(entry)
 
 
@@ -611,9 +627,11 @@ func reapply_vehicle(vehicle_id: String) -> void:
 	## Switch this LOCAL cart to another catalog vehicle at runtime. Used when
 	## the race host assigns one car to everyone. Rebuilds visuals, collider,
 	## derived stats and feedback (audio/skid width) from pristine values.
-	var entry: Dictionary = VehicleCatalog.find(vehicle_id)
-	if entry.is_empty():
+	var base: Dictionary = VehicleCatalog.find(vehicle_id)
+	if base.is_empty():
 		return
+	_current_vehicle_id = str(base.get("id", ""))
+	var entry: Dictionary = _visual_entry(base)
 	_apply_vehicle_stats(entry)
 	_apply_vehicle_visual_for(entry)
 	if _feedback != null:
@@ -763,13 +781,62 @@ func _net_apply_car_bump(normal: Vector3, push: float) -> void:
 
 func _apply_vehicle_visual() -> Dictionary:
 	## Swap the placeholder kart for the vehicle picked in the selector.
-	var entry: Dictionary = VehicleCatalog.find(GameSettings.selected_vehicle)
-	if entry.is_empty():
-		entry = VehicleCatalog.find(VehicleCatalog.DEFAULT_ID)
-	if entry.is_empty() or _mesh_root == null:
-		return entry
+	var base: Dictionary = VehicleCatalog.find(GameSettings.selected_vehicle)
+	if base.is_empty() and GameSettings.racing_scene_active():
+		base = VehicleCatalog.racing_find(GameSettings.racing_vehicle_id())
+	if base.is_empty():
+		base = VehicleCatalog.find(VehicleCatalog.DEFAULT_ID)
+	if base.is_empty() or _mesh_root == null:
+		return base
+	_current_vehicle_id = str(base.get("id", ""))
+	var entry: Dictionary = _visual_entry(base)
 	_apply_vehicle_visual_for(entry)
 	return entry
+
+
+func _visual_entry(base: Dictionary) -> Dictionary:
+	## Turn a catalog chassis into the entry this cart actually renders. Racing
+	## cars get the local point build, or just a per-peer paint tint when this is
+	## a remote ghost. Every other vehicle passes through untouched, so sandbox,
+	## cargo and minigame behaviour is byte-for-byte the old path.
+	var vehicle_id: String = str(base.get("id", ""))
+	if not VehicleCatalog.is_racing_id(vehicle_id):
+		return base
+	var tint: Color = _tint_for_cart()
+	if remote_mode:
+		return VehicleCatalog.tinted_racing_entry(vehicle_id, tint)
+	return VehicleCatalog.compose_racing_entry(vehicle_id,
+		GameSettings.racing_allocation(), tint)
+
+
+func _tint_for_cart() -> Color:
+	## Local players use their saved tag colour; remote players use the colour
+	## the host relayed for their peer id. Bots cycle a fixed field palette so a
+	## race never shows a grid of identical red cars.
+	if remote_mode:
+		if remote_peer_id >= BOT_PEER_BASE:
+			var bot_index: int = remote_peer_id - BOT_PEER_BASE
+			return BOT_TINTS[abs(bot_index) % BOT_TINTS.size()]
+		return Network.color_of(remote_peer_id)
+	if ai_mode:
+		return BOT_TINTS[abs(get_index()) % BOT_TINTS.size()]
+	return GameSettings.tag_color()
+
+
+func _on_tag_colors_changed() -> void:
+	## A peer picked a new colour. Only a racing body can change paint, and only
+	## when the effective tint actually moved; every other cart is untouched.
+	if ai_mode or _current_vehicle_id == "":
+		return
+	if not VehicleCatalog.is_racing_id(_current_vehicle_id):
+		return
+	var tint: Color = _tint_for_cart()
+	if tint == _applied_tint:
+		return
+	var base: Dictionary = VehicleCatalog.find(_current_vehicle_id)
+	if base.is_empty():
+		return
+	_apply_vehicle_visual_for(_visual_entry(base))
 
 
 func _apply_vehicle_stats(entry: Dictionary) -> void:
@@ -864,6 +931,11 @@ func _resize_collision(entry: Dictionary) -> void:
 func _apply_vehicle_visual_for(entry: Dictionary) -> void:
 	if _mesh_root == null or entry.is_empty():
 		return
+	var raw_tint: Variant = entry.get("tint_color", null)
+	if raw_tint is Color:
+		_applied_tint = raw_tint as Color
+	else:
+		_applied_tint = Color(0, 0, 0, 0)
 	var existing: Node = _mesh_root.get_node_or_null("KartModel")
 	if existing != null:
 		_mesh_root.remove_child(existing)
