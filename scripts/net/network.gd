@@ -72,6 +72,7 @@ const MAX_BOT_COUNT: int = 5
 const MAX_LOBBY_ENTRIES: int = 200
 const MAX_HTTP_BODY: int = 1024 * 1024
 const RelayTunnel := preload("res://scripts/net/relay_tunnel.gd")
+const TrackDefs := preload("res://scripts/minigames/track_defs.gd")
 
 # A reliable scene-start message can land before the client has finished
 # changing scenes. Retry for any peer that has not announced ready, but keep
@@ -195,7 +196,12 @@ var game_scene: String = GAME_SCENE
 var session_mode: String = GameSettings.GAME_SANDBOX
 var session_bots: bool = false
 var session_bot_count: int = 0
+## Legacy minigame/arena theme id carried for older scenes (cargo_rush). The
+## track a race builds comes from session_map_id, always a TrackDefs race map.
 var session_minigame: String = "meadow_loop"
+## Registry id (TrackDefs) of the track the host will race on. Sanitised on
+## both send and receive; it is always an id, never a scene path.
+var session_map_id: String = TrackDefs.DEFAULT_ID
 var race_standings: Array[Dictionary] = [] ## peer id/name/time/place, filled by the race.
 
 var _peer: ENetMultiplayerPeer
@@ -780,6 +786,7 @@ func host_game(mode: String = "pi") -> void:
 	session_mode = GameSettings.multiplayer_mode
 	session_bots = GameSettings.bots_enabled
 	session_bot_count = GameSettings.effective_bot_count()
+	session_map_id = GameSettings.sanitize_map_id(GameSettings.selected_map)
 	room_public = GameSettings.room_public
 	player_names[1] = GameSettings.player_name
 	player_colors[1] = GameSettings.tag_color()
@@ -1001,6 +1008,7 @@ func _poll_lan_listener() -> void:
 			"players": peer_count(),
 			"mode": session_mode,
 			"state": room_state,
+			"map": session_map_id,
 			"version": str(ProjectSettings.get_setting("application/config/version", "")),
 		}
 		_lan_listener.set_dest_address(sender, sender_port)
@@ -1050,6 +1058,7 @@ func scan_lan_rooms(timeout: float = 1.4) -> Array:
 				"players": maxi(int(room.get("players", 1)), 1),
 				"mode": str(room.get("mode", GameSettings.GAME_SANDBOX)),
 				"state": str(room.get("state", "lobby")),
+				"map": GameSettings.sanitize_map_id(str(room.get("map", ""))),
 			}
 		var now: int = Time.get_ticks_msec()
 		if now >= next_nudge:
@@ -1369,6 +1378,9 @@ func start_server_race(laps: int, bots: int, difficulty: int,
 		"difficulty": clampi(difficulty, 0, 2),
 		"max_speed": clampf(max_speed, 8.0, 40.0),
 		"seed": seed,
+		# 1.7.0+ builds the server bot field from this map so its ghosts drive
+		# the same layout every peer builds locally. Older relays ignore it.
+		"map": GameSettings.sanitize_map_id(session_map_id),
 	}
 	var response: Dictionary = await _relay_post("/api/race/start", payload)
 	var race: Variant = response.get("race", {})
@@ -1442,6 +1454,7 @@ func _register_relay(local_port: int) -> bool:
 		"local_ip": local_address,
 		"tunnel": true,
 		"public": room_public,
+		"map": session_map_id,
 	})
 	if response.is_empty():
 		return false
@@ -1537,6 +1550,7 @@ func _relay_heartbeat_tick(delta: float) -> void:
 		"state": room_state,
 		"players": peer_count(),
 		"public": room_public,
+		"map": session_map_id,
 	}, HEARTBEAT_TIMEOUT)
 	var status: int = _relay_http_status
 	_relay_busy = false
@@ -1597,6 +1611,7 @@ func _push_room_state() -> void:
 		"state": room_state,
 		"players": peer_count(),
 		"public": room_public,
+		"map": session_map_id,
 	}
 	var http := HTTPRequest.new()
 	http.timeout = 3.0
@@ -1976,26 +1991,38 @@ func leave() -> void:
 # session config (host -> everyone, while still in the lobby)
 
 
-func configure_session(mode: String, bots: bool, count: int) -> void:
+func configure_session(mode: String, bots: bool, count: int,
+		map_id: String = "") -> void:
 	if not is_host:
 		return
 	session_mode = mode
 	session_bots = bots
 	session_bot_count = count
+	# The map is sanitised before it leaves this machine. An empty override
+	# means "use the host's current pick", which is what older call sites do.
+	session_map_id = GameSettings.sanitize_map_id(
+		map_id if map_id != "" else GameSettings.selected_map)
 	session_minigame = GameSettings.selected_minigame
-	rpc("_net_session_config", mode, bots, count)
+	rpc("_net_session_config", mode, bots, count, session_map_id)
 
 
 @rpc("authority", "call_local", "reliable")
-func _net_session_config(mode: String, bots: bool, count: int) -> void:
+func _net_session_config(mode: String, bots: bool, count: int,
+		map_id: String = "") -> void:
 	if mode != GameSettings.GAME_SANDBOX and mode != GameSettings.GAME_MINIGAMES:
 		return
 	count = clampi(count, 0, MAX_BOT_COUNT)
 	session_mode = mode
 	session_bots = bots
 	session_bot_count = count
+	# Receive-side sanitising: only a registry race-map id can become the
+	# session map, so a peer cannot smuggle a scene path through the config RPC.
+	# The legacy session_minigame field is left untouched for cargo_rush.
+	if map_id != "":
+		session_map_id = GameSettings.sanitize_map_id(map_id)
 	if is_host:
-		GameSettings.set_session_config(GameSettings.MODE_MULTIPLAYER, mode, bots, count)
+		GameSettings.set_session_config(GameSettings.MODE_MULTIPLAYER, mode,
+			bots, count, session_map_id)
 	session_config_changed.emit()
 
 
@@ -2023,6 +2050,7 @@ func start_game(scene_path: String = "", mode: String = "") -> void:
 	session_mode = chosen_mode
 	session_bots = GameSettings.bots_enabled
 	session_bot_count = GameSettings.effective_bot_count()
+	session_map_id = GameSettings.sanitize_map_id(GameSettings.selected_map)
 	session_minigame = GameSettings.selected_minigame
 	race_seed = Time.get_ticks_msec()
 	clear_scene_ready()

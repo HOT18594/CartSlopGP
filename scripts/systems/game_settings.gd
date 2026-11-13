@@ -22,6 +22,7 @@ const CONN_LAN: String = "lan"
 const CONN_PI: String = "pi"
 ## Kept as an alias for older saved settings and scripts.
 const CONN_ONLINE: String = CONN_PI
+const TrackDefs := preload("res://scripts/minigames/track_defs.gd")
 
 @export_range(0.0, 1.0, 0.01) var master_volume: float = 0.8
 @export_range(0.0, 1.0, 0.01) var music_volume: float = 0.75
@@ -66,7 +67,10 @@ const QUALITY_SCALES: PackedFloat32Array = [0.72, 0.92, 1.0]
 @export var multiplayer_mode: String = GAME_SANDBOX ## GAME_SANDBOX or GAME_MINIGAMES.
 @export var connection_preference: String = CONN_PI ## CONN_LAN (this PC) or CONN_PI.
 @export var relay_server: String = "" ## Optional relay address for internet joins.
-@export var selected_minigame: String = "meadow_loop" ## Map chosen for the next race.
+@export var selected_minigame: String = "meadow_loop" ## Legacy minigame/arena theme id.
+## Map chosen for the next race. Registry id from TrackDefs (race maps only).
+@export var selected_map: String = TrackDefs.DEFAULT_ID
+
 @export var bots_enabled: bool = false ## OFF by default - bots are strictly opt-in.
 @export_range(0, 5) var bot_count: int = 3 ## How many AI carts to add when enabled.
 ## Online/LAN room discovery. Public rooms appear in the browser and can be
@@ -81,10 +85,16 @@ var vehicle_edit_minigame: bool = false
 var _resolution_scale: float = 1.0
 var _quality_timer: float = 0.0
 var _quality_warmup: float = 5.0
+## Last legacy minigame id seen at load/save. A direct write from the old map
+## picker is detected by comparing against it.
+var _legacy_minigame_seen: String = ""
 
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
+	# Baseline before load_settings(): a first run has no config file and must
+	# not treat the untouched legacy default as a fresh map-picker write.
+	_legacy_minigame_seen = selected_minigame
 	_ensure_sfx_bus()
 	_ensure_music_bus()
 	load_settings()
@@ -367,17 +377,44 @@ func set_relay_server(raw: String) -> void:
 
 
 func set_selected_minigame(id: String) -> void:
-	selected_minigame = id if id == "meadow_loop" else "meadow_loop"
+	## Legacy minigame/arena selection. It used to clamp every id to
+	## `meadow_loop`, which discarded registry maps and cargo arena themes;
+	## keep the caller's id and only fall back when it is empty.
+	var key: String = id.strip_edges()
+	selected_minigame = key if key != "" else "meadow_loop"
+	save_settings()
+
+
+func set_selected_map(id: String) -> void:
+	## Clamp to a real race map from TrackDefs. The legacy `meadow_loop` id
+	## resolves to `circuit`, and an invented id falls back to the default map.
+	## The legacy selected_minigame (cargo arena theme) is deliberately kept
+	## separate, so picking a map never overwrites a minigame's theme.
+	selected_map = sanitize_map_id(id)
 	save_settings()
 
 
 func minigame_name(id: String = "") -> String:
-	var key: String = id if id != "" else selected_minigame
-	match key:
-		"meadow_loop":
-			return "MEADOW LOOP"
-		_:
-			return "MEADOW LOOP"
+	## Display name straight from the registry, so a new map needs no edit here.
+	var key: String = id if id != "" else selected_map
+	return str(TrackDefs.get_preset(key).get("name", "RACE"))
+
+
+static func sanitize_map_id(raw: String) -> String:
+	## Only ids that exist in TrackDefs survive. get_preset() returns race maps
+	## only and maps the legacy `meadow_loop` alias to `circuit`, so a cargo
+	## theme, an invented id or a smuggled scene path falls back to the default.
+	return str(TrackDefs.get_preset(raw).get("id", TrackDefs.DEFAULT_ID))
+
+
+static func map_id_or_empty(raw: String) -> String:
+	## The registry id when `raw` names a race map (legacy `meadow_loop`
+	## included), or "" for a cargo theme, a minigame id or an unknown value.
+	var key: String = "circuit" if raw == "meadow_loop" else raw
+	for preset: Dictionary in TrackDefs.PRESETS:
+		if TrackDefs.is_map(preset) and str(preset.get("id", "")) == key:
+			return key
+	return ""
 
 
 func set_bots_enabled(enabled: bool) -> void:
@@ -421,12 +458,17 @@ func set_room_public(value: bool) -> void:
 	session_changed.emit()
 
 
-func set_session_config(mode: int, game: String, bots: bool, count: int) -> void:
-	## Used by Network so every peer runs the host's exact configuration.
+func set_session_config(mode: int, game: String, bots: bool, count: int,
+		map_id: String = "") -> void:
+	## Used by Network so every peer runs the host's exact configuration. The
+	## map is adopted only when the caller supplies one, so older call sites
+	## keep their current selection.
 	play_mode = MODE_MULTIPLAYER if mode == MODE_MULTIPLAYER else MODE_SINGLE
 	multiplayer_mode = GAME_MINIGAMES if game == GAME_MINIGAMES else GAME_SANDBOX
 	bots_enabled = bots
 	bot_count = clampi(count, 0, 5)
+	if map_id != "":
+		selected_map = sanitize_map_id(map_id)
 	session_changed.emit()
 
 
@@ -566,14 +608,34 @@ func load_settings() -> void:
 	if connection_preference != CONN_LAN and connection_preference != CONN_PI:
 		connection_preference = CONN_PI
 	relay_server = _cfg_str(config, "session", "relay_server", relay_server).strip_edges()
-	# Only Meadow Loop ever shipped; drop invented events from older builds.
-	selected_minigame = "meadow_loop"
+	selected_minigame = _cfg_str(config, "session", "selected_minigame", selected_minigame)
+	_legacy_minigame_seen = selected_minigame
+	# Map ids come from the registry. Older saves only have the legacy key;
+	# accept it only when it names a race map, never a cargo arena theme.
+	var saved_map: String = map_id_or_empty(
+		_cfg_str(config, "session", "selected_map", ""))
+	if saved_map == "":
+		saved_map = map_id_or_empty(selected_minigame)
+	selected_map = saved_map if saved_map != "" else TrackDefs.DEFAULT_ID
 	bots_enabled = _cfg_bool(config, "session", "bots_enabled", bots_enabled)
 	bot_count = _cfg_int(config, "session", "bot_count", bot_count, 0, 5)
 	room_public = _cfg_bool(config, "session", "room_public", room_public)
 
 
+func _absorb_legacy_map_choice() -> void:
+	## The old map picker writes its choice straight into selected_minigame.
+	## When that field changed and now names a race map, adopt it into the
+	## dedicated map field; cargo theme ids and unchanged values are ignored.
+	if selected_minigame == _legacy_minigame_seen:
+		return
+	_legacy_minigame_seen = selected_minigame
+	var legacy_map: String = map_id_or_empty(selected_minigame)
+	if legacy_map != "":
+		selected_map = legacy_map
+
+
 func save_settings() -> void:
+	_absorb_legacy_map_choice()
 	var config := ConfigFile.new()
 	config.set_value("audio", "master", master_volume)
 	config.set_value("audio", "music", music_volume)
@@ -599,6 +661,7 @@ func save_settings() -> void:
 	config.set_value("session", "multiplayer_mode", multiplayer_mode)
 	config.set_value("session", "connection", connection_preference)
 	config.set_value("session", "relay_server", relay_server)
+	config.set_value("session", "selected_map", selected_map)
 	config.set_value("session", "selected_minigame", selected_minigame)
 	config.set_value("session", "bots_enabled", bots_enabled)
 	config.set_value("session", "bot_count", bot_count)

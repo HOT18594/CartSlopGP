@@ -308,9 +308,11 @@ static func tyre_wall(parent: Node3D, spline: RefCounted, distance: float,
 
 ## A stepped stand with a roof, rail and instanced crowd, facing the track from
 ## `side`. The whole footprint is one WORLD collision box, so it is never a
-## drive-through decoration.
+## drive-through decoration. `roof_colour`/`seat_colour` let a tile theme tint
+## the stand without a second copy of this builder.
 static func grandstand(parent: Node3D, spline: RefCounted, distance: float,
-		side: float) -> void:
+		side: float, roof_colour: Color = Color("c9553f"),
+		seat_colour: Color = Color("8fa3b8")) -> void:
 	if parent == null or spline == null:
 		return
 	var direction: float = 1.0 if side >= 0.0 else -1.0
@@ -334,10 +336,10 @@ static func grandstand(parent: Node3D, spline: RefCounted, distance: float,
 			Vector3(0.0, top * 0.5, z - STAND_ROW_RUN * 0.5)),
 			Vector3(STAND_LENGTH, top, 0.14), CONCRETE.darkened(0.12))
 		batch.add_box(Transform3D(Basis.IDENTITY, Vector3(0.0, top + 0.08, z + 0.18)),
-			Vector3(STAND_LENGTH, 0.14, 0.40), Color("8fa3b8"))
+			Vector3(STAND_LENGTH, 0.14, 0.40), seat_colour)
 	batch.add_box(Transform3D(Basis(Vector3.RIGHT, deg_to_rad(-7.0)),
 		Vector3(0.0, roof_y, 0.4)), Vector3(STAND_LENGTH + 1.6, 0.22, depth + 3.0),
-		Color("c9553f"))
+		roof_colour)
 	for i in 5:
 		var x: float = -STAND_LENGTH * 0.5 + 0.8 \
 			+ (STAND_LENGTH - 1.6) * float(i) / 4.0
@@ -708,6 +710,317 @@ static func _make_arrays(verts: PackedVector3Array, norms: PackedVector3Array,
 	arrays[Mesh.ARRAY_TEX_UV] = uvs
 	arrays[Mesh.ARRAY_INDEX] = indices
 	return arrays
+
+
+# --------------------------------------------------------------------------
+# tile batches
+#
+# A tile map dresses a whole lap in one build pass, so these take arrays of runs
+# and merge every piece into a single vertex-coloured mesh (plus one collision
+# body) instead of one node per prop. They are the batched counterparts of
+# kerbs(), barriers() and floodlight() and keep a 600 m lap at a handful of
+# draw calls while every solid piece still collides on WORLD.
+
+
+## One merged kerb ribbon for many runs. Each run is
+## {from, to, side, width}; `width` is the half width of the road over that run,
+## so a split tile's wider tarmac keeps its kerb on the real edge.
+static func kerb_ribbon(parent: Node3D, spline: RefCounted, runs: Array,
+		colour: Color) -> void:
+	if parent == null or spline == null or runs.is_empty():
+		return
+	var verts := PackedVector3Array()
+	var colours := PackedColorArray()
+	var indices := PackedInt32Array()
+	var faces := PackedVector3Array()
+	var total: float = maxf(spline.total_length, 0.001)
+	for run: Dictionary in runs:
+		var from_distance: float = float(run.get("from", 0.0))
+		var span: float = fposmod(float(run.get("to", 0.0)) - from_distance, total)
+		if span <= 0.01:
+			continue
+		var side: float = float(run.get("side", 1.0))
+		var direction: float = 1.0 if side >= 0.0 else -1.0
+		var half: float = float(run.get("width", ROAD_HALF))
+		var steps: int = maxi(int(ceil(span / KERB_STEP)), 1)
+		var step: float = span / float(steps)
+		for i in steps:
+			var s0: float = from_distance + step * float(i)
+			var s1: float = s0 + step
+			var f0: Dictionary = spline.sample(s0)
+			var f1: Dictionary = spline.sample(s1)
+			var p0: Vector3 = f0["position"]
+			var p1: Vector3 = f1["position"]
+			var r0: Vector3 = f0["right"]
+			var r1: Vector3 = f1["right"]
+			var inner0: Vector3 = p0 + r0 * (half * direction) \
+				+ Vector3.UP * (ROAD_Y + 0.012)
+			var inner1: Vector3 = p1 + r1 * (half * direction) \
+				+ Vector3.UP * (ROAD_Y + 0.012)
+			var outer0: Vector3 = p0 + r0 * ((half + KERB_WIDTH) * direction) \
+				+ Vector3.UP * (ROAD_Y + KERB_LIFT)
+			var outer1: Vector3 = p1 + r1 * ((half + KERB_WIDTH) * direction) \
+				+ Vector3.UP * (ROAD_Y + KERB_LIFT)
+			var shade: Color = colour if int(floor(s0 / 3.0)) % 2 == 0 else CREAM
+			var low0: Vector3 = outer0 - Vector3.UP * KERB_LIFT
+			var low1: Vector3 = outer1 - Vector3.UP * KERB_LIFT
+			if direction > 0.0:
+				_add_quad(verts, colours, indices, inner0, outer0, outer1, inner1, shade)
+				_append_quad_faces(faces, inner0, outer0, outer1, inner1)
+				_add_quad(verts, colours, indices, low0, outer0, outer1, low1,
+					shade.darkened(0.12))
+				_append_quad_faces(faces, low0, outer0, outer1, low1)
+			else:
+				_add_quad(verts, colours, indices, inner1, outer1, outer0, inner0, shade)
+				_append_quad_faces(faces, inner1, outer1, outer0, inner0)
+				_add_quad(verts, colours, indices, low1, outer1, outer0, low0,
+					shade.darkened(0.12))
+				_append_quad_faces(faces, low1, outer1, outer0, low0)
+	var mesh: ArrayMesh = SceneryKit.mesh_from(verts, colours, indices, true)
+	if mesh == null:
+		return
+	var visual := MeshInstance3D.new()
+	visual.name = "TileKerbs"
+	visual.mesh = mesh
+	visual.material_override = palette()["kerb"] as Material
+	visual.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	parent.add_child(visual)
+	var body := _static_root(parent, "TileKerbCollision")
+	var shape := ConcavePolygonShape3D.new()
+	shape.set_faces(faces)
+	shape.backface_collision = true
+	var collision := CollisionShape3D.new()
+	collision.shape = shape
+	body.add_child(collision)
+
+
+## Armco rail and posts over many runs, merged into one mesh and one continuous
+## concave wall. Each run is {from, to, side, lateral}; `lateral` defaults to
+## BARRIER_LATERAL.
+static func armco_runs(parent: Node3D, spline: RefCounted, runs: Array) -> int:
+	if parent == null or spline == null or runs.is_empty():
+		return 0
+	var total: float = maxf(spline.total_length, 0.001)
+	var body := _static_root(parent, "TileArmco")
+	var batch := PropBatch.new()
+	var faces := PackedVector3Array()
+	var pieces: int = 0
+	for run: Dictionary in runs:
+		var from_distance: float = float(run.get("from", 0.0))
+		var span: float = fposmod(float(run.get("to", 0.0)) - from_distance, total)
+		if span <= 0.01:
+			continue
+		var direction: float = 1.0 if float(run.get("side", 1.0)) >= 0.0 else -1.0
+		var lateral: float = float(run.get("lateral", BARRIER_LATERAL)) * direction
+		var steps: int = maxi(int(ceil(span / BARRIER_STEP)), 1)
+		var step: float = span / float(steps)
+		for i in steps:
+			var s0: float = from_distance + step * float(i)
+			var s1: float = s0 + step
+			var f0: Dictionary = spline.sample(s0)
+			var f1: Dictionary = spline.sample(s1)
+			var p0: Vector3 = f0["position"] + (f0["right"] as Vector3) * lateral
+			var p1: Vector3 = f1["position"] + (f1["right"] as Vector3) * lateral
+			var mid: Vector3 = (p0 + p1) * 0.5
+			var yaw: float = spline.yaw_at(s0 + step * 0.5)
+			var rail_xform := Transform3D(Basis(Vector3.UP, yaw), mid)
+			batch.add_box(rail_xform * Transform3D(Basis.IDENTITY,
+				Vector3(0.0, 0.68, 0.0)), Vector3(0.10, 0.36, step + 0.12), STEEL)
+			var top0: Vector3 = p0 + Vector3.UP * 1.0
+			var top1: Vector3 = p1 + Vector3.UP * 1.0
+			faces.append_array([p0, top0, p1, p1, top0, top1])
+			pieces += 1
+			if i % 2 == 0:
+				batch.add_box(_track_transform(spline, s0, lateral) * Transform3D(
+					Basis.IDENTITY, Vector3(0.0, 0.50, 0.0)),
+					Vector3(0.14, 1.0, 0.14), DARK)
+				pieces += 1
+	if faces.is_empty():
+		return 0
+	var shape := ConcavePolygonShape3D.new()
+	shape.set_faces(faces)
+	shape.backface_collision = true
+	var collision := CollisionShape3D.new()
+	collision.shape = shape
+	body.add_child(collision)
+	_add_visual(body, batch, "TileArmcoRail", palette()["vertex"] as Material)
+	return pieces
+
+
+## Catch fencing: posts, three rails and a bar every couple of metres, all
+## merged. Each run is {from, to, side, lateral}; the fence is solid on WORLD.
+static func catch_fence(parent: Node3D, spline: RefCounted, runs: Array,
+		height: float = 3.2, lateral: float = 8.7) -> int:
+	if parent == null or spline == null or runs.is_empty():
+		return 0
+	var total: float = maxf(spline.total_length, 0.001)
+	var body := _static_root(parent, "TileCatchFence")
+	var batch := PropBatch.new()
+	var faces := PackedVector3Array()
+	var post_step: float = 4.6
+	var bar_step: float = 2.3
+	var pieces: int = 0
+	for run: Dictionary in runs:
+		var from_distance: float = float(run.get("from", 0.0))
+		var span: float = fposmod(float(run.get("to", 0.0)) - from_distance, total)
+		if span <= 0.01:
+			continue
+		var direction: float = 1.0 if float(run.get("side", 1.0)) >= 0.0 else -1.0
+		var offset: float = float(run.get("lateral", lateral)) * direction
+		var steps: int = maxi(int(ceil(span / bar_step)), 1)
+		var step: float = span / float(steps)
+		for i in steps + 1:
+			var s: float = from_distance + step * float(i)
+			var frame: Dictionary = spline.sample(s)
+			var base: Vector3 = frame["position"] \
+				+ (frame["right"] as Vector3) * offset
+			var yaw: float = spline.yaw_at(s)
+			var root := Transform3D(Basis(Vector3.UP, yaw), base)
+			var thick: float = 0.14 if i % 2 == 0 else 0.06
+			batch.add_box(root * Transform3D(Basis.IDENTITY,
+				Vector3(0.0, height * 0.5, 0.0)),
+				Vector3(thick, height, thick), STEEL)
+			pieces += 1
+			for level in 3:
+				var rail_y: float = height * (0.24 + 0.30 * float(level))
+				batch.add_box(root * Transform3D(Basis.IDENTITY,
+					Vector3(0.0, rail_y, 0.0)),
+					Vector3(0.06, 0.08, step + 0.05), CREAM)
+				pieces += 1
+			if i < steps:
+				var next: Dictionary = spline.sample(s + step)
+				var next_base: Vector3 = next["position"] \
+					+ (next["right"] as Vector3) * offset
+				var low: Vector3 = base
+				var high: Vector3 = next_base
+				faces.append_array([low, low + Vector3.UP * height, high,
+					high, low + Vector3.UP * height, high + Vector3.UP * height])
+	if faces.is_empty():
+		return 0
+	var shape := ConcavePolygonShape3D.new()
+	shape.set_faces(faces)
+	shape.backface_collision = true
+	var collision := CollisionShape3D.new()
+	collision.shape = shape
+	body.add_child(collision)
+	_add_visual(body, batch, "TileFenceDetail", palette()["vertex"] as Material)
+	return pieces
+
+
+## Every light tower in one pass: merged frames in one mesh, merged lamp heads in
+## one emissive mesh, one body with the pole colliders. `spots` is an array of
+## world positions.
+static func floodlight_batch(parent: Node3D, spots: Array) -> int:
+	if parent == null or spots.is_empty():
+		return 0
+	var body := _static_root(parent, "TileFloodlights")
+	var frames := PropBatch.new()
+	var lamps := PropBatch.new()
+	var placed: int = 0
+	for spot: Vector3 in spots:
+		var yaw: float = atan2(spot.x, spot.z)
+		var root := Transform3D(Basis(Vector3.UP, yaw), spot)
+		frames.add_box(root * Transform3D(Basis.IDENTITY, Vector3(0.0, 0.15, 0.0)),
+			Vector3(1.40, 0.30, 1.40), CONCRETE)
+		frames.add_cylinder(root * Transform3D(Basis.IDENTITY,
+			Vector3(0.0, 4.75, 0.0)), 0.16, 9.0, 8, STEEL)
+		frames.add_box(root * Transform3D(Basis.IDENTITY, Vector3(0.0, 9.15, 0.0)),
+			Vector3(2.20, 0.18, 0.18), STEEL)
+		for i in 4:
+			lamps.add_box(root * Transform3D(Basis(Vector3.RIGHT, deg_to_rad(-24.0)),
+				Vector3((float(i) - 1.5) * 0.50, 9.12, 0.10)),
+				Vector3(0.38, 0.24, 0.06), Color.WHITE)
+		_add_box_shape(body, root * Transform3D(Basis.IDENTITY,
+			Vector3(0.0, 0.15, 0.0)), Vector3(1.40, 0.30, 1.40))
+		_add_box_shape(body, root * Transform3D(Basis.IDENTITY,
+			Vector3(0.0, 9.15, 0.0)), Vector3(2.20, 0.18, 0.18))
+		var pole_shape := CylinderShape3D.new()
+		pole_shape.radius = 0.22
+		pole_shape.height = 9.0
+		var pole := CollisionShape3D.new()
+		pole.shape = pole_shape
+		pole.position = Vector3(0.0, 4.50, 0.0)
+		body.add_child(pole)
+		placed += 1
+	_add_visual(body, frames, "TileFloodlightFrame", palette()["vertex"] as Material)
+	_add_visual(body, lamps, "TileFloodlightLamps",
+		palette()["floodlight"] as Material)
+	return placed
+
+
+## All tyre walls in one MultiMesh and one body. Each wall is
+## {distance, side, length}; every stack is three tyres high and solid.
+static func tyre_walls(parent: Node3D, spline: RefCounted, walls: Array) -> int:
+	if parent == null or spline == null or walls.is_empty():
+		return 0
+	var body := _static_root(parent, "TileTyreWalls")
+	var transforms: Array = []
+	var colours: Array = []
+	var stacks: int = 0
+	for wall: Dictionary in walls:
+		var direction: float = 1.0 if float(wall.get("side", 1.0)) >= 0.0 else -1.0
+		var lateral: float = float(wall.get("lateral", TYRE_LATERAL)) * direction
+		var length: float = maxf(float(wall.get("length", 12.0)), TYRE_SPACING)
+		var count: int = maxi(int(round(length / TYRE_SPACING)), 1)
+		var start: float = float(wall.get("distance", 0.0)) \
+			- float(count - 1) * TYRE_SPACING * 0.5
+		for i in count:
+			var d: float = start + float(i) * TYRE_SPACING
+			var root: Transform3D = _track_transform(spline, d, lateral, 0.0)
+			for level in 3:
+				transforms.append(root * Transform3D(Basis.IDENTITY,
+					Vector3(0.0, TYRE_HEIGHT * 0.5 + float(level) * TYRE_HEIGHT, 0.0)))
+				colours.append(TYRE_RED if level == 2 and i % 2 == 0 else
+					(TYRE_BLACK if level < 2 else CREAM))
+			_add_box_shape(body, root * Transform3D(Basis.IDENTITY,
+				Vector3(0.0, TYRE_HEIGHT * 1.5, 0.0)),
+				Vector3(TYRE_RADIUS * 2.0, TYRE_HEIGHT * 3.0, TYRE_SPACING))
+			stacks += 1
+	if transforms.is_empty():
+		return 0
+	var tyre := CylinderMesh.new()
+	tyre.top_radius = TYRE_RADIUS
+	tyre.bottom_radius = TYRE_RADIUS
+	tyre.height = TYRE_HEIGHT
+	tyre.radial_segments = 12
+	tyre.rings = 1
+	var tyres := SceneryKit.multimesh(tyre, palette()["instance"] as Material,
+		transforms, "TileTyres", false, colours)
+	SceneryKit.set_view(tyres, 0.0, 220.0)
+	body.add_child(tyres)
+	body.set_meta("stacks", stacks)
+	return stacks
+
+
+## Trackside billboards over many spots, merged into one mesh. Each board is
+## {distance, lateral}; the caller adds the few Label3D texts it wants. Returns
+## the number of boards.
+static func signage_batch(parent: Node3D, spline: RefCounted,
+		boards: Array) -> int:
+	if parent == null or spline == null or boards.is_empty():
+		return 0
+	var body := _static_root(parent, "TileSignage")
+	var batch := PropBatch.new()
+	var placed: int = 0
+	for board: Dictionary in boards:
+		var distance: float = float(board.get("distance", 0.0))
+		var lateral: float = float(board.get("lateral", ROAD_HALF + 3.2))
+		var root: Transform3D = _track_transform(spline, distance, lateral, 0.0)
+		# Face the traffic: local +Z points at the track.
+		root = root.rotated_local(Vector3.UP, PI)
+		var width: float = float(board.get("width", 4.4))
+		batch.add_box(root * Transform3D(Basis.IDENTITY, Vector3(0.0, 1.55, 0.0)),
+			Vector3(width, 1.35, 0.16), CREAM)
+		batch.add_box(root * Transform3D(Basis.IDENTITY, Vector3(0.0, 2.20, 0.02)),
+			Vector3(width + 0.12, 0.18, 0.20), TYRE_RED)
+		for post: float in [-width * 0.36, width * 0.36]:
+			batch.add_box(root * Transform3D(Basis.IDENTITY,
+				Vector3(post, 0.82, 0.0)), Vector3(0.16, 1.65, 0.16), STEEL)
+		_add_box_shape(body, root * Transform3D(Basis.IDENTITY,
+			Vector3(0.0, 1.35, 0.0)), Vector3(width + 0.2, 2.7, 0.36))
+		placed += 1
+	_add_visual(body, batch, "TileSignageDetail", palette()["vertex"] as Material)
+	return placed
 
 
 static func _flat_quad_mesh(width: float, length: float,

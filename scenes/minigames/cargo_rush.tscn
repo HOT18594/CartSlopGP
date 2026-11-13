@@ -23,7 +23,7 @@ glow_intensity = 0.22
 glow_bloom = 0.04
 fog_enabled = true
 fog_light_color = Color(0.72, 0.84, 0.90, 1)
-fog_density = 0.0022
+fog_density = 0.0024
 adjustment_enabled = true
 adjustment_saturation = 1.08
 adjustment_contrast = 1.05
@@ -39,9 +39,9 @@ transform = Transform3D(0.921061, -0.279352, 0.27131, 0, 0.696707, 0.717356, -0.
 light_color = Color(1, 0.96, 0.88, 1)
 light_energy = 1.2
 shadow_enabled = true
-directional_shadow_max_distance = 100.0
+directional_shadow_max_distance = 120.0
 
 [node name="CartPlayer" parent="." instance=ExtResource("2_cart")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.22, 18)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.35, 40.5)
 
 [node name="PauseMenu" parent="." instance=ExtResource("3_pause")]

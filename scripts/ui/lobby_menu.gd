@@ -937,8 +937,10 @@ func _refresh_config() -> void:
 	_game_pill.call("set_index", 0 if mode == GameSettings.GAME_SANDBOX else 1)
 	var bots: int = Network.session_bot_count if active else GameSettings.effective_bot_count()
 	_set_bots_views(clampi(bots, 0, 5))
-	var map_id: String = Network.session_minigame if active and Network.is_host \
-		else GameSettings.selected_minigame
+	# The host's session map is authoritative for the whole room, so a client
+	# shows the host's choice instead of its own local pick.
+	var map_id: String = Network.session_map_id if active \
+		else GameSettings.selected_map
 	var map_text: String = GameSettings.minigame_name(map_id) \
 		if mode == GameSettings.GAME_MINIGAMES else "FREEROAM"
 	_set_badge("map", map_text,
@@ -964,8 +966,8 @@ func _refresh_config() -> void:
 func _setup_line() -> String:
 	var active: bool = Network.is_session_active()
 	var mode: String = Network.session_mode if active else GameSettings.multiplayer_mode
-	var map_id: String = Network.session_minigame if active and Network.is_host \
-		else GameSettings.selected_minigame
+	var map_id: String = Network.session_map_id if active \
+		else GameSettings.selected_map
 	var map_text: String = GameSettings.minigame_name(map_id) \
 		if mode == GameSettings.GAME_MINIGAMES else "FREEROAM"
 	var vehicle_id: String = GameSettings.minigame_vehicle \
@@ -1257,6 +1259,9 @@ func _set_bots_views(total: int) -> void:
 
 
 func _on_choose_map() -> void:
+	if Network.is_session_active() and not Network.is_host:
+		_set_status("Only the host can change the map.")
+		return
 	if GameSettings.multiplayer_mode != GameSettings.GAME_MINIGAMES:
 		_set_status("Maps are for minigames. Switch MODE to MINIGAMES first.")
 		return

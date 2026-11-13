@@ -269,13 +269,15 @@ func _exit_tree() -> void:
 
 
 func _ready() -> void:
-	# Decide the session type before building the map: multiplayer clients ask
-	# the host's session for the map they should be racing on.
+	# Decide the session type before building the map: in a session the host's
+	# Network session map decides the layout for every peer.
 	_multiplayer = Network.is_session_active()
 	_is_host = Network.is_host
-	var map_id: String = GameSettings.selected_minigame
-	if _multiplayer and not _is_host and Network.session_minigame != "":
-		map_id = Network.session_minigame
+	# In a session both peers build the host's session map, so the host and
+	# every client race the same layout. Solo uses the local map pick.
+	var map_id: String = GameSettings.selected_map
+	if _multiplayer and Network.session_map_id != "":
+		map_id = Network.session_map_id
 	_preset = TrackDefs.get_preset(map_id)
 	_preset_id = str(_preset.get("id", TrackDefs.DEFAULT_ID))
 	_spline = TrackSpline.new(_preset)

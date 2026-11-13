@@ -15,6 +15,16 @@ const SandboxBot := preload("res://scripts/ai/sandbox_bot.gd")
 const TITLE_FONT: String = "res://assets/ui/fonts/LuckiestGuy-Regular.ttf"
 const CART_SYNC_INTERVAL: float = 0.05
 const PROP_SYNC_INTERVAL: float = 0.10
+## Painted paddock grid slots, row-major, mirrored from sandbox_park.gd. Slot 5
+## (index 4) is the authored single-player marker.
+const GRID_SLOTS: Array[Vector3] = [
+	Vector3(-9.0, 0.0, 5.0), Vector3(0.0, 0.0, 5.0), Vector3(9.0, 0.0, 5.0),
+	Vector3(-9.0, 0.0, 13.0), Vector3(0.0, 0.0, 13.0), Vector3(9.0, 0.0, 13.0),
+]
+const GRID_MARKER_SLOT: int = 4
+## Beyond six peers the grid continues behind the last row, still on the apron.
+const GRID_OVERFLOW_Z: float = 17.0
+const GRID_OVERFLOW_STEP: float = 3.5
 
 var _local_cart: CartPlayer
 var _remote_carts: Dictionary = {} ## peer_id -> CartPlayer
@@ -28,6 +38,10 @@ var _prop_sync_timer: float = 0.0
 var _bots: Array[SandboxBot] = []
 var _traffic: Array[CartPlayer] = [] ## local player first, then every bot cart
 var _bot_time: float = 0.0
+## Authored spawn anchor from the scene marker; grid slots reuse its height and
+## facing so single- and multiplayer start on the same transforms.
+var _spawn_anchor: Transform3D = Transform3D(Basis.IDENTITY,
+	Vector3(0.0, 0.25, 0.0))
 var _cart_relay_ms: Dictionary = {} ## peer id -> last host relay (anti-amplification)
 ## Client-side prediction for a pushed frozen prop.
 var _prop_kick_until: Dictionary = {}
@@ -44,13 +58,15 @@ func _ready() -> void:
 	VisualGrade.apply($WorldEnvironment, "sandbox")
 	VisualGrade.apply_sun($Sun)
 	_local_cart = get_tree().get_first_node_in_group("player") as CartPlayer
+	var marker: Node3D = get_tree().get_first_node_in_group("spawn_point") as Node3D
+	if marker != null:
+		_spawn_anchor = marker.global_transform
 	if Network.is_session_active():
 		_setup_multiplayer()
 	elif _local_cart != null:
 		# The scene file parks the local cart on the host's multiplayer grid
 		# slot. Single player returns to the authored marker so a session that
 		# did not start still feels like the solo Sandbox.
-		var marker: Node3D = get_tree().get_first_node_in_group("spawn_point") as Node3D
 		if marker != null:
 			_local_cart.global_position = marker.global_position
 			_local_cart.set_spawn_transform(marker.global_transform)
@@ -65,8 +81,10 @@ func _setup_multiplayer() -> void:
 	_props.sort_custom(func(a: RigidBody3D, b: RigidBody3D) -> bool: return str(a.name) < str(b.name))
 
 	if _local_cart != null:
-		_local_cart.global_position = Network.spawn_position(multiplayer.get_unique_id())
-		_local_cart.set_spawn_transform(_local_cart.global_transform)
+		var local_slot: Transform3D = _grid_slot_transform(
+			_peer_grid_index(multiplayer.get_unique_id()))
+		_local_cart.global_transform = local_slot
+		_local_cart.set_spawn_transform(local_slot)
 		if not _local_cart.net_push_requested.is_connected(_on_local_push_requested):
 			_local_cart.net_push_requested.connect(_on_local_push_requested)
 		if not _local_cart.horn_requested.is_connected(_on_horn_requested):
@@ -145,22 +163,21 @@ func _setup_bots() -> void:
 		else GameSettings.selected_vehicle
 	if VehicleCatalog.find(vehicle_id).is_empty():
 		vehicle_id = VehicleCatalog.DEFAULT_ID
+	# Bots take the grid slots after every peer. Solo, the authored marker slot
+	# stays free for the local cart. Position BEFORE add_child: a physics body
+	# that enters the world at the origin spends its first tick overlapping
+	# every other new cart, which launched them across the map.
+	var first_slot: int = Network.participants().size() \
+		if Network.is_session_active() else 0
 	for i in count:
 		var node: CartPlayer = CART_SCENE.instantiate() as CartPlayer
 		node.name = "SandboxBot_%d" % (i + 1)
-		var angle: float = TAU * float(i) / float(count) + 0.7
-		var radius: float = 53.0 + float(i % 3) * 1.8
-		# Position BEFORE add_child: a physics body that enters the world at the
-		# origin spends its first tick overlapping every other new cart, which
-		# launched them across the map. The transform must be set on the
-		# detached node so the body is created in the right place.
-		var spawn_x: float = cos(angle) * radius
-		var spawn_z: float = sin(angle) * radius
-		# The outer ring crosses the mesa/highline skirts. Spawn on the actual
-		# surface instead of a fixed 0.12 m, or a bot can be born inside a hill.
-		var spawn_y: float = _ground_height(Vector3(spawn_x, 0.0, spawn_z)) + 0.12
-		node.position = Vector3(spawn_x, spawn_y, spawn_z)
-		node.rotation.y = PI - angle
+		var slot_index: int = first_slot + i
+		if not Network.is_session_active() and slot_index >= GRID_MARKER_SLOT:
+			slot_index += 1
+		var slot: Transform3D = _grid_slot_transform(slot_index)
+		node.position = slot.origin
+		node.rotation.y = slot.basis.get_euler().y
 		node.ai_mode = true
 		add_child(node)
 		node.setup_ai(vehicle_id)
@@ -226,7 +243,8 @@ func _on_peer_disconnected(peer_id: int) -> void:
 func _spawn_remote(peer_id: int) -> void:
 	if _remote_carts.has(peer_id) or peer_id == multiplayer.get_unique_id():
 		return
-	var spawn: Vector3 = Network.spawn_position(peer_id)
+	var slot: Transform3D = _grid_slot_transform(_peer_grid_index(peer_id))
+	var spawn: Vector3 = slot.origin
 	# Ghosts never run physics, so they would hover at the spawn height (a
 	# quarter metre up) until the first sync packet. Sit them on the floor.
 	spawn.y = _ground_height(spawn)
@@ -234,8 +252,10 @@ func _spawn_remote(peer_id: int) -> void:
 	# Set the transform before add_child so the body never spends a tick at the
 	# world origin, overlapping the local cart and other new ghosts.
 	cart.position = spawn
+	cart.rotation.y = slot.basis.get_euler().y
 	add_child(cart)
 	cart.setup_remote(peer_id)
+	cart.set_spawn_transform(Transform3D(slot.basis, spawn))
 	# The ghost scene briefly owns a current Camera3D; make sure the local
 	# driving camera stays in charge.
 	if _local_cart != null:
@@ -247,6 +267,26 @@ func _spawn_remote(peer_id: int) -> void:
 		cart.set_vehicle_id(str(_peer_vehicles[peer_id]))
 	_add_name_label(cart, peer_id)
 	_remote_carts[peer_id] = cart
+
+
+func _peer_grid_index(peer_id: int) -> int:
+	## Stable grid order: the same sorted participant list on every machine.
+	return maxi(Network.participants().find(peer_id), 0)
+
+
+func _grid_slot_transform(index: int) -> Transform3D:
+	## One paddock grid transform. The six painted boxes come first, in order;
+	## overflow waits behind the last row. Height and facing come from the
+	## authored single-player marker, so both modes share the same spawn pose.
+	var centre: Vector3
+	if index < GRID_SLOTS.size():
+		centre = GRID_SLOTS[index]
+	else:
+		var extra: int = index - GRID_SLOTS.size()
+		centre = Vector3(-9.0 + float(extra % 3) * 9.0, 0.0,
+			GRID_OVERFLOW_Z + float(extra / 3) * GRID_OVERFLOW_STEP)
+	return Transform3D(_spawn_anchor.basis,
+		Vector3(centre.x, _spawn_anchor.origin.y, centre.z))
 
 
 func _add_name_label(cart: CartPlayer, peer_id: int) -> void:
@@ -523,9 +563,9 @@ func _expire_prop_kicks() -> void:
 
 
 func _ground_height(at: Vector3) -> float:
-	## Floor height under a point, for placing ghosts and bots. The ray starts
-	## above the tallest park feature (5.5 m) so a spawn on the mesa/highline
-	## skirt finds the real surface instead of falling back to y=0.
+	## Floor height under a point, for placing ghosts. The ray starts above the
+	## tallest facility solid so a slot near the pit building or kickers finds the
+	## real surface instead of falling back to y=0.
 	var space: PhysicsDirectSpaceState3D = get_world_3d().direct_space_state
 	var query := PhysicsRayQueryParameters3D.create(
 		at + Vector3.UP * 12.0, at + Vector3.DOWN * 30.0, 1)
