@@ -73,6 +73,7 @@ const MAX_LOBBY_ENTRIES: int = 200
 const MAX_HTTP_BODY: int = 1024 * 1024
 const RelayTunnel := preload("res://scripts/net/relay_tunnel.gd")
 const TrackDefs := preload("res://scripts/minigames/track_defs.gd")
+const VehicleCatalog := preload("res://scripts/vehicles/vehicle_catalog.gd")
 
 # A reliable scene-start message can land before the client has finished
 # changing scenes. Retry for any peer that has not announced ready, but keep
@@ -147,6 +148,10 @@ var _scene_load_path: String = ""
 ## duplicate remote impacts while a state packet is still in flight.
 var _separation_ms: Dictionary = {}
 var _impact_ms: Dictionary = {}
+## Pair key -> closing speed of the last accepted impact. While a pair stays
+## in contact, a state packet that replays the pre-impact velocity must not be
+## charged as a brand-new hit (the old code fired again every 100 ms).
+var _impact_closing: Dictionary = {}
 ## Last finite, in-bounds contact pose per peer id. A corrupt or out-of-bounds
 ## report is replaced from here (never silently dropped) before the car-vs-car
 ## solver sees a position.
@@ -202,6 +207,14 @@ var session_minigame: String = "meadow_loop"
 ## Registry id (TrackDefs) of the track the host will race on. Sanitised on
 ## both send and receive; it is always an id, never a scene path.
 var session_map_id: String = TrackDefs.DEFAULT_ID
+## Host-chosen racing chassis and stat build, relayed with the session config
+## exactly like session_map_id. Every peer composes its racing cart from these
+## numbers, so a client's local physics and the host's ghost copy agree on
+## mass. Both fields are sanitised on send and on receive; an empty value means
+## "not supplied" and falls back to the peer's own saved build, which keeps a
+## peer that does not carry the field working.
+var session_racing_car_id: String = ""
+var session_racing_allocation: Dictionary = {}
 var race_standings: Array[Dictionary] = [] ## peer id/name/time/place, filled by the race.
 
 var _peer: ENetMultiplayerPeer
@@ -302,6 +315,7 @@ func clear_scene_ready() -> void:
 	_scene_retry_counts.clear()
 	_separation_ms.clear()
 	_impact_ms.clear()
+	_impact_closing.clear()
 	_last_good_position.clear()
 	_scene_load_path = ""
 	if is_host:
@@ -428,6 +442,7 @@ func _erase_peer_separation(peer_id: int) -> void:
 	## to leave keys behind for the rest of the session.
 	_erase_peer_pair_keys(_separation_ms, peer_id)
 	_erase_peer_pair_keys(_impact_ms, peer_id)
+	_erase_peer_pair_keys(_impact_closing, peer_id)
 
 
 func _erase_peer_pair_keys(stamps: Dictionary, peer_id: int) -> void:
@@ -451,6 +466,25 @@ func _prune_separation_ms(now_ms: int) -> void:
 		for key: int in stamps.keys():
 			if now_ms - int(stamps[key]) > 60_000:
 				stamps.erase(key)
+	# The closing-speed memory has no timestamp; it is cleared with the pair
+	# on separation and on peer departure, so bound it to the live impact keys.
+	for key: int in _impact_closing.keys():
+		if not _impact_ms.has(key):
+			_impact_closing.erase(key)
+
+
+static func sanitize_racing_car_id(raw: String) -> String:
+	## Only a real racing-class chassis id leaves/enters the wire. Empty means
+	## the field was not supplied, which is the compatibility default.
+	return raw if VehicleCatalog.is_racing_id(raw) else ""
+
+
+static func sanitize_racing_allocation(raw: Dictionary) -> Dictionary:
+	## Receive/send side both pass through the catalog clamp: all four keys,
+	## 0..RACING_STAT_MAX each, over-budget builds trimmed deterministically.
+	if raw.is_empty():
+		return {}
+	return VehicleCatalog.sanitize_allocation(raw)
 
 
 func _obb_contact(offset: Vector3, yaw_a: float, yaw_b: float,
@@ -550,7 +584,7 @@ func resolve_car_collisions(local_cart: Node, remotes: Dictionary) -> void:
 	## phase through a crate the host says it hit. This resolver owns only
 	## car-vs-car momentum; the host is authoritative for a pushed prop's
 	## motion, never for whether a solid crate blocks.
-	if not is_host or local_cart == null:
+	if not is_host or not is_instance_valid(local_cart):
 		return
 	var solver: Variant = _shared_collision_solver()
 	var host_id: int = multiplayer.get_unique_id()
@@ -561,18 +595,31 @@ func resolve_car_collisions(local_cart: Node, remotes: Dictionary) -> void:
 	# Host vs every remote, then remote vs remote. Iterating in place avoids
 	# the array-of-pairs allocation that used to run on every physics tick.
 	for peer_id: Variant in ids:
+		var remote: Node = remotes[peer_id] as Node
+		if not is_instance_valid(remote):
+			# A ghost can be queue_free()d on a peer disconnect in the same
+			# frame this loop runs. Calling get()/global_position on a freed
+			# instance is an engine error, so drop the entry here.
+			continue
 		_resolve_contact_pair(local_cart, host_id, local_cart, int(peer_id),
-			remotes[peer_id], solver, host_id, now_ms)
+			remote, solver, host_id, now_ms)
 	for i in ids.size():
 		for j in range(i + 1, ids.size()):
-			_resolve_contact_pair(local_cart, int(ids[i]), remotes[ids[i]],
-				int(ids[j]), remotes[ids[j]], solver, host_id, now_ms)
+			var remote_a: Node = remotes[ids[i]] as Node
+			var remote_b: Node = remotes[ids[j]] as Node
+			if not is_instance_valid(remote_a) or not is_instance_valid(remote_b):
+				continue
+			_resolve_contact_pair(local_cart, int(ids[i]), remote_a,
+				int(ids[j]), remote_b, solver, host_id, now_ms)
 
 
 func _resolve_contact_pair(local_cart: Node, id_a: int, cart_a: Node,
 		id_b: int, cart_b: Node, solver: Variant, host_id: int,
 		now_ms: int) -> void:
-	if cart_a == null or cart_b == null or id_a <= 0 or id_b <= 0:
+	# Freed bodies compare true against null in GDScript, so a stale dict entry
+	# must be tested with is_instance_valid before any property read.
+	if not is_instance_valid(cart_a) or not is_instance_valid(cart_b) \
+			or id_a <= 0 or id_b <= 0:
 		return
 	# A finished or severed cart is not an obstacle by design; its owner set
 	# contact_enabled=false. This is an intentional non-contact, not the
@@ -589,12 +636,17 @@ func _resolve_contact_pair(local_cart: Node, id_a: int, cart_a: Node,
 	# is never silently dropped because one side sent a bad value.
 	var pos_a: Vector3 = _contact_position(id_a, cart_a, cart_a.global_position)
 	var pos_b: Vector3 = _contact_position(id_b, cart_b, cart_b.global_position)
+	var pair_key: int = _pair_key(id_a, id_b)
 	var ext_a: Dictionary = _cart_extents(cart_a)
 	var ext_b: Dictionary = _cart_extents(cart_b)
 	var contact_height: float = maxf(
 		float(ext_a.get("height", 1.70)),
 		float(ext_b.get("height", 1.70)))
 	if absf(pos_b.y - pos_a.y) > contact_height * 0.95:
+		# One cart is on the roof / well above the other: not a planar bump, so
+		# the next planar overlap starts a fresh impact.
+		_impact_ms.erase(pair_key)
+		_impact_closing.erase(pair_key)
 		return
 	var offset: Vector3 = pos_b - pos_a
 	offset.y = 0.0
@@ -613,6 +665,11 @@ func _resolve_contact_pair(local_cart: Node, id_a: int, cart_a: Node,
 		# motion for the most recent overlapping sample.
 		contact = _swept_obb_contact(cart_a, cart_b, offset, ext_a, ext_b)
 		if contact.is_empty():
+			# Out of contact: the next overlap is a NEW impact, not the tail of
+			# the one already answered. Without this reset a pair that bounced
+			# and touched again inside the cooldown lost its second hit.
+			_impact_ms.erase(pair_key)
+			_impact_closing.erase(pair_key)
 			return
 	var normal: Vector3 = contact["normal"]
 	var penetration: float = float(contact["penetration"])
@@ -630,7 +687,6 @@ func _resolve_contact_pair(local_cart: Node, id_a: int, cart_a: Node,
 	var closing: float = maxf(relative.dot(normal), 0.0)
 	if not is_finite(closing):
 		closing = 0.0
-	var pair_key: int = _pair_key(id_a, id_b)
 	if closing < 0.08:
 		# Resting overlap is positional, not an impact. The physics engine
 		# separates the bodies; rate-limit the solver's small resting
@@ -641,15 +697,19 @@ func _resolve_contact_pair(local_cart: Node, id_a: int, cart_a: Node,
 			return
 		_separation_ms[pair_key] = now_ms
 	else:
-		# One momentum impulse per pair per 100 ms. A late state packet can
-		# rewind the predicted ghost velocity below; without this guard
-		# the same impact fired on several consecutive ticks and sent the
-		# remote duplicate impulses (a momentum-conservation bug and a
-		# visible double bounce). Kept separate from the resting stamps so
-		# a resting pair still gets a full impact impulse when it is hit.
+		# One momentum impulse per continuous contact. A late state packet can
+		# rewind the predicted ghost velocity to its pre-impact value, so the
+		# old 100 ms window fired the same hit over and over (a ghost pinned
+		# inside the host was shoved ten times a second). A pair pays a new
+		# impact only after it has been out of contact, or when the new closing
+		# speed is clearly harder than the one already answered.
 		if now_ms - int(_impact_ms.get(pair_key, -1000)) < 100:
 			return
+		var answered: float = float(_impact_closing.get(pair_key, -1000.0))
 		_impact_ms[pair_key] = now_ms
+		if closing <= answered + 1.5:
+			return
+		_impact_closing[pair_key] = closing
 	if solver != null:
 		# The shared solver owns all impulse maths (including resting and
 		# friction rules) so the sandbox and the race respond identically.
@@ -787,6 +847,10 @@ func host_game(mode: String = "pi") -> void:
 	session_bots = GameSettings.bots_enabled
 	session_bot_count = GameSettings.effective_bot_count()
 	session_map_id = GameSettings.sanitize_map_id(GameSettings.selected_map)
+	session_racing_car_id = sanitize_racing_car_id(
+		GameSettings.racing_vehicle_id())
+	session_racing_allocation = sanitize_racing_allocation(
+		GameSettings.racing_allocation())
 	room_public = GameSettings.room_public
 	player_names[1] = GameSettings.player_name
 	player_colors[1] = GameSettings.tag_color()
@@ -1985,6 +2049,10 @@ func leave() -> void:
 	player_colors.clear()
 	ping_table.clear()
 	race_standings.clear()
+	# A stale host build must not leak into the next session before its first
+	# config packet; player_cart.gd treats empty as "use the local save".
+	session_racing_car_id = ""
+	session_racing_allocation = {}
 
 
 # --------------------------------------------------------------------------
@@ -2003,12 +2071,28 @@ func configure_session(mode: String, bots: bool, count: int,
 	session_map_id = GameSettings.sanitize_map_id(
 		map_id if map_id != "" else GameSettings.selected_map)
 	session_minigame = GameSettings.selected_minigame
-	rpc("_net_session_config", mode, bots, count, session_map_id)
+	# The racing build travels in the same reliable packet as the map id. It is
+	# sanitised before it leaves (the receiver sanitises again), and a peer
+	# that never receives the trailing fields keeps its own saved build.
+	session_racing_car_id = sanitize_racing_car_id(
+		GameSettings.racing_vehicle_id())
+	session_racing_allocation = sanitize_racing_allocation(
+		GameSettings.racing_allocation())
+	_push_session_config()
+
+
+func _push_session_config() -> void:
+	## One reliable host -> peer config packet. The trailing racing fields are
+	## optional on the receiver so a peer without them still gets mode, bots and
+	## map, then falls back to its local racing build.
+	rpc("_net_session_config", session_mode, session_bots, session_bot_count,
+		session_map_id, session_racing_car_id, session_racing_allocation)
 
 
 @rpc("authority", "call_local", "reliable")
 func _net_session_config(mode: String, bots: bool, count: int,
-		map_id: String = "") -> void:
+		map_id: String = "", racing_car_id: String = "",
+		racing_allocation: Dictionary = {}) -> void:
 	if mode != GameSettings.GAME_SANDBOX and mode != GameSettings.GAME_MINIGAMES:
 		return
 	count = clampi(count, 0, MAX_BOT_COUNT)
@@ -2020,6 +2104,13 @@ func _net_session_config(mode: String, bots: bool, count: int,
 	# The legacy session_minigame field is left untouched for cargo_rush.
 	if map_id != "":
 		session_map_id = GameSettings.sanitize_map_id(map_id)
+	# An absent racing field is the old-client default: keep the peer's local
+	# build rather than overwriting it with an empty one.
+	if racing_car_id != "":
+		session_racing_car_id = sanitize_racing_car_id(racing_car_id)
+	if not racing_allocation.is_empty():
+		session_racing_allocation = sanitize_racing_allocation(
+			racing_allocation)
 	if is_host:
 		GameSettings.set_session_config(GameSettings.MODE_MULTIPLAYER, mode,
 			bots, count, session_map_id)
@@ -2052,9 +2143,17 @@ func start_game(scene_path: String = "", mode: String = "") -> void:
 	session_bot_count = GameSettings.effective_bot_count()
 	session_map_id = GameSettings.sanitize_map_id(GameSettings.selected_map)
 	session_minigame = GameSettings.selected_minigame
+	session_racing_car_id = sanitize_racing_car_id(
+		GameSettings.racing_vehicle_id())
+	session_racing_allocation = sanitize_racing_allocation(
+		GameSettings.racing_allocation())
 	race_seed = Time.get_ticks_msec()
 	clear_scene_ready()
 	set_room_state("playing")
+	# Refresh the config so a build changed in the garage after the last peer
+	# change still reaches every peer before the scene starts (reliable and
+	# ordered ahead of the begin-game packet).
+	_push_session_config()
 	rpc("_net_begin_game", target, chosen_mode, session_bots, session_bot_count, race_seed)
 
 

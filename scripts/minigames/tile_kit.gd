@@ -15,6 +15,12 @@ class_name TileKit
 ## placement to the tile grid: arc distances to a quarter tile, lateral offsets
 ## to half a metre and points passed as positions to a cell centre.
 ##
+## Clearance is an invariant, not a suggestion. Barriers and banks are placed by
+## walking the true road edge geometry (KenneyTiles.clearance_path) at a
+## constant lateral distance and are asserted to never come inside
+## BARRIER_CLEARANCE of the centreline, so nothing solid can sit on the racing
+## surface even on the inside of an 8 m corner.
+##
 ## Repeated props of the same model are batched into one MultiMesh per mesh
 ## part; one-off pieces (grandstands, gantries, overhead lights) are instantiated
 ## normally. Every solid piece carries a StaticBody3D collider on
@@ -24,6 +30,7 @@ class_name TileKit
 ## the left, matching the old racing_kit helpers.
 
 const TileCatalog := preload("res://scripts/minigames/tiles/tile_catalog.gd")
+const TileGeometry := preload("res://scripts/minigames/tiles/kenney_tiles.gd")
 const CollisionLayers := preload("res://scripts/systems/collision_layers.gd")
 
 const TILE_SIZE: float = TileCatalog.TILE_SIZE
@@ -34,9 +41,35 @@ const NATURE_SCALE: float = TileCatalog.NATURE_SCALE
 
 ## Lateral offsets from the centreline, in metres. They are snapped again to
 ## half a metre so every prop lands on the same lattice.
-const BARRIER_OFFSET: float = 0.9
+##
+## BARRIER_OFFSET is the clearance beyond the drivable lane edge, so
+## BARRIER_CLEARANCE (roughly the road half width plus 2.5 m) is the closest any
+## barrier surface may come to the centreline. It lands two centimetres outside
+## the visible 16 m tile edge, which is where the Kenney road mesh ends.
+const BARRIER_OFFSET: float = 2.5
+const BARRIER_CLEARANCE: float = ROAD_HALF + BARRIER_OFFSET
+## A grandstand is a full 16 m kit footprint, so its centre sits a little over
+## one cell out: its front edge then clears the barrier's outer face instead of
+## swallowing the wall.
+const STAND_OFFSET: float = TILE_SIZE * 1.15
+## A barrier piece is a 4 m chord, so on the outside of a corner its middle sags
+## inside the arc and a tilted piece on a hill shifts a couple of centimetres.
+## The placement line is pushed out by this much so even after both effects no
+## piece comes inside BARRIER_CLEARANCE.
+const BARRIER_SAG: float = 0.30
+## Meta flag on every barrier body, so an audit can find the wall even when two
+## runs share a node name.
+const BARRIER_META: String = "tile_barrier"
+## Path sample spacing for the barrier/bank walkers, in metres.
+const CLEARANCE_STEP: float = 0.75
+## Nature-kit bank geometry: the inner face of a bank sits BARRIER_CLEARANCE
+## from the centreline, so the models extend BANK_INSET further out.
+const BANK_INSET: float = 3.2
+const BANK_SPACING: float = 7.0
+const BANK_MODELS: Array[String] = [
+	"rock_largeA", "rock_largeB", "rock_tallA", "rock_largeF",
+]
 const TYRE_OFFSET: float = 2.0
-const STAND_OFFSET: float = TILE_SIZE * 0.95
 
 const FLAG_SCALE: float = TILE_SIZE * 0.65
 const TYRE_RADIUS: float = 0.30
@@ -53,47 +86,265 @@ static var _tyre_material: StandardMaterial3D = null
 # barriers and tyres
 
 
-## Red/white/wall barrier run along one edge of the track. The run is a real
-## continuous wall on WORLD: each piece gets a box collider the size of the
-## visible barrier. Distances snap to a quarter tile.
+## Red/white/wall barrier run along one edge of the track. The run follows the
+## real road edge at a constant BARRIER_CLEARANCE from the centreline: straight
+## cells give a straight wall, the outside of a corner gives a concentric arc,
+## and the inside of a corner is mitred between the two neighbouring walls
+## instead of being offset onto the racing surface. Each piece is a real wall
+## section with its own box collider on WORLD, laid along the path chord, so the
+## wall is continuous and never chords across a corner. Distances snap to a
+## quarter tile.
 static func barrier_line(parent: Node3D, spline: RefCounted, from_dist: float,
 		to_dist: float, side: float, kind: String = "barrierRed") -> int:
 	if parent == null or spline == null:
 		return 0
 	var spec: Dictionary = TileCatalog.barrier_spec(kind)
-	var length_m: float = float(spec.get("length", 0.25)) * TILE_SIZE
-	if length_m <= 0.01:
+	var piece_length: float = float(spec.get("length", 0.25)) * TILE_SIZE
+	if piece_length <= 0.01:
 		return 0
 	var total: float = maxf(float(spline.total_length), 0.001)
 	var direction: float = 1.0 if side >= 0.0 else -1.0
-	var lateral: float = _snap_lateral(ROAD_HALF + BARRIER_OFFSET) * direction
 	var start: float = _snap_distance(spline, from_dist)
-	var span: float = fposmod(_snap_distance(spline, to_dist) - start, total)
-	if span < length_m * 0.5:
-		return 0
-	var count: int = maxi(int(round(span / length_m)), 1)
+	var span: float = fposmod(to_dist - start, total)
+	if span <= 0.01:
+		span = total
 	var model: String = str(spec.get("model", "barrierRed"))
 	var info: Dictionary = TileCatalog.model_info(model)
 	if not bool(info.get("ok", false)):
 		return 0
-	var body := _static_body(parent, "Barrier_%s_%d" % [kind,
-		int(round(start))])
-	var size := Vector3(length_m * 0.98,
-		float(spec.get("height", 0.1312)) * TILE_SIZE,
-		float(spec.get("depth", 0.123)) * TILE_SIZE)
+	var path: Dictionary = TileGeometry.clearance_path(spline, direction,
+		BARRIER_CLEARANCE + BARRIER_SAG, CLEARANCE_STEP)
+	if not bool(path.get("ok", false)):
+		push_warning("TileKit.barrier_line: no usable %s clearance path for this spline." % (
+			"right" if direction > 0.0 else "left"))
+		return 0
+	var run_length: float = _path_run_length(path, start, span,
+		float(spline.total_length))
+	if run_length <= piece_length * 0.5:
+		return 0
+	var size_y: float = float(spec.get("height", 0.1312)) * TILE_SIZE
+	var size_z: float = float(spec.get("depth", 0.123)) * TILE_SIZE
+	var from_position: float = _path_position(path, start)
+	var body := _static_body(parent, "Barrier_%s_%d_%s" % [
+		kind, int(round(start)), "R" if direction > 0.0 else "L"])
+	body.set_meta(BARRIER_META, true)
+	body.set_meta("tile_barrier_clearance", BARRIER_CLEARANCE)
 	var transforms: Array = []
-	for index in count:
-		var distance: float = start + float(index) * length_m
-		var point: Vector3 = _point_at(spline, distance, lateral)
-		var yaw: float = _across_track_yaw(spline, distance)
-		transforms.append(_fit_transform(model, point, yaw,
-			Vector3.ONE * PROP_SCALE))
-		_add_box_shape(body,
-			Transform3D(Basis(Vector3.UP, yaw),
-				point + Vector3.UP * (size.y * 0.5)),
-			size)
+	var closest: float = INF
+	# Sharp path corners are mitres: a 4 m chord across one would cut the corner
+	# and reach inside BARRIER_CLEARANCE, so each smooth stretch is walled on its
+	# own and the pieces meet at the corner point.
+	var cuts: PackedFloat32Array = _run_cuts(path, from_position, run_length)
+	for index in range(0, cuts.size() - 1):
+		var segment_from: float = cuts[index]
+		var segment_to: float = cuts[index + 1]
+		var segment_length: float = segment_to - segment_from
+		if segment_length < 0.4:
+			continue
+		var count: int = maxi(int(round(segment_length / piece_length)), 1)
+		var step_length: float = segment_length / float(count)
+		for piece in count:
+			var s0: float = segment_from + step_length * float(piece)
+			var s1: float = s0 + step_length
+			var p0: Vector3 = _path_point(path, s0)
+			var p1: Vector3 = _path_point(path, s1)
+			var chord: Vector3 = p1 - p0
+			var horizontal: float = Vector2(chord.x, chord.z).length()
+			if horizontal < 0.02:
+				continue
+			var yaw: float = atan2(-chord.z, chord.x)
+			var pitch: float = atan2(chord.y, horizontal)
+			var outward := Vector3(-chord.z, 0.0, chord.x).normalized() * direction
+			var middle: Vector3 = (p0 + p1) * 0.5
+			var centre: Vector3 = middle + outward * (size_z * 0.5)
+			centre.y = middle.y
+			var length: float = maxf(chord.length(), 0.1)
+			var scale := Vector3(PROP_SCALE * length / piece_length, PROP_SCALE,
+				PROP_SCALE)
+			var xform: Transform3D = _fit_transform(model, centre, yaw, scale)
+			var axis: Vector3 = Basis(Vector3.UP, yaw) * Vector3(0.0, 0.0, 1.0)
+			transforms.append(_tilt(xform, centre, axis, pitch))
+			var basis := Basis(Vector3.UP, yaw) * Basis(Vector3(0.0, 0.0, 1.0),
+				pitch)
+			_add_box_shape(body, Transform3D(basis,
+				centre + basis * Vector3.UP * (size_y * 0.5)),
+				Vector3(length * 0.98, size_y, size_z))
+			closest = minf(closest, _min_clearance(spline, p0, p1, middle))
+	if transforms.is_empty():
+		# A degenerate run (a seam inside one corner) leaves nothing to show.
+		body.free()
+		return 0
 	_batch_model(body, model, transforms, "BarrierRun", true)
-	return count
+	_assert_run_clearance(closest, start, span, direction)
+	return transforms.size()
+
+
+## Splits a path run at its sharp corners: [from, corner…, from + length].
+## Every stretch between two cuts is smooth enough for a straight barrier piece
+## to stay outside its own arc.
+static func _run_cuts(path: Dictionary, from_position: float,
+		run_length: float) -> PackedFloat32Array:
+	var cuts := PackedFloat32Array()
+	cuts.append(from_position)
+	var total: float = maxf(float(path["total_length"]), 0.001)
+	var breaks: PackedFloat32Array = _path_breaks(path)
+	if not breaks.is_empty():
+		var end: float = from_position + run_length
+		var selected: Array[float] = []
+		for raw: float in breaks:
+			var value: float = raw
+			while value <= from_position + 0.001:
+				value += total
+			if value < end - 0.2:
+				selected.append(value)
+		selected.sort()
+		for value: float in selected:
+			cuts.append(value)
+	cuts.append(from_position + run_length)
+	return cuts
+
+
+## Path arc lengths of the sharp corners (mitres), where a barrier piece must
+## end instead of bridging across.
+static func _path_breaks(path: Dictionary) -> PackedFloat32Array:
+	var breaks := PackedFloat32Array()
+	var points: PackedVector3Array = path["points"]
+	var lengths: PackedFloat32Array = path["lengths"]
+	if points.size() < 4 or lengths.size() != points.size():
+		return breaks
+	# Drop the duplicated closing point, then walk the ring.
+	var count: int = points.size()
+	if count > 1 and points[0].distance_to(points[count - 1]) < 0.001:
+		count -= 1
+	var limit: float = deg_to_rad(10.0)
+	for index in count:
+		var previous: Vector3 = points[posmod(index - 1, count)]
+		var current: Vector3 = points[index]
+		var next: Vector3 = points[posmod(index + 1, count)]
+		var incoming: Vector3 = current - previous
+		var outgoing: Vector3 = next - current
+		incoming.y = 0.0
+		outgoing.y = 0.0
+		if incoming.length() < 0.001 or outgoing.length() < 0.001:
+			continue
+		if incoming.angle_to(outgoing) > limit:
+			breaks.append(lengths[index])
+	return breaks
+
+
+## Publishes the closest approach of one run and fails a debug build when a
+## piece would be on the racing surface.
+static func _assert_run_clearance(closest: float, start: float, span: float,
+		direction: float) -> void:
+	if closest == INF:
+		return
+	if closest >= BARRIER_CLEARANCE - 0.02:
+		return
+	push_error("TileKit.barrier_line: %s run from %.1f m over %.1f m has a barrier %.2f m from the centreline, inside BARRIER_CLEARANCE %.2f m." % [
+		"right" if direction > 0.0 else "left", start, span, closest,
+		BARRIER_CLEARANCE])
+
+
+## Closest plan distance from a barrier run's three sampled points to the
+## centreline. Uses the grid spline's exact plan helper when available.
+static func _min_clearance(spline: RefCounted, p0: Vector3, p1: Vector3,
+		p2: Vector3) -> float:
+	return minf(spline_distance(spline, p0),
+		minf(spline_distance(spline, p1), spline_distance(spline, p2)))
+
+
+## Debug assert for a whole built circuit: measures every barrier collider and
+## reports the closest approach, so a map can prove its wall clears the road.
+## Returns true when every piece is at least BARRIER_CLEARANCE from the
+## centreline.
+static func assert_barrier_clearance(parent: Node3D, spline: RefCounted,
+		label: String = "") -> bool:
+	var report: Dictionary = barrier_clearance(parent, spline)
+	var clears: bool = bool(report["clears"])
+	print("BARRIER CLEARANCE %s: %d piece(s), closest %.2f m, limit %.2f m -> %s" % [
+		label if label != "" else "circuit", int(report["pieces"]),
+		float(report["closest"]), float(report["limit"]),
+		"CLEARS" if clears else "ON THE ROAD"])
+	if not clears and OS.is_debug_build():
+		push_error("TileKit.assert_barrier_clearance: %s has %d barrier piece(s) inside %.2f m of the centreline (closest %.2f m)." % [
+			label if label != "" else "circuit", int(report["offenders"]),
+			float(report["limit"]), float(report["closest"])])
+	return clears
+
+
+## Closest plan approach of every barrier collider under `parent` to the
+## centreline: {pieces, closest, limit, offenders, clears}.
+static func barrier_clearance(parent: Node3D, spline: RefCounted) -> Dictionary:
+	var report: Dictionary = {"pieces": 0, "closest": INF,
+		"limit": BARRIER_CLEARANCE, "offenders": 0, "clears": false}
+	if parent == null or spline == null:
+		report["closest"] = 0.0
+		return report
+	_walk_barrier_shapes(parent, spline, report)
+	var closest: float = float(report["closest"])
+	if closest == INF:
+		closest = 0.0
+	report["closest"] = closest
+	report["clears"] = closest >= BARRIER_CLEARANCE - 0.02
+	return report
+
+
+static func _walk_barrier_shapes(node: Node, spline: RefCounted,
+		report: Dictionary) -> void:
+	for child: Node in node.get_children():
+		if child is StaticBody3D and bool(child.get_meta(BARRIER_META, false)):
+			for shape_node: Node in child.get_children():
+				var collision := shape_node as CollisionShape3D
+				if collision == null:
+					continue
+				var box := collision.shape as BoxShape3D
+				if box == null:
+					continue
+				_measure_barrier_box(collision, box, spline, report)
+		_walk_barrier_shapes(child, spline, report)
+
+
+static func _measure_barrier_box(collision: CollisionShape3D, box: BoxShape3D,
+		spline: RefCounted, report: Dictionary) -> void:
+	var xform: Transform3D = _world_transform(collision)
+	var half: Vector3 = box.size * 0.5
+	var closest: float = INF
+	for point: Vector3 in _box_samples(half):
+		closest = minf(closest, spline_distance(spline, xform * point))
+	if closest == INF:
+		return
+	report["pieces"] = int(report["pieces"]) + 1
+	report["closest"] = minf(float(report["closest"]), closest)
+	if closest < BARRIER_CLEARANCE - 0.02:
+		report["offenders"] = int(report["offenders"]) + 1
+
+
+## Eight corners plus the four face centres of a box, so the audit does not only
+## look at the ends of a long barrier piece.
+static func _box_samples(half: Vector3) -> Array[Vector3]:
+	var points: Array[Vector3] = []
+	for ix: int in [-1, 1]:
+		for iy: int in [-1, 1]:
+			for iz: int in [-1, 1]:
+				points.append(Vector3(half.x * float(ix), half.y * float(iy),
+					half.z * float(iz)))
+	points.append(Vector3.ZERO)
+	points.append(Vector3(0.0, 0.0, half.z))
+	points.append(Vector3(0.0, 0.0, -half.z))
+	points.append(Vector3(half.x, 0.0, 0.0))
+	points.append(Vector3(-half.x, 0.0, 0.0))
+	return points
+
+
+## Composes the parent chain, so a collider under a themed holder measures in
+## world space even when a tool builds the map off-tree.
+static func _world_transform(node: Node3D) -> Transform3D:
+	var xform: Transform3D = node.transform
+	var current: Node = node.get_parent()
+	while current is Node3D:
+		xform = (current as Node3D).transform * xform
+		current = current.get_parent()
+	return xform
 
 
 ## One stack of cartoon tyres. The racing kit ships no tyre model, so the stack
@@ -121,6 +372,64 @@ static func tyre_stack(parent: Node3D, spline: RefCounted, dist: float,
 	var height: float = TYRE_TUBE * 2.0 + float(TYRE_LEVELS) * TYRE_LEVEL_STEP
 	_add_cylinder_shape(body, point, TYRE_COLLIDER_RADIUS, height)
 	return 1
+
+
+# --------------------------------------------------------------------------
+# terrain
+
+
+## A berm/bank run along the outside of the circuit, built from nature-kit rock
+## blocks. It follows the same clearance path as the barriers, so a map can dress
+## elevation cheaply and still guarantee the banks never reach the road: the
+## inner face of every bank sits BARRIER_CLEARANCE from the centreline. Banks
+## follow the spline height, so they climb with an elevated circuit, and each one
+## carries a WORLD box collider.
+static func terrain_banks(parent: Node3D, spline: RefCounted, from_dist: float,
+		to_dist: float, side: float, height: float = 1.6) -> int:
+	if parent == null or spline == null:
+		return 0
+	var total: float = maxf(float(spline.total_length), 0.001)
+	var direction: float = 1.0 if side >= 0.0 else -1.0
+	var start: float = _snap_distance(spline, from_dist)
+	var span: float = fposmod(to_dist - start, total)
+	if span <= 0.01:
+		span = total
+	if span < BANK_SPACING * 0.5:
+		return 0
+	var path: Dictionary = TileGeometry.clearance_path(spline, direction,
+		BARRIER_CLEARANCE + BANK_INSET, CLEARANCE_STEP)
+	if not bool(path.get("ok", false)):
+		return 0
+	var run_length: float = _path_run_length(path, start, span, total)
+	var count: int = maxi(int(floor(run_length / BANK_SPACING)), 1)
+	var step: float = run_length / float(count)
+	var from_position: float = _path_position(path, start)
+	var body := _static_body(parent, "TerrainBanks_%d_%s" % [
+		int(round(start)), "R" if direction > 0.0 else "L"])
+	var scale_factor: float = NATURE_SCALE * clampf(height / 2.0, 0.55, 1.6)
+	var batches: Dictionary = {}
+	var placed: int = 0
+	for index in count:
+		var s: float = from_position + step * (float(index) + 0.5)
+		var point: Vector3 = _path_point(path, s)
+		if spline_distance(spline, point) < BARRIER_CLEARANCE - 0.02:
+			continue
+		var model: String = TileCatalog.pick(BANK_MODELS, index, "rock_largeA")
+		var jitter: float = 0.85 + 0.3 * fposmod(float(index) * 0.61803398875,
+			1.0)
+		var bank_scale: float = scale_factor * jitter
+		if not batches.has(model):
+			batches[model] = []
+		(batches[model] as Array).append(_fit_transform(model, point,
+			float(index) * 1.7, Vector3.ONE * bank_scale, true))
+		_add_box_shape(body, Transform3D(Basis.IDENTITY,
+			point + Vector3.UP * (height * 0.5)),
+			Vector3(BANK_INSET * 1.6, height, BANK_INSET * 1.6))
+		placed += 1
+	for model: String in batches:
+		_batch_model(body, model, batches[model] as Array, "Bank_" + model,
+			false, true)
+	return placed
 
 
 # --------------------------------------------------------------------------
@@ -347,14 +656,14 @@ static func trees(parent: Node3D, positions: Array,
 
 
 ## Overhead start/finish gantry across the road at `dist`. The two legs are
-## solid on WORLD; the beam is above kart height.
+## solid on WORLD; the beam is above kart height. The gantry follows the road
+## deck height like every other track-side prop.
 static func gantry(parent: Node3D, spline: RefCounted, dist: float) -> int:
 	if parent == null or spline == null:
 		return 0
 	var distance: float = _snap_distance(spline, dist)
 	var frame: Dictionary = spline.sample(distance)
 	var point: Vector3 = frame["position"]
-	point.y = 0.0
 	var right: Vector3 = frame["right"]
 	var yaw: float = atan2(-right.z, right.x)
 	var xform: Transform3D = _fit_transform(TileCatalog.LIGHT_GANTRY, point,
@@ -368,12 +677,24 @@ static func gantry(parent: Node3D, spline: RefCounted, dist: float) -> int:
 	return 1
 
 
-## Distance from a world point to the centreline, or INF without a spline.
+## Plan distance from a world point to the centreline, or INF without a spline.
+## Clearance is measured in plan view so a prop beside a raised road section is
+## still judged against the racing surface it sits next to.
 static func spline_distance(spline: RefCounted, point: Vector3) -> float:
 	if spline == null:
 		return INF
+	if spline.has_method("plan_distance"):
+		return float(spline.call("plan_distance", point))
 	var hit: Dictionary = spline.closest(point)
 	return float(hit.get("distance", INF))
+
+
+## Road deck height at a world point, from the grid spline. 0 on a flat map.
+static func ground_height(spline: RefCounted, point: Vector3) -> float:
+	if spline == null:
+		return 0.0
+	var hit: Dictionary = spline.closest(point)
+	return float((hit.get("point", Vector3.ZERO) as Vector3).y)
 
 
 ## Walk up from `node` looking for the spline KenneyTiles.build stored on the
@@ -410,14 +731,83 @@ static func _sign_model(kind: String) -> String:
 # placement
 
 
+## Point at `lateral` from the centreline. The height is the road deck's, so a
+## prop on an elevated map sits on the terrain instead of at world zero.
 static func _point_at(spline: RefCounted, distance: float,
 		lateral: float) -> Vector3:
 	var frame: Dictionary = spline.sample(distance)
 	var position: Vector3 = frame["position"]
 	var right: Vector3 = frame["right"]
-	var point: Vector3 = position + right * lateral
-	point.y = 0.0
-	return point
+	return position + right * lateral
+
+
+## Rotates a placement about `axis` through `pivot`, so props can follow a
+## sloped road instead of floating level over it.
+static func _tilt(xform: Transform3D, pivot: Vector3, axis: Vector3,
+		angle: float) -> Transform3D:
+	if absf(angle) < 0.0001:
+		return xform
+	var turn := Basis(axis.normalized(), angle)
+	return Transform3D(turn * xform.basis, pivot + turn * (xform.origin - pivot))
+
+
+## Path arc position that a lap arc length maps to on a clearance path.
+static func _path_position(path: Dictionary, lap_distance: float) -> float:
+	var distances: PackedFloat32Array = path["distances"]
+	var lengths: PackedFloat32Array = path["lengths"]
+	if distances.size() < 2 or lengths.size() != distances.size():
+		return 0.0
+	var total: float = float(path["total_length"])
+	var wanted: float = fposmod(lap_distance, maxf(
+		float(distances[distances.size() - 1]), 0.001))
+	for index in range(0, distances.size() - 1):
+		var from: float = distances[index]
+		var to: float = distances[index + 1]
+		if to < from:
+			continue
+		if wanted >= from and wanted <= to:
+			var t: float = 0.0 if to - from < 0.0001 \
+				else (wanted - from) / (to - from)
+			return lerpf(lengths[index], lengths[index + 1], t)
+	return total
+
+
+## Path length of a lap run, following the offset path rather than the lap.
+static func _path_run_length(path: Dictionary, start: float, span: float,
+		lap_total: float) -> float:
+	var path_total: float = float(path["total_length"])
+	if path_total <= 0.01:
+		return 0.0
+	var from: float = _path_position(path, start)
+	var to: float = _path_position(path, fposmod(start + span, maxf(lap_total,
+		0.001)))
+	var run: float = fposmod(to - from, path_total)
+	if run <= 0.01:
+		run = path_total
+	return run
+
+
+## Point on a clearance path at a path arc length.
+static func _path_point(path: Dictionary, distance: float) -> Vector3:
+	var points: PackedVector3Array = path["points"]
+	var lengths: PackedFloat32Array = path["lengths"]
+	if points.is_empty():
+		return Vector3.ZERO
+	if points.size() < 2 or lengths.size() != points.size():
+		return points[0]
+	var total: float = float(path["total_length"])
+	var wanted: float = fposmod(distance, maxf(total, 0.001))
+	var low: int = 0
+	var high: int = lengths.size() - 2
+	while low < high:
+		var mid: int = (low + high + 1) / 2
+		if lengths[mid] <= wanted:
+			low = mid
+		else:
+			high = mid - 1
+	var span: float = lengths[low + 1] - lengths[low]
+	var t: float = 0.0 if span < 0.0001 else (wanted - lengths[low]) / span
+	return points[low].lerp(points[low + 1], clampf(t, 0.0, 1.0))
 
 
 ## Yaw that maps a road piece's local -Z (travel) onto the track forward.
@@ -445,11 +835,12 @@ static func _snap_lateral(lateral: float) -> float:
 
 
 ## Nearest cell centre for a world point. Cell (column, row) has its centre at
-## ((column + 0.5) * TILE, 0, (row + 0.5) * TILE).
+## ((column + 0.5) * TILE, 0, (row + 0.5) * TILE). The caller's height is kept,
+## so a theme can put a prop on an elevated cell by passing a Vector3.
 static func _snap_point(point: Vector3) -> Vector3:
 	var column: int = int(floor(point.x / TILE_SIZE))
 	var row: int = int(floor(point.z / TILE_SIZE))
-	return Vector3((float(column) + 0.5) * TILE_SIZE, 0.0,
+	return Vector3((float(column) + 0.5) * TILE_SIZE, point.y,
 		(float(row) + 0.5) * TILE_SIZE)
 
 

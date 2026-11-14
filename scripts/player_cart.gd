@@ -20,6 +20,10 @@ const BUMP_MIN_DURATION: float = 0.35
 const BUMP_MAX_DURATION: float = 0.6
 const BUMP_DEFAULT_DURATION: float = 0.45
 const BUMP_STEER_AUTHORITY: float = 0.45
+## A steady stream of contact bumps must not re-arm the steering penalty
+## forever. One chain may last BUMP_MAX_DURATION, then it needs a
+## BUMP_MIN_DURATION quiet gap before another bump can open a new one.
+const BUMP_CHAIN_QUIET: float = BUMP_MIN_DURATION
 ## A sender clock is its own process uptime, so a single absurd stamp must not
 ## permanently reject every later packet. A backwards jump larger than this is
 ## treated as a clock reset and re-baselined; normal reordering stays rejected.
@@ -257,6 +261,9 @@ var _bump_timer: float = 0.0
 ## _physics_process can freeze at its last value when the race ends and physics
 ## is switched off; the deadline guarantees the penalty still expires.
 var _bump_expire_ms: int = 0
+## Wall-clock end of the current bump chain (see _arm_bump_penalty). Kept
+## separate from the penalty deadline so repeated contacts cannot re-arm it.
+var _bump_chain_end_ms: int = 0
 ## True while the last contact was another cart's roof. CharacterBody treats
 ## that top face as floor, but accelerating along it is not real ground.
 var _cart_roof_contact: bool = false
@@ -487,6 +494,7 @@ func mark_race_finished() -> void:
 	# steering penalty here rather than leaving it frozen for a reuse/reset.
 	_bump_timer = 0.0
 	_bump_expire_ms = 0
+	_bump_chain_end_ms = 0
 
 
 func setup_ai(vehicle_id: String) -> void:
@@ -608,19 +616,23 @@ func _move_ghost_towards(target: Vector3, blend: float) -> void:
 
 func set_vehicle_id(vehicle_id: String) -> void:
 	## Rebuild the visual for a remote player's chosen vehicle and remember its
-	## mass so car-to-car impacts use the right inertia.
+	## mass so car-to-car impacts use the right inertia. The mass must come
+	## from the composed entry, not the bare chassis: a racing ghost carries
+	## the session's stat build (the host relays it with the map id), and
+	## without it the host resolved that client's contacts 72-144 kg light.
 	var entry: Dictionary = VehicleCatalog.find(vehicle_id)
 	if entry.is_empty():
 		return
+	var visual: Dictionary = _visual_entry(entry)
 	_current_vehicle_id = str(entry.get("id", ""))
-	_profile_mass = maxf(float(entry.get("mass", REFERENCE_MASS)), 1.0)
+	_profile_mass = maxf(float(visual.get("mass", REFERENCE_MASS)), 1.0)
 	# The host's OBB resolver reads these extents for every ghost. Without
 	# refreshing them here a remote truck was resolved as the default 1.5 x
 	# 2.26 body, so its bumper passed through cars and it could shove cars it
 	# was not touching.
-	_apply_vehicle_dimensions(entry)
-	_apply_vehicle_visual_for(_visual_entry(entry))
-	_resize_collision(entry)
+	_apply_vehicle_dimensions(visual)
+	_apply_vehicle_visual_for(visual)
+	_resize_collision(visual)
 
 
 func reapply_vehicle(vehicle_id: String) -> void:
@@ -741,12 +753,7 @@ func apply_bump(impulse: Vector3, duration: float) -> void:
 	var hold: float = duration if is_finite(duration) and duration > 0.0 \
 		else BUMP_DEFAULT_DURATION
 	hold = clampf(hold, BUMP_MIN_DURATION, BUMP_MAX_DURATION)
-	# Take the longer of the remaining penalty and this bump; never add them.
-	# Two hits in quick succession cost at most one full penalty instead of
-	# stacking into a long steering lockout.
-	if hold > _bump_timer:
-		_bump_timer = hold
-		_bump_expire_ms = Time.get_ticks_msec() + int(round(hold * 1000.0))
+	_arm_bump_penalty(hold)
 	_impact_timer = maxf(_impact_timer, 0.08)
 	var strength: float = kick.length()
 	_susp_vel += minf(strength * 0.03, 0.30)
@@ -755,6 +762,27 @@ func apply_bump(impulse: Vector3, duration: float) -> void:
 		_camera_rig.add_shake(clampf(strength * 0.05, 0.04, 0.30))
 	if _feedback != null:
 		_feedback.on_collision(clampf(strength / maxf(max_speed, 1.0), 0.12, 0.7))
+
+
+func _arm_bump_penalty(hold: float) -> void:
+	## Start or extend the reduced-steering window without letting a repeated
+	## contact turn it into a lockout loop. The old rule ("take the longer of
+	## the remaining penalty and this bump") was re-armed every tick by a
+	## resting contact, so the penalty never decayed. A chain now has a hard
+	## wall-clock end at BUMP_MAX_DURATION and then needs BUMP_CHAIN_QUIET
+	## before it can open again; a second hit inside the chain never extends it
+	## beyond that end.
+	var now_ms: int = Time.get_ticks_msec()
+	if _bump_timer <= 0.0 or now_ms >= _bump_expire_ms:
+		_bump_expire_ms = 0
+	if now_ms >= _bump_chain_end_ms + int(round(BUMP_CHAIN_QUIET * 1000.0)):
+		_bump_chain_end_ms = now_ms + int(round(BUMP_MAX_DURATION * 1000.0))
+	var end_ms: int = mini(now_ms + int(round(hold * 1000.0)), _bump_chain_end_ms)
+	if end_ms <= now_ms:
+		return
+	_bump_expire_ms = maxi(_bump_expire_ms, end_ms)
+	_bump_timer = maxf(_bump_timer,
+		float(_bump_expire_ms - now_ms) / 1000.0)
 
 
 @rpc("authority", "reliable")
@@ -784,6 +812,11 @@ func _apply_vehicle_visual() -> Dictionary:
 	var base: Dictionary = VehicleCatalog.find(GameSettings.selected_vehicle)
 	if base.is_empty() and GameSettings.racing_scene_active():
 		base = VehicleCatalog.racing_find(GameSettings.racing_vehicle_id())
+	if base.is_empty() and GameSettings.racing_scene_active() \
+			and Network.is_session_active():
+		# Last resort for a corrupt save: the host's racing pick travelled with
+		# the session config, so use it instead of dropping to the sandbox kart.
+		base = VehicleCatalog.racing_find(Network.session_racing_car_id)
 	if base.is_empty():
 		base = VehicleCatalog.find(VehicleCatalog.DEFAULT_ID)
 	if base.is_empty() or _mesh_root == null:
@@ -796,17 +829,26 @@ func _apply_vehicle_visual() -> Dictionary:
 
 func _visual_entry(base: Dictionary) -> Dictionary:
 	## Turn a catalog chassis into the entry this cart actually renders. Racing
-	## cars get the local point build, or just a per-peer paint tint when this is
-	## a remote ghost. Every other vehicle passes through untouched, so sandbox,
-	## cargo and minigame behaviour is byte-for-byte the old path.
+	## cars are composed with the live stat build; a remote ghost must use the
+	## same numbers the owner simulates or the host's collisions use the wrong
+	## mass. Every other vehicle passes through untouched, so sandbox, cargo
+	## and minigame behaviour is byte-for-byte the old path.
 	var vehicle_id: String = str(base.get("id", ""))
 	if not VehicleCatalog.is_racing_id(vehicle_id):
 		return base
-	var tint: Color = _tint_for_cart()
-	if remote_mode:
-		return VehicleCatalog.tinted_racing_entry(vehicle_id, tint)
 	return VehicleCatalog.compose_racing_entry(vehicle_id,
-		GameSettings.racing_allocation(), tint)
+		_racing_allocation(), _tint_for_cart())
+
+
+func _racing_allocation() -> Dictionary:
+	## The host's build travels with the session config, exactly like the map
+	## id, so every peer simulates the same mass in a session. Solo uses the
+	## local saved build. An empty session field (a peer that did not send the
+	## field) falls back to the local save.
+	if Network.is_session_active() \
+			and not Network.session_racing_allocation.is_empty():
+		return Network.session_racing_allocation
+	return GameSettings.racing_allocation()
 
 
 func _tint_for_cart() -> Color:
@@ -1211,6 +1253,8 @@ func _process_collisions() -> void:
 				continue
 			handled[hit_id] = true
 		var normal: Vector3 = collision.get_normal()
+		if not normal.is_finite():
+			continue
 		var other_mass: float = 0.0
 		var other_velocity: Vector3 = Vector3.ZERO
 		var other_vehicle: bool = false
@@ -1235,6 +1279,13 @@ func _process_collisions() -> void:
 			other_vehicle = true
 			other_mass = float(hit_node.get_meta("vehicle_mass"))
 			other_velocity = hit_node.get_meta("vehicle_velocity", Vector3.ZERO)
+		# A legacy meta-bodied vehicle can carry a hand-written mass/velocity;
+		# a corrupt value must not reach the impulse maths or the visual spring
+		# state through impact_speed (a NaN there used to stick in _base_pitch).
+		if not is_finite(other_mass) or other_mass < 0.0:
+			other_mass = 0.0
+		if not other_velocity.is_finite():
+			other_velocity = Vector3.ZERO
 		if normal.y > 0.6 and not other_vehicle:
 			continue
 		if other_vehicle and normal.y > 0.6:
@@ -1251,6 +1302,8 @@ func _process_collisions() -> void:
 			if planar_normal.length_squared() > 0.001:
 				normal = planar_normal.normalized()
 		var impact_speed: float = maxf(-(_prev_velocity - other_velocity).dot(normal), 0.0)
+		if not is_finite(impact_speed):
+			continue
 		if impact_speed < (0.05 if other_vehicle else min_impact_speed):
 			continue
 		var own_mass: float = maxf(_profile_mass, 1.0)
@@ -1486,6 +1539,7 @@ func _exit_tree() -> void:
 	# Never leave a penalized state behind if this node is removed/reused.
 	_bump_timer = 0.0
 	_bump_expire_ms = 0
+	_bump_chain_end_ms = 0
 
 
 func on_boost_pad(burst_speed: float) -> void:
@@ -1561,6 +1615,7 @@ func _enter_crashed(up_dot: float) -> void:
 	_pad_burst_timer = 0.0
 	_bump_timer = 0.0
 	_bump_expire_ms = 0
+	_bump_chain_end_ms = 0
 	velocity *= 0.5
 	if not is_on_floor():
 		global_position.y += 0.4
@@ -1835,6 +1890,7 @@ func _reset_cart(restore_props: bool = true) -> void:
 	_impact_timer = 0.0
 	_bump_timer = 0.0
 	_bump_expire_ms = 0
+	_bump_chain_end_ms = 0
 	is_drifting = false
 	_frame_start_velocity = Vector3.ZERO
 	_prev_velocity = Vector3.ZERO

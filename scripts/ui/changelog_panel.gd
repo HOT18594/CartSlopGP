@@ -26,7 +26,7 @@ const MUTED: String = "#7284a6"
 const NOTE_INK: String = "#4b5c82"
 
 const PANEL_MAX_WIDTH: float = 860.0
-const PANEL_MAX_HEIGHT: float = 620.0
+const PANEL_MAX_HEIGHT: float = 600.0
 const PANEL_MARGIN_X: float = 120.0
 const PANEL_MARGIN_Y: float = 96.0
 const PHOTO_WIDTH: int = 380
@@ -52,6 +52,10 @@ func _ready() -> void:
 	hide()
 	_back_button.pressed.connect(close)
 	_all_versions_button.pressed.connect(_show_list)
+	## Footer and detail buttons share the candy look but must not push the
+	## card past the viewport, so they get tighter text boxes than big actions.
+	_compact_button(_back_button, 16.0, 6.0)
+	_compact_button(_all_versions_button, 16.0, 6.0)
 	_current_label.text = "CURRENT  v" + UpdateChecker.read_version_file()
 	resized.connect(_fit_panel)
 	_fit_panel()
@@ -126,14 +130,18 @@ func _build_version_list() -> void:
 	_release_buttons.clear()
 	var vp_w: float = get_viewport_rect().size.x
 	var card_w: float = minf(PANEL_MAX_WIDTH, maxf(320.0, vp_w - PANEL_MARGIN_X))
-	# Two equal tiles per row, so a version is a block instead of one thin bar
-	# stretched across the whole card.
-	var button_w: float = maxf(160.0, (card_w - 120.0) * 0.5)
+	var inner_w: float = maxf(240.0, card_w - _panel_content_margin() * 2.0)
+	# Two equal tiles per row is the intended shape, but a narrow browser tab
+	# gets one full-width column instead of two clipped tiles.
+	var stacked: bool = inner_w < 620.0
+	_version_list.columns = 1 if stacked else 2
+	var button_w: float = inner_w if stacked else (inner_w - 16.0) * 0.5 - 2.0
+	var tile_font: int = 15 if button_w >= 330.0 else 13
 	for i in _releases.size():
 		var release: Dictionary = _releases[i]
 		var button := UiKit.tile("", UiPalette.BLUE if i % 2 == 0 else UiPalette.CYAN,
-			64.0, 17)
-		button.custom_minimum_size.x = button_w
+			50.0, tile_font)
+		button.custom_minimum_size.x = maxf(160.0, button_w)
 		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		var date_text: String = str(release.get("date", "")).strip_edges()
 		if date_text == "":
@@ -141,6 +149,7 @@ func _build_version_list() -> void:
 		button.text = "v%s  ·  %s" % [str(release.get("version", "")), date_text]
 		button.pressed.connect(_show_release.bind(i))
 		_version_list.add_child(button)
+		_compact_button(button, 12.0, 5.0)
 		_release_buttons.append(button)
 	if _releases.is_empty():
 		var empty := Label.new()
@@ -148,6 +157,33 @@ func _build_version_list() -> void:
 		empty.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		empty.add_theme_color_override("font_color", UiPalette.TEXT_DIM)
 		_version_list.add_child(empty)
+
+
+## PanelContainer content margin comes from theme.tres; read it instead of
+## hard-coding so the tile width always matches the real inner width.
+func _panel_content_margin() -> float:
+	var style: StyleBox = _panel.get_theme_stylebox("panel")
+	if style == null:
+		return 36.0
+	return style.get_margin(SIDE_LEFT)
+
+
+## The candy style is authored for big action buttons (26 px side padding).
+## Changelog controls keep its outline, fill and ring but trade that padding
+## for a compact text box, so footer and version rows stay inside the card.
+func _compact_button(button: Button, padding_x: float, padding_y: float) -> void:
+	for state: String in ["normal", "hover", "pressed", "disabled"]:
+		var box: StyleBox = button.get_theme_stylebox(state)
+		if box == null:
+			continue
+		var flat: StyleBoxFlat = box.duplicate() as StyleBoxFlat
+		if flat == null:
+			continue
+		flat.content_margin_left = padding_x
+		flat.content_margin_right = padding_x
+		flat.content_margin_top = padding_y
+		flat.content_margin_bottom = padding_y
+		button.add_theme_stylebox_override(state, flat)
 
 
 func _show_list() -> void:

@@ -26,9 +26,6 @@ const RESTITUTION: float = 0.35
 const WALL_RESTITUTION: float = 0.30
 const MIN_NORMAL_LENGTH_SQ: float = 0.0001
 const MIN_CLOSING_SPEED: float = 0.001
-## If an impulse would leave a previously moving cart parked, add a tiny
-## equal/opposite separation impulse so the hit never reads as a dead stop.
-const MIN_KEEP_SPEED: float = 0.35
 ## A contact speed above this is corruption, not driving: no cart in the game
 ## can move faster than a boost cap of ~26 m/s plus a fall. Reading a bad body
 ## velocity (NaN, 1e30) into the impulse maths would turn one contact into a
@@ -80,24 +77,17 @@ static func resolve_pair(a: Node3D, b: Node3D, contact_point: Vector3,
 	var closing: float = (velocity_a - velocity_b).dot(n)
 	if not is_finite(closing) or closing <= MIN_CLOSING_SPEED:
 		return 0.0
+	# Standard restitution impulse along the contact normal. The pair leaves
+	# the contact at RESTITUTION * closing, so a hit separates without any
+	# extra shove. A light cart can only ever put
+	# (1 + RESTITUTION) * closing * m_light / (m_light + m_heavy) into a heavy
+	# one, which is the mass-ratio bound. Do not add a "keep moving" nudge on
+	# top of this: an extra equal/opposite impulse is not bounded by
+	# restitution, and it can reverse a cart that the main exchange only
+	# slowed (the harness now asserts the exact bound and zero momentum error).
 	var impulse: float = (1.0 + RESTITUTION) * closing / inv_sum
 	if not is_finite(impulse) or impulse <= 0.0:
 		return 0.0
-	var post_a: Vector3 = velocity_a - n * (impulse * inv_a)
-	var post_b: Vector3 = velocity_b + n * (impulse * inv_b)
-	# An unlucky mass ratio can leave the lighter cart with exactly zero speed.
-	# That still conserves momentum, but it reads as a dead stop. Add a small
-	# equal/opposite impulse along the normal so the pair separates and a
-	# formerly moving cart keeps moving. Normal contacts never trigger this.
-	var nudge_impulse: float = 0.0
-	if closing > 1.0:
-		if post_a.length() < MIN_KEEP_SPEED and velocity_a.length() > 1.0:
-			nudge_impulse = maxf(nudge_impulse,
-				(MIN_KEEP_SPEED + post_a.dot(n)) * mass_a)
-		if post_b.length() < MIN_KEEP_SPEED and velocity_b.length() > 1.0:
-			nudge_impulse = maxf(nudge_impulse,
-				(MIN_KEEP_SPEED - post_b.dot(n)) * mass_b)
-	impulse += maxf(nudge_impulse, 0.0)
 	_apply_impulse(a, -n * impulse, contact_point)
 	_apply_impulse(b, n * impulse, contact_point)
 	return impulse

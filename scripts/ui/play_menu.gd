@@ -66,11 +66,9 @@ func _build_ui() -> void:
 	_cards_row.alignment = BoxContainer.ALIGNMENT_CENTER
 	_body.add_child(_cards_row)
 	_single_card = _card("SINGLE", UiPalette.YELLOW, false)
-	_single_card.set("badge_text", "1 PLAYER")
 	_single_card.pressed.connect(_on_single_card)
 	_cards_row.add_child(_single_card)
 	_multi_card = _card("MULTIPLAYER", UiPalette.BLUE, true)
-	_multi_card.set("badge_text", "2-8 PLAYERS")
 	_multi_card.pressed.connect(_on_multi_card)
 	_cards_row.add_child(_multi_card)
 

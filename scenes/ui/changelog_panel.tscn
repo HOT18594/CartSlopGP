@@ -97,15 +97,15 @@ theme_override_constants/separation = 16
 
 [node name="AllVersionsButton" type="Button" parent="Panel/Body/DetailView"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(180, 48)
+custom_minimum_size = Vector2(156, 36)
 layout_mode = 2
 size_flags_horizontal = 0
-theme_override_font_sizes/font_size = 16
+theme_override_font_sizes/font_size = 15
 text = "ALL VERSIONS"
 script = ExtResource("3")
 fill_color = Color(0.270588, 0.713726, 0.941176, 1)
-corner_radius = 16
-shadow_offset = 5
+corner_radius = 14
+shadow_offset = 4
 
 [node name="ChangelogText" type="RichTextLabel" parent="Panel/Body/DetailView"]
 unique_name_in_owner = true
@@ -131,11 +131,11 @@ size_flags_horizontal = 3
 
 [node name="BackButton" type="Button" parent="Panel/Body/Footer"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(140, 48)
+custom_minimum_size = Vector2(112, 36)
 layout_mode = 2
-theme_override_font_sizes/font_size = 18
+theme_override_font_sizes/font_size = 15
 text = "BACK"
 script = ExtResource("3")
 fill_color = Color(0.94902, 0.329412, 0.356863, 1)
-corner_radius = 16
-shadow_offset = 5
+corner_radius = 14
+shadow_offset = 4

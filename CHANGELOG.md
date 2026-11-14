@@ -2,7 +2,7 @@
 
 Player-facing notes, newest first.
 
-## [0.7.1] - 2026-11-10
+## [0.7.1] - 2026-11-13
 
 ### Bumps that move you
 
