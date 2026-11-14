@@ -15,6 +15,10 @@ extends RefCounted
 ## the outer band gets the raised wharf, cranes and mooring props. Nothing is
 ## pinned to a hard-coded column/row, so a layout edit moves the yard with it.
 ##
+## The packing reserves eight free infield cells as overgrown pockets and
+## publishes them on the plan metadata, so the green pass can grow a windswept
+## tree between container rows without a stack already standing there.
+##
 ## Every solid piece sits behind the barrier line (Parts.SAFE_CLEARANCE) and
 ## carries a real WORLD collider. Repeated models are batched into MultiMeshes,
 ## so all of this detail costs only a handful of draw calls.
@@ -57,6 +61,20 @@ const BOLLARD_LIMIT: int = 44
 ## Service gap rhythm in the container rows: every fourth cell is left open.
 const STACK_GAP: int = 4
 const LATTICE_STACK_LIMIT: int = 46
+## Overgrown yard pockets: free infield cells the container packing leaves alone
+## so the forest pass can plant a windswept tree and scrub in them. Eight cells
+## out of a packed yard read as accidental, which is exactly the dock look.
+const TREE_ISLANDS: int = 8
+const TREE_ISLAND_CLEARANCE: float = 15.0
+const TREE_ISLAND_SPACING: float = 24.0
+const TREE_ISLAND_META: String = "dockyard_tree_islands"
+## Crane bases are published for the green pass: a boom reaches 11 m, so the
+## treeline keeps a wider seat round these three cells than the other posts.
+const CRANE_META: String = "dockyard_crane_bases"
+## Cells that carry an actual catch-fence panel. A ring cell can also hold a
+## container or a bollard, so the green pass only grows fence-foot brambles on
+## the cells this list names.
+const FENCE_META: String = "dockyard_fence_cells"
 
 
 ## Builds the yard, pit complex, wharf and fence, returning statistics.
@@ -65,7 +83,7 @@ static func build(parent: Node3D, spline: RefCounted,
 	var stats: Dictionary = {
 		"objects": 0, "draws": 0, "containers": 0, "pit_bays": 0,
 		"fence": 0, "cranes": 0, "bollards": 0, "mooring": 0, "wharf": 0,
-		"loading": 0,
+		"loading": 0, "tree_islands": 0,
 	}
 	if parent == null or spline == null or plan == null:
 		return stats
@@ -88,6 +106,9 @@ static func _grid_yard(parent: Node3D, spline: RefCounted, plan: RefCounted,
 	_pit_complex(parent, spline, plan, stats)
 	_wharf(parent, spline, plan, containers, container_boxes, stats)
 	_loading_docks(parent, spline, plan, containers, container_boxes, stats)
+	# Reserve the overgrown pockets before the stacks are packed: a claimed cell
+	# is skipped by every later pass, so these stay empty concrete for the trees.
+	_tree_islands(plan, spline, stats)
 	_grid_containers(parent, spline, plan, containers, container_boxes, stats)
 	_canyon_containers(spline, plan, containers, container_boxes, stats)
 	_emit_containers(parent, containers, container_boxes, stats)
@@ -95,6 +116,37 @@ static func _grid_yard(parent: Node3D, spline: RefCounted, plan: RefCounted,
 	_bollards(parent, spline, plan, stats)
 	_mooring(parent, plan, stats)
 	_grid_fence(parent, plan, stats)
+
+
+## Claims a handful of free infield cells as overgrown pockets and publishes them
+## on the plan metadata. The container packing skips a claimed cell and the
+## circuit keeps its lights and flags off used cells, so an island stays empty
+## concrete; dockyard_forest.gd reads the list back and plants one windswept tree
+## and its scrub in each. Spacing and centreline clearance keep the pockets away
+## from the barriers and from each other, so they read as separate accidents of
+## the yard rather than a planted avenue.
+static func _tree_islands(plan: RefCounted, spline: RefCounted,
+		stats: Dictionary) -> void:
+	var islands: Array[Vector2i] = []
+	for cell: Vector2i in plan.free_cells():
+		if islands.size() >= TREE_ISLANDS:
+			break
+		if plan.is_ring_cell(cell) or plan.is_outer_band(cell):
+			continue
+		var point: Vector3 = plan.cell_point(cell)
+		if TileKit.spline_distance(spline, point) < TREE_ISLAND_CLEARANCE:
+			continue
+		var spaced: bool = true
+		for other: Vector2i in islands:
+			if plan.cell_point(other).distance_to(point) < TREE_ISLAND_SPACING:
+				spaced = false
+				break
+		if not spaced:
+			continue
+		if plan.take(cell):
+			islands.append(cell)
+	plan.set_meta(TREE_ISLAND_META, islands)
+	stats["tree_islands"] = islands.size()
 
 
 ## The pit complex on the inside of the longest straight: flat pads on the
@@ -647,6 +699,7 @@ static func _cranes(parent: Node3D, spline: RefCounted, plan: RefCounted,
 			break
 	if spots.is_empty():
 		return
+	plan.set_meta(CRANE_META, spots)
 	var masts: Array = []
 	var booms: Array = []
 	var cabs: Array = []
@@ -788,6 +841,7 @@ static func _grid_fence(parent: Node3D, plan: RefCounted,
 	var transforms: Array = []
 	var points: Array[Vector3] = []
 	var yaws: Array[float] = []
+	var cells: Array[Vector2i] = []
 	var index: int = 0
 	for cell: Vector2i in plan.ring_cells():
 		index += 1
@@ -798,9 +852,11 @@ static func _grid_fence(parent: Node3D, plan: RefCounted,
 		var horizontal: bool = cell.y == 1 or cell.y == plan.rows - 2
 		var yaw: float = 0.0 if horizontal else PI * 0.5
 		var point: Vector3 = plan.cell_point(cell)
+		cells.append(cell)
 		points.append(point)
 		transforms.append(Parts.fit(FENCE_MODEL, point, yaw, PROP_SCALE))
 		yaws.append(yaw)
+	plan.set_meta(FENCE_META, cells)
 	_fence_batch(parent, transforms, points, yaws, stats)
 
 

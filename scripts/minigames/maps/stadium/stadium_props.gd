@@ -42,6 +42,8 @@ const TYRE_HEIGHT: float = (TYRE_TUBE * 2.0
 const TYRE_BLACK: Color = Color("141216")
 const TYRE_RED: Color = Color("c23a2c")
 const TYRE_WHITE: Color = Color("f5efe4")
+## Distance fade of a view-limited batch, as a fraction of its cull distance.
+const VIEW_FADE: float = 0.14
 
 static var _tyre_mesh: TorusMesh = null
 static var _tyre_material: StandardMaterial3D = null
@@ -78,15 +80,32 @@ static func part_count(model: String, nature: bool = false) -> int:
 
 
 ## One MultiMesh per mesh part for every instance of `model`. Returns the draw
-## calls it added so the theme can keep the budget honest.
+## calls it added so the theme can keep the budget honest. `view_end` is an
+## optional cull distance in metres: the batches this call creates stop being
+## drawn beyond it, which is how the far treeline is kept out of the browser
+## build's frame when the camera is on the other side of the bowl.
 static func batch(parent: Node3D, model: String, transforms: Array,
-		node_name: String, shadow: bool = true,
-		nature: bool = false) -> int:
+		node_name: String, shadow: bool = true, nature: bool = false,
+		view_end: float = 0.0) -> int:
 	if transforms.is_empty():
 		return 0
 	var draws: int = part_count(model, nature)
+	var first: int = parent.get_child_count()
 	TileKit._batch_model(parent, model, transforms, node_name, shadow, nature)
+	if view_end > 0.0:
+		_cull_far(parent, first, view_end)
 	return draws
+
+
+## Applies a visibility range to the batch nodes a single batching call added,
+## i.e. the children between `first` and the current child count.
+static func _cull_far(parent: Node3D, first: int, view_end: float) -> void:
+	for index in range(first, parent.get_child_count()):
+		var batch_node := parent.get_child(index) as GeometryInstance3D
+		if batch_node == null:
+			continue
+		batch_node.visibility_range_end = view_end
+		batch_node.visibility_range_end_margin = view_end * VIEW_FADE
 
 
 ## A real WORLD box collider, rotated to the piece's yaw and resting on `at`.

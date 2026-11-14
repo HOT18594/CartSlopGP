@@ -7,9 +7,13 @@ extends RefCounted
 ##
 ##   1. places the barrier ring on both edges of the lap,
 ##   2. asks stadium_bowl.gd for the seating bowl, catch fencing, tyre walls,
-##      marshal posts, cranes, floodlights, signage, cliffs and the tree band,
-##   3. asks stadium_pits.gd for the pit lane, garages, paddock and start box,
-##   4. measures every collider it emitted against the centreline and fails a
+##      marshal posts, cranes, floodlights, signage and cliffs,
+##   3. replaces the bowl's old even tree scatter with the designed woodland in
+##      stadium_forest.gd: a noise-clustered belt several rows deep, clearings
+##      behind the two grandstand runs and the start gantry, corner walls and
+##      undergrowth along the barrier line,
+##   4. asks stadium_pits.gd for the pit lane, garages, paddock and start box,
+##   5. measures every collider it emitted against the centreline and fails a
 ##      debug build when a solid piece came inside the racing surface.
 ##
 ## Clearance is the owner's invariant, so it is asserted here rather than
@@ -19,12 +23,15 @@ extends RefCounted
 ## only way to prove it is gone.
 ##
 ## Every prop is a Kenney racing-kit or nature-kit GLB placed through
-## stadium_props.gd, batched into MultiMeshes and given a WORLD collider. The
-## build is idempotent at the theme level, so a scene reload cannot double it.
+## stadium_props.gd, batched into MultiMeshes and given a WORLD collider, except
+## the woodland: its trunks stand beyond the continuous barrier ring and the two
+## stand tiers, so it is batched without per-tree colliders. The build is
+## idempotent at the theme level, so a scene reload cannot double it.
 
 const Props := preload("res://scripts/minigames/maps/stadium/stadium_props.gd")
 const Bowl := preload("res://scripts/minigames/maps/stadium/stadium_bowl.gd")
 const Pits := preload("res://scripts/minigames/maps/stadium/stadium_pits.gd")
+const Forest := preload("res://scripts/minigames/maps/stadium/stadium_forest.gd")
 const StadiumGrid := preload("res://scripts/minigames/maps/stadium/stadium_grid.gd")
 const TileKit := preload("res://scripts/minigames/tile_kit.gd")
 const TileGeometry := preload("res://scripts/minigames/tiles/kenney_tiles.gd")
@@ -50,8 +57,12 @@ const DRIVE_UNDER: float = 3.2
 const BARRIER_TOLERANCE: float = 0.12
 ## The hard floor a barrier may never cross: one metre beyond the lane edge.
 const BARRIER_FLOOR: float = TileKit.ROAD_HALF + 1.0
-## Plan margin the tree band adds outside the circuit's own rectangle.
+## Plan margin the layout adds around the centreline. The woodland uses the
+## resulting rectangle as its plant lattice and its culling quadrants.
 const PLAN_MARGIN: float = 34.0
+## Name tile_kit.trees gives the static body holding a tree batch. The bowl's
+## obsolete band is detached by that name before the designed belt is planted.
+const LEGACY_FOLIAGE: String = "Foliage"
 
 
 ## Builds the whole stadium under `holder` and returns the statistics.
@@ -62,9 +73,9 @@ static func build(holder: Node3D, spline: RefCounted,
 	var stats: Dictionary = {
 		"objects": 0, "draws": 0, "barriers": 0, "stands": 0, "gantry": 0,
 		"pit": 0, "pit_wall": 0, "signage": 0, "flags": 0, "lights": 0,
-		"tyres": 0, "trees": 0, "fences": 0, "marshals": 0, "cameras": 0,
-		"cliffs": 0, "bridge": 0, "paddock": 0, "lap": 0.0, "tiles": 0,
-		"barrier_closest": 0.0, "solid_closest": 0.0,
+		"tyres": 0, "trees": 0, "undergrowth": 0, "fences": 0, "marshals": 0,
+		"cameras": 0, "cliffs": 0, "bridge": 0, "paddock": 0, "lap": 0.0,
+		"tiles": 0, "barrier_closest": 0.0, "solid_closest": 0.0,
 	}
 	if holder == null or spline == null:
 		return stats
@@ -78,16 +89,36 @@ static func build(holder: Node3D, spline: RefCounted,
 	_warn_if_not_canonical(rows)
 	stats["barriers"] = _barrier_ring(holder, spline, plan)
 	Bowl.build(holder, spline, plan, stats)
+	_retire_legacy_foliage(holder)
+	var forest: Dictionary = Forest.build(holder, spline, plan)
+	stats["trees"] = int(forest.get("trees", 0))
+	stats["undergrowth"] = int(forest.get("underbrush", 0))
+	stats["forest_draws"] = int(forest.get("draws", 0))
 	Pits.build(holder, spline, plan, stats)
 	var objects: int = 0
 	for key: String in ["barriers", "stands", "gantry", "pit", "pit_wall",
-			"signage", "flags", "lights", "tyres", "trees", "fences",
-			"marshals", "cameras", "cliffs", "bridge", "paddock"]:
+			"signage", "flags", "lights", "tyres", "trees", "undergrowth",
+			"fences", "marshals", "cameras", "cliffs", "bridge", "paddock"]:
 		objects += int(stats.get(key, 0))
 	stats["objects"] = objects
 	stats["draws"] = Props.count_geometry(holder)
 	_audit(holder, spline, stats)
 	return stats
+
+
+## Detaches the bowl's single-scatter tree band so the designed woodland can own
+## the meadow. tile_kit.trees names its body "Foliage"; removing that body takes
+## its batches and its trunk colliders with it, and the bowl file stays as it
+## was. The band is retired before the new belt is planted, so the two can never
+## overlap or double the count.
+static func _retire_legacy_foliage(holder: Node3D) -> void:
+	if holder == null:
+		return
+	var legacy: Node = holder.get_node_or_null(LEGACY_FOLIAGE)
+	if legacy == null:
+		return
+	holder.remove_child(legacy)
+	legacy.queue_free()
 
 
 ## Highest road deck on the lap, in metres: what the build report prints, so a
