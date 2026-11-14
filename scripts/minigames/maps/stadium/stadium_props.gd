@@ -45,6 +45,19 @@ const TYRE_WHITE: Color = Color("f5efe4")
 ## Distance fade of a view-limited batch, as a fraction of its cull distance.
 const VIEW_FADE: float = 0.14
 
+## Vertical layering ladder, in metres above the surface a layer stands on. Every
+## family picks one rung, so two surfaces never share a plane and the depth
+## buffer has a winner at every distance. The rungs are the real stack: bare
+## deck, the flat apron laid on it, paint on the apron, and a prop's foot a
+## centimetre above whatever it stands on. The rungs stay at centimetre scale
+## because a larger lift would read as a floating prop.
+const LAYER_DECK: float = 0.0
+const LAYER_FOOT: float = 0.01
+const LAYER_APRON: float = 0.02
+const LAYER_DECAL: float = 0.03
+## Minimum plan gap two solid footprints of different families keep.
+const SITE_GAP: float = 0.10
+
 static var _tyre_mesh: TorusMesh = null
 static var _tyre_material: StandardMaterial3D = null
 
@@ -315,6 +328,83 @@ static func site_ok(spline: RefCounted, point: Vector3, radius: float) -> bool:
 		>= radius + SOLID_CLEARANCE
 
 
+## True when `point` really sits on the `side` of the lap it was offset to. A
+## constant-lateral ring folds back across the lap where the offset is wider
+## than the local corner radius, and a stand planted on that fold stands in the
+## middle of the map, over the pit complex and the paddock. The closest-point
+## right vector is what decides it, so a folded site is refused before a node is
+## created.
+static func side_ok(spline: RefCounted, point: Vector3, side: float) -> bool:
+	if spline == null or absf(side) < 0.001:
+		return true
+	var hit: Dictionary = spline.closest(point)
+	var centre: Vector3 = hit.get("point", Vector3.ZERO)
+	var delta: Vector3 = point - centre
+	delta.y = 0.0
+	if delta.length_squared() < 0.01:
+		return false
+	var frame: Dictionary = spline.sample(float(hit.get("s", 0.0)))
+	var right: Vector3 = frame["right"]
+	var sign_side: float = 1.0 if side > 0.0 else -1.0
+	return delta.dot(right) * sign_side > 0.0
+
+
+# --------------------------------------------------------------------------
+# footprint packing
+
+
+## Signed plan separation of two yawed footprints, in metres: positive is the
+## penetration depth, zero is a touching pair and negative is the clearance
+## between them. A stand is a 16 m square, so the test has to use the yaw: an
+## axis-aligned box reports a corner-touching pair as clear and a 45 degree
+## stand as 6 m too wide.
+static func plan_overlap(at_a: Vector3, yaw_a: float, size_a: Vector3,
+		at_b: Vector3, yaw_b: float, size_b: Vector3) -> float:
+	var axis_a := Basis(Vector3.UP, yaw_a)
+	var axis_b := Basis(Vector3.UP, yaw_b)
+	var half_a := Vector2(size_a.x, size_a.z) * 0.5
+	var half_b := Vector2(size_b.x, size_b.z) * 0.5
+	var delta := Vector2(at_b.x - at_a.x, at_b.z - at_a.z)
+	var axes: Array[Vector2] = [
+		Vector2(axis_a.x.x, axis_a.x.z), Vector2(axis_a.z.x, axis_a.z.z),
+		Vector2(axis_b.x.x, axis_b.x.z), Vector2(axis_b.z.x, axis_b.z.z),
+	]
+	var overlap: float = INF
+	for axis: Vector2 in axes:
+		if axis.length_squared() < 0.0001:
+			continue
+		axis = axis.normalized()
+		var radius_a: float = half_a.x * absf(axis.dot(
+			Vector2(axis_a.x.x, axis_a.x.z).normalized())) \
+			+ half_a.y * absf(axis.dot(
+			Vector2(axis_a.z.x, axis_a.z.z).normalized()))
+		var radius_b: float = half_b.x * absf(axis.dot(
+			Vector2(axis_b.x.x, axis_b.x.z).normalized())) \
+			+ half_b.y * absf(axis.dot(
+			Vector2(axis_b.z.x, axis_b.z.z).normalized()))
+		overlap = minf(overlap, radius_a + radius_b - absf(delta.dot(axis)))
+	return -INF if overlap == INF else overlap
+
+
+## True when a footprint of `size` at `at`/`yaw` keeps at least `gap` metres
+## clear of every footprint already registered in `placed`
+## ([{at, yaw, size}]). Used by the stand rings, where a fixed bay spacing on a
+## tight corner would otherwise stack two 16 m tiers through each other.
+static func site_free(placed: Array, at: Vector3, yaw: float, size: Vector3,
+		gap: float = SITE_GAP) -> bool:
+	for entry: Dictionary in placed:
+		if plan_overlap(at, yaw, size, entry["at"], float(entry["yaw"]),
+				entry["size"]) > -gap:
+			return false
+	return true
+
+
+## Registers a footprint for the packing tests above.
+static func remember(placed: Array, at: Vector3, yaw: float,
+		size: Vector3) -> void:
+	placed.append({"at": at, "yaw": yaw, "size": size})
+
+
 # --------------------------------------------------------------------------
 # tyres
 
@@ -322,6 +412,8 @@ static func site_ok(spline: RefCounted, point: Vector3, radius: float) -> bool:
 ## N stacks of cartoon tyres, batched into one MultiMesh (the kit has no tyre
 ## model). Each stack gets a real cylinder collider on WORLD. The stack colour
 ## alternates so a long wall reads as red/white blocks instead of a black smear.
+## The stack stands on the LAYER_FOOT rung, so its lowest ring never lies in the
+## meadow plane it was planted on.
 static func tyres(parent: Node3D, stacks: Array, node_name: String = "Tyres") -> int:
 	if parent == null or stacks.is_empty():
 		return 0
@@ -330,7 +422,7 @@ static func tyres(parent: Node3D, stacks: Array, node_name: String = "Tyres") ->
 	var colours: Array = []
 	for stack_index in stacks.size():
 		var entry: Dictionary = stacks[stack_index]
-		var at: Vector3 = entry["position"]
+		var at: Vector3 = entry["position"] + Vector3.UP * LAYER_FOOT
 		var tint: Color = TYRE_RED if stack_index % 3 == 1 else TYRE_WHITE \
 			if stack_index % 3 == 2 else TYRE_BLACK
 		for level in TYRE_LEVELS:
@@ -357,6 +449,11 @@ static func _tyre_geometry() -> TorusMesh:
 	return _tyre_mesh
 
 
+## The one tyre paint the whole theme uses. It is built once and shared by every
+## stack, and it states the cartoon material policy outright: opaque, lit per
+## pixel, writing depth. A prop material must never inherit an alpha mode or an
+## unshaded mode from a default it did not ask for - that is exactly the
+## see-through, flat-shaded look the owner reported.
 static func _tyre_paint() -> StandardMaterial3D:
 	if _tyre_material != null:
 		return _tyre_material
@@ -366,6 +463,9 @@ static func _tyre_paint() -> StandardMaterial3D:
 	material.roughness = 1.0
 	material.metallic = 0.0
 	material.specular_mode = BaseMaterial3D.SPECULAR_DISABLED
+	material.shading_mode = BaseMaterial3D.SHADING_MODE_PER_PIXEL
+	material.transparency = BaseMaterial3D.TRANSPARENCY_DISABLED
+	material.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_OPAQUE_ONLY
 	_tyre_material = material
 	return _tyre_material
 

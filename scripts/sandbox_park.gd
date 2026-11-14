@@ -6,8 +6,8 @@ extends Node3D
 ## tile. Everything that faces the player is placed against that axis:
 ##   - behind the grid (+Z): a raised spectator terrace with the covered
 ##     grandstand on it, flanked by the park's south fence;
-##   - west of the grid: the pit block, with the service yard and its tents in
-##     front of it (the old pit pad);
+##   - west of the grid: the pit block, its open bays facing the service-yard
+##     pit lane, with the kit tents parked behind the block;
 ##   - in front (-Z): the tarmac link, the pit gate and the loop's armco;
 ##   - east: the skidpad, now reached over the terrace's drive-up ramp.
 ## `_audit_facility` prints the spawn transform and the loop's first tile each
@@ -16,8 +16,9 @@ extends Node3D
 ##
 ## The five zones keep the destinations the sandbox bots already drive to:
 ##   - PADDOCK: painted apron, six grid slots (the multiplayer contract),
-##     two kit pit garages, the raised terrace with the covered grandstand, the
-##     service yard (kit tents, a cone pen) and the pit gate's banner towers.
+##     four enterable pit-garage bays, the raised terrace with the covered
+##     grandstand, the pit lane service yard (cone line, tents behind the
+##     block) and the pit gate's banner towers.
 ##   - HANDLING LOOP: a five-by-three grid oval of roadStraight/roadCornerSmall
 ##     pieces, 178 m of cartoon tarmac, a checkered start band at the pit gate
 ##     and a red barrier ring with one 16 m gate - the armco the bots expect.
@@ -81,6 +82,32 @@ const LOOP_GATE_WIDTH: float = 16.0
 # Zone rectangles in world x/z, every edge a multiple of the 16 m tile.
 const PADDOCK := Rect2(-32.0, -16.0, 64.0, 32.0)
 const YARD := Rect2(-48.0, -12.0, 32.0, 12.0)
+
+# Pit garages: two open kit pitsGarage modules on the paddock's west edge.
+# The GLB measures 1.00 x 0.70 x 1.09 model units, so at PROP_SCALE each module
+# is 16 m wide, 11.2 m tall and 17.44 m deep. A ray scan of the open facade
+# gives two 0.3728-unit bays (5.965 m) either side of a 0.0848-unit centre pier
+# (1.357 m) and 0.0848-unit side walls. The kit opens toward +Z; PI turns the
+# bays onto the service yard instead of the dirt at the paddock's south edge.
+const PIT_GARAGE_CELLS: Array[Vector2i] = [Vector2i(-3, 0), Vector2i(-2, 0)]
+const PIT_GARAGE_YAW: float = PI
+const GARAGE_HALF_WIDTH: float = 8.0
+const GARAGE_HALF_DEPTH: float = 8.72
+## The facade is 1.44 m behind the roof lip, the kit's own front overhang.
+const GARAGE_FACADE_INSET: float = 7.28
+const GARAGE_WALL: float = 1.357
+const GARAGE_PIER_HALF: float = 0.678
+const GARAGE_BAY_OUTER: float = 6.643
+const GARAGE_BAY_WIDTH: float = GARAGE_BAY_OUTER - GARAGE_PIER_HALF
+const GARAGE_HEIGHT: float = 11.2
+## Lintel underside measured at 0.385 model units: a cart passes under it.
+const GARAGE_OPENING_TOP: float = 6.16
+const GARAGE_ROOF_UNDERSIDE: float = 10.4
+## Clearance contract. The cart's collision profile is 1.50 m wide
+## (player_cart.gd) and its largest push envelope is 2.0 m
+## (cart_player.tscn), so every bay must stay 2.5 x 2.0 = 5.0 m clear.
+const CART_BODY_WIDTH: float = 2.0
+const BAY_MIN_CLEARANCE: float = CART_BODY_WIDTH * 2.5
 const SKID_BLOCK := Rect2(32.0, 0.0, 32.0, 32.0)
 const SKID_CENTRE := Vector2(48.0, 16.0)
 const SKID_RADIUS: float = 14.0
@@ -672,15 +699,118 @@ func _berm() -> void:
 # paddock
 
 
-## Paddock furniture: six numbered slots, the pit block and its sign.
+## Paddock furniture: six numbered slots, the open pit garages and their sign.
 func _paddock() -> void:
 	for i in GRID_SLOTS.size():
 		_grid_number(i + 1, GRID_SLOTS[i])
-	# Pit block on the paddock's west edge, in front of the service yard. Cell
-	# row 0 keeps its north face 13.7 m clear of the loop's armco; the old row
-	# (-1) clipped the wall's inner corner by 0.2 m.
-	TileKit.pit_building(self, [Vector2i(-3, 0), Vector2i(-2, 0)])
+	# Pit block on the paddock's west edge, its bays opening onto the service
+	# yard. Cell row 0 keeps the block 13.7 m clear of the loop's armco; the old
+	# row (-1) clipped the wall's inner corner by 0.2 m.
+	_pit_garage()
 	_wall_label("PADDOCK", Vector3(-15.6, 6.6, 8.0), PI * 0.5, 128, 0.009)
+
+
+## Two open kit pit garages whose bays are genuinely driveable.
+##
+## The kit's pitsGarage GLB is already the open variant, but the shared
+## TileKit.pit_building helper wrapped each whole module in one 16 x 11.2 x 16 m
+## box, so both 5.97 m openings had an invisible wall across them. This builds
+## the block from the OPEN model and authors the collision as its real shell:
+## side walls, rear wall, centre pier, roof slab and the lintel above each bay.
+## The bay volume itself (floor to 6.16 m, 5.97 m wide, 14.64 m deep) is free.
+##
+## The modules are turned 180 degrees so the bays face the service yard / pit
+## lane rather than the dirt at the paddock's south edge. The kit's roof lip
+## still overhangs the mouths by 1.44 m at 11.2 m, well above the 1.87 m chase
+## camera, so entering a bay does not push the camera down.
+func _pit_garage() -> void:
+	var info: Dictionary = TileCatalog.model_info(TileCatalog.PIT_GARAGE)
+	if not bool(info.get("ok", false)):
+		push_warning("sandbox_park: missing kit model " + TileCatalog.PIT_GARAGE)
+		return
+	var packed: PackedScene = load(str(info["path"])) as PackedScene
+	if packed == null:
+		return
+	var body := _static_body("PitGarageCollision")
+	for index in PIT_GARAGE_CELLS.size():
+		var cell: Vector2i = PIT_GARAGE_CELLS[index]
+		var at := Vector3((float(cell.x) + 0.5) * TILE, 0.0,
+			(float(cell.y) + 0.5) * TILE)
+		var node: Node3D = packed.instantiate() as Node3D
+		if node == null:
+			continue
+		node.name = "PitGarage%d" % (index + 1)
+		node.transform = _fit_model(TileCatalog.PIT_GARAGE, at,
+			PIT_GARAGE_YAW, Vector3.ONE * TileCatalog.PROP_SCALE)
+		add_child(node)
+		_garage_shell(body, at)
+		_garage_floor(at)
+	_audit_garage_bays()
+
+
+## World-space collision shell of one garage module. `at` is the module's
+## footprint centre, so the measured 1.36 m walls, 1.36 m centre pier and
+## 16 x 17.44 m roof slab land exactly on the kit mesh.
+func _garage_shell(body: StaticBody3D, at: Vector3) -> void:
+	var front: float = at.z - GARAGE_FACADE_INSET
+	var back: float = at.z + GARAGE_HALF_DEPTH
+	var rear: float = back - GARAGE_WALL
+	var mid_y: float = GARAGE_HEIGHT * 0.5
+	# Outer side walls, from the facade back to the rear outer face.
+	for side_sign: float in [-1.0, 1.0]:
+		_add_box_shape(body, Transform3D(Basis.IDENTITY, Vector3(
+			at.x + side_sign * (GARAGE_BAY_OUTER + GARAGE_WALL * 0.5),
+			mid_y, (front + back) * 0.5)),
+			Vector3(GARAGE_WALL, GARAGE_HEIGHT, back - front))
+	# Rear wall and the centre pier between the two bays.
+	_add_box_shape(body, Transform3D(Basis.IDENTITY, Vector3(at.x, mid_y,
+		(rear + back) * 0.5)), Vector3(GARAGE_HALF_WIDTH * 2.0,
+		GARAGE_HEIGHT, GARAGE_WALL))
+	_add_box_shape(body, Transform3D(Basis.IDENTITY, Vector3(at.x, mid_y,
+		front + GARAGE_WALL * 0.5)), Vector3(GARAGE_PIER_HALF * 2.0,
+		GARAGE_HEIGHT, GARAGE_WALL))
+	# Roof slab, including the kit's 1.44 m lip over the bay mouths.
+	_add_box_shape(body, Transform3D(Basis.IDENTITY, Vector3(at.x,
+		(GARAGE_ROOF_UNDERSIDE + GARAGE_HEIGHT) * 0.5, at.z)),
+		Vector3(GARAGE_HALF_WIDTH * 2.0,
+			GARAGE_HEIGHT - GARAGE_ROOF_UNDERSIDE, GARAGE_HALF_DEPTH * 2.0))
+	# Lintel over each bay. It starts at 6.16 m, so it never touches a cart or
+	# the chase camera, but it keeps the visible facade above the opening solid.
+	for bay_sign: float in [-1.0, 1.0]:
+		var bay_mid: float = at.x + bay_sign * (GARAGE_PIER_HALF
+			+ GARAGE_BAY_WIDTH * 0.5)
+		_add_box_shape(body, Transform3D(Basis.IDENTITY, Vector3(bay_mid,
+			(GARAGE_OPENING_TOP + GARAGE_HEIGHT) * 0.5, front + 0.2)),
+			Vector3(GARAGE_BAY_WIDTH,
+				GARAGE_HEIGHT - GARAGE_OPENING_TOP, 0.4))
+
+
+## Painted bay floor and threshold, flush with the service yard's apron.
+## Physics is the park's one ground slab at y = 0 everywhere, so the garage has
+## no lip to climb; the paint uses the yard's layer so the two read as one slab.
+func _garage_floor(at: Vector3) -> void:
+	var front: float = at.z - GARAGE_FACADE_INSET
+	var inner_back: float = at.z + GARAGE_HALF_DEPTH - GARAGE_WALL
+	_paint.rect(Rect2(at.x - GARAGE_BAY_OUTER, front,
+		GARAGE_BAY_OUTER * 2.0, inner_back - front), ZONE_Y + 0.002,
+		PAD_CONCRETE)
+	_paint.rect(Rect2(at.x - GARAGE_HALF_WIDTH, 0.0,
+		GARAGE_HALF_WIDTH * 2.0, front), ZONE_Y + 0.002, PIT_PAD_TINT)
+
+
+## Publishes the measured bay clearance and fails the boot if the cart no longer
+## has its 2.5x margin. Called once, after both modules are built.
+func _audit_garage_bays() -> void:
+	var ratio: float = GARAGE_BAY_WIDTH / CART_BODY_WIDTH
+	var overhang: float = GARAGE_HALF_DEPTH - GARAGE_FACADE_INSET
+	print("PIT GARAGE modules=%d bays=%d opening=%.2f m cart=%.2f m clearance=%.2fx (need %.1fx) roof=%.1f m lip=%.2f m -> %s" % [
+		PIT_GARAGE_CELLS.size(), PIT_GARAGE_CELLS.size() * 2,
+		GARAGE_BAY_WIDTH, CART_BODY_WIDTH, ratio,
+		BAY_MIN_CLEARANCE / CART_BODY_WIDTH, GARAGE_HEIGHT, overhang,
+		"CLEARS" if ratio >= BAY_MIN_CLEARANCE / CART_BODY_WIDTH else "TOO NARROW"])
+	if GARAGE_BAY_WIDTH < BAY_MIN_CLEARANCE:
+		push_error("sandbox_park: pit garage bays are %.2f m, under the %.2f m cart-clearance contract." % [
+			GARAGE_BAY_WIDTH, BAY_MIN_CLEARANCE])
 
 
 ## Big painted grid number, lying flat and readable from the south.
@@ -1058,17 +1188,19 @@ func _flags() -> void:
 	])
 
 
-## Service yard: kit tents, a cone pen and tyre dressing behind the pit block.
-## A kit unit is 16 m, so the tents are scaled to 8-11 m to fit the yard.
+## Service yard: kit tents parked behind the pit block plus a cone line along
+## the yard's loop side, so the pit lane in front of the four bays stays clear.
+## A kit unit is 16 m, so the tents are scaled to 8-11 m to sit south of the
+## block without touching its rear wall.
 func _yard() -> void:
 	var body := _static_body("YardProps")
-	_kit_solid("tent", Vector3(-42.0, 0.0, -7.0), 0.0,
+	_kit_solid("tent", Vector3(-42.0, 0.0, 21.5), 0.0,
 		TileCatalog.PROP_SCALE * 0.55, body)
-	_kit_solid("tentLong", Vector3(-30.0, 0.0, -7.0), 0.0,
+	_kit_solid("tentLong", Vector3(-30.0, 0.0, 21.5), 0.0,
 		TileCatalog.PROP_SCALE * 0.35, body)
-	_kit_solid("tentClosed", Vector3(-19.0, 0.0, -7.0), 0.0,
+	_kit_solid("tentClosed", Vector3(-19.0, 0.0, 21.5), 0.0,
 		TileCatalog.PROP_SCALE * 0.50, body)
-	_cone_row(body, Vector2(-46.0, -1.6), Vector2(-19.0, -1.6), 6)
+	_cone_row(body, Vector2(-46.0, -11.5), Vector2(-19.0, -11.5), 6)
 
 
 ## A row of static cones: one MultiMesh for the visuals, one box each on WORLD.

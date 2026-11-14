@@ -25,6 +25,39 @@ const PROP_SCALE: Vector3 = Vector3.ONE * TileKit.PROP_SCALE
 ## and grandstands behind the wall instead of grinding through it.
 const SAFE_CLEARANCE: float = TileKit.BARRIER_CLEARANCE + 1.5
 
+## Vertical layering ladder, in metres above the surface a layer stands on. A
+## slab, a decal and the foot of a prop each get their own rung, so no two
+## surfaces share a plane and the depth buffer has a winner at every distance.
+## The rungs are centimetre scale on purpose: a bigger lift reads as a floating
+## prop instead of a layered one.
+const LAYER_DECK: float = 0.0
+const LAYER_FOOT: float = 0.01
+const LAYER_APRON: float = 0.02
+const LAYER_DECAL: float = 0.03
+## Concrete grey of the flat slabs this map builds from a primitive.
+const SLAB_COLOUR: Color = Color("8d938d")
+
+static var _slab_material: StandardMaterial3D = null
+
+
+## The one concrete slab material the yard uses. It is created once and shared
+## by every slab batch, and it states the cartoon policy outright: opaque, lit
+## per pixel, writing depth. A locally built material must never inherit an
+## alpha or unshaded mode it did not ask for - that is the see-through, flat
+## look the owner reported.
+static func slab_material() -> StandardMaterial3D:
+	if _slab_material != null:
+		return _slab_material
+	var material := StandardMaterial3D.new()
+	material.albedo_color = SLAB_COLOUR
+	material.roughness = 0.96
+	material.metallic = 0.0
+	material.shading_mode = BaseMaterial3D.SHADING_MODE_PER_PIXEL
+	material.transparency = BaseMaterial3D.TRANSPARENCY_DISABLED
+	material.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_OPAQUE_ONLY
+	_slab_material = material
+	return _slab_material
+
 
 ## A static WORLD body owned by TileKit.
 static func body(parent: Node3D, node_name: String) -> StaticBody3D:

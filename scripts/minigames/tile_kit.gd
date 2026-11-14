@@ -28,6 +28,27 @@ class_name TileKit
 ##
 ## `side` is +1 for the right-hand side of the direction of travel and -1 for
 ## the left, matching the old racing_kit helpers.
+##
+## Z-FIGHTING LADDER (the only stacking policy in the Kenney maps):
+##   ground slab   Z_GROUND  -0.020 m   terrain, aprons, floors
+##   road piece    Z_ROAD     0.000 m   every drivable Kenney slab
+##   decal/paint   Z_DECAL   +0.012 m   painted lines, bands, overlaps
+##   prop base     Z_PROP    +0.024 m   stands, garages, barriers, foliage
+## A layer never nudges itself against a neighbour; it moves to its rung. Props
+## are fitted with Z_PROP in `_fit_transform`, road cross arms use Z_DECAL in
+## kenney_tiles.gd, and the deferred audit raises every unshaded transparent
+## decal to DECAL_RENDER_PRIORITY so it draws after the road.
+##
+## MATERIAL POLICY: imported kit surfaces are forced back to OPAQUE, SHADED,
+## DEPTH_DRAW_OPAQUE_ONLY by `sanitize_props`, unless the albedo texture really
+## contains alpha (the two chain-link fence models do). Every prop helper calls
+## the sanitiser as it instantiates, and a deferred audit covers props whose
+## theme code instantiates GLBs directly. Counts print as `PROP AUDIT ...`.
+##
+## COLLIDER POLICY: `_add_model_colliders` tries a cheap convex hull (<= 64
+## points), uses a trimesh for large/concave structures (stands, garages), and
+## keeps an oriented AABB box for long thin repeated pieces (barriers, flags,
+## screens). The old AABB box is now only the no-surface fallback.
 
 const TileCatalog := preload("res://scripts/minigames/tiles/tile_catalog.gd")
 const TileGeometry := preload("res://scripts/minigames/tiles/kenney_tiles.gd")
@@ -66,7 +87,6 @@ const CLEARANCE_STEP: float = 0.75
 ## from the centreline, so the models extend BANK_INSET further out.
 const BANK_INSET: float = 5.0
 const BANK_SPACING: float = 7.0
-const BANK_COLLIDER: float = 4.0
 const BANK_MODELS: Array[String] = [
 	"rock_largeA", "rock_largeB", "rock_tallA", "rock_largeF",
 ]
@@ -79,8 +99,423 @@ const TYRE_LEVELS: int = 4
 const TYRE_LEVEL_STEP: float = 0.38
 const TYRE_COLLIDER_RADIUS: float = 0.66
 
+## Vertical epsilon ladder, in metres. See the stacking policy at the top.
+const Z_GROUND: float = -0.020
+const Z_ROAD: float = 0.000
+const Z_DECAL: float = 0.012
+const Z_PROP: float = 0.024
+const LAYER_GROUND: int = 0
+const LAYER_ROAD: int = 1
+const LAYER_DECAL: int = 2
+const LAYER_PROP: int = 3
+## Render priority an unshaded transparent decal must carry.
+const DECAL_RENDER_PRIORITY: int = 1
+
+## A convex hull this small is cheaper than a triangle mesh. Above it the
+## factory treats the surface as concave and builds a trimesh.
+const COLLIDER_CONVEX_BUDGET: int = 64
+const COLLIDER_STATS_META: String = "tile_kit_collider_stats"
+const MATERIAL_STATS_META: String = "tile_kit_material_stats"
+const SANITIZE_META: String = "tile_kit_sanitized"
+const SANITIZE_SCHEDULED_META: String = "tile_kit_sanitize_scheduled"
+
+## Model families whose hitbox must follow the art instead of wrapping it.
+const TRIMESH_MODELS: Array[String] = [
+	"grandStand", "pitsGarage", "pitsOffice", "crane", "container",
+	"lightPost", "overheadLights", "camera",
+]
+## Long, thin or flat repeated pieces keep a deliberately cheap oriented box.
+const SCREEN_MODELS: Array[String] = [
+	"barrier", "billboard", "bannerTower", "flag", "fence", "rail", "sign",
+]
+
 static var _tyre_mesh: TorusMesh = null
 static var _tyre_material: StandardMaterial3D = null
+static var _material_cache: Dictionary = {}
+static var _mesh_cache: Dictionary = {}
+static var _shape_cache: Dictionary = {}
+static var _decal_cache: Dictionary = {}
+
+
+# --------------------------------------------------------------------------
+# material sanitiser
+#
+# Imported Kenney surfaces are supposed to be opaque and lit. A source texture
+# is the only thing allowed to keep transparency: we inspect its actual alpha
+# channel instead of guessing from the material name. The function is
+# idempotent, caches the copied materials so a palette is never recoloured, and
+# records its counters on the scene root for the deferred audit line.
+
+
+## Vertical rung of the stacking ladder, in metres.
+static func layer_y(layer: int) -> float:
+	match layer:
+		LAYER_GROUND:
+			return Z_GROUND
+		LAYER_ROAD:
+			return Z_ROAD
+		LAYER_DECAL:
+			return Z_DECAL
+		_:
+			return Z_PROP
+
+
+## Render priority an unshaded transparent decal must carry.
+static func decal_render_priority() -> int:
+	return DECAL_RENDER_PRIORITY
+
+
+## Schedules one deferred audit on the scene root. Called by every prop helper
+## and by KenneyTiles.build, so props a theme instantiates directly are still
+## covered once the whole map exists.
+static func schedule_prop_audit(parent: Node) -> void:
+	var root: Node = _scene_root(parent)
+	if root == null or root.has_meta(SANITIZE_SCHEDULED_META):
+		return
+	root.set_meta(SANITIZE_SCHEDULED_META, true)
+	var audit := PropAudit.new()
+	audit.name = "TileKitPropAudit"
+	audit.target = root
+	# Props are built inside a node's _ready, when that node may still be busy
+	# adding children. Defer the audit node so it lands on the next idle frame.
+	root.add_child.call_deferred(audit)
+
+
+## Sanitises every Kenney-kit surface under `root`. `stats_root` is the scene
+## root whose metadata accumulates the counters; it defaults to `root`.
+## Returns {surfaces, changed, kept_alpha}.
+static func sanitize_props(root: Node, stats_root: Node = null) -> Dictionary:
+	var empty: Dictionary = {"surfaces": 0, "changed": 0, "kept_alpha": 0}
+	if root == null:
+		return empty
+	var owner: Node = stats_root if stats_root != null else root
+	var stats: Dictionary = _material_stats(owner)
+	_sanitize_walk(root, stats)
+	owner.set_meta(MATERIAL_STATS_META, stats)
+	return stats.duplicate()
+
+
+## Prints the measured prop audit for one scene root.
+static func report_prop_audit(root: Node, decal_priority: int = 0) -> void:
+	if root == null:
+		return
+	var materials: Dictionary = _material_stats(root)
+	var colliders: Dictionary = _collider_stats(root)
+	print("PROP AUDIT %s: materials changed %d/%d surface(s), texture alpha kept %d; decal priority raised %d; colliders hull=%d trimesh=%d oriented_box=%d fallback=%d" % [
+		_audit_label(root), int(materials.get("changed", 0)),
+		int(materials.get("surfaces", 0)), int(materials.get("kept_alpha", 0)),
+		decal_priority, int(colliders.get("hull", 0)),
+		int(colliders.get("trimesh", 0)),
+		int(colliders.get("oriented_box", 0)),
+		int(colliders.get("fallback", 0))])
+
+
+## Gives unshaded transparent decals the decal rung's render priority. Ground,
+## paint and prop surfaces are left alone: opaque materials ignore priority, and
+## props are already opaque.
+static func apply_decal_priority(root: Node) -> int:
+	if root == null:
+		return 0
+	var stats: Dictionary = {"changed": 0}
+	_decal_walk(root, stats)
+	return int(stats.get("changed", 0))
+
+
+static func _decal_walk(node: Node, stats: Dictionary) -> void:
+	if not _under_prop_body(node) \
+			and (node is MeshInstance3D or node is MultiMeshInstance3D):
+		_decal_instance(node, stats)
+	for child: Node in node.get_children():
+		_decal_walk(child, stats)
+
+
+static func _decal_instance(node: Node, stats: Dictionary) -> void:
+	var mesh: Mesh = null
+	var multi: MultiMesh = null
+	if node is MeshInstance3D:
+		mesh = (node as MeshInstance3D).mesh
+	elif node is MultiMeshInstance3D:
+		multi = (node as MultiMeshInstance3D).multimesh
+		if multi != null:
+			mesh = multi.mesh
+	if mesh == null:
+		return
+	var geometry := node as GeometryInstance3D
+	if geometry != null and geometry.material_override is BaseMaterial3D:
+		var source := geometry.material_override as BaseMaterial3D
+		var clean: BaseMaterial3D = _decal_material(source, stats)
+		if clean != source:
+			geometry.material_override = clean
+		return
+	if node is MeshInstance3D:
+		var instance := node as MeshInstance3D
+		for surface in mesh.get_surface_count():
+			var material: Material = instance.get_surface_override_material(surface)
+			if material == null:
+				material = mesh.surface_get_material(surface)
+			if not (material is BaseMaterial3D):
+				continue
+			var source := material as BaseMaterial3D
+			var clean: BaseMaterial3D = _decal_material(source, stats)
+			if clean != source:
+				instance.set_surface_override_material(surface, clean)
+	elif multi != null:
+		var clean_mesh: Mesh = _priority_mesh(mesh, stats)
+		if clean_mesh != mesh:
+			multi.mesh = clean_mesh
+
+
+static func _decal_material(source: BaseMaterial3D,
+		stats: Dictionary) -> BaseMaterial3D:
+	if source.shading_mode != BaseMaterial3D.SHADING_MODE_UNSHADED \
+			or source.transparency == BaseMaterial3D.TRANSPARENCY_DISABLED \
+			or source.render_priority == DECAL_RENDER_PRIORITY:
+		return source
+	var key: int = source.get_instance_id()
+	if _decal_cache.has(key):
+		stats["changed"] = int(stats.get("changed", 0)) + 1
+		return _decal_cache[key] as BaseMaterial3D
+	var clean: BaseMaterial3D = source.duplicate() as BaseMaterial3D
+	clean.render_priority = DECAL_RENDER_PRIORITY
+	_decal_cache[key] = clean
+	stats["changed"] = int(stats.get("changed", 0)) + 1
+	return clean
+
+
+static func _priority_mesh(mesh: Mesh, stats: Dictionary) -> Mesh:
+	var copy: Mesh = null
+	for surface in mesh.get_surface_count():
+		var material: Material = mesh.surface_get_material(surface)
+		if not (material is BaseMaterial3D):
+			continue
+		var source := material as BaseMaterial3D
+		var clean: BaseMaterial3D = _decal_material(source, stats)
+		if clean == source:
+			continue
+		if copy == null:
+			copy = mesh.duplicate() as Mesh
+		copy.surface_set_material(surface, clean)
+	return copy if copy != null else mesh
+
+
+static func _sanitize_walk(node: Node, stats: Dictionary) -> void:
+	if node is MeshInstance3D or node is MultiMeshInstance3D:
+		_sanitize_instance(node, stats)
+	for child: Node in node.get_children():
+		_sanitize_walk(child, stats)
+
+
+static func _sanitize_instance(node: Node, stats: Dictionary) -> void:
+	if node.has_meta(SANITIZE_META):
+		return
+	var mesh: Mesh = null
+	var multi: MultiMesh = null
+	if node is MeshInstance3D:
+		mesh = (node as MeshInstance3D).mesh
+	elif node is MultiMeshInstance3D:
+		multi = (node as MultiMeshInstance3D).multimesh
+		if multi != null:
+			mesh = multi.mesh
+	if mesh == null:
+		return
+	if not _is_kit_mesh(mesh) and not _under_prop_body(node):
+		return
+	var geometry := node as GeometryInstance3D
+	if geometry != null and geometry.material_override != null:
+		var override := geometry.material_override
+		if override is BaseMaterial3D:
+			var source := override as BaseMaterial3D
+			_note_material(stats, source)
+			var clean: BaseMaterial3D = _sanitize_material(source)
+			if clean != source:
+				geometry.material_override = clean
+		node.set_meta(SANITIZE_META, true)
+		return
+	if node is MeshInstance3D:
+		var instance := node as MeshInstance3D
+		for surface in mesh.get_surface_count():
+			var material: Material = instance.get_surface_override_material(surface)
+			if material == null:
+				material = mesh.surface_get_material(surface)
+			if not (material is BaseMaterial3D):
+				continue
+			var source := material as BaseMaterial3D
+			_note_material(stats, source)
+			var clean: BaseMaterial3D = _sanitize_material(source)
+			if clean != source:
+				instance.set_surface_override_material(surface, clean)
+	elif multi != null:
+		var clean_mesh: Mesh = _sanitized_mesh(mesh, stats)
+		if clean_mesh != mesh:
+			multi.mesh = clean_mesh
+	node.set_meta(SANITIZE_META, true)
+
+
+## Returns a sanitised copy of `mesh` only when at least one surface changes.
+static func _sanitized_mesh(mesh: Mesh, stats: Dictionary) -> Mesh:
+	var key: int = mesh.get_instance_id()
+	var cached: Variant = _mesh_cache.get(key, null)
+	if cached is Mesh:
+		var existing: Mesh = cached as Mesh
+		for surface in mesh.get_surface_count():
+			var source: Material = mesh.surface_get_material(surface)
+			if source is BaseMaterial3D:
+				_note_material(stats, source as BaseMaterial3D)
+		return existing
+	var copy: Mesh = null
+	for surface in mesh.get_surface_count():
+		var material: Material = mesh.surface_get_material(surface)
+		if not (material is BaseMaterial3D):
+			continue
+		var source := material as BaseMaterial3D
+		_note_material(stats, source)
+		var clean: BaseMaterial3D = _sanitize_material(source)
+		if clean == source:
+			continue
+		if copy == null:
+			copy = mesh.duplicate() as Mesh
+		copy.surface_set_material(surface, clean)
+	if copy == null:
+		return mesh
+	_mesh_cache[key] = copy
+	return copy
+
+
+## Opaque, per-pixel, ambient-lit copy of a source material. The palette is
+## copied verbatim; only the render state is corrected.
+static func _sanitize_material(source: BaseMaterial3D) -> BaseMaterial3D:
+	var key: int = source.get_instance_id()
+	if _material_cache.has(key):
+		return _material_cache[key] as BaseMaterial3D
+	if not _material_changed(source):
+		_material_cache[key] = source
+		return source
+	var clean: BaseMaterial3D = source.duplicate() as BaseMaterial3D
+	clean.shading_mode = BaseMaterial3D.SHADING_MODE_PER_PIXEL
+	clean.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_OPAQUE_ONLY
+	clean.disable_ambient_light = false
+	# Only a texture with real alpha may stay transparent; everything else is
+	# forced opaque so a prop can never be a see-through ghost.
+	if source.transparency != BaseMaterial3D.TRANSPARENCY_DISABLED \
+			and not _texture_needs_alpha(source.albedo_texture):
+		clean.transparency = BaseMaterial3D.TRANSPARENCY_DISABLED
+		clean.albedo_color.a = 1.0
+	_material_cache[key] = clean
+	return clean
+
+
+static func _material_changed(source: BaseMaterial3D) -> bool:
+	if source.shading_mode != BaseMaterial3D.SHADING_MODE_PER_PIXEL:
+		return true
+	if source.depth_draw_mode != BaseMaterial3D.DEPTH_DRAW_OPAQUE_ONLY:
+		return true
+	if source.disable_ambient_light:
+		return true
+	return source.transparency != BaseMaterial3D.TRANSPARENCY_DISABLED \
+		and not _texture_needs_alpha(source.albedo_texture)
+
+
+static func _note_material(stats: Dictionary, source: BaseMaterial3D) -> void:
+	stats["surfaces"] = int(stats.get("surfaces", 0)) + 1
+	if _material_changed(source):
+		stats["changed"] = int(stats.get("changed", 0)) + 1
+	if source.transparency != BaseMaterial3D.TRANSPARENCY_DISABLED \
+			and _texture_needs_alpha(source.albedo_texture):
+		stats["kept_alpha"] = int(stats.get("kept_alpha", 0)) + 1
+
+
+## True only when the texture carries non-opaque pixels. A missing or unreadable
+## image is treated as alpha-bearing so the sanitiser can never erase a real cut
+## out by guessing.
+static func _texture_needs_alpha(texture: Texture2D) -> bool:
+	if texture == null:
+		return false
+	var image: Image = texture.get_image()
+	if image == null or image.is_empty():
+		return true
+	if image.is_compressed() and image.decompress() != OK:
+		return true
+	return image.detect_alpha() != Image.ALPHA_NONE
+
+
+static func _is_kit_mesh(mesh: Mesh) -> bool:
+	return mesh.resource_path.contains(
+		"res://assets/models/kenney_racing_kit/") \
+		or mesh.resource_path.contains(
+			"res://assets/models/kenney_nature_kit/")
+
+
+## A visual parented under a StaticBody3D is a solid prop, even when its mesh is
+## a primitive or a theme-built ArrayMesh. Ground planes and painted decals live
+## under the map holder, not a body, so they keep their authored flat shading.
+static func _under_prop_body(node: Node) -> bool:
+	var current: Node = node.get_parent()
+	while current != null:
+		if current is StaticBody3D:
+			return true
+		if current.get_parent() is Window:
+			return false
+		current = current.get_parent()
+	return false
+
+
+## The map root: the topmost scene node below the SceneTree's Window. Staying
+## below the window means the audit, its metadata and its one-per-frame guard
+## are scoped to this race or sandbox instead of leaking between loaded maps.
+static func _scene_root(node: Node) -> Node:
+	var current: Node = node
+	while current != null and current.get_parent() != null:
+		if current.get_parent() is Window:
+			break
+		current = current.get_parent()
+	return current
+
+
+static func _audit_label(root: Node) -> String:
+	var label: String = ""
+	if root.has_meta("kenney_grid_stats"):
+		var stats: Variant = root.get_meta("kenney_grid_stats")
+		if stats is Dictionary:
+			label = str((stats as Dictionary).get("theme", ""))
+	return label if label != "" else str(root.name)
+
+
+static func _material_stats(owner: Node) -> Dictionary:
+	if owner.has_meta(MATERIAL_STATS_META):
+		var raw: Variant = owner.get_meta(MATERIAL_STATS_META)
+		if raw is Dictionary:
+			var stats: Dictionary = raw
+			stats["surfaces"] = int(stats.get("surfaces", 0))
+			stats["changed"] = int(stats.get("changed", 0))
+			stats["kept_alpha"] = int(stats.get("kept_alpha", 0))
+			return stats
+	return {"surfaces": 0, "changed": 0, "kept_alpha": 0}
+
+
+static func _collider_stats(root: Node) -> Dictionary:
+	if root.has_meta(COLLIDER_STATS_META):
+		var raw: Variant = root.get_meta(COLLIDER_STATS_META)
+		if raw is Dictionary:
+			return raw as Dictionary
+	return {"hull": 0, "trimesh": 0, "oriented_box": 0, "fallback": 0}
+
+
+## The deferred pass: waits until the theme has finished building, then audits
+## the whole race/sandbox root once and prints the measured counters.
+class PropAudit extends Node:
+	var target: Node = null
+
+	func _ready() -> void:
+		if not is_inside_tree():
+			return
+		await get_tree().process_frame
+		if target == null or not is_instance_valid(target):
+			queue_free()
+			return
+		TileKit.sanitize_props(target, target)
+		var decals: int = TileKit.apply_decal_priority(target)
+		TileKit.report_prop_audit(target, decals)
+		queue_free()
 
 
 # --------------------------------------------------------------------------
@@ -92,9 +527,9 @@ static var _tyre_material: StandardMaterial3D = null
 ## cells give a straight wall, the outside of a corner gives a concentric arc,
 ## and the inside of a corner is mitred between the two neighbouring walls
 ## instead of being offset onto the racing surface. Each piece is a real wall
-## section with its own box collider on WORLD, laid along the path chord, so the
-## wall is continuous and never chords across a corner. Distances snap to a
-## quarter tile.
+## section with its own oriented AABB collider on WORLD, laid along the path
+## chord, so the wall is continuous and never chords across a corner. Distances
+## snap to a quarter tile.
 static func barrier_line(parent: Node3D, spline: RefCounted, from_dist: float,
 		to_dist: float, side: float, kind: String = "barrierRed") -> int:
 	if parent == null or spline == null:
@@ -123,7 +558,6 @@ static func barrier_line(parent: Node3D, spline: RefCounted, from_dist: float,
 		float(spline.total_length))
 	if run_length <= piece_length * 0.5:
 		return 0
-	var size_y: float = float(spec.get("height", 0.1312)) * TILE_SIZE
 	var size_z: float = float(spec.get("depth", 0.123)) * TILE_SIZE
 	var from_position: float = _path_position(path, start)
 	var body := _static_body(parent, "Barrier_%s_%d_%s" % [
@@ -164,12 +598,11 @@ static func barrier_line(parent: Node3D, spline: RefCounted, from_dist: float,
 				PROP_SCALE)
 			var xform: Transform3D = _fit_transform(model, centre, yaw, scale)
 			var axis: Vector3 = Basis(Vector3.UP, yaw) * Vector3(0.0, 0.0, 1.0)
-			transforms.append(_tilt(xform, centre, axis, pitch))
-			var basis := Basis(Vector3.UP, yaw) * Basis(Vector3(0.0, 0.0, 1.0),
-				pitch)
-			_add_box_shape(body, Transform3D(basis,
-				centre + basis * Vector3.UP * (size_y * 0.5)),
-				Vector3(length * 0.98, size_y, size_z))
+			var placed: Transform3D = _tilt(xform, centre, axis, pitch)
+			transforms.append(placed)
+			# (c) a long thin repeated piece: keep the cheap oriented box, but
+			# size it from the model AABB instead of the barrier spec.
+			_add_oriented_box(body, model, placed, false, Vector3(0.98, 1.0, 1.0))
 			closest = minf(closest, _min_clearance(spline, p0, p1, middle))
 	if transforms.is_empty():
 		# A degenerate run (a seam inside one corner) leaves nothing to show.
@@ -364,7 +797,8 @@ static func tyre_stack(parent: Node3D, spline: RefCounted, dist: float,
 	var colours: Array = []
 	for level in TYRE_LEVELS:
 		transforms.append(Transform3D(Basis.IDENTITY,
-			point + Vector3.UP * (TYRE_TUBE + float(level) * TYRE_LEVEL_STEP)))
+			point + Vector3.UP * (Z_PROP + TYRE_TUBE
+				+ float(level) * TYRE_LEVEL_STEP)))
 		colours.append(Color("121114") if level < TYRE_LEVELS - 1 \
 			else Color("c23a2c"))
 	var instance := _multimesh(_tyre_geometry(), _tyre_paint(), transforms,
@@ -384,7 +818,7 @@ static func tyre_stack(parent: Node3D, spline: RefCounted, dist: float,
 ## elevation cheaply and still guarantee the banks never reach the road: the
 ## inner face of every bank sits BARRIER_CLEARANCE from the centreline. Banks
 ## follow the spline height, so they climb with an elevated circuit, and each one
-## carries a WORLD box collider.
+## carries a WORLD convex-hull collider.
 static func terrain_banks(parent: Node3D, spline: RefCounted, from_dist: float,
 		to_dist: float, side: float, height: float = 1.6) -> int:
 	if parent == null or spline == null:
@@ -419,13 +853,14 @@ static func terrain_banks(parent: Node3D, spline: RefCounted, from_dist: float,
 		var jitter: float = 0.85 + 0.3 * fposmod(float(index) * 0.61803398875,
 			1.0)
 		var bank_scale: float = scale_factor * jitter
+		var bank_xform: Transform3D = _fit_transform(model, point,
+			float(index) * 1.7, Vector3.ONE * bank_scale, true)
 		if not batches.has(model):
 			batches[model] = []
-		(batches[model] as Array).append(_fit_transform(model, point,
-			float(index) * 1.7, Vector3.ONE * bank_scale, true))
-		_add_box_shape(body, Transform3D(Basis.IDENTITY,
-			point + Vector3.UP * (height * 0.5)),
-			Vector3(BANK_COLLIDER, height, BANK_COLLIDER))
+		(batches[model] as Array).append(bank_xform)
+		# Rock blocks are convex enough for a real hull, so a bank rolls over
+		# the rock instead of hitting a 4 m cube around it.
+		_add_model_colliders(body, model, bank_xform, true, "auto")
 		placed += 1
 	for model: String in batches:
 		_batch_model(body, model, batches[model] as Array, "Bank_" + model,
@@ -438,7 +873,7 @@ static func terrain_banks(parent: Node3D, spline: RefCounted, from_dist: float,
 
 
 ## A stepped grandstand with (covered) or without a roof, facing the track from
-## `side`. The whole footprint is one WORLD collision box.
+## `side`. The art itself is the WORLD trimesh collider.
 static func grandstand(parent: Node3D, spline: RefCounted, dist: float,
 		side: float, covered: bool = false) -> int:
 	if parent == null or spline == null:
@@ -457,34 +892,35 @@ static func grandstand(parent: Node3D, spline: RefCounted, dist: float,
 	if node == null:
 		return 0
 	var body := _static_body(parent, "GrandstandCollision_%d" % int(round(distance)))
-	var size: Vector3 = _scaled_size(model, Vector3.ONE * PROP_SCALE)
-	_add_box_shape(body, Transform3D(Basis(Vector3.UP, yaw),
-		point + Vector3.UP * (size.y * 0.5)), size)
+	# (b) a stand is large and concave: its trimesh follows the steps and lets
+	# a kart drive under the open frame instead of hitting one fat box.
+	_add_model_colliders(body, model, node.transform, false, "trimesh")
 	return 1
 
 
 ## A row of pit garages on the grid cell centres in `grid_positions`. Entries
 ## may be Vector2i(column, row), [column, row] or a world Vector3 that snaps to
-## its cell. Garages are batched; each gets a box collider.
+## its cell. Garages are batched; each shell gets a trimesh collider so the open
+## service bay stays drivable.
 static func pit_building(parent: Node3D, grid_positions: Array) -> int:
 	if parent == null or grid_positions.is_empty():
 		return 0
 	var body := _static_body(parent, "PitBuildings")
 	var transforms: Array = []
-	var points: Array[Vector3] = []
+	var placed: Array[Transform3D] = []
 	for entry: Variant in grid_positions:
 		var point: Vector3 = _grid_point(entry)
-		points.append(point)
-		transforms.append(_fit_transform(TileCatalog.PIT_GARAGE, point, 0.0,
-			Vector3.ONE * PROP_SCALE))
+		var garage_xform: Transform3D = _fit_transform(TileCatalog.PIT_GARAGE,
+			point, 0.0, Vector3.ONE * PROP_SCALE)
+		transforms.append(garage_xform)
+		placed.append(garage_xform)
 	_batch_model(body, TileCatalog.PIT_GARAGE, transforms, "PitGarages", true)
-	var size: Vector3 = _scaled_size(TileCatalog.PIT_GARAGE,
-		Vector3.ONE * PROP_SCALE)
-	for point: Vector3 in points:
-		_add_box_shape(body, Transform3D(Basis.IDENTITY,
-			point + Vector3.UP * (size.y * 0.5)),
-			Vector3(minf(size.x, TILE_SIZE), size.y, minf(size.z, TILE_SIZE)))
-	return points.size()
+	# (b) the garage is a concave shell: a trimesh keeps the open service bay
+	# drivable, which an AABB around the footprint never could.
+	for garage_xform: Transform3D in placed:
+		_add_model_colliders(body, TileCatalog.PIT_GARAGE, garage_xform,
+			false, "trimesh")
+	return placed.size()
 
 
 ## Floodlight posts on the grid. `positions` entries are Vector3 cell points or
@@ -494,7 +930,6 @@ static func lights(parent: Node3D, positions: Array) -> int:
 		return 0
 	var body := _static_body(parent, "Lights")
 	var post_transforms: Array = []
-	var post_spots: Array[Vector3] = []
 	var placed: int = 0
 	for index in positions.size():
 		var entry: Variant = positions[index]
@@ -519,15 +954,15 @@ static func lights(parent: Node3D, positions: Array) -> int:
 			continue
 		post_transforms.append(_fit_transform(TileCatalog.LIGHT_POST, point,
 			yaw, Vector3.ONE * PROP_SCALE))
-		post_spots.append(point)
 		placed += 1
 	if not post_transforms.is_empty():
 		_batch_model(body, TileCatalog.LIGHT_POST, post_transforms,
 			"LightPosts", true)
-	var height: float = _scaled_size(TileCatalog.LIGHT_POST,
-		Vector3.ONE * PROP_SCALE).y
-	for point: Vector3 in post_spots:
-		_add_cylinder_shape(body, point, 0.45, height)
+	# (b) a floodlight mast is large and concave; its trimesh catches the pole
+	# and the lamp head instead of one full-height cylinder.
+	for post_xform: Transform3D in post_transforms:
+		_add_model_colliders(body, TileCatalog.LIGHT_POST, post_xform,
+			false, "trimesh")
 	return placed
 
 
@@ -553,21 +988,19 @@ static func signage(parent: Node3D, positions: Array) -> int:
 			point = _grid_point(entry)
 		var model: String = _sign_model(kind)
 		var scale: float = TileCatalog.sign_scale(kind)
+		var xform: Transform3D = _fit_transform(model, point, yaw,
+			Vector3.ONE * scale)
 		if not batches.has(model):
 			batches[model] = []
-		(batches[model] as Array).append(_fit_transform(model, point, yaw,
-			Vector3.ONE * scale))
-		colliders.append({"model": model, "point": point, "yaw": yaw,
-			"scale": scale})
+		(batches[model] as Array).append(xform)
+		colliders.append({"model": model, "xform": xform})
 	for model: String in batches:
 		_batch_model(body, model, batches[model] as Array, "Sign_" + model, true)
 	for data: Dictionary in colliders:
-		var size: Vector3 = _scaled_size(str(data["model"]),
-			Vector3.ONE * float(data["scale"]))
-		var point: Vector3 = data["point"]
-		var yaw: float = float(data["yaw"])
-		_add_box_shape(body, Transform3D(Basis(Vector3.UP, yaw),
-			point + Vector3.UP * (size.y * 0.5)), size)
+		# Billboards and banner towers are screens: cheap oriented boxes. A
+		# pylon falls through to the hull path.
+		_add_model_colliders(body, str(data["model"]),
+			data["xform"] as Transform3D, false, "auto")
 	return positions.size()
 
 
@@ -578,7 +1011,7 @@ static func flags(parent: Node3D, positions: Array) -> int:
 		return 0
 	var body := _static_body(parent, "Flags")
 	var batches: Dictionary = {}
-	var poles: Array[Vector3] = []
+	var poles: Array[Dictionary] = []
 	for index in positions.size():
 		var entry: Variant = positions[index]
 		var point := Vector3.ZERO
@@ -592,18 +1025,19 @@ static func flags(parent: Node3D, positions: Array) -> int:
 			yaw = float(data.get("yaw", 0.0))
 		else:
 			point = _grid_point(entry)
+		var pole_xform: Transform3D = _fit_transform(model, point, yaw,
+			Vector3.ONE * FLAG_SCALE)
 		if not batches.has(model):
 			batches[model] = []
-		(batches[model] as Array).append(_fit_transform(model, point, yaw,
-			Vector3.ONE * FLAG_SCALE))
-		poles.append(point)
+		(batches[model] as Array).append(pole_xform)
+		poles.append({"model": model, "xform": pole_xform})
 	for model: String in batches:
 		_batch_model(body, model, batches[model] as Array, "Flag_" + model, true)
-	var height: float = _scaled_size("flagRed", Vector3.ONE * FLAG_SCALE).y
-	for point: Vector3 in poles:
-		_add_box_shape(body, Transform3D(Basis.IDENTITY,
-			point + Vector3.UP * (height * 0.5)),
-			Vector3(0.35, height, 0.35))
+	# (c) a flag is a thin repeated screen: one oriented AABB box per pole,
+	# rotated with the flag instead of an axis-aligned cube.
+	for pole: Dictionary in poles:
+		_add_oriented_box(body, str(pole["model"]),
+			pole["xform"] as Transform3D)
 	return poles.size()
 
 
@@ -642,11 +1076,12 @@ static func trees(parent: Node3D, positions: Array,
 			rejected += 1
 			continue
 		var scale: float = NATURE_SCALE * jitter
+		var xform: Transform3D = _fit_transform(model, point,
+			float(index) * 1.7, Vector3.ONE * scale, true)
 		if not batches.has(model):
 			batches[model] = []
-		(batches[model] as Array).append(_fit_transform(model, point,
-			float(index) * 1.7, Vector3.ONE * scale, true))
-		_add_foliage_collider(body, model, point, scale)
+		(batches[model] as Array).append(xform)
+		_add_foliage_collider(body, model, point, scale, xform)
 		placed += 1
 	for model: String in batches:
 		_batch_model(body, model, batches[model] as Array, "Nature_" + model,
@@ -875,7 +1310,9 @@ static func _fit_transform(model: String, at: Vector3, yaw: float,
 	var yaw_basis := Basis(Vector3.UP, yaw)
 	var basis: Basis = yaw_basis * Basis.IDENTITY.scaled(scale)
 	var center_m := Vector3(center.x * scale.x, 0.0, center.y * scale.z)
-	var lift: float = -aabb.position.y * scale.y
+	# Props live on their own rung of the Z ladder, never on the road/decal
+	# plane they sit above.
+	var lift: float = -aabb.position.y * scale.y + Z_PROP
 	return Transform3D(basis, at - yaw_basis * center_m + Vector3.UP * lift)
 
 
@@ -901,6 +1338,7 @@ static func _emit_unique(parent: Node3D, model: String, xform: Transform3D,
 		return null
 	node.name = node_name
 	node.transform = xform
+	sanitize_props(node, _scene_root(parent))
 	parent.add_child(node)
 	return node
 
@@ -933,6 +1371,7 @@ static func _batch_model(parent: Node3D, model: String, transforms: Array,
 		instance.cast_shadow = \
 			GeometryInstance3D.SHADOW_CASTING_SETTING_ON if cast_shadow \
 			else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		sanitize_props(instance, _scene_root(parent))
 		parent.add_child(instance)
 
 
@@ -941,12 +1380,206 @@ static func _batch_model(parent: Node3D, model: String, transforms: Array,
 
 
 static func _static_body(parent: Node3D, node_name: String) -> StaticBody3D:
+	schedule_prop_audit(parent)
 	var body := StaticBody3D.new()
 	body.name = node_name
 	body.collision_layer = CollisionLayers.WORLD
 	body.collision_mask = 0
 	parent.add_child(body)
 	return body
+
+
+## Adds the best collision shape for one visual instance of a Kenney model.
+##
+## `policy` is "auto" (hull if cheap, else trimesh), "hull", "trimesh" or "box".
+## Auto resolves by model family first: structures become trimeshes, screens and
+## other long thin pieces stay oriented boxes, and the rest try a cheap hull.
+## The shapes are baked from the mesh in model space and shared through a cache,
+## so every instance of a garage reuses one trimesh instead of rebuilding it.
+static func _add_model_colliders(body: StaticBody3D, model: String,
+		xform: Transform3D, nature: bool = false,
+		policy: String = "auto") -> void:
+	var resolved: String = _resolve_policy(model, policy)
+	if resolved == "box":
+		_add_oriented_box(body, model, xform, nature)
+		return
+	var scale: Vector3 = xform.basis.get_scale()
+	var built: Dictionary = _model_shapes(model, nature, scale, resolved)
+	var shapes: Array = built.get("shapes", []) as Array
+	if shapes.is_empty():
+		# (d) no usable surfaces: the measured AABB is the last resort.
+		_add_oriented_box(body, model, xform, nature, Vector3.ONE, "fallback")
+		return
+	var kind: String = str(built.get("kind", "fallback"))
+	var basis: Basis = xform.basis.orthonormalized()
+	for item: Variant in shapes:
+		if not (item is Shape3D):
+			continue
+		var collision := CollisionShape3D.new()
+		collision.shape = item as Shape3D
+		collision.transform = Transform3D(basis, xform.origin)
+		body.add_child(collision)
+		_record_collider(body, kind)
+
+
+## Oriented AABB box: sized from the mesh's measured footprint and rotated with
+## the prop. This is the cheap route for barriers, flags and screens.
+static func _add_oriented_box(body: StaticBody3D, model: String,
+		xform: Transform3D, nature: bool = false,
+		shrink: Vector3 = Vector3.ONE, kind: String = "oriented_box") -> void:
+	var info: Dictionary = TileCatalog.model_info(model, nature)
+	if not bool(info.get("ok", false)):
+		_add_box_shape(body, Transform3D(xform.basis.orthonormalized(),
+			xform.origin + Vector3.UP * 0.5), Vector3.ONE)
+		_record_collider(body, "fallback")
+		return
+	var aabb: AABB = info["aabb"]
+	var scale: Vector3 = xform.basis.get_scale().abs()
+	var size: Vector3 = aabb.size * scale * shrink
+	if size.x <= 0.001 or size.y <= 0.001 or size.z <= 0.001:
+		_add_box_shape(body, Transform3D(xform.basis.orthonormalized(),
+			xform.origin + Vector3.UP * 0.5), Vector3.ONE)
+		_record_collider(body, "fallback")
+		return
+	var shape := BoxShape3D.new()
+	shape.size = size
+	var collision := CollisionShape3D.new()
+	collision.shape = shape
+	collision.transform = Transform3D(xform.basis.orthonormalized(),
+		xform * (aabb.position + aabb.size * 0.5))
+	body.add_child(collision)
+	_record_collider(body, kind)
+
+
+## Chooses the factory route for a model. Family policy wins over the measured
+## hull so a grandstand is never wrapped in one fat convex blob.
+static func _resolve_policy(model: String, policy: String) -> String:
+	if policy != "auto":
+		return policy
+	if _model_matches(model, TRIMESH_MODELS):
+		return "trimesh"
+	if _model_matches(model, SCREEN_MODELS):
+		return "box"
+	return "auto"
+
+
+static func _model_matches(model: String, prefixes: Array[String]) -> bool:
+	for prefix: String in prefixes:
+		if model.begins_with(prefix):
+			return true
+	return false
+
+
+## Cached shapes for (model, nature, scale, policy). Returns {kind, shapes}.
+## Convex hulls must stay under COLLIDER_CONVEX_BUDGET points; the moment one
+## part exceeds it the whole prop switches to a trimesh, because a hull of a
+## concave prop fills the doorway a kart is meant to drive through.
+static func _model_shapes(model: String, nature: bool, scale: Vector3,
+		policy: String) -> Dictionary:
+	var key: String = "%s|%s|%s|%s" % [model, str(nature),
+		_scale_key(scale), policy]
+	if _shape_cache.has(key):
+		return _shape_cache[key] as Dictionary
+	var info: Dictionary = TileCatalog.model_info(model, nature)
+	var result: Dictionary = {"kind": "fallback", "shapes": []}
+	if not bool(info.get("ok", false)):
+		_shape_cache[key] = result
+		return result
+	var parts: Array = info["parts"] as Array
+	if parts.is_empty():
+		_shape_cache[key] = result
+		return result
+	if policy == "trimesh":
+		var meshes: Array[Shape3D] = []
+		for part: Dictionary in parts:
+			var shape: Shape3D = _trimesh_shape(part, scale)
+			if shape != null:
+				meshes.append(shape)
+		if not meshes.is_empty():
+			result = {"kind": "trimesh", "shapes": meshes}
+		_shape_cache[key] = result
+		return result
+	var hulls: Array[Shape3D] = []
+	var cheap: bool = true
+	for part: Dictionary in parts:
+		var hull: Shape3D = _convex_shape(part, scale,
+			COLLIDER_CONVEX_BUDGET)
+		if hull == null:
+			cheap = false
+			break
+		hulls.append(hull)
+	if cheap and not hulls.is_empty():
+		result = {"kind": "hull", "shapes": hulls}
+		_shape_cache[key] = result
+		return result
+	var fallback_meshes: Array[Shape3D] = []
+	for part: Dictionary in parts:
+		var shape: Shape3D = _trimesh_shape(part, scale)
+		if shape != null:
+			fallback_meshes.append(shape)
+	if not fallback_meshes.is_empty():
+		result = {"kind": "trimesh", "shapes": fallback_meshes}
+	_shape_cache[key] = result
+	return result
+
+
+## Convex hull of one mesh part, baked with the model scale, or null when the
+## hull would exceed `budget` points.
+static func _convex_shape(part: Dictionary, scale: Vector3,
+		budget: int) -> Shape3D:
+	var mesh: Mesh = part["mesh"] as Mesh
+	if mesh == null or mesh.get_surface_count() == 0:
+		return null
+	var hull := mesh.create_convex_shape(true, true)
+	if hull == null or hull.points.size() < 4 or hull.points.size() > budget:
+		return null
+	var bake: Transform3D = _bake(part, scale)
+	var points := PackedVector3Array()
+	points.resize(hull.points.size())
+	for index in hull.points.size():
+		points[index] = bake * hull.points[index]
+	var shape := ConvexPolygonShape3D.new()
+	shape.points = points
+	return shape
+
+
+## Trimesh of one mesh part, baked with the model scale.
+static func _trimesh_shape(part: Dictionary, scale: Vector3) -> Shape3D:
+	var mesh: Mesh = part["mesh"] as Mesh
+	if mesh == null or mesh.get_surface_count() == 0:
+		return null
+	var concave := mesh.create_trimesh_shape()
+	if concave == null:
+		return null
+	var faces: PackedVector3Array = concave.get_faces()
+	if faces.size() < 3:
+		return null
+	var bake: Transform3D = _bake(part, scale)
+	for index in faces.size():
+		faces[index] = bake * faces[index]
+	var shape := ConcavePolygonShape3D.new()
+	shape.set_faces(faces)
+	shape.backface_collision = true
+	return shape
+
+
+## Model scale applied to a part's own local mesh transform.
+static func _bake(part: Dictionary, scale: Vector3) -> Transform3D:
+	var local: Transform3D = part["transform"]
+	return Transform3D(Basis.IDENTITY.scaled(scale), Vector3.ZERO) * local
+
+
+static func _scale_key(scale: Vector3) -> String:
+	return "%.3f,%.3f,%.3f" % [scale.x, scale.y, scale.z]
+
+
+static func _record_collider(body: Node, kind: String) -> void:
+	var root: Node = _scene_root(body)
+	if root == null:
+		return
+	var stats: Dictionary = _collider_stats(root)
+	stats[kind] = int(stats.get(kind, 0)) + 1
+	root.set_meta(COLLIDER_STATS_META, stats)
 
 
 static func _add_box_shape(body: StaticBody3D, xform: Transform3D,
@@ -966,15 +1599,16 @@ static func _add_cylinder_shape(body: StaticBody3D, point: Vector3,
 	shape.height = height
 	var collision := CollisionShape3D.new()
 	collision.shape = shape
-	collision.position = point + Vector3.UP * (height * 0.5)
+	collision.position = point + Vector3.UP * (Z_PROP + height * 0.5)
 	body.add_child(collision)
 
 
 static func _add_foliage_collider(body: StaticBody3D, model: String,
-		point: Vector3, scale: float) -> void:
+		point: Vector3, scale: float, xform: Transform3D) -> void:
 	if model.begins_with("rock_"):
-		_add_box_shape(body, Transform3D(Basis.IDENTITY,
-			point + Vector3.UP * (0.5 * scale)), Vector3(1.4, 1.0, 1.4) * scale)
+		# A rock is convex; the hull follows its silhouette instead of the old
+		# axis-aligned 4 m cube.
+		_add_model_colliders(body, model, xform, true, "auto")
 		return
 	if model.begins_with("plant_") or model == "grass":
 		_add_cylinder_shape(body, point, 0.9 * scale, 1.2 * scale)
@@ -991,17 +1625,22 @@ static func _add_gantry_colliders(body: StaticBody3D, model: String,
 	var center: Vector2 = info["center"]
 	var height: float = aabb.size.y * scale_factor
 	var thickness: float = 1.2
+	var basis: Basis = xform.basis.orthonormalized()
 	var legs: Array[Vector3] = [
 		xform * Vector3(aabb.position.x, 0.0, center.y),
 		xform * Vector3(aabb.end.x, 0.0, center.y),
 	]
+	# (c) a gantry is a thin repeated frame: keep oriented boxes, but rotate
+	# them with the prop so the legs are not axis-aligned cubes.
 	for leg: Vector3 in legs:
-		_add_box_shape(body, Transform3D(Basis.IDENTITY,
-			leg + Vector3.UP * (height * 0.5)),
+		_add_box_shape(body, Transform3D(basis,
+			leg + basis * Vector3.UP * (height * 0.5)),
 			Vector3(thickness, height, thickness))
-	_add_box_shape(body, Transform3D(Basis.IDENTITY,
+		_record_collider(body, "oriented_box")
+	_add_box_shape(body, Transform3D(basis,
 		xform * Vector3(center.x, aabb.size.y * 0.9, center.y)),
 		Vector3(aabb.size.x * scale_factor, 1.4, 1.4))
+	_record_collider(body, "oriented_box")
 
 
 # --------------------------------------------------------------------------

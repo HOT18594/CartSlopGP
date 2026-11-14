@@ -7,6 +7,10 @@ extends Label
 @export var drip_color: Color = Color("f26ca7")
 @export var drip_outline: Color = Color("1e1b3a")
 @export var drip_letters: String = "SLOP" ## Letters that get a drip.
+## Where the drip attaches across each glyph's advance, 0 = left edge, 1 = right.
+## The default is the glyph centre, but a "P" keeps its stem on the left, so its
+## slime has to hang from the stem rather than the right of the bowl.
+@export var drip_anchors: Dictionary = {"P": 0.30}
 @export var drip_lengths: PackedFloat32Array = PackedFloat32Array([0.24, 0.13, 0.30, 0.16])
 @export var drip_widths: PackedFloat32Array = PackedFloat32Array([0.082, 0.052, 0.094, 0.062])
 @export var drip_slant: float = 0.012 ## Sideways drift as a fraction of font size.
@@ -41,7 +45,8 @@ func _draw() -> void:
 			var width_scale: float = _at(drip_widths, drip_index, 0.065)
 			var slant: float = drip_slant * float(font_size) \
 				* (1.0 if drip_index % 2 == 0 else -0.65)
-			_draw_drip(Vector2(left + cursor + char_width * 0.5,
+			var anchor: float = float(drip_anchors.get(character.to_upper(), 0.5))
+			_draw_drip(Vector2(left + cursor + char_width * anchor,
 				baseline - float(font_size) * 0.012),
 				float(font_size) * length_scale,
 				float(font_size) * width_scale * 0.5, slant)

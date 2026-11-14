@@ -266,10 +266,12 @@ static func _building_batch(parent: Node3D, model: String, transforms: Array,
 	stats["objects"] = int(stats["objects"]) + transforms.size()
 
 
-## A raised quay deck along the outer band: pads at the wharf deck height, a retaining
-## row of container blocks on the road-facing edge, stacks and bollards on top,
-## and one loading ramp at the end. The deck is solid on WORLD with a box per
-## pad, so the whole thing can be climbed from the apron.
+## A raised quay deck along the outer band: pads at the wharf deck height, cargo
+## rows standing on the deck surface, and one loading ramp at the end. The deck
+## is solid on WORLD with a box per pad, so the whole thing can be climbed from
+## the apron. Cargo is based on the pad's visible top, not on the deck height:
+## a block planted at the deck height is buried in the 4 cm slab and its flanks
+## fight the slab's.
 static func _wharf(parent: Node3D, _spline: RefCounted, plan: RefCounted,
 		containers: Array, container_boxes: Array[Dictionary],
 		stats: Dictionary) -> void:
@@ -293,10 +295,15 @@ static func _wharf(parent: Node3D, _spline: RefCounted, plan: RefCounted,
 		return
 	var pads: Array = []
 	var body := Parts.body(parent, "DockyardWharf")
-	var piece_height: float = Parts.size(CONTAINER_MODEL, PROP_SCALE).y
+	var piece_size: Vector3 = Parts.size(CONTAINER_MODEL, PROP_SCALE)
+	var pad_height: float = Parts.size(PAD_MODEL, PAD_SCALE).y
 	# The deck rises with the authored wharf terrain: on a flat grid it stays at
 	# 2.2 m, on the raised quay layout it clears the 3 m upper lobe.
 	var deck_height: float = maxf(WHARF_HEIGHT, plan.max_road_height() + 0.8)
+	# The pad is only a few centimetres thick, so a container based at the deck
+	# height would be buried in it and its side faces would fight the pad's.
+	# Cargo stands on the pad's visible top, one rung up the layering ladder.
+	var deck_top: float = deck_height + pad_height + Parts.LAYER_FOOT
 	for cell: Vector2i in cells:
 		var point: Vector3 = plan.cell_point(cell)
 		pads.append(Parts.fit(PAD_MODEL, point + Vector3.UP * deck_height,
@@ -307,46 +314,39 @@ static func _wharf(parent: Node3D, _spline: RefCounted, plan: RefCounted,
 	stats["draws"] = int(stats["draws"]) \
 		+ Parts.batch(body, PAD_MODEL, pads, "WharfDeck", false)
 	stats["objects"] = int(stats["objects"]) + pads.size()
-	# Retaining wall along the road-facing edge, built from the same container
-	# block so the wharf reads as stacked cargo, not a floating table.
-	for cell: Vector2i in cells:
-		var point: Vector3 = plan.cell_point(cell) \
-			+ Vector3.UP * (deck_height - piece_height * 0.5)
-		containers.append(Parts.fit(CONTAINER_MODEL, point, 0.0, PROP_SCALE))
-		container_boxes.append({
-			"point": point, "yaw": 0.0,
-			"size": Vector3(TileKit.TILE_SIZE, piece_height,
-				CONTAINER_COLLIDER_DEPTH),
-		})
-		stats["containers"] = int(stats["containers"]) + 1
-	# Cargo on top: two levels on three of the five pads.
+	# Cargo on top: two levels on three of the five pads, standing on the deck
+	# surface. The old retaining row was planted half a block under the deck, so
+	# its top was flush with the deck and its flanks fought the deck's sides.
 	for index in [0, 2, 4]:
 		if index >= cells.size():
 			continue
 		var point: Vector3 = plan.cell_point(cells[index]) \
-			+ Vector3.UP * deck_height
+			+ Vector3.UP * deck_top
 		for level in 2:
 			containers.append(Parts.fit(CONTAINER_MODEL,
-				point + Vector3.UP * (piece_height * float(level)),
-				PI * 0.5, PROP_SCALE))
+				point + Vector3.UP * (piece_size.y * float(level)),
+				0.0, PROP_SCALE))
 			container_boxes.append({
 				"point": point
-					+ Vector3.UP * (piece_height * (float(level) + 0.5)),
-				"yaw": PI * 0.5,
-				"size": Vector3(TileKit.TILE_SIZE, piece_height,
-					CONTAINER_COLLIDER_DEPTH),
+					+ Vector3.UP * (piece_size.y * (float(level) + 0.5)),
+				"yaw": 0.0,
+				"size": Vector3(TileKit.TILE_SIZE, piece_size.y,
+					piece_size.z),
 			})
 			stats["containers"] = int(stats["containers"]) + 1
 	# A loading ramp at the seaward end gives the deck a way up and reads as a
-	# freight apron from the chase camera.
-	var end: Vector3 = plan.cell_point(cells[cells.size() - 1]) \
-		+ Vector3(TileKit.TILE_SIZE * 0.5, 0.0, 0.0)
-	var ramp_size: Vector3 = Parts.size(DOCK_RAMP, PROP_SCALE * 0.35)
+	# freight apron from the chase camera. It stands clear of the deck columns:
+	# a ramp placed on the cell edge itself cuts through the wharf's side.
+	var ramp_scale: Vector3 = PROP_SCALE * 0.35
+	var ramp_size: Vector3 = Parts.size(DOCK_RAMP, ramp_scale)
+	var end_cell: Vector3 = plan.cell_point(cells[cells.size() - 1])
+	var end: Vector3 = end_cell + Vector3(TileKit.TILE_SIZE * 0.5
+		+ ramp_size.z * 0.5 + Parts.LAYER_APRON, 0.0, 0.0)
 	var ramp_body := Parts.body(parent, "DockyardLoadingRamp")
 	stats["draws"] = int(stats["draws"]) \
 		+ Parts.batch(ramp_body, DOCK_RAMP, [Parts.fit(DOCK_RAMP, end, PI * 0.5,
-			PROP_SCALE * 0.35)], "LoadingRamp", true)
-	Parts.box(ramp_body, end + Vector3.UP * (ramp_size.y * 0.5), 0.0,
+			ramp_scale)], "LoadingRamp", true)
+	Parts.box(ramp_body, end + Vector3.UP * (ramp_size.y * 0.5), PI * 0.5,
 		ramp_size)
 	stats["objects"] = int(stats["objects"]) + 1
 
@@ -362,8 +362,13 @@ static func _loading_docks(parent: Node3D, spline: RefCounted, plan: RefCounted,
 	var cells: Array[Vector2i] = plan.tile_cells("J")
 	if cells.is_empty():
 		return
-	var piece_height: float = Parts.size(CONTAINER_MODEL, PROP_SCALE).y
+	# Cargo on the platform is drawn at 55 % so two stacks fit inside the 24 m
+	# deck. At full size a 16 m container at +-6 m overlapped its neighbour by
+	# four metres and hung off both ends of the platform.
+	var piece_scale: Vector3 = PROP_SCALE * 0.55
+	var piece_size: Vector3 = Parts.size(CONTAINER_MODEL, piece_scale)
 	var deck: float = 1.3
+	var deck_top: float = deck + Parts.LAYER_FOOT
 	var decks: Array = []
 	var ramps: Array = []
 	var body := Parts.body(parent, "DockyardLoadingDock")
@@ -399,25 +404,25 @@ static func _loading_docks(parent: Node3D, spline: RefCounted, plan: RefCounted,
 		Parts.box(body, chosen + Vector3.UP * (deck * 0.5), platform_yaw,
 			Vector3(24.0, deck, 8.0))
 		_mark_dock_cells(plan, chosen, platform_yaw)
-		for along: float in [-6.0, 6.0]:
+		for along: float in [-6.5, 6.5]:
 			var stack: Vector3 = chosen + forward * along \
-				+ Vector3.UP * deck
+				+ Vector3.UP * deck_top
 			for level in 2:
 				containers.append(Parts.fit(CONTAINER_MODEL,
-					stack + Vector3.UP * (piece_height * float(level)),
-					platform_yaw, PROP_SCALE))
+					stack + Vector3.UP * (piece_size.y * float(level)),
+					platform_yaw, piece_scale))
 				container_boxes.append({
-					"point": stack + Vector3.UP * (piece_height
+					"point": stack + Vector3.UP * (piece_size.y
 						* (float(level) + 0.5)),
 					"yaw": platform_yaw,
-					"size": Vector3(TileKit.TILE_SIZE, piece_height,
-						CONTAINER_COLLIDER_DEPTH),
+					"size": piece_size,
 				})
 				stats["containers"] = int(stats["containers"]) + 1
-		var ramp_point: Vector3 = chosen + forward * 13.0
+		var ramp_size: Vector3 = Parts.size(DOCK_RAMP, PROP_SCALE * 0.35)
+		var ramp_point: Vector3 = chosen + forward \
+			* (12.0 + ramp_size.z * 0.5 + Parts.LAYER_APRON)
 		ramps.append(Parts.fit(DOCK_RAMP, ramp_point, ramp_yaw,
 			PROP_SCALE * 0.35))
-		var ramp_size: Vector3 = Parts.size(DOCK_RAMP, PROP_SCALE * 0.35)
 		Parts.box(body, ramp_point + Vector3.UP * (ramp_size.y * 0.5),
 			ramp_yaw, ramp_size)
 		stats["loading"] = int(stats["loading"]) + 1
@@ -435,11 +440,8 @@ static func _loading_docks(parent: Node3D, spline: RefCounted, plan: RefCounted,
 	var slabs := MultiMeshInstance3D.new()
 	slabs.name = "LoadingDockDecks"
 	slabs.multimesh = multi
-	var material := StandardMaterial3D.new()
-	material.albedo_color = Color("8d938d")
-	material.roughness = 0.96
-	material.metallic = 0.0
-	slabs.material_override = material
+	# One shared concrete material for every slab batch in the map.
+	slabs.material_override = Parts.slab_material()
 	parent.add_child(slabs)
 	stats["draws"] = int(stats["draws"]) \
 		+ Parts.batch(body, DOCK_RAMP, ramps, "LoadingRamps", true) + 1
@@ -539,7 +541,8 @@ static func _pack_containers(plan: RefCounted, spline: RefCounted,
 			var cell: Vector2i = group[index]
 			if not plan.is_free(cell):
 				continue
-			var point: Vector3 = plan.cell_point(cell)
+			var point: Vector3 = plan.cell_point(cell) \
+				+ Vector3.UP * Parts.LAYER_FOOT
 			if TileKit.spline_distance(spline, point) < LATTICE_CLEARANCE:
 				continue
 			var levels: int = CONTAINER_LEVELS
@@ -617,7 +620,7 @@ static func _canyon_containers(spline: RefCounted, plan: RefCounted,
 			for side: float in [-1.0, 1.0]:
 				var point: Vector3 = Parts.side_point(spline, distance,
 					CANYON_LATERAL * side)
-				point.y = 0.0
+				point.y = Parts.LAYER_FOOT
 				var yaw: float = Parts.along_yaw(spline, distance)
 				# Measure the real box, not just its centre: a long wall close
 				# to a corner can turn its end towards the next strand.
@@ -706,39 +709,53 @@ static func _cranes(parent: Node3D, spline: RefCounted, plan: RefCounted,
 	var weights: Array = []
 	var body := Parts.body(parent, "DockyardCranes")
 	var centre: Vector3 = plan.centre()
-	var mast_size: Vector3 = Parts.size(CRANE_MAST, PROP_SCALE)
+	var mast_scale: Vector3 = PROP_SCALE
+	var mast_size: Vector3 = Parts.size(CRANE_MAST, mast_scale)
+	var boom_scale: Vector3 = Vector3(PROP_SCALE.x * 1.15,
+		PROP_SCALE.y * 0.45, PROP_SCALE.z)
+	var boom_size: Vector3 = Parts.size(CRANE_BOOM, boom_scale)
+	var cab_scale: Vector3 = Vector3(PROP_SCALE.x * 1.2,
+		PROP_SCALE.y * 0.35, PROP_SCALE.z * 1.2)
+	var cab_size: Vector3 = Parts.size(CRANE_CAB, cab_scale)
+	var weight_scale: Vector3 = PROP_SCALE * 0.45
+	var weight_size: Vector3 = Parts.size(CONTAINER_MODEL, weight_scale)
+	# Every crane part starts clear of the mast instead of running through it.
+	# The mast is a square tower, so its reach along the boom is the rotated
+	# half-width, not the flat one: at the old 38 m boom the arm crossed the
+	# tower, the cab and the next crane's mast, which is where the yard's
+	# z-clipping came from.
+	var cab_offset: float = 0.0
+	var weight_offset: float = 0.0
 	for cell: Vector2i in spots:
-		var point: Vector3 = plan.cell_point(cell)
-		masts.append(Parts.fit(CRANE_MAST, point, 0.0, PROP_SCALE))
+		var point: Vector3 = plan.cell_point(cell) \
+			+ Vector3.UP * Parts.LAYER_FOOT
+		masts.append(Parts.fit(CRANE_MAST, point, 0.0, mast_scale))
 		Parts.box(body, point + Vector3.UP * (mast_size.y * 0.5), 0.0,
-			Vector3(mast_size.x, mast_size.y, mast_size.z))
+			mast_size)
 		var direction := Vector3(centre.x - point.x, 0.0, centre.z - point.z)
 		if direction.length_squared() < 1.0:
 			direction = Vector3.RIGHT
 		direction = direction.normalized()
+		var mast_reach: float = (absf(direction.x) + absf(direction.z)) \
+			* mast_size.x * 0.5
+		var boom_start: float = mast_reach + 0.2
+		cab_offset = mast_reach + cab_size.z * 0.5 + 0.1
+		weight_offset = mast_reach + weight_size.z * 0.5 + 0.15
 		var boom_yaw: float = atan2(-direction.z, direction.x)
-		var boom_point: Vector3 = point + direction * 11.0 \
+		var boom_point: Vector3 = point \
+			+ direction * (boom_start + boom_size.x * 0.5) \
 			+ Vector3.UP * (mast_size.y - 1.5)
-		booms.append(Parts.fit(CRANE_BOOM, boom_point, boom_yaw,
-			Vector3(PROP_SCALE.x * 2.4, PROP_SCALE.y * 0.45, PROP_SCALE.z)))
-		var boom_size: Vector3 = Parts.size(CRANE_BOOM,
-			Vector3(PROP_SCALE.x * 2.4, PROP_SCALE.y * 0.45, PROP_SCALE.z))
+		booms.append(Parts.fit(CRANE_BOOM, boom_point, boom_yaw, boom_scale))
 		Parts.box(body, boom_point, boom_yaw, boom_size)
-		var cab_point: Vector3 = point + direction * 2.5 \
+		var cab_point: Vector3 = point + direction * cab_offset \
 			+ Vector3.UP * (mast_size.y - 5.0)
-		cabs.append(Parts.fit(CRANE_CAB, cab_point, boom_yaw,
-			Vector3(PROP_SCALE.x * 1.2, PROP_SCALE.y * 0.35,
-				PROP_SCALE.z * 1.2)))
-		Parts.box(body, cab_point, boom_yaw,
-			Parts.size(CRANE_CAB, Vector3(PROP_SCALE.x * 1.2,
-				PROP_SCALE.y * 0.35, PROP_SCALE.z * 1.2)))
-		var weight_point: Vector3 = point - direction * 5.0 \
+		cabs.append(Parts.fit(CRANE_CAB, cab_point, boom_yaw, cab_scale))
+		Parts.box(body, cab_point, boom_yaw, cab_size)
+		var weight_point: Vector3 = point - direction * weight_offset \
 			+ Vector3.UP * (mast_size.y - 1.5)
 		weights.append(Parts.fit(CONTAINER_MODEL, weight_point,
-			boom_yaw + PI * 0.5, PROP_SCALE))
-		Parts.box(body, weight_point, boom_yaw + PI * 0.5,
-			Vector3(TileKit.TILE_SIZE, Parts.size(CONTAINER_MODEL,
-				PROP_SCALE).y, CONTAINER_COLLIDER_DEPTH))
+			boom_yaw + PI * 0.5, weight_scale))
+		Parts.box(body, weight_point, boom_yaw + PI * 0.5, weight_size)
 		stats["cranes"] = int(stats["cranes"]) + 1
 	stats["draws"] = int(stats["draws"]) \
 		+ Parts.batch(body, CRANE_MAST, masts, "CraneMasts", true) \
@@ -772,15 +789,16 @@ static func _bollards(parent: Node3D, spline: RefCounted, plan: RefCounted,
 		else:
 			plan.mark(cell)
 		spots.append(point)
-		transforms.append(Parts.fit(BOLLARD_MODEL, point, 0.0,
-			PROP_SCALE * 0.32))
+		transforms.append(Parts.fit(BOLLARD_MODEL,
+			point + Vector3.UP * Parts.LAYER_FOOT, 0.0, PROP_SCALE * 0.32))
 	if transforms.is_empty():
 		return
 	var body := Parts.body(parent, "DockyardBollards")
 	stats["draws"] = int(stats["draws"]) \
 		+ Parts.batch(body, BOLLARD_MODEL, transforms, "QuayBollards", true)
 	for point: Vector3 in spots:
-		Parts.cylinder(body, point, 0.35, 0.72)
+		Parts.cylinder(body, point + Vector3.UP * Parts.LAYER_FOOT, 0.35,
+			0.72)
 	stats["objects"] = int(stats["objects"]) + transforms.size()
 	stats["bollards"] = transforms.size()
 
@@ -798,6 +816,8 @@ static func _mooring(parent: Node3D, plan: RefCounted,
 		if entries.size() >= 28:
 			break
 		if (cell.x * 5 + cell.y) % 3 != 0:
+			continue
+		if plan.is_used(cell):
 			continue
 		var point: Vector3 = plan.cell_point(cell)
 		var model: String = models[index % models.size()]
@@ -818,8 +838,8 @@ static func _mooring(parent: Node3D, plan: RefCounted,
 		if not batches.has(model):
 			batches[model] = []
 		(batches[model] as Array).append(Parts.fit_nature(model,
-			entry["point"], float(entry["yaw"]),
-			Vector3.ONE * float(entry["scale"])))
+			(entry["point"] as Vector3) + Vector3.UP * Parts.LAYER_FOOT,
+			float(entry["yaw"]), Vector3.ONE * float(entry["scale"])))
 	var body := Parts.body(parent, "DockyardMooring")
 	for model: String in batches:
 		stats["draws"] = int(stats["draws"]) \
@@ -828,7 +848,8 @@ static func _mooring(parent: Node3D, plan: RefCounted,
 	for entry: Dictionary in entries:
 		var size: Vector3 = Parts.size_nature(str(entry["model"]),
 			Vector3.ONE * float(entry["scale"]))
-		Parts.box(body, (entry["point"] as Vector3) + Vector3.UP * size.y * 0.5,
+		Parts.box(body, (entry["point"] as Vector3) \
+			+ Vector3.UP * (size.y * 0.5 + Parts.LAYER_FOOT),
 			float(entry["yaw"]), size)
 	stats["objects"] = int(stats["objects"]) + entries.size()
 	stats["mooring"] = entries.size()
@@ -854,7 +875,8 @@ static func _grid_fence(parent: Node3D, plan: RefCounted,
 		var point: Vector3 = plan.cell_point(cell)
 		cells.append(cell)
 		points.append(point)
-		transforms.append(Parts.fit(FENCE_MODEL, point, yaw, PROP_SCALE))
+		transforms.append(Parts.fit(FENCE_MODEL,
+			point + Vector3.UP * Parts.LAYER_FOOT, yaw, PROP_SCALE))
 		yaws.append(yaw)
 	plan.set_meta(FENCE_META, cells)
 	_fence_batch(parent, transforms, points, yaws, stats)
@@ -870,7 +892,8 @@ static func _fence_batch(parent: Node3D, transforms: Array, points: Array,
 	var size: Vector3 = Parts.size(FENCE_MODEL, PROP_SCALE)
 	for index in points.size():
 		var point: Vector3 = points[index]
-		Parts.box(body, point + Vector3.UP * (size.y * 0.5), yaws[index], size)
+		Parts.box(body, point + Vector3.UP * (size.y * 0.5 + Parts.LAYER_FOOT),
+			yaws[index], size)
 	stats["objects"] = int(stats["objects"]) + transforms.size()
 	stats["fence"] = int(stats["fence"]) + transforms.size()
 

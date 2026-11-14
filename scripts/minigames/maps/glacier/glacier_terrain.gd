@@ -92,7 +92,9 @@ static func build(holder: Node3D, spline: RefCounted) -> Dictionary:
 
 ## Rock faces under a raised deck. Every cliff is a nature block scaled to the
 ## deck height at that point and based on y = 0, so it meets the ground and the
-## road shoulder at once with no gap and no float.
+## road shoulder at once with no gap and no float. The foot is lifted one rung
+## off the snow plane and the site is measured against the colliders already in
+## the scene, so a face can never be planted through a stand or a fence.
 static func _cliffs(holder: Node3D, spline: RefCounted) -> int:
 	var entries: Array = []
 	var points: Array = []
@@ -122,12 +124,15 @@ static func _cliffs(holder: Node3D, spline: RefCounted) -> int:
 				block_height, true)
 			scale = clampf(scale, 1.2, 9.0)
 			var yaw: float = GlacierProps.axis_yaw(model, scale, forward, true)
-			var base := Vector3(at.x, 0.0, at.z)
+			var footprint: Vector2 = GlacierProps.footprint(model, scale, true)
+			var width: float = minf(footprint.x * 0.72, 5.5)
+			var base := Vector3(at.x, 0.0, at.z) \
+				+ Vector3.UP * GlacierProps.LAYER_FOOT
+			if not GlacierProps.site_clear(holder, base, width * 0.5):
+				continue
 			entries.append({"model": model, "nature": true,
 				"transform": GlacierProps.fit(model, base, yaw, scale, true)})
 			points.append(base)
-			var width: float = minf(GlacierProps.footprint(model, scale,
-				true).x * 0.72, 5.5)
 			GlacierProps.box(body, base + Vector3.UP * (block_height * 0.5),
 				Vector3(width, block_height, width))
 	if entries.is_empty():
@@ -143,8 +148,11 @@ static func _cliffs(holder: Node3D, spline: RefCounted) -> int:
 # --------------------------------------------------------------------------
 
 
-## Boulder fields on both sides of the pass. Grounded on the snow, batched per
-## model, one box collider each.
+## Boulder fields on both sides of the pass. Grounded one rung above the snow
+## plane, batched per model, one box collider each. A boulder is skipped when it
+## would be planted through a stand, a garage or a fence that is already in the
+## scene: the outcrop band crosses the stand band, and a rock through a
+## grandstand is the same class of clip as a stand through a stand.
 static func _outcrops(holder: Node3D, spline: RefCounted) -> int:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = SEED
@@ -165,17 +173,21 @@ static func _outcrops(holder: Node3D, spline: RefCounted) -> int:
 				(float(index) + 0.5) * OUTCROP_STEP)
 			var jitter := Vector3(rng.randf_range(-4.0, 4.0), 0.0,
 				rng.randf_range(-4.0, 4.0))
-			var base := Vector3(at.x + jitter.x, 0.0, at.z + jitter.z)
+			var base := Vector3(at.x + jitter.x, 0.0, at.z + jitter.z) \
+				+ Vector3.UP * GlacierProps.LAYER_FOOT
 			if GlacierProps.clearance(spline, base) < GlacierProps.SOLID_CLEARANCE:
 				continue
 			var model: String = OUTCROP_MODELS[rng.randi_range(0,
 				OUTCROP_MODELS.size() - 1)]
 			var scale: float = NATURE * rng.randf_range(0.75, 1.25)
+			var plan: Vector2 = GlacierProps.footprint(model, scale, true)
+			if not GlacierProps.site_clear(holder, base,
+					maxf(plan.x, plan.y) * 0.5):
+				continue
 			var yaw: float = rng.randf_range(0.0, TAU)
 			entries.append({"model": model, "nature": true,
 				"transform": GlacierProps.fit(model, base, yaw, scale, true)})
 			points.append(base)
-			var plan: Vector2 = GlacierProps.footprint(model, scale, true)
 			var height: float = GlacierProps.height(model, scale, true)
 			GlacierProps.box(body, base + Vector3.UP * (height * 0.5),
 				Vector3(minf(plan.x, 6.5), height, minf(plan.y, 6.5)))
@@ -209,7 +221,7 @@ static func _ridges(holder: Node3D, spline: RefCounted) -> int:
 			var angle: float = TAU * (float(index) + 0.5) / float(count) \
 				+ rng.randf_range(-0.10, 0.10)
 			var base := Vector3(centre.x + cos(angle) * radius, 0.0,
-				centre.z + sin(angle) * radius)
+				centre.z + sin(angle) * radius) + Vector3.UP * GlacierProps.LAYER_FOOT
 			if GlacierProps.clearance(spline, base) < 40.0:
 				continue
 			var model: String = RIDGE_MODELS[rng.randi_range(0,
@@ -278,9 +290,11 @@ static func _ski_lift(holder: Node3D, spline: RefCounted) -> int:
 		var offset: float = (float(index) - float(LIFT_PYLONS - 1) * 0.5) \
 			* LIFT_SPACING
 		var base: Vector3 = centre + forward * offset \
-			+ right * (chosen_offset * chosen)
-		base.y = 0.0
+			+ right * (chosen_offset * chosen) \
+			+ Vector3.UP * GlacierProps.LAYER_FOOT
 		if GlacierProps.clearance(spline, base) < 24.0:
+			continue
+		if not GlacierProps.site_clear(holder, base, 1.2):
 			continue
 		points.append(base)
 		entries.append({"model": LIFT_POST,

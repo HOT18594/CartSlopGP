@@ -38,6 +38,17 @@ const SOLID_CLEARANCE: float = TileKit.BARRIER_CLEARANCE + 1.4
 ## Path sampling for banks, rails and cliff bands, in metres.
 const PATH_STEP: float = 0.75
 
+## Vertical layering ladder, in metres above the surface a layer stands on. The
+## snow plate owns rung zero; a rock face, a boulder or a pylon foot is based one
+## rung up, so its lowest face never shares the plane of the plate under it. The
+## rungs are centimetre scale: a bigger lift would read as a floating prop.
+const LAYER_SNOW: float = 0.0
+const LAYER_FOOT: float = 0.01
+const LAYER_APRON: float = 0.02
+const LAYER_DECAL: float = 0.03
+## Minimum plan gap a new solid keeps from a collider already in the scene.
+const SITE_GAP: float = 0.20
+
 
 # --------------------------------------------------------------------------
 # batching
@@ -339,6 +350,60 @@ static func assert_clearance(label: String, points: Array,
 		push_error("GlacierProps: %s has a solid %.2f m from the centreline, inside %.2f m." % [
 			label, closest, SOLID_CLEARANCE])
 	return closest
+
+
+## True when a solid footprint of `radius` metres around `point` clears every
+## collider already placed under `holder` by SITE_GAP. The terrain passes run
+## after the layout pass, so a boulder, a cliff block or a pylon can check the
+## stands, garages and fences that are already in the scene: the modules cannot
+## see each other's placement lists, but they can see each other's colliders,
+## and that is what stops a rock being planted through a grandstand.
+static func site_clear(holder: Node, point: Vector3, radius: float) -> bool:
+	if holder == null:
+		return true
+	for body: Node in _solid_bodies(holder):
+		for child: Node in body.get_children():
+			var collision := child as CollisionShape3D
+			if collision == null:
+				continue
+			var box := collision.shape as BoxShape3D
+			var cylinder := collision.shape as CylinderShape3D
+			var half := Vector2.ZERO
+			if box != null:
+				half = Vector2(box.size.x, box.size.z) * 0.5
+			elif cylinder != null:
+				half = Vector2(cylinder.radius, cylinder.radius)
+			else:
+				continue
+			var xform: Transform3D = world_transform(collision)
+			var offset: Vector3 = \
+				xform.basis.orthonormalized().inverse() * (point - xform.origin)
+			var nearest := Vector2(clampf(offset.x, -half.x, half.x),
+				clampf(offset.z, -half.y, half.y))
+			if Vector2(offset.x, offset.z).distance_to(nearest) \
+					< radius + SITE_GAP:
+				return false
+	return true
+
+
+## Every StaticBody3D under `node`, including `node`'s own children.
+static func _solid_bodies(node: Node) -> Array[Node]:
+	var found: Array[Node] = []
+	for child: Node in node.get_children():
+		if child is StaticBody3D:
+			found.append(child)
+		found.append_array(_solid_bodies(child))
+	return found
+
+
+## Composes the parent chain, so an off-tree prop still measures in world space.
+static func world_transform(node: Node3D) -> Transform3D:
+	var xform: Transform3D = node.transform
+	var current: Node = node.get_parent()
+	while current is Node3D:
+		xform = (current as Node3D).transform * xform
+		current = current.get_parent()
+	return xform
 
 
 # --------------------------------------------------------------------------

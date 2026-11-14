@@ -50,6 +50,12 @@ class_name KenneyTiles
 ## Every road cell collides on CollisionLayers.WORLD with a box (tilted on an
 ## elevated grid), and jump/bump cells get a real wedge/hump concave shape
 ## instead of a box so a kart drives up the slope it sees.
+##
+## Z-FIGHTING LADDER (mirrored from tile_kit.gd, which owns the policy):
+## ground -0.020 m, road 0.000 m, decal +0.012 m, prop +0.024 m. Road pieces
+## stay on Z_ROAD, the crossing's second arm moves up to Z_DECAL instead of a
+## magic number, and a deferred TileKit audit finishes the map once the theme
+## has added its props.
 
 const TileCatalog := preload("res://scripts/minigames/tiles/tile_catalog.gd")
 const CollisionLayers := preload("res://scripts/systems/collision_layers.gd")
@@ -74,6 +80,11 @@ const CORNER_STEPS: int = 6
 const WIDE_STEPS: int = 8
 const CLOSE_STEP: float = 4.0
 const ROAD_THICKNESS: float = 0.4
+## Stacking rungs shared with tile_kit.gd; keep the two ladders identical.
+const Z_GROUND: float = -0.020
+const Z_ROAD: float = 0.000
+const Z_DECAL: float = 0.012
+const Z_PROP: float = 0.024
 
 ## Clearance sampling. A barrier path is walked along the real road edge in
 ## steps this small, so a chord across a corner can never cut onto the surface.
@@ -360,6 +371,7 @@ static func build(parent: Node3D, rows: PackedStringArray,
 	_fill_tile_distances(spline)
 	_build_road(parent, tiles, heights)
 	_build_road_collision(parent, tiles, heights)
+	_schedule_prop_audit(parent)
 
 	var theme_id: String = _theme_id(theme)
 	parent.set_meta("kenney_spline", spline)
@@ -381,6 +393,19 @@ static func build(parent: Node3D, rows: PackedStringArray,
 		"" if float(heights.get("max_height", 0.0)) <= 0.001 \
 			else ", elevation to %.1f m" % float(heights.get("max_height", 0.0))])
 	return spline
+
+
+## One deferred material/shape audit per scene root. The grid engine builds the
+## road before the theme dresses the map, so the audit waits one frame: by then
+## every theme prop exists and the whole map can be swept once. The lazy load
+## avoids a parse-time cycle (tile_kit preloads this file).
+static func _schedule_prop_audit(parent: Node3D) -> void:
+	if parent == null:
+		return
+	var script: Script = load("res://scripts/minigames/tile_kit.gd") as Script
+	if script == null or not script.has_method("schedule_prop_audit"):
+		return
+	script.call("schedule_prop_audit", parent)
 
 
 ## ASCII character of every placed tile, in lap order. Diagnostics helper.
@@ -1066,7 +1091,8 @@ static func _build_road(parent: Node3D, tiles: Array[Dictionary],
 		var tile_char: String = str(tile["tile"])
 		var center: Vector3 = _cell_center(tile["cell"])
 		var yaw: float = float(tile["yaw"])
-		var deck: Vector3 = center + Vector3.UP * float(tile.get("height", 0.0))
+		var deck: Vector3 = center + Vector3.UP * (float(tile.get("height", 0.0))
+			+ Z_ROAD)
 		var pitch: float = _tile_pitch(tile)
 		var model: String = TileCatalog.START_MODEL \
 			if bool(tile["start"]) and _is_straight_char(tile_char) \
@@ -1078,11 +1104,11 @@ static func _build_road(parent: Node3D, tiles: Array[Dictionary],
 		if tile_char == "C":
 			# Two straights crossing on the same cell: the read of a junction
 			# without a 2x2 piece that would spill into the neighbours. The
-			# cross arm is lifted 12 mm so the two coplanar verge slabs cannot
-			# z-fight in the overlap.
+			# cross arm takes the decal rung so the two coplanar verge slabs
+			# cannot z-fight in the overlap.
 			_add_batch(batches, TileCatalog.road_model("S"),
 				_fit_tile(TileCatalog.road_model("S"),
-					deck + Vector3.UP * 0.012, yaw + PI * 0.5,
+					deck + Vector3.UP * Z_DECAL, yaw + PI * 0.5,
 					Vector3.ONE * TILE_SIZE, pitch))
 		if float(tile.get("height", 0.0)) >= BRIDGE_MIN_HEIGHT \
 				and _is_straight_char(tile_char):

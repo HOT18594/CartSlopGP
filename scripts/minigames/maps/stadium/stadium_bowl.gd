@@ -5,9 +5,10 @@ extends RefCounted
 ## edge rather than from hard-coded world points, so a registry grid edit moves
 ## the whole bowl with the track. The bowl is built as concentric groups:
 ##
-##   tier 1  an unbroken ring of stands one grid cell apart: the seating wall of
-##           the stadium, with the covered main stand over the start/finish and
-##           awning stands on the far side
+##   tier 1  a ring of stands on a one-grid-cell pitch: the seating wall of the
+##           stadium, with the covered main stand over the start/finish and
+##           awning stands on the far side. A bay whose 16 m footprint would
+##           cut the one beside it on a corner is left out, not drawn through it
 ##   tier 2  covered stands a further 17 m out along both long sides, offset by
 ##           half a bay so the two tiers read as a terrace and not as a grid
 ##   fence   catch fencing on the longest straight and on the outside of the
@@ -28,7 +29,6 @@ const TileCatalog := preload("res://scripts/minigames/tiles/tile_catalog.gd")
 const GRANDSTAND_OPEN: String = "grandStand"
 const GRANDSTAND_COVERED: String = "grandStandCovered"
 const GRANDSTAND_AWNING: String = "grandStandAwning"
-const GRANDSTAND_ROUND: String = "grandStandRound"
 const FENCE_MODEL: String = "fenceStraight"
 const CAMERA_MODEL: String = "camera_exclusive"
 const LIGHT_MODEL: String = "lightPostLarge"
@@ -42,23 +42,37 @@ const BRIDGE_CENTER: String = "bridge_center_stone"
 ## as a continuous terrace.
 const STAND_BAY: float = 16.0
 ## Lateral distance of the lower stand ring. A stand is a 16 m footprint, so its
-## front face lands 11.4 m out: behind the barrier face at 8 m and behind the
-## wall body that sits on it.
-const STAND_LATERAL: float = 19.4
-## Second tier: a ring of covered stands further out, on both long sides.
-const TIER_TWO_LATERAL: float = 36.0
+## front face lands 12.8 m out: behind the barrier face at 8.02 m and behind the
+## barrier body (which is 2 m deep), leaving a 2.5 m furniture lane in front of
+## the seating. The upper tier stays inside 46 m so the designed woodland, whose
+## nearest trunk is 48.2 m, can never grow through the second roof.
+const STAND_LATERAL: float = 20.8
+## Second tier: a ring of covered stands further out, on both long sides. The
+## 0.65 m shadow gap between the back of the lower ring (28.8 m) and the front
+## of the upper one (29.45 m) keeps the two tiers reading separately.
+const TIER_TWO_LATERAL: float = 37.6
 const STAND_MAIN_BAYS: float = 6.0
 
-## Lateral distances of the detail props, all outside the barrier face.
-const FENCE_LATERAL: float = 11.6
-const TYRE_LATERAL: float = 10.2
-const MARSHAL_LATERAL: float = 13.4
-const CAMERA_LATERAL: float = 23.0
-const LIGHT_LATERAL: float = 29.0
-const SIGN_LATERAL: float = 14.4
-const FLAG_LATERAL: float = 12.4
-const CLIFF_LATERAL: float = 14.6
+## Lateral distances of the detail props, all outside the barrier body and
+## inside the furniture lane in front of the lower stand ring. Every prop here
+## is <= 2.3 m deep, which is what the lane holds.
+const FENCE_LATERAL: float = 11.0
+const TYRE_LATERAL: float = 11.45
+const MARSHAL_LATERAL: float = 11.7
+## A crane's measured footprint is 4.2 m deep, so it is yawed to run its long
+## axis along the track and only 1.7 m of it faces the road.
+const CAMERA_LATERAL: float = 11.5
+## Floodlights stand in the same lane, in front of the seating.
+const LIGHT_LATERAL: float = 11.45
+const SIGN_LATERAL: float = 11.45
+const FLAG_LATERAL: float = 11.6
+## Cliff walls stand behind the upper tier, so the rock face reads above the
+## second roof instead of being buried in the seating.
+const CLIFF_LATERAL: float = 49.0
 const BRIDGE_DECK: float = 3.7
+## Sponsor boards are drawn at four tenths of the catalogue sign scale so a
+## 7.6 m deep billboard becomes 1.8 m deep and fits the furniture lane.
+const BOARD_SCALE: float = 0.4
 
 const TYRE_STACKS_PER_CORNER: int = 6
 const TYRE_STACK_SPACING: float = 4.4
@@ -71,9 +85,7 @@ const MARSHAL_REACH: float = 1.9
 const CAMERA_REACH: float = 2.2
 const LIGHT_REACH: float = 3.2
 const FLAG_REACH: float = 1.2
-## A 26 m round stand reaches 13 m.
-const ROUND_REACH: float = 18.6
-## A cliff block reaches 3.6 m; the valley wall stands further out than that.
+## A cliff block reaches 3.6 m; the wall stands behind the upper tier.
 const CLIFF_REACH: float = 3.6
 const CATCH_FENCE_MAX: int = 14
 const FLOODLIGHTS: int = 12
@@ -82,9 +94,9 @@ const FLAG_COUNT: int = 32
 const BOARD_COUNT: int = 10
 const TREE_BAND: int = 140
 const BUSH_BAND: int = 44
-## Trees stand beyond the second stand tier, which is the barrier ring's outer
-## edge: this is the plan distance that guarantees it.
-const TREE_RING_MIN: float = 44.0
+## Trees stand beyond the second stand tier and the cliff wall behind it: this
+## is the plan distance that guarantees both.
+const TREE_RING_MIN: float = 52.0
 
 const TREE_KINDS: Array[String] = [
 	"tree_default", "tree_oak", "tree_pineTallA", "tree_cone", "tree_fat",
@@ -103,15 +115,20 @@ static func build(holder: Node3D, spline: RefCounted, plan: Dictionary,
 		stats: Dictionary) -> void:
 	if holder == null or spline == null:
 		return
-	_grandstands(holder, spline, plan, stats)
-	_catch_fence(holder, spline, plan, stats)
-	_tyre_walls(holder, spline, plan, stats)
-	_marshal_posts(holder, spline, plan, stats)
-	_camera_cranes(holder, spline, plan, stats)
-	_floodlights(holder, spline, plan, stats)
-	_sponsor_boards(holder, spline, plan, stats)
-	_flags(holder, spline, plan, stats)
-	_cliff_walls(holder, spline, plan, stats)
+	# Order is priority: the deck-defining terrace and the big, functional
+	# furniture take their sites first, then the small dressing fills the lane
+	# that is left. Every pass registers its footprint, so a later prop is
+	# skipped rather than drawn through an earlier one.
+	var placed: Array = []
+	_grandstands(holder, spline, plan, stats, placed)
+	_catch_fence(holder, spline, plan, stats, placed)
+	_floodlights(holder, spline, plan, stats, placed)
+	_tyre_walls(holder, spline, plan, stats, placed)
+	_camera_cranes(holder, spline, plan, stats, placed)
+	_marshal_posts(holder, spline, plan, stats, placed)
+	_sponsor_boards(holder, spline, plan, stats, placed)
+	_flags(holder, spline, plan, stats, placed)
+	_cliff_walls(holder, spline, plan, stats, placed)
 	_footbridge(holder, spline, plan, stats)
 	_tree_band(holder, spline, plan, stats)
 
@@ -121,9 +138,12 @@ static func build(holder: Node3D, spline: RefCounted, plan: Dictionary,
 
 
 ## Two concentric stand rings, batched into one MultiMesh per model, so the
-## whole bowl costs four draw calls however many bays it holds.
+## whole bowl costs four draw calls however many bays it holds. Every bay is
+## tested in plan against the bays already placed: a fixed 16 m spacing turns a
+## 16 m square into an interpenetrating pile on a corner, so a bay that would
+## clip the terrace is left out instead of being drawn through its neighbour.
 static func _grandstands(holder: Node3D, spline: RefCounted, plan: Dictionary,
-		stats: Dictionary) -> void:
+		stats: Dictionary, placed: Array) -> void:
 	var outside: float = float(plan["outside"])
 	var total: float = float(plan["total"])
 	var start: float = float(plan["start_distance"])
@@ -140,18 +160,23 @@ static func _grandstands(holder: Node3D, spline: RefCounted, plan: Dictionary,
 		var lap: float = fposmod(start + STAND_BAY * (float(index) + 0.5), total)
 		if not Props.site_ok(spline, point, STAND_REACH):
 			continue
+		if not Props.side_ok(spline, point, outside):
+			continue
 		var model: String = GRANDSTAND_OPEN
 		if _lap_gap(lap, start, total) < STAND_BAY * STAND_MAIN_BAYS:
 			model = GRANDSTAND_COVERED
 		elif index % 4 == 2:
 			model = GRANDSTAND_AWNING
-		var yaw: float = stand_yaw(spline, lap, outside)
+		var yaw: float = ring_stand_yaw(site, outside)
+		var footprint: Vector3 = Props.size(model,
+			Vector3.ONE * Props.PROP_SCALE)
+		if not Props.site_free(placed, point, yaw, footprint):
+			stats["stands_shed"] = int(stats.get("stands_shed", 0)) + 1
+			continue
+		Props.remember(placed, point, yaw, footprint)
 		_add(lower, model, Props.fit(model, point, yaw,
 			Vector3.ONE * Props.PROP_SCALE))
 		colliders.append({"model": model, "point": point, "yaw": yaw})
-	# One round stand closes each end of the bowl, where the corner makes a
-	# square terrace read like a box.
-	_round_stands(lower, colliders, spline, plan, outside, start, total)
 	var upper_sites: Array = Props.ring_run(upper_ring, 0.0, total,
 		STAND_BAY * 2.0)
 	for index in upper_sites.size():
@@ -162,9 +187,17 @@ static func _grandstands(holder: Node3D, spline: RefCounted, plan: Dictionary,
 			* (float(index) + 0.5), total)
 		if not Props.site_ok(spline, point, STAND_REACH):
 			continue
+		if not Props.side_ok(spline, point, outside):
+			continue
 		var model: String = GRANDSTAND_COVERED if index % 2 == 0 \
 			else GRANDSTAND_OPEN
-		var yaw: float = stand_yaw(spline, lap, outside)
+		var yaw: float = ring_stand_yaw(site, outside)
+		var footprint: Vector3 = Props.size(model,
+			Vector3.ONE * Props.PROP_SCALE)
+		if not Props.site_free(placed, point, yaw, footprint):
+			stats["stands_shed"] = int(stats.get("stands_shed", 0)) + 1
+			continue
+		Props.remember(placed, point, yaw, footprint)
 		_add(upper, model, Props.fit(model, point, yaw,
 			Vector3.ONE * Props.PROP_SCALE))
 		colliders.append({"model": model, "point": point, "yaw": yaw})
@@ -173,46 +206,45 @@ static func _grandstands(holder: Node3D, spline: RefCounted, plan: Dictionary,
 		var point: Vector3 = entry["point"]
 		Props.model_body(stand_body, str(entry["model"]), point,
 			float(entry["yaw"]), Vector3.ONE * Props.PROP_SCALE)
-	var placed: int = 0
+	var placed_count: int = 0
 	for model: String in lower:
 		var transforms: Array = lower[model] as Array
-		placed += transforms.size()
+		placed_count += transforms.size()
 		stats["draws"] = int(stats.get("draws", 0)) + Props.batch(holder,
 			model, transforms, "Stand_" + model, true)
 	for model: String in upper:
 		var transforms: Array = upper[model] as Array
-		placed += transforms.size()
+		placed_count += transforms.size()
 		stats["draws"] = int(stats.get("draws", 0)) + Props.batch(holder,
 			model, transforms, "UpperStand_" + model, true)
-	stats["stands"] = int(stats.get("stands", 0)) + placed
+	stats["stands"] = int(stats.get("stands", 0)) + placed_count
 
 
-## Round stands at the two ends of the main straight, sized to a 26 m kit
-## footprint and set one bay further out so they do not cut the lower ring.
-static func _round_stands(lower: Dictionary, colliders: Array,
-		spline: RefCounted, plan: Dictionary, outside: float, start: float,
-		total: float) -> void:
-	var longest: Dictionary = plan["longest"]
-	for offset: float in [float(longest["from"]), float(longest["to"])]:
-		var lap: float = fposmod(offset, total)
-		var point: Vector3 = Props.deck_point(spline, lap,
-			(STAND_LATERAL + 4.0) * outside)
-		point.y = 0.0
-		if not Props.site_ok(spline, point, ROUND_REACH):
-			continue
-		var yaw: float = stand_yaw(spline, lap, outside)
-		_add(lower, GRANDSTAND_ROUND, Props.fit(GRANDSTAND_ROUND, point, yaw,
-			Vector3.ONE * Props.PROP_SCALE))
-		colliders.append({"model": GRANDSTAND_ROUND, "point": point,
-			"yaw": yaw})
+## Ring site at a path arc length: the point and the path's own along-yaw.
+static func ring_site(ring_path: Dictionary, path: float) -> Dictionary:
+	var point: Vector3 = Props.ring_point(ring_path, path)
+	var ahead: Vector3 = Props.ring_point(ring_path, path + 0.8)
+	var delta: Vector3 = ahead - point
+	return {"position": point,
+		"yaw": atan2(-delta.z, delta.x) if delta.length_squared() > 0.0001 \
+			else 0.0}
 
 
-## Yaw that turns a stand's front face towards the track, mirroring the
-## convention tile_kit.grandstand was tuned with.
-static func stand_yaw(spline: RefCounted, lap: float, side: float) -> float:
-	var f: Dictionary = Props.frame(spline, lap)
-	var forward: Vector3 = f["forward"]
-	return atan2(-forward.x, -forward.z) \
+## Facing yaw for a prop placed from a clearance ring: its position is the ring
+## point, so its facing has to come from the ring tangent as well. A yaw taken
+## from the lap distance is sampled metres away on a corner, which turns a
+## 6 m floodlight across the service lane and a billboard through a stand.
+static func ring_face_yaw(ring_path: Dictionary, path: float,
+		side: float) -> float:
+	return ring_stand_yaw(ring_site(ring_path, path), side)
+
+
+## Yaw that turns a stand's front face towards the track, using the clearance
+## ring's own tangent instead of the centreline forward: on a corner the ring
+## position no longer matches the lap distance the forward was sampled at, and
+## a stand yawed from the wrong lap cuts through its neighbour.
+static func ring_stand_yaw(site: Dictionary, side: float) -> float:
+	return float(site["yaw"]) - PI * 0.5 \
 		+ (PI * 0.5 if side > 0.0 else -PI * 0.5)
 
 
@@ -244,7 +276,7 @@ static func _lap_gap(a: float, b: float, total: float) -> float:
 ## carries enough speed to leave the road. Two short runs guard the outside of
 ## the fastest corners as well. The fence follows the lap behind the barrier.
 static func _catch_fence(holder: Node3D, spline: RefCounted, plan: Dictionary,
-		stats: Dictionary) -> void:
+		stats: Dictionary, placed: Array) -> void:
 	var outside: float = float(plan["outside"])
 	var longest: Dictionary = plan["longest"]
 	var runs: Array[Dictionary] = [
@@ -256,6 +288,8 @@ static func _catch_fence(holder: Node3D, spline: RefCounted, plan: Dictionary,
 	var ring: Dictionary = Props.ring(spline, outside, FENCE_LATERAL)
 	var transforms: Array = []
 	var spots: Array[Dictionary] = []
+	var footprint: Vector3 = Props.size(FENCE_MODEL,
+		Vector3.ONE * Props.PROP_SCALE)
 	for run: Dictionary in runs:
 		var sites: Array = Props.ring_run(ring, float(run["from"]),
 			float(run["to"]), STAND_BAY)
@@ -265,7 +299,14 @@ static func _catch_fence(holder: Node3D, spline: RefCounted, plan: Dictionary,
 			var point: Vector3 = (site["position"] as Vector3)
 			if not Props.site_ok(spline, point, FENCE_REACH):
 				continue
+			if not Props.side_ok(spline, point, outside):
+				continue
 			var yaw: float = float(site["yaw"])
+			# Fence panels tile end to end, so they may touch: only a real
+			# interpenetration is refused.
+			if not Props.site_free(placed, point, yaw, footprint, 0.0):
+				continue
+			Props.remember(placed, point, yaw, footprint)
 			transforms.append(Props.fit(FENCE_MODEL, point, yaw,
 				Vector3.ONE * Props.PROP_SCALE))
 			spots.append({"point": point, "yaw": yaw})
@@ -284,10 +325,12 @@ static func _catch_fence(holder: Node3D, spline: RefCounted, plan: Dictionary,
 ## apexes are closest together. A stack is a primitive torus batch plus a WORLD
 ## cylinder, so a whole wall of tyres is one draw call.
 static func _tyre_walls(holder: Node3D, spline: RefCounted, plan: Dictionary,
-		stats: Dictionary) -> void:
+		stats: Dictionary, placed: Array) -> void:
 	var outside: float = float(plan["outside"])
 	var ring: Dictionary = Props.ring(spline, outside, TYRE_LATERAL)
 	var stacks: Array = []
+	var tyre_diameter: float = (Props.TYRE_RADIUS + Props.TYRE_TUBE) * 2.0
+	var footprint := Vector3(tyre_diameter, Props.TYRE_HEIGHT, tyre_diameter)
 	for corner: Dictionary in plan["tight_corners"] as Array:
 		var apex: float = float(corner["distance"])
 		var sites: Array = Props.ring_run(ring, apex - 14.0, apex + 18.0,
@@ -297,6 +340,11 @@ static func _tyre_walls(holder: Node3D, spline: RefCounted, plan: Dictionary,
 			point.y = 0.0
 			if not Props.site_ok(spline, point, TYRE_REACH):
 				continue
+			if not Props.side_ok(spline, point, outside):
+				continue
+			if not Props.site_free(placed, point, 0.0, footprint):
+				continue
+			Props.remember(placed, point, 0.0, footprint)
 			stacks.append({"position": point})
 	if stacks.is_empty():
 		return
@@ -312,12 +360,13 @@ static func _tyre_walls(holder: Node3D, spline: RefCounted, plan: Dictionary,
 ## A marshal post on the outside of every corner: a pylon base with a checkered
 ## flag on top, so the driver reads "people here" before the apex.
 static func _marshal_posts(holder: Node3D, spline: RefCounted,
-		plan: Dictionary, stats: Dictionary) -> void:
+		plan: Dictionary, stats: Dictionary, placed: Array) -> void:
 	var outside: float = float(plan["outside"])
 	var ring: Dictionary = Props.ring(spline, outside, MARSHAL_LATERAL)
 	var bases: Array = []
 	var flags: Array = []
 	var spots: Array[Dictionary] = []
+	var footprint := Vector3(1.9, 6.4, 1.9)
 	for corner: Dictionary in plan["corners"] as Array:
 		var apex: float = float(corner["distance"])
 		var sites: Array = Props.ring_run(ring, apex - 3.0, apex + 5.0, 8.0)
@@ -327,7 +376,12 @@ static func _marshal_posts(holder: Node3D, spline: RefCounted,
 		point.y = 0.0
 		if not Props.site_ok(spline, point, MARSHAL_REACH):
 			continue
+		if not Props.side_ok(spline, point, outside):
+			continue
 		var yaw: float = float((sites[0] as Dictionary)["yaw"])
+		if not Props.site_free(placed, point, yaw, footprint):
+			continue
+		Props.remember(placed, point, yaw, footprint)
 		bases.append(Props.fit(MARSHAL_BASE, point, yaw + PI * 0.5,
 			Vector3.ONE * Props.PROP_SCALE))
 		flags.append(Props.fit(MARSHAL_FLAG, point + Vector3.UP * 2.2, yaw,
@@ -349,12 +403,13 @@ static func _marshal_posts(holder: Node3D, spline: RefCounted,
 ## Camera positions: a crane on the outside of the lap every sixth of the way
 ## round, so the director can cover both straights and both hairpins.
 static func _camera_cranes(holder: Node3D, spline: RefCounted,
-		plan: Dictionary, stats: Dictionary) -> void:
+		plan: Dictionary, stats: Dictionary, placed: Array) -> void:
 	var outside: float = float(plan["outside"])
 	var ring: Dictionary = Props.ring(spline, outside, CAMERA_LATERAL)
 	var total: float = float(plan["total"])
 	var transforms: Array = []
 	var spots: Array[Dictionary] = []
+	var footprint := Vector3(2.4, 6.5, 2.4)
 	for index in CAMERA_CRANES:
 		var lap: float = total * (float(index) + 0.5) / float(CAMERA_CRANES)
 		var path: float = Props.ring_position(ring, lap)
@@ -362,10 +417,18 @@ static func _camera_cranes(holder: Node3D, spline: RefCounted,
 		point.y = 0.0
 		if not Props.site_ok(spline, point, CAMERA_REACH):
 			continue
-		var yaw: float = stand_yaw(spline, lap, outside)
-		transforms.append(Props.fit(CAMERA_MODEL, point, yaw,
+		if not Props.side_ok(spline, point, outside):
+			continue
+		var yaw: float = ring_face_yaw(ring, path, outside)
+		# The crane is 4.2 m deep, so it is turned a quarter to run its arm
+		# along the lane instead of through the seating behind it.
+		var place_yaw: float = yaw + PI * 0.5
+		if not Props.site_free(placed, point, place_yaw, footprint):
+			continue
+		Props.remember(placed, point, place_yaw, footprint)
+		transforms.append(Props.fit(CAMERA_MODEL, point, place_yaw,
 			Vector3.ONE * Props.PROP_SCALE))
-		spots.append({"point": point, "yaw": yaw})
+		spots.append({"point": point, "yaw": place_yaw})
 	var body := Props.body(holder, "CameraCranes")
 	for spot: Dictionary in spots:
 		Props.box(body, spot["point"], float(spot["yaw"]),
@@ -377,11 +440,13 @@ static func _camera_cranes(holder: Node3D, spline: RefCounted,
 
 ## Floodlights on the outer ring, evenly spaced so every seat sees a lit sky.
 static func _floodlights(holder: Node3D, spline: RefCounted, plan: Dictionary,
-		stats: Dictionary) -> void:
+		stats: Dictionary, placed: Array) -> void:
 	var outside: float = float(plan["outside"])
 	var ring: Dictionary = Props.ring(spline, outside, LIGHT_LATERAL)
 	var transforms: Array = []
-	var spots: Array[Vector3] = []
+	var spots: Array[Dictionary] = []
+	var footprint: Vector3 = Props.size(LIGHT_MODEL,
+		Vector3.ONE * Props.PROP_SCALE)
 	for index in FLOODLIGHTS:
 		var lap: float = float(plan["total"]) * (float(index) + 0.5) \
 			/ float(FLOODLIGHTS)
@@ -390,15 +455,23 @@ static func _floodlights(holder: Node3D, spline: RefCounted, plan: Dictionary,
 		point.y = 0.0
 		if not Props.site_ok(spline, point, LIGHT_REACH):
 			continue
-		transforms.append(Props.fit(LIGHT_MODEL, point,
-			stand_yaw(spline, lap, outside), Vector3.ONE * Props.PROP_SCALE))
-		spots.append(point)
+		if not Props.side_ok(spline, point, outside):
+			continue
+		var yaw: float = ring_face_yaw(ring, path, outside)
+		if not Props.site_free(placed, point, yaw, footprint):
+			continue
+		Props.remember(placed, point, yaw, footprint)
+		transforms.append(Props.fit(LIGHT_MODEL, point, yaw,
+			Vector3.ONE * Props.PROP_SCALE))
+		spots.append({"point": point, "yaw": yaw})
 	if transforms.is_empty():
 		return
 	var body := Props.body(holder, "Floodlights")
-	for point: Vector3 in spots:
-		Props.model_body(body, LIGHT_MODEL, point, 0.0,
-			Vector3.ONE * Props.PROP_SCALE)
+	for spot: Dictionary in spots:
+		# The collider follows the model's yaw: an axis-aligned box on a turned
+		# pylon is 3 m too deep across the service lane.
+		Props.model_body(body, LIGHT_MODEL, spot["point"],
+			float(spot["yaw"]), Vector3.ONE * Props.PROP_SCALE)
 	stats["lights"] = int(stats.get("lights", 0)) + transforms.size()
 	stats["draws"] = int(stats.get("draws", 0)) \
 		+ Props.batch(holder, LIGHT_MODEL, transforms, "Floodlights", true)
@@ -407,7 +480,7 @@ static func _floodlights(holder: Node3D, spline: RefCounted, plan: Dictionary,
 ## Sponsor boards and pylons on the outside of the straights, batched per model
 ## and facing the track so the sponsor art reads from the chase camera.
 static func _sponsor_boards(holder: Node3D, spline: RefCounted,
-		plan: Dictionary, stats: Dictionary) -> void:
+		plan: Dictionary, stats: Dictionary, placed: Array) -> void:
 	var outside: float = float(plan["outside"])
 	var ring: Dictionary = Props.ring(spline, outside, SIGN_LATERAL)
 	var batches: Dictionary = {}
@@ -415,11 +488,12 @@ static func _sponsor_boards(holder: Node3D, spline: RefCounted,
 	var total: float = float(plan["total"])
 	for index in BOARD_COUNT:
 		var lap: float = total * (float(index) + 0.25) / float(BOARD_COUNT)
-		_board(batches, body, spline, ring, lap, outside, "billboardLow")
+		_board(batches, body, spline, ring, lap, outside, "billboardLow", placed)
 	for corner: Dictionary in plan["tight_corners"] as Array:
 		var apex: float = float(corner["distance"])
 		for offset: float in [-24.0, 26.0]:
-			_board(batches, body, spline, ring, apex + offset, outside, "pylon")
+			_board(batches, body, spline, ring, apex + offset, outside, "pylon",
+				placed)
 	stats["signage"] = int(stats.get("signage", 0)) + _batch_count(batches)
 	for kind: String in batches:
 		var model: String = _sign_model(kind)
@@ -431,16 +505,23 @@ static func _sponsor_boards(holder: Node3D, spline: RefCounted,
 ## One sponsor board or pylon at a lap position on the outside sign ring.
 static func _board(batches: Dictionary, body_node: StaticBody3D,
 		spline: RefCounted, ring_path: Dictionary, lap: float, outside: float,
-		kind: String) -> void:
+		kind: String, placed: Array) -> void:
 	var path: float = Props.ring_position(ring_path, lap)
 	var point: Vector3 = Props.ring_point(ring_path, path)
 	point.y = 0.0
 	var model: String = _sign_model(kind)
-	var scale: float = TileCatalog.sign_scale(kind)
-	if not Props.site_ok(spline, point,
-			Props.half_extent(model, Vector3.ONE * scale)):
+	var scale: float = TileCatalog.sign_scale(kind) \
+		* (BOARD_SCALE if model == TileCatalog.BILLBOARD_LOW else 1.0)
+	var footprint: Vector3 = Props.size(model, Vector3.ONE * scale)
+	if not Props.site_ok(spline, point, Props.half_extent(model,
+			Vector3.ONE * scale)):
 		return
-	var yaw: float = stand_yaw(spline, lap, outside)
+	if not Props.side_ok(spline, point, outside):
+		return
+	var yaw: float = ring_face_yaw(ring_path, path, outside)
+	if not Props.site_free(placed, point, yaw, footprint):
+		return
+	Props.remember(placed, point, yaw, footprint)
 	if not batches.has(kind):
 		batches[kind] = []
 	(batches[kind] as Array).append(Props.fit(model, point, yaw,
@@ -468,7 +549,7 @@ static func _batch_count(batches: Dictionary) -> int:
 ## A flag line around the bowl, one pole every few metres, so the ring reads as
 ## a festival from the chase camera.
 static func _flags(holder: Node3D, spline: RefCounted, plan: Dictionary,
-		stats: Dictionary) -> void:
+		stats: Dictionary, placed: Array) -> void:
 	var outside: float = float(plan["outside"])
 	var ring: Dictionary = Props.ring(spline, outside, FLAG_LATERAL)
 	var kinds: Array[String] = ["flagRed", "flagGreen", "flagCheckers"]
@@ -483,8 +564,14 @@ static func _flags(holder: Node3D, spline: RefCounted, plan: Dictionary,
 		point.y = 0.0
 		if not Props.site_ok(spline, point, FLAG_REACH):
 			continue
+		if not Props.side_ok(spline, point, outside):
+			continue
 		var kind: String = kinds[index % kinds.size()]
-		var yaw: float = stand_yaw(spline, lap, outside)
+		var yaw: float = ring_face_yaw(ring, path, outside)
+		var footprint: Vector3 = Props.size(kind, Vector3.ONE * scale)
+		if not Props.site_free(placed, point, yaw, footprint):
+			continue
+		Props.remember(placed, point, yaw, footprint)
 		if not batches.has(kind):
 			batches[kind] = []
 		(batches[kind] as Array).append(Props.fit(kind, point, yaw,
@@ -505,7 +592,7 @@ static func _flags(holder: Node3D, spline: RefCounted, plan: Dictionary,
 ## valley. The cliff blocks stand on the meadow, so they hide the side of the
 ## raised deck and turn the valley into a cutting instead of a flat field.
 static func _cliff_walls(holder: Node3D, spline: RefCounted, plan: Dictionary,
-		stats: Dictionary) -> void:
+		stats: Dictionary, placed: Array) -> void:
 	var outside: float = float(plan["outside"])
 	var ring: Dictionary = Props.ring(spline, outside, CLIFF_LATERAL)
 	var spans: Array[Dictionary] = []
@@ -527,7 +614,13 @@ static func _cliff_walls(holder: Node3D, spline: RefCounted, plan: Dictionary,
 			point.y = 0.0
 			if not Props.site_ok(spline, point, CLIFF_REACH):
 				continue
+			if not Props.side_ok(spline, point, outside):
+				continue
 			var yaw: float = float(site["yaw"])
+			var footprint: Vector3 = Props.size(CLIFF_MODEL, scale, true)
+			if not Props.site_free(placed, point, yaw, footprint):
+				continue
+			Props.remember(placed, point, yaw, footprint)
 			transforms.append(Props.fit(CLIFF_MODEL, point, yaw, scale, true))
 			spots.append({"point": point, "yaw": yaw})
 	if transforms.is_empty():
@@ -541,9 +634,10 @@ static func _cliff_walls(holder: Node3D, spline: RefCounted, plan: Dictionary,
 
 
 ## A stone footbridge over the valley: two side modules carry the deck and a
-## centre module spans the road. Piers stand outside the barrier and the deck is
-## high enough for a kart to drive under, which is what makes the dip read as a
-## tunnel mouth.
+## centre module spans the road. Piers stand outside the barrier body and the
+## deck is high enough for a kart to drive under, which is what makes the dip
+## read as a tunnel mouth. The modules are spaced from their measured widths
+## plus a seam gap, so no two stone pieces share a face plane.
 static func _footbridge(holder: Node3D, spline: RefCounted, plan: Dictionary,
 		stats: Dictionary) -> void:
 	var valley: Dictionary = plan["valley"]
@@ -554,18 +648,23 @@ static func _footbridge(holder: Node3D, spline: RefCounted, plan: Dictionary,
 	var centre: Vector3 = f["position"]
 	var right: Vector3 = f["right"]
 	var yaw: float = atan2(-right.z, right.x)
-	var span: float = Props.size(BRIDGE_CENTER,
-		Vector3.ONE * Props.NATURE_SCALE, true).x
+	var centre_size: Vector3 = Props.size(BRIDGE_CENTER,
+		Vector3.ONE * Props.NATURE_SCALE, true)
+	var side_size: Vector3 = Props.size(BRIDGE_SIDE,
+		Vector3.ONE * Props.NATURE_SCALE, true)
+	var seam: float = 0.05
+	var module_offset: float = (centre_size.x + side_size.x) * 0.5 + seam
+	var deck_top: float = BRIDGE_DECK + Props.LAYER_APRON
 	var modules: Array[Dictionary] = [
-		{"model": BRIDGE_SIDE, "offset": -1.0},
+		{"model": BRIDGE_SIDE, "offset": -module_offset},
 		{"model": BRIDGE_CENTER, "offset": 0.0},
-		{"model": BRIDGE_SIDE, "offset": 1.0},
+		{"model": BRIDGE_SIDE, "offset": module_offset},
 	]
 	var body := Props.body(holder, "Footbridge")
 	var batches: Dictionary = {}
 	for module: Dictionary in modules:
-		var point: Vector3 = centre + right * (float(module["offset"]) * span)
-		point.y = BRIDGE_DECK
+		var point: Vector3 = centre + right * float(module["offset"])
+		point.y = deck_top
 		var model: String = str(module["model"])
 		if not batches.has(model):
 			batches[model] = []
@@ -576,15 +675,15 @@ static func _footbridge(holder: Node3D, spline: RefCounted, plan: Dictionary,
 			+ Props.batch(holder, model, batches[model] as Array,
 				"Bridge_" + model, true, true)
 	# The two piers are solid on WORLD; the deck only has to clear a kart.
-	var deck_size: Vector3 = Props.size(BRIDGE_CENTER,
-		Vector3.ONE * Props.NATURE_SCALE, true)
+	var deck_width: float = side_size.x + module_offset * 2.0
 	Props.box(body, centre + Vector3.UP * BRIDGE_DECK, yaw,
-		Vector3(deck_size.x * 3.0, 0.5, deck_size.z))
+		Vector3(deck_width, 0.5, centre_size.z))
 	for side: float in [-1.0, 1.0]:
-		var pier: Vector3 = centre + right * (side * span * 1.55)
+		var pier: Vector3 = centre + right * (side * (deck_width * 0.5 + 0.45))
 		pier.y = 0.0
 		Props.box(body, pier, yaw,
-			Vector3(deck_size.x * 0.7, BRIDGE_DECK, deck_size.z * 0.7))
+			Vector3(1.4, BRIDGE_DECK - Props.LAYER_APRON,
+				centre_size.z * 0.7))
 	stats["bridge"] = int(stats.get("bridge", 0)) + modules.size()
 
 
