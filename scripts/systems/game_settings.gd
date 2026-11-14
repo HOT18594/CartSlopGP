@@ -8,6 +8,16 @@ signal session_changed
 const SETTINGS_PATH: String = "user://settings.cfg"
 const SFX_BUS: String = "SFX"
 const MUSIC_BUS: String = "Music"
+## Saved-schema marker. A save without it was written before versioning and
+## gets the one-time vehicle migration in load_settings(); the marker is then
+## written immediately, so the migration can never run twice. A choice saved
+## after that (including a deliberate racing chassis) is honoured as-is.
+##   1 = the layout before the shopping cart became the default everywhere.
+##   2 = every vehicle slot resolved to the stock cart once; marker persisted.
+const SETTINGS_VERSION: int = 2
+## Read the marker defensively: a hand-edited or future value must never look
+## like an old save or crash the loader.
+const SETTINGS_VERSION_MAX: int = 1_000_000
 ## Driving actions whose InputMap deadzone follows the stick_deadzone setting.
 const DRIVING_ACTIONS: Array[StringName] = [
 	&"accelerate", &"brake", &"steer_left", &"steer_right",
@@ -754,6 +764,38 @@ func load_settings() -> void:
 	bots_enabled = _cfg_bool(config, "session", "bots_enabled", bots_enabled)
 	bot_count = _cfg_int(config, "session", "bot_count", bot_count, 0, 5)
 	room_public = _cfg_bool(config, "session", "room_public", room_public)
+	# ---- ONE-TIME migration, deliberately last ----
+	# A save written before the marker may still name a racing chassis
+	# (race_car_red) in any vehicle slot, and that stale pick used to survive
+	# forever. Resolve every slot to the stock shopping cart once, then write
+	# the marker straight away so it never re-applies - even if the player
+	# quits before changing anything else. Every unrelated key was already
+	# loaded above and is written back unchanged.
+	if _migrate_legacy_vehicle(config):
+		save_settings()
+
+
+static func saved_settings_version(config: ConfigFile) -> int:
+	## 0 means the file predates the marker (or is missing); a newer save keeps
+	## its higher number and is never treated as old.
+	if config == null:
+		return 0
+	return _cfg_int(config, "meta", "version", 0, 0, SETTINGS_VERSION_MAX)
+
+
+func _migrate_legacy_vehicle(config: ConfigFile) -> bool:
+	## ONE-TIME vehicle migration for pre-marker saves. The shopping cart is the
+	## intended default everywhere now, so a persisted racing car id (for
+	## example race_car_red) is resolved to it exactly once. A deliberate pick
+	## saved afterwards carries the marker and is never overwritten. Returns
+	## true when the caller must persist the marker.
+	if saved_settings_version(config) >= SETTINGS_VERSION:
+		return false
+	selected_vehicle = VehicleCatalog.DEFAULT_ID
+	_sandbox_vehicle = VehicleCatalog.DEFAULT_ID
+	_minigame_vehicle = VehicleCatalog.DEFAULT_ID
+	racing_vehicle = VehicleCatalog.DEFAULT_RACING_ID
+	return true
 
 
 func _absorb_legacy_map_choice() -> void:
@@ -805,6 +847,9 @@ func save_settings() -> void:
 	config.set_value("session", "bots_enabled", bots_enabled)
 	config.set_value("session", "bot_count", bot_count)
 	config.set_value("session", "room_public", room_public)
+	# The schema marker is part of the save, not a one-off: every later write
+	# keeps it, which is what makes the vehicle migration above one-time.
+	config.set_value("meta", "version", SETTINGS_VERSION)
 	var error: Error = config.save(SETTINGS_PATH)
 	if error != OK:
 		# A read-only user:// (or a full disk) must not look like success.

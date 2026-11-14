@@ -6,6 +6,15 @@ const SkidTrailScript := preload("res://scripts/feedback/skid_trail.gd")
 ## for heavier vehicles but never collapse to zero.
 const MIN_SKID_WIDTH: float = 0.12
 const MAX_SKID_WIDTH: float = 0.40
+## Remote ghost ribbons. The state packet arrives at 20 Hz, so the slide flag
+## is rebuilt at that rate and each ribbon samples at 30 Hz; the point buffers
+## use the same 128-sample cap as an AI rival. One ribbon pair per ghost, with
+## a hard budget for the worst real case - seven peer ghosts plus five
+## relay-driven bot ghosts - so nothing can multiply mesh draw calls.
+const REMOTE_SKID_INTERVAL: float = 0.05
+const REMOTE_MAX_POINTS: int = 128
+## Network.MAX_PLAYERS - 1 peers plus Network.MAX_BOT_COUNT relay bot ghosts.
+const REMOTE_RIBBON_BUDGET: int = 12
 
 const IMPACT_LIGHT_PATHS: PackedStringArray = [
 	"res://assets/audio/sfx/impacts/metal_light_0.ogg",
@@ -102,6 +111,10 @@ var _loop_pitch_span: float = 0.7
 ## float would never tick down for them.
 var _horn_ready_ms: int = 0
 var _chime_ready_ms: int = 0
+## Remote ghost ribbon bookkeeping: rebuild clock and the shared ribbon budget.
+var _remote_skid_timer: float = 0.0
+var _remote_budget_owner: bool = false
+static var _remote_ribbon_owners: int = 0
 
 
 func _ready() -> void:
@@ -155,12 +168,59 @@ func _spawn_skid_trails() -> void:
 
 
 func set_remote_mode(remote: bool) -> void:
-	## A ghost streams a pose, not a slide state, so its ribbons stay parked
-	## with physics off instead of paying for another cart's marks.
-	set_physics_process(not remote)
+	## A ghost cannot read local physics, but its owner's velocity already
+	## travels in the ghost state packet. Keep the ribbons ticking and rebuild
+	## the slide flag from that packet in _update_remote_skid(); audio, smoke
+	## and wind stay off for a ghost.
+	if not remote:
+		_release_remote_ribbons()
+		set_physics_process(true)
+		for trail: Node3D in _skid_trails:
+			if is_instance_valid(trail):
+				trail.set("remote_ghost", false)
+		return
+	if not _claim_remote_ribbons():
+		# More ghosts than peer slots (a duplicated spawn or a stale peer):
+		# this one still races, it just leaves no marks.
+		set_physics_process(false)
+		for trail: Node3D in _skid_trails:
+			if is_instance_valid(trail):
+				trail.set("remote_ghost", false)
+				trail.set_physics_process(false)
+		return
+	set_physics_process(true)
 	for trail: Node3D in _skid_trails:
 		if is_instance_valid(trail):
-			trail.set_physics_process(not remote)
+			trail.set("remote_ghost", true)
+			trail.set("remote_sliding", false)
+			trail.set("max_points", REMOTE_MAX_POINTS)
+			trail.set_physics_process(true)
+	_remote_skid_timer = REMOTE_SKID_INTERVAL
+
+
+func _claim_remote_ribbons() -> bool:
+	## One ribbon pair per remote ghost. The budget is a safety net: the worst
+	## real session (seven peer ghosts plus five relay bot ghosts) still fits,
+	## so only a duplicated spawn or a stale peer is refused.
+	if _remote_budget_owner:
+		return true
+	if _remote_ribbon_owners >= REMOTE_RIBBON_BUDGET:
+		return false
+	_remote_ribbon_owners += 1
+	_remote_budget_owner = true
+	return true
+
+
+func _release_remote_ribbons() -> void:
+	if not _remote_budget_owner:
+		return
+	_remote_budget_owner = false
+	_remote_ribbon_owners = maxi(_remote_ribbon_owners - 1, 0)
+
+
+func _exit_tree() -> void:
+	# A ghost freed on a disconnect has to hand its ribbon slot back.
+	_release_remote_ribbons()
 
 
 func apply_vehicle_profile(entry: Dictionary) -> void:
@@ -264,8 +324,11 @@ func _loop_stream(stream: AudioStream) -> void:
 		wav.loop_end = maxi(int(wav.get_length() * wav.mix_rate), 1)
 
 
-func _physics_process(_delta: float) -> void:
+func _physics_process(delta: float) -> void:
 	if _cart == null:
+		return
+	if _cart.remote_mode:
+		_update_remote_skid(delta)
 		return
 	if _camera == null:
 		_camera = get_viewport().get_camera_3d()
@@ -277,6 +340,29 @@ func _physics_process(_delta: float) -> void:
 	_update_smoke(speed, grounded, drifting, handbraking, accelerating)
 	_update_speed_feedback(speed)
 	_update_audio(speed, grounded, drifting, handbraking)
+
+
+func _update_remote_skid(delta: float) -> void:
+	## Remote ghosts used to leave no marks: their body has no local physics, so
+	## velocity, is_on_floor() and is_drifting are all empty. The ghost state
+	## packet already carries the owner's velocity, so rebuild the bounded
+	## lateral slip from it and let every ribbon know whether to mark. The slip
+	## threshold is the cart's own drift_detection_threshold, so a ghost smears
+	## exactly when its owner's local drift test would.
+	_remote_skid_timer += delta
+	if _remote_skid_timer < REMOTE_SKID_INTERVAL:
+		return
+	_remote_skid_timer = 0.0
+	# Prefer the ghost's placed heading; fall back to the yaw in the packet.
+	var yaw: float = _cart.rotation.y
+	if not is_finite(yaw):
+		yaw = _cart.net_yaw
+	var slide: Vector2 = Network.ghost_slide_state(yaw, _cart.net_velocity)
+	var skidding: bool = Network.ghost_skid_active(
+		slide, _cart.drift_detection_threshold)
+	for trail: Node3D in _skid_trails:
+		if is_instance_valid(trail):
+			trail.set("remote_sliding", skidding)
 
 
 func _update_smoke(speed: float, grounded: bool, drifting: bool, handbraking: bool, accelerating: bool) -> void:

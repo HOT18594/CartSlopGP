@@ -7,6 +7,12 @@ extends Node3D
 ## along the hit normal to avoid z-fighting, and the ribbon breaks on jumps
 ## instead of drawing a line through the air.
 ##
+## A remote ghost has no local physics of its own: cart_feedback rebuilds its
+## slide flag from the velocity in the ghost state packet, sets `remote_ghost`
+## and drives the ribbon from the interpolated pose. Width, fade and the
+## airborne rule stay identical to a local cart, so a ghost's marks look the
+## same as everyone else's.
+##
 ## The sample window is a fixed ring buffer over preallocated packed arrays, so
 ## emitting a point is a bounded buffer write and never an allocation. Old
 ## samples are dropped by advancing the tail, which also caps the trail length.
@@ -19,6 +25,14 @@ const MIN_FADE_TIME: float = 0.5
 const MAX_POINTS: int = 512
 ## How often the per-vertex fade is refreshed while a ribbon is on screen (s).
 const FADE_REFRESH: float = 0.1
+## A remote ghost has no local physics: its slide flag is rebuilt from the
+## state packet by cart_feedback. The packet arrives at 20 Hz, so sampling the
+## ribbon faster only repeats the same sample.
+const REMOTE_SAMPLE_INTERVAL: float = 1.0 / 30.0
+## A wheel this far above the hit surface is airborne. The ghost is script-
+## placed, so there is no is_on_floor() to prove contact; the ground distance
+## is the equivalent test, and a jump has to break the ribbon like a local one.
+const AIRBORNE_LIFT: float = 0.6
 
 ## Mark width (m). Clamped so an external profile can never disable the ribbon.
 @export var width: float = 0.17:
@@ -47,6 +61,12 @@ const FADE_REFRESH: float = 0.1
 
 var cart: CartPlayer
 var wheel_offset: Vector3 = Vector3(0.0, 0.0, 0.55)
+## True while this ribbon belongs to a remote ghost. The ghost is placed by
+## script and has no velocity/is_on_floor()/is_drifting of its own, so the
+## slide flag comes from cart_feedback (rebuilt from the state packet).
+var remote_ghost: bool = false
+var remote_sliding: bool = false
+var _remote_clock: float = 0.0
 
 var _mesh: ImmediateMesh
 var _instance: MeshInstance3D
@@ -96,7 +116,15 @@ func _physics_process(delta: float) -> void:
 	if cart == null:
 		return
 	_now += delta
-	_emit_samples()
+	if remote_ghost:
+		# Sample at the state stream's own rate; the flag between packets is
+		# held, not guessed.
+		_remote_clock += delta
+		if _remote_clock >= REMOTE_SAMPLE_INTERVAL:
+			_remote_clock = 0.0
+			_emit_samples()
+	else:
+		_emit_samples()
 	var pruned: bool = _prune()
 	# Geometry changes only when a sample is added or pruned; the fade is
 	# refreshed at 10 Hz. A trail with nothing buffered does no mesh work.
@@ -118,12 +146,20 @@ func clear_trail() -> void:
 
 
 func _emit_samples() -> void:
-	var handbrake_held: bool = cart.ai_handbrake if cart.ai_mode \
-		else Input.is_action_pressed("handbrake")
-	var velocity: Vector3 = cart.velocity
-	var planar_speed_sq: float = velocity.x * velocity.x + velocity.z * velocity.z
-	if not cart.is_on_floor() or planar_speed_sq <= min_speed * min_speed \
-			or not (cart.is_drifting or handbrake_held):
+	var sliding: bool = false
+	if remote_ghost:
+		# A ghost never reports floor contact or a physics velocity. The flag
+		# was rebuilt from its streamed velocity by cart_feedback; the ground
+		# ray below still has to hit a surface, so a jump breaks the ribbon.
+		sliding = remote_sliding
+	else:
+		var handbrake_held: bool = cart.ai_handbrake if cart.ai_mode \
+			else Input.is_action_pressed("handbrake")
+		var velocity: Vector3 = cart.velocity
+		var planar_speed_sq: float = velocity.x * velocity.x + velocity.z * velocity.z
+		sliding = cart.is_on_floor() and planar_speed_sq > min_speed * min_speed \
+			and (cart.is_drifting or handbrake_held)
+	if not sliding:
 		_break_strip()
 		return
 
@@ -144,6 +180,11 @@ func _emit_samples() -> void:
 		_break_strip()
 		return
 	var position: Vector3 = (hit.position as Vector3) + (hit.normal as Vector3) * ground_lift
+	if remote_ghost and world.y - position.y > AIRBORNE_LIFT:
+		# A hop shorter than the ray still finds the road beneath it. A local
+		# cart proves contact with is_on_floor(); a ghost only has this gap.
+		_break_strip()
+		return
 	if _has_last and _last_pos.distance_to(position) < sample_distance:
 		return
 	_add_point(position)

@@ -85,6 +85,19 @@ const WORLD_BOUND_SQ: float = 5000.0 * 5000.0
 ## ~26 m/s; a larger finite value is corruption/desync and is clamped rather
 ## than fed raw into an impulse (which would become a teleport-sized shove).
 const MAX_CART_SPEED: float = 64.0
+## Remote drift marks. The ghost state packet already carries the owner's
+## velocity as an optional trailing field (an older peer that omits it sends
+## Vector3.ZERO), so the receiving peer rebuilds the minimum slide state from
+## it: lateral slip is the velocity projected on the ghost's right axis - the
+## same quantity the local physics calls lat_speed. No extra packet field, no
+## second RPC and no bandwidth cost.
+## Slip is capped at the receive clamp in player_cart.set_net_state() (60 m/s);
+## the drift threshold itself is read from the ghost (drift_detection_threshold)
+## instead of being duplicated here.
+const GHOST_SLIP_CAP: float = 60.0
+## Planar speed floor for a ghost mark. Mirrors skid_trail's min_speed default
+## so a ghost that is merely rolling leaves nothing, exactly like a local cart.
+const GHOST_SKID_MIN_SPEED: float = 3.0
 ## Pair keys pack two peer ids into one int: low id in the high word, high id
 ## in the low word. This avoids formatting a String per contacting pair per tick.
 const PAIR_ID_SHIFT: int = 32
@@ -384,6 +397,41 @@ func _collision_velocity_of(cart: Node) -> Vector3:
 			return velocity.limit_length(MAX_CART_SPEED) \
 				if velocity.is_finite() else Vector3.ZERO
 	return _cart_velocity_value(cart)
+
+
+static func ghost_slide_state(yaw: float, velocity: Vector3) -> Vector2:
+	## (lateral slip speed, planar speed) for a remote ghost, rebuilt from the
+	## velocity already in its state payload. Slip is the absolute velocity
+	## projected on the ghost's right axis - the same number the local physics
+	## calls lat_speed - so a ghost and its owner agree on what a drift is.
+	## Finite-checked and bounded on receive: a corrupt, stale or absent
+	## velocity resolves to Vector2.ZERO, which leaves no mark and logs nothing.
+	if not is_finite(yaw) or not velocity.is_finite():
+		return Vector2.ZERO
+	var planar := Vector3(velocity.x, 0.0, velocity.z)
+	if not planar.is_finite():
+		return Vector2.ZERO
+	var right: Vector3 = Basis(Vector3.UP, wrapf(yaw, -PI, PI)) * Vector3.RIGHT
+	var slip: float = absf(planar.dot(right))
+	var speed: float = planar.length()
+	if not is_finite(slip) or not is_finite(speed):
+		return Vector2.ZERO
+	return Vector2(clampf(slip, 0.0, GHOST_SLIP_CAP),
+		clampf(speed, 0.0, MAX_CART_SPEED))
+
+
+static func ghost_skid_active(slide: Vector2, slip_threshold: float) -> bool:
+	## True while a ghost slides hard enough to mark. The threshold is the
+	## ghost's own drift_detection_threshold (2.0 m/s by default), read at
+	## receive time so the remote and local paths cannot drift apart. A slip
+	## of zero - the old-peer case - is always a clean "no marks".
+	if not slide.is_finite() or not is_finite(slip_threshold):
+		return false
+	# Strict comparisons, matching player_cart's own tests: lat_speed must
+	# exceed drift_detection_threshold and the planar speed must exceed the
+	# ribbon's min_speed floor.
+	return slide.x > maxf(slip_threshold, 0.5) \
+		and slide.y > GHOST_SKID_MIN_SPEED
 
 
 func _cart_mass(cart: Node) -> float:
