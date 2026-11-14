@@ -5,11 +5,12 @@ extends RefCounted
 ## its collider, so the sheen is a flat, unshaded ribbon a few millimetres above
 ## the visible road top. It has no collision and casts no shadow.
 ##
-## Height: the Kenney road pieces are placed with their lowest point on y = 0,
-## so a straight piece's visible top is its measured AABB height times the tile
-## scale. The legacy grass_race ribbon is painted at y = 0.04 and is used when
-## the race has no grid road. Raised cells (bump and jump) are skipped so the
-## flat sheet never cuts through a crest.
+## Height: the Kenney road pieces are placed with their lowest point on the deck
+## the grid engine gives the cell, so the sheen is painted on the spline sample
+## raised by the road slab's measured thickness. On a flat map that is the old
+## fixed y; on the alpine descent it follows the hill, which is where the ice now
+## lives. Raised cells (bump and jump) are skipped so the flat sheet never cuts
+## through a crest.
 ##
 ## The ribbon follows the same spline the road uses and the spans come from
 ## GlacierSurface, so the visual can never disagree with the grip model.
@@ -78,7 +79,8 @@ static func build(holder: Node3D, race: Node3D, spline: RefCounted,
 
 
 ## Quad strip along one ice span, inset from the barrier so the snow edge still
-## reads on both sides of the lane. Raised cells are left unpainted.
+## reads on both sides of the lane. Each quad is lifted off its own spline
+## sample, so a span on the descent is painted on the slope and not in the air.
 static func _add_span(spline: RefCounted, from_distance: float,
 		to_distance: float, top: float, verts: PackedVector3Array,
 		normals: PackedVector3Array, indices: PackedInt32Array) -> void:
@@ -87,7 +89,6 @@ static func _add_span(spline: RefCounted, from_distance: float,
 		return
 	var steps: int = maxi(int(ceil(span / STEP)), 1)
 	var half: float = TileKit.ROAD_HALF - EDGE_INSET
-	var lift: Vector3 = Vector3.UP * (top + LIFT)
 	for index in steps:
 		var s0: float = from_distance + span * float(index) / float(steps)
 		var s1: float = from_distance + span * float(index + 1) \
@@ -96,16 +97,14 @@ static func _add_span(spline: RefCounted, from_distance: float,
 			continue
 		var f0: Dictionary = spline.sample(s0)
 		var f1: Dictionary = spline.sample(s1)
-		var c0: Vector3 = f0["position"]
-		var c1: Vector3 = f1["position"]
-		var p0: Vector3 = c0 + lift
-		var p1: Vector3 = c1 + lift
+		var c0: Vector3 = f0["position"] + Vector3.UP * (top + LIFT)
+		var c1: Vector3 = f1["position"] + Vector3.UP * (top + LIFT)
 		var r0: Vector3 = f0["right"]
 		var r1: Vector3 = f1["right"]
 		var base: int = verts.size()
 		for point: Vector3 in [
-				p0 - r0 * half, p0 + r0 * half,
-				p1 - r1 * half, p1 + r1 * half]:
+				c0 - r0 * half, c0 + r0 * half,
+				c1 - r1 * half, c1 + r1 * half]:
 			verts.append(point)
 			normals.append(Vector3.UP)
 		indices.append(base)

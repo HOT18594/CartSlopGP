@@ -1,37 +1,57 @@
 extends RefCounted
-## Glacier Pass: a fast alpine loop dressed entirely in flat Kenney cartoon art.
+## Glacier Pass: a raised alpine circuit dressed entirely in flat Kenney art.
 ##
 ## Entry point, called by grass_race once per race:
 ##
 ##   static func build(race: Node3D, spline) -> void
 ##
-## KenneyTiles owns the road, its colliders and the spline. This theme only
-## dresses the map, and every solid piece is placed through
-## scripts/minigames/tile_kit.gd, so the map batches into a handful of
-## MultiMeshes and every prop collides on CollisionLayers.WORLD.
+## KenneyTiles owns the road, its colliders and the spline; this theme dresses
+## the pass and every solid piece is placed through scripts/minigames/tile_kit.gd
+## or the glacier prop layer, so the map batches into a few dozen MultiMeshes and
+## every prop collides on CollisionLayers.WORLD.
 ##
-## Layout: a red barrier ring on both sides, two grandstands, a start gantry,
-## eight floodlights, checkered start flags, ice warning flags and pylons,
-## start banner towers, snowbank boulders on the corner exits and a four-cell
-## pine band packed outside the loop. A flat white snow field replaces the
-## meadow ground and a flat ice sheen marks the preset's `ice` spans. No photo
-## texture is referenced anywhere in the theme.
+## The dress, outside in:
 ##
-## The build is idempotent: a second call finds GlacierDressing and returns, so
-## a scene reload can never double the props.
+##   layout    barrier ring at the road edge, snowbank banks, avalanche fencing,
+##             start gantry, two grandstands, ten floodlights, summit flags,
+##             banner towers and the pit-lane split (glacier_layout.gd);
+##   forest    a six-cell pine band around the loop plus an infield island and
+##             underbrush (glacier_forest.gd);
+##   terrain   rock faces under every raised deck, boulder outcrops, three rings
+##             of distant ridges and a ski-lift line (glacier_terrain.gd);
+##   ice       the slippery span painted on the descent (glacier_ice.gd);
+##   ground    one flat snow plate replacing the photo-scanned meadow.
+##
+## Terrain: the circuit is authored with the grid engine's per-cell heights -
+## summit plateau, crest ramp, long descent, lower return leg - by
+## glacier_course.gd. That file is the route spec; the map registry
+## (track_defs.gd) is what grass_race reads, and merging
+## GlacierCourse.preset_fields() into the glacier preset is the whole
+## integration. When the registry still carries the flat loop this theme quietly
+## dresses it flat and prints a one-line note, so the map can never break over a
+## missing height table.
+##
+## No photo texture is referenced anywhere: the art is the Kenney racing and
+## nature kits only. The build is idempotent, so a scene reload can never double
+## the props.
 
+const TileKit := preload("res://scripts/minigames/tile_kit.gd")
 const GlacierLayout := preload("res://scripts/minigames/maps/glacier/glacier_layout.gd")
-const GlacierGround := preload("res://scripts/minigames/maps/glacier/glacier_ground.gd")
+const GlacierForest := preload("res://scripts/minigames/maps/glacier/glacier_forest.gd")
+const GlacierTerrain := preload("res://scripts/minigames/maps/glacier/glacier_terrain.gd")
 const GlacierIce := preload("res://scripts/minigames/maps/glacier/glacier_ice.gd")
+const GlacierGround := preload("res://scripts/minigames/maps/glacier/glacier_ground.gd")
 const GlacierSurface := preload("res://scripts/minigames/maps/glacier/glacier_surface.gd")
+const GlacierCourse := preload("res://scripts/minigames/maps/glacier/glacier_course.gd")
 
 const HOLDER_NAME: String = "GlacierDressing"
+const META_STATS: String = "glacier_stats"
 
 
 ## Builds the whole glacier dressing under `race`. `spline` is the grid spline
 ## KenneyTiles.build returned, or the legacy TrackSpline while the race scene is
-## still being wired; both expose the sample/total_length surface this theme
-## reads through TileKit.
+## still being wired; both expose the sample/total_length surface the modules
+## read.
 static func build(race: Node3D, spline) -> void:
 	if race == null:
 		push_warning("GlacierTheme: build() needs the race root.")
@@ -45,37 +65,106 @@ static func build(race: Node3D, spline) -> void:
 	var holder := Node3D.new()
 	holder.name = HOLDER_NAME
 	race.add_child(holder)
-	var stats: Dictionary = GlacierLayout.build(holder, spline, preset)
+	var layout: Dictionary = GlacierLayout.build(holder, spline, preset)
+	var forest: Dictionary = GlacierForest.build(holder, spline)
+	var terrain: Dictionary = GlacierTerrain.build(holder, spline)
 	var ice: Dictionary = GlacierIce.build(holder, race, spline, preset)
 	var ground: int = GlacierGround.build(race, preset)
 	_apply_climate(race, preset)
-	var objects: int = int(stats.get("objects", 0))
-	var draws: int = int(stats.get("draws", 0)) \
-		+ int(ice.get("draws", 0)) + ground
-	print("GLACIER PASS: %d objects, ~%d draws, %d barrier pieces, %d pines, %d snowbanks, %d stands, %d lights, %d flags, %d signs" % [
-		objects, draws, int(stats.get("barriers", 0)),
-		int(stats.get("pines", 0)), int(stats.get("snowbanks", 0)),
-		int(stats.get("stands", 0)), int(stats.get("lights", 0)),
-		int(stats.get("flags", 0)), int(stats.get("signage", 0))])
-	print("GLACIER PASS: ice %.0f%% of the lap in %d span(s) (%.0f m), white ground %s" % [
-		GlacierSurface.ice_fraction(preset) * 100.0, int(ice.get("spans", 0)),
-		float(ice.get("length", 0.0)), "on" if ground > 0 else "kept"])
-	race.set_meta("glacier_stats", {
-		"objects": objects,
-		"draws": draws,
-		"barriers": int(stats.get("barriers", 0)),
-		"pines": int(stats.get("pines", 0)),
-		"snowbanks": int(stats.get("snowbanks", 0)),
-		"stands": int(stats.get("stands", 0)),
-		"lights": int(stats.get("lights", 0)),
-		"flags": int(stats.get("flags", 0)),
-		"signage": int(stats.get("signage", 0)),
-		"gantry": int(stats.get("gantry", 0)),
+	var measured: Dictionary = _measure(holder)
+	var stats: Dictionary = {
+		"objects": int(measured["objects"]),
+		"draws": int(measured["draws"]) + int(ice.get("draws", 0)) + ground,
+		"barriers": int(layout.get("barriers", 0)),
+		"stands": int(layout.get("stands", 0)),
+		"gantry": int(layout.get("gantry", 0)),
+		"lights": int(layout.get("lights", 0)),
+		"flags": int(layout.get("flags", 0)),
+		"signage": int(layout.get("signage", 0)),
+		"snowbanks": int(layout.get("snowbanks", 0)),
+		"fences": int(layout.get("fences", 0)),
+		"split": int(layout.get("split", 0)),
+		"pines": int(forest.get("pines", 0)),
+		"brush": int(forest.get("brush", 0)),
+		"cliffs": int(terrain.get("cliffs", 0)),
+		"outcrops": int(terrain.get("outcrops", 0)),
+		"ridges": int(terrain.get("ridges", 0)),
+		"pylons": int(terrain.get("pylons", 0)),
 		"ice_spans": int(ice.get("spans", 0)),
 		"ice_length": float(ice.get("length", 0.0)),
 		"ice_top": float(ice.get("top", 0.0)),
 		"ground": ground,
-	})
+		"elevation": _elevation(spline),
+		"flat": _elevation(spline) < 0.5,
+	}
+	stats["clearance"] = _clearance(race, spline, int(stats["barriers"]))
+	print("GLACIER PASS: %d objects, ~%d draw calls, %d barrier pieces, %d pines, %d snowbanks, %d fence panels" % [
+		int(stats["objects"]), int(stats["draws"]), int(stats["barriers"]),
+		int(stats["pines"]), int(stats["snowbanks"]), int(stats["fences"])])
+	print("GLACIER PASS: %d rock faces, %d outcrops, %d ridges, %d lift pylons, %d stands, %d lights, %d flags, %d signs, %d split pieces" % [
+		int(stats["cliffs"]), int(stats["outcrops"]), int(stats["ridges"]),
+		int(stats["pylons"]), int(stats["stands"]), int(stats["lights"]),
+		int(stats["flags"]), int(stats["signage"]), int(stats["split"])])
+	print("GLACIER PASS: elevation %.1f m, ice %.0f%% of the lap in %d span(s) (%.0f m), white ground %s" % [
+		float(stats["elevation"]), GlacierSurface.ice_fraction(preset) * 100.0,
+		int(stats["ice_spans"]), float(stats["ice_length"]),
+		"on" if ground > 0 else "kept"])
+	if bool(stats["flat"]):
+		print("GLACIER PASS: registry grid is still the flat %d-cell loop; the authored pass (%s) is in GlacierCourse.preset_fields(), so copy that into the glacier preset in track_defs.gd." % [
+			int((spline.get("tiles") as Array).size()), GlacierCourse.summary()])
+	race.set_meta(META_STATS, stats)
+
+
+## Highest road deck on the lap, in metres, sampled finely enough to find the
+## summit between two tile joints.
+static func _elevation(spline: RefCounted) -> float:
+	var total: float = maxf(float(spline.total_length), 1.0)
+	var highest: float = 0.0
+	for index in 96:
+		var frame: Dictionary = spline.call("sample",
+			total * float(index) / 96.0) as Dictionary
+		highest = maxf(highest, (frame["position"] as Vector3).y)
+	return highest
+
+
+## Runs the kit's own barrier audit, so every race prints the measured clearance
+## of its wall from the racing line and a regression fails loudly.
+static func _clearance(race: Node3D, spline: RefCounted, barriers: int) -> float:
+	var report: Dictionary = TileKit.barrier_clearance(race, spline)
+	print("GLACIER PASS: barrier clearance %.2f m (limit %.2f m, %d piece(s)) -> %s" % [
+		float(report["closest"]), float(report["limit"]), int(report["pieces"]),
+		"CLEARS" if bool(report["clears"]) else "ON THE ROAD"])
+	if not bool(report["clears"]) and OS.is_debug_build():
+		push_error("GlacierTheme: %d barrier piece(s) sit inside %.2f m of the centreline (closest %.2f m)." % [
+			int(report["offenders"]), float(report["limit"]),
+			float(report["closest"])])
+	return float(report["closest"])
+
+
+## Objects and draw calls of the built dressing, measured on the scene graph
+## instead of estimated: one draw per MultiMesh or MeshInstance, and the object
+## count is the instances those nodes actually hold.
+static func _measure(holder: Node) -> Dictionary:
+	var objects: int = 0
+	var draws: int = 0
+	for node: Node in _descendants(holder):
+		var multi := node as MultiMeshInstance3D
+		if multi != null and multi.multimesh != null:
+			draws += 1
+			objects += multi.multimesh.instance_count
+			continue
+		if node is MeshInstance3D:
+			draws += 1
+			objects += 1
+	return {"objects": objects, "draws": draws}
+
+
+static func _descendants(root: Node) -> Array[Node]:
+	var found: Array[Node] = []
+	for child: Node in root.get_children():
+		found.append(child)
+		found.append_array(_descendants(child))
+	return found
 
 
 ## Cold alpine grade: pale blue depth fog, a snow-blue horizon under the sky and

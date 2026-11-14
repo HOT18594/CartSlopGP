@@ -32,13 +32,25 @@ var rows: int = 0
 
 var _track_cells: Dictionary = {}
 var _used_cells: Dictionary = {}
+var _tile_list: Array[Dictionary] = []
+var _track_low: Vector2i = Vector2i(999999, 999999)
+var _track_high: Vector2i = Vector2i(-1, -1)
 var _straights: Array[Dictionary] = []
 var _corners: Array[Dictionary] = []
 var _centre: Vector3 = Vector3.ZERO
+var _grid_cols: int = 0
+var _grid_rows: int = 0
 
 
-func _init(track_spline: RefCounted) -> void:
+## `grid_cols` / `grid_rows` are the known ASCII dimensions from the grid stats
+## on the race root. They keep the plan correct when the layout file is newer
+## than the registry copy: the engine built a 12 x 10 grid, so the plan must
+## measure that grid, not whatever the registry still says.
+func _init(track_spline: RefCounted, grid_cols: int = 0,
+		grid_rows: int = 0) -> void:
 	spline = track_spline
+	_grid_cols = grid_cols
+	_grid_rows = grid_rows
 	if spline == null:
 		return
 	total = maxf(float(spline.get("total_length")), 0.001)
@@ -56,6 +68,88 @@ func _init(track_spline: RefCounted) -> void:
 ## placed ASCII cell.
 func is_grid() -> bool:
 	return grid
+
+
+## Tile character the lap uses at `cell`, or "X" when the cell is not a tile.
+func tile_char(cell: Vector2i) -> String:
+	for tile: Dictionary in _tile_list:
+		if tile.get("cell", Vector2i(-1, -1)) == cell:
+			return str(tile.get("tile", "X"))
+	return "X"
+
+
+## Cells carrying `kind`, in lap order. Used by the theme to react to the grid:
+## a crossing ('C'), a jump ramp ('J') or a corner change the dressing without a
+## hard-coded coordinate anywhere.
+func tile_cells(kind: String) -> Array[Vector2i]:
+	var cells: Array[Vector2i] = []
+	for tile: Dictionary in _tile_list:
+		if str(tile.get("tile", "X")) == kind:
+			cells.append(tile.get("cell", Vector2i(-1, -1)) as Vector2i)
+	return cells
+
+
+## Placed tile at a lap distance, or an empty dictionary.
+func tile_at(distance: float) -> Dictionary:
+	for tile: Dictionary in _tile_list:
+		if distance >= float(tile.get("from", 0.0)) \
+				and distance < float(tile.get("to", 0.0)):
+			return tile
+	return {}
+
+
+## Lap arc distance at the middle of the placed tile on `cell`. Returns -1.0
+## when the cell is not part of the lap.
+func tile_distance(cell: Vector2i) -> float:
+	for tile: Dictionary in _tile_list:
+		if tile.get("cell", Vector2i(-1, -1)) != cell:
+			continue
+		var from: float = float(tile.get("from", 0.0))
+		var to: float = float(tile.get("to", from))
+		return fposmod(from + fposmod(to - from, total) * 0.5, total)
+	return -1.0
+
+
+## Road deck height of a placed cell, in metres. Zero on a flat grid.
+func cell_road_height(cell: Vector2i) -> float:
+	var heights: Variant = spline.get("heights")
+	if heights is Dictionary:
+		return float((heights as Dictionary).get(cell, 0.0))
+	return 0.0
+
+
+## Highest road deck on the lap, in metres. Zero on a flat grid.
+func max_road_height() -> float:
+	var highest: float = 0.0
+	for tile: Dictionary in _tile_list:
+		highest = maxf(highest, float(tile.get("height", 0.0)))
+	return highest
+
+
+## Road deck height nearest a world point, in metres. Props beside a raised
+## section climb with it instead of floating at world zero.
+func road_height_at(point: Vector3) -> float:
+	if spline == null:
+		return 0.0
+	var hit: Dictionary = spline.closest(point)
+	var surface: Vector3 = hit.get("point", Vector3.ZERO) as Vector3
+	return surface.y
+
+
+## Free off-track cells, nearest the plan centre first. The planning bucket the
+## yard, quay and treeline all draw from.
+func free_cells() -> Array[Vector2i]:
+	var cells: Array[Vector2i] = []
+	for row in rows:
+		for col in cols:
+			var cell := Vector2i(col, row)
+			if is_free(cell):
+				cells.append(cell)
+	var centre := _centre
+	cells.sort_custom(func(a: Vector2i, b: Vector2i) -> bool:
+		return cell_point(a).distance_squared_to(centre) \
+			< cell_point(b).distance_squared_to(centre))
+	return cells
 
 
 ## Centre of a lattice cell, exactly where the tile engine puts a road piece.
@@ -90,6 +184,33 @@ func take(cell: Vector2i) -> bool:
 	return true
 
 
+## Claims a cell unconditionally, including the lattice rings outside the
+## parsed grid. Used by the mooring clutter so the treeline cannot grow through
+## a beached canoe.
+func mark(cell: Vector2i) -> void:
+	_used_cells[cell] = true
+
+
+## True when a cell is already claimed, including the rings outside the grid.
+func is_used(cell: Vector2i) -> bool:
+	return _used_cells.has(cell)
+
+
+## True for the outermost lattice ring. The yard leaves it free for the quay
+## edge furniture (floodlights, signs, offices, wharf) instead of burying it in
+## container blocks.
+func is_outer_band(cell: Vector2i) -> bool:
+	if not grid:
+		return false
+	return cell.x == 0 or cell.y == 0 or cell.x == cols - 1 \
+		or cell.y == rows - 1
+
+
+## True for the ring the catch fence occupies (one cell outside the track box).
+func is_ring_cell(cell: Vector2i) -> bool:
+	return _is_ring_cell(cell)
+
+
 ## Claims the cell containing a world point. Used by the legacy spline path,
 ## where prop positions come from arc length rather than an ASCII cell.
 func take_point(point: Vector3, clearance: float = VERGE_CLEAR) -> bool:
@@ -116,14 +237,21 @@ func reserve_ring_area(cell: Vector2i, radius: int = 1) -> void:
 				_used_cells[probe] = true
 
 
-## True for the ring the catch fence occupies (one cell outside the track box).
+## True for the ring the catch fence occupies: one cell outside the box the
+## track cells actually span, clipped to the parsed grid. Deriving it from the
+## track bounds keeps the fence beside the road when the layout file puts tiles
+## on a different row than the old fixed ring.
 func _is_ring_cell(cell: Vector2i) -> bool:
-	if not grid:
+	if not grid or _track_high.x < 0:
 		return false
-	if cell.y == 1 or cell.y == rows - 2:
-		return cell.x >= 2 and cell.x <= cols - 3
-	if cell.x == 1 or cell.x == cols - 2:
-		return cell.y >= 2 and cell.y <= rows - 3
+	var top: int = maxi(_track_low.y - 1, 0)
+	var bottom: int = mini(_track_high.y + 1, rows - 1)
+	var left: int = maxi(_track_low.x - 1, 0)
+	var right: int = mini(_track_high.x + 1, cols - 1)
+	if cell.y == top or cell.y == bottom:
+		return cell.x >= left and cell.x <= right
+	if cell.x == left or cell.x == right:
+		return cell.y >= top and cell.y <= bottom
 	return false
 
 
@@ -145,14 +273,18 @@ func take_cells(candidates: Array, limit: int = 0) -> Array[Vector3]:
 ## edges. Empty on the legacy spline path.
 func ring_cells() -> Array[Vector2i]:
 	var cells: Array[Vector2i] = []
-	if not grid or cols < 5 or rows < 5:
+	if not grid or cols < 5 or rows < 5 or _track_high.x < 0:
 		return cells
-	for col in range(2, cols - 2):
-		cells.append(Vector2i(col, 1))
-		cells.append(Vector2i(col, rows - 2))
-	for row in range(2, rows - 2):
-		cells.append(Vector2i(1, row))
-		cells.append(Vector2i(cols - 2, row))
+	var top: int = maxi(_track_low.y - 1, 0)
+	var bottom: int = mini(_track_high.y + 1, rows - 1)
+	var left: int = maxi(_track_low.x - 1, 0)
+	var right: int = mini(_track_high.x + 1, cols - 1)
+	for col in range(left + 1, right):
+		cells.append(Vector2i(col, top))
+		cells.append(Vector2i(col, bottom))
+	for row in range(top + 1, bottom):
+		cells.append(Vector2i(left, row))
+		cells.append(Vector2i(right, row))
 	return cells
 
 
@@ -186,10 +318,27 @@ func beyond_band_cells() -> Array[Vector2i]:
 	return cells
 
 
-## Claims up to `limit` tree cells, outer ring first and one ring out second.
+## Two more lattice rings outside the parsed grid. The apron plane is 2200 m, so
+## the horizon can hold a dense treeline without new ground.
+func far_band_cells() -> Array[Vector2i]:
+	var cells: Array[Vector2i] = []
+	if not grid:
+		return cells
+	for ring in range(2, 4):
+		for col in range(-ring, cols + ring):
+			cells.append(Vector2i(col, -ring))
+			cells.append(Vector2i(col, rows - 1 + ring))
+		for row in range(-ring + 1, rows - 1 + ring):
+			cells.append(Vector2i(-ring, row))
+			cells.append(Vector2i(cols - 1 + ring, row))
+	return cells
+
+
+## Claims up to `limit` tree cells, outer ring first and further rings second.
 func tree_points(limit: int) -> Array[Vector3]:
 	var candidates: Array[Vector2i] = outer_band_cells()
 	candidates.append_array(beyond_band_cells())
+	candidates.append_array(far_band_cells())
 	var points: Array[Vector3] = []
 	for cell: Vector2i in candidates:
 		if points.size() >= limit:
@@ -326,18 +475,27 @@ func _read_tiles() -> void:
 		var cell: Vector2i = raw_cell
 		if cell.x < 0 or cell.y < 0:
 			continue
+		_tile_list.append(tile)
 		_track_cells[cell] = true
+		_track_low.x = mini(_track_low.x, cell.x)
+		_track_low.y = mini(_track_low.y, cell.y)
+		_track_high.x = maxi(_track_high.x, cell.x)
+		_track_high.y = maxi(_track_high.y, cell.y)
 		cols = maxi(cols, cell.x + 1)
 		rows = maxi(rows, cell.y + 1)
-	# The parsed tiles only reach the outermost track column and row; the map's
-	# empty border (rows 0/9, columns 0/14) is what the signs and treeline use, so
-	# take the real ASCII grid size from the registry rather than from the tiles.
-	var preset: Dictionary = TrackDefs.get_preset("dockyard")
-	var rows_text: PackedStringArray = TrackDefs.grid_of(preset)
-	if not rows_text.is_empty():
-		rows = rows_text.size()
-		for line: String in rows_text:
-			cols = maxi(cols, line.length())
+	# The parsed tiles only reach the outermost track column and row; the grid's
+	# empty border is what the signs and treeline use, so take the real ASCII
+	# size from the grid stats when the caller has them, then from the registry.
+	if _grid_cols > 0 and _grid_rows > 0:
+		cols = _grid_cols
+		rows = _grid_rows
+	else:
+		var preset: Dictionary = TrackDefs.get_preset("dockyard")
+		var rows_text: PackedStringArray = TrackDefs.grid_of(preset)
+		if not rows_text.is_empty():
+			rows = rows_text.size()
+			for line: String in rows_text:
+				cols = maxi(cols, line.length())
 	if cols <= 0 or rows <= 0:
 		# A spline with tiles but no usable cells is not a grid map.
 		grid = false
@@ -371,26 +529,21 @@ func _is_straight_tile(tile: Dictionary) -> bool:
 func _find_straights() -> Array[Dictionary]:
 	var runs: Array[Dictionary] = []
 	if grid:
-		var raw: Variant = spline.get("tiles")
-		if raw is Array:
-			var current: Dictionary = {}
-			for entry: Variant in raw as Array:
-				if not (entry is Dictionary):
-					continue
-				var tile: Dictionary = entry as Dictionary
-				var from: float = float(tile.get("from", 0.0))
-				var to: float = float(tile.get("to", from))
-				if _is_straight_tile(tile):
-					if current.is_empty():
-						current = {"from": from, "to": to}
-					else:
-						current["to"] = to
-				elif not current.is_empty():
-					runs.append(current)
-					current = {}
-			if not current.is_empty():
+		var current: Dictionary = {}
+		for tile: Dictionary in _tile_list:
+			var from: float = float(tile.get("from", 0.0))
+			var to: float = float(tile.get("to", from))
+			if _is_straight_tile(tile):
+				if current.is_empty():
+					current = {"from": from, "to": to, "cells": []}
+				current["to"] = to
+				(current["cells"] as Array).append(tile.get("cell", Vector2i(-1, -1)))
+			elif not current.is_empty():
 				runs.append(current)
-			_merge_seam(runs)
+				current = {}
+		if not current.is_empty():
+			runs.append(current)
+		_merge_seam(runs)
 	else:
 		runs = _scan_straights()
 	var result: Array[Dictionary] = []
@@ -402,6 +555,7 @@ func _find_straights() -> Array[Dictionary]:
 			"from": float(run["from"]),
 			"to": float(run["to"]),
 			"length": span,
+			"cells": (run.get("cells", []) as Array).duplicate(),
 		})
 	return result
 
@@ -416,6 +570,9 @@ func _merge_seam(runs: Array[Dictionary]) -> void:
 	if float(last["to"]) < total - 0.5:
 		return
 	first["from"] = float(last["from"])
+	var seam_cells: Array = (last.get("cells", []) as Array).duplicate()
+	seam_cells.append_array(first.get("cells", []) as Array)
+	first["cells"] = seam_cells
 	runs.remove_at(runs.size() - 1)
 
 

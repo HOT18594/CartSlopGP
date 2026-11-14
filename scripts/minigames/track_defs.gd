@@ -33,6 +33,11 @@ extends RefCounted
 ## `preview` is the menu image under res://assets/ui/minigames/. `palette` is
 ## the flat cartoon palette the theme reads (ground, sky, haze); it never names
 ## a texture.
+##
+## Menu fields: `tagline` is the one-line blurb on a map card, `lap_length` the
+## built centreline length in metres (measured with KenneyTiles.build) and
+## `difficulty` the short tag shown beside it. A minigame may carry `game`, the
+## game name its card is listed under (the cargo arena is DELIVER).
 
 const KIND_MAP: String = "map"
 const KIND_MINIGAME: String = "minigame"
@@ -55,6 +60,9 @@ const PRESETS: Array[Dictionary] = [
 		"kind": KIND_MAP,
 		"name": "STADIUM CIRCUIT",
 		"desc": "Tight cartoon stadium loop on a 16 m grid: pit straight, two long straights, a crossing and four kerbed corners. Grandstands, catch fencing and floodlights on every side.",
+		"tagline": "Tight stadium loop with a crossing and four kerbed corners.",
+		"lap_length": 434,
+		"difficulty": "MEDIUM",
 		"preview": "meadow_loop.png",
 		"theme": THEME_ROOT + "stadium_theme.gd",
 		"theme_id": "stadium",
@@ -84,6 +92,9 @@ const PRESETS: Array[Dictionary] = [
 		"kind": KIND_MAP,
 		"name": "DOCKYARD QUAY",
 		"desc": "Technical cartoon quay loop: an inset chicane, a wet middle sector and a long container-yard straight. Flat concrete, tyre walls and floodlights over the water.",
+		"tagline": "Quay loop with an inset chicane and a wet middle sector.",
+		"lap_length": 484,
+		"difficulty": "HARD",
 		"preview": "meadow_loop.png",
 		"theme": THEME_ROOT + "dockyard_theme.gd",
 		"theme_id": "dockyard",
@@ -117,6 +128,9 @@ const PRESETS: Array[Dictionary] = [
 		"kind": KIND_MAP,
 		"name": "GLACIER PASS",
 		"desc": "Fast cartoon alpine loop: two wide sweepers, long straights, a bump and a big crest jump. Snow banks, pines and cold flat haze beyond the catch fence.",
+		"tagline": "Alpine crest with two wide sweepers, a bump and ice.",
+		"lap_length": 499,
+		"difficulty": "EXPERT",
 		"preview": "meadow_loop.png",
 		"theme": THEME_ROOT + "glacier_theme.gd",
 		"theme_id": "glacier",
@@ -150,6 +164,8 @@ const PRESETS: Array[Dictionary] = [
 		"kind": KIND_MINIGAME,
 		"name": "CARGO RUSH",
 		"desc": "Two-team 90 second scramble: shove cargo crates into your delivery pad.",
+		# The games list names the card DELIVER; the arena keeps its own name.
+		"game": "DELIVER",
 		"preview": "cargo_rush.png",
 		# Not a grid map: the menu loads this scene directly, and the chosen
 		# theme id travels in GameSettings.selected_minigame (cargo_rush.gd
@@ -203,7 +219,42 @@ static func is_minigame(preset: Dictionary) -> bool:
 
 
 ## ASCII grid rows for a grid map, or an empty array for a minigame.
+const StadiumGrid := preload("res://scripts/minigames/maps/stadium/stadium_grid.gd")
+const DockyardGrid := preload("res://scripts/minigames/maps/dockyard/dockyard_grid.gd")
+const GlacierCourse := preload("res://scripts/minigames/maps/glacier/glacier_course.gd")
+
+
+static func heights_of(preset: Dictionary) -> PackedStringArray:
+	## Per-cell road heights authored beside each course. Empty means flat.
+	match str(preset.get("id", "")):
+		"stadium":
+			return StadiumGrid.height_rows()
+		"dockyard":
+			return DockyardGrid.heights()
+		"glacier":
+			return GlacierCourse.heights()
+	var raw: Variant = preset.get("heights", PackedStringArray())
+	if raw is PackedStringArray:
+		return raw as PackedStringArray
+	if raw is Array:
+		var rows := PackedStringArray()
+		for row: Variant in raw as Array:
+			rows.append(str(row))
+		return rows
+	return PackedStringArray()
+
+
 static func grid_of(preset: Dictionary) -> PackedStringArray:
+	## Each map authors its course in its own module; the registry grid is only a
+	## fallback for older saves and for the menu. Without this dispatch the race
+	## silently builds the stale layout.
+	match str(preset.get("id", "")):
+		"stadium":
+			return StadiumGrid.grid_rows()
+		"dockyard":
+			return DockyardGrid.grid_rows()
+		"glacier":
+			return GlacierCourse.grid()
 	var raw: Variant = preset.get("grid", PackedStringArray())
 	if raw is PackedStringArray:
 		return raw as PackedStringArray

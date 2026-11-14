@@ -32,6 +32,11 @@ const MIN_PNG_BYTES: int = 120 * 1024
 const MIN_COLOURS: int = 24
 const MAX_FLAT_RATIO: float = 0.94
 const SAMPLE_STEP: int = 12
+## A solid prop must stay at least this far from the centreline; the lane edge
+## is TileKit.ROAD_HALF, so 6.02 m leaves half a metre of real margin.
+const SOLID_MARGIN: float = 6.02
+## Colliders whose lowest point is above this are overhead (start gantry beam).
+const DRIVE_UNDER: float = 3.2
 
 ## A hill profile used by the terrain audit: two 3 m rises per lap.
 const TEST_ELEVATION: Array[Dictionary] = [
@@ -83,14 +88,70 @@ func _audit_barriers() -> int:
 				theme.call("build", host, spline)
 		var report: Dictionary = TileKit.barrier_clearance(host, spline)
 		var closest: float = float(report["closest"])
+		var solids: Dictionary = _solid_props(host, spline)
 		print("BARRIERS %s: %d piece(s), closest %.2f m from the centreline (limit %.2f m, road half %.2f m) -> %s" % [
 			map_id, int(report["pieces"]), closest,
 			float(report["limit"]), TileKit.ROAD_HALF,
 			"CLEARS" if bool(report["clears"]) else "ON THE ROAD"])
-		if not bool(report["clears"]) or int(report["pieces"]) == 0:
+		print("SOLIDS %s: %d collider(s), closest %.2f m (%s) -> %s" % [
+			map_id, int(solids["pieces"]), float(solids["closest"]),
+			str(solids["worst"]),
+			"OK" if float(solids["closest"]) >= SOLID_MARGIN else "TOO CLOSE"])
+		if not bool(report["clears"]) or int(report["pieces"]) == 0 \
+				or float(solids["closest"]) < SOLID_MARGIN:
 			failures += 1
 		host.free()
 	return failures
+
+
+## Every solid collider outside the road body, sampled in plan and skipped when
+## its lowest point is above a kart (the gantry beam). Proves the wider invariant
+## that stands, lights, signage and tyres stay off the racing surface.
+func _solid_props(root: Node, spline: RefCounted) -> Dictionary:
+	var closest: float = INF
+	var worst: String = "none"
+	var pieces: int = 0
+	for node: Node in _all_nodes(root):
+		var body := node as StaticBody3D
+		if body == null or str(body.name) == "RoadCollision":
+			continue
+		for child: Node in body.get_children():
+			var collision := child as CollisionShape3D
+			if collision == null:
+				continue
+			var samples: Array[Vector3] = []
+			var box := collision.shape as BoxShape3D
+			var cylinder := collision.shape as CylinderShape3D
+			if box != null:
+				for point: Vector3 in TileKit.box_samples(box.size * 0.5):
+					samples.append(point)
+				if _lowest(box.size, collision) > DRIVE_UNDER:
+					continue
+			elif cylinder != null:
+				for step in 8:
+					var angle: float = TAU * float(step) / 8.0
+					samples.append(Vector3(cos(angle) * cylinder.radius, 0.0,
+						sin(angle) * cylinder.radius))
+				if _world_transform(collision).origin.y \
+						- cylinder.height * 0.5 > DRIVE_UNDER:
+					continue
+			else:
+				continue
+			var xform: Transform3D = _world_transform(collision)
+			pieces += 1
+			for point: Vector3 in samples:
+				var distance: float = TileKit.spline_distance(spline,
+					xform * point)
+				if distance < closest:
+					closest = distance
+					worst = str(body.name)
+	if closest == INF:
+		closest = 0.0
+	return {"closest": closest, "worst": worst, "pieces": pieces}
+
+
+static func _lowest(size: Vector3, collision: CollisionShape3D) -> float:
+	return _world_transform(collision).origin.y - size.y * 0.5
 
 
 # --------------------------------------------------------------------------
@@ -126,10 +187,40 @@ func _audit_terrain() -> int:
 			"barrierRed")
 	var report: Dictionary = TileKit.barrier_clearance(host, spline)
 	var barrier_heights: Array[float] = _barrier_heights(host)
-	# Diagnostic: the worst pieces, so a terrain regression is locatable.
-	for body: Node in _all_nodes(host):
-		if not (body is StaticBody3D) \
-				or not bool(body.get_meta(TileKit.BARRIER_META, false)):
+	# Terrain berms are the cheap elevation dressing the kit exposes; they must
+	# clear the same barrier line.
+	var banks: int = 0
+	for side: float in [-1.0, 1.0]:
+		banks += TileKit.terrain_banks(host, spline, 0.0, total, side, 1.8)
+	var bank_closest: float = _solid_clearance(host, spline, "TerrainBanks_")
+	var flat_ok: bool = absf(highest) > 0.5 and absf(lowest) < 0.5
+	var slopes_ok: bool = not barrier_heights.is_empty() \
+		and highest > barrier_heights[0]
+	var collider_ok: bool = _road_collider_heights(host) > 1.0
+	var banks_ok: bool = banks > 0 \
+		and bank_closest >= TileKit.BARRIER_CLEARANCE - 0.02
+	print("TERRAIN %s: road height %.2f..%.2f m, %d barrier piece(s) %.2f..%.2f m, road collider top %.2f m, %d bank(s) closest %.2f m, barriers closest %.2f m -> %s" % [
+		TERRAIN_MAP, lowest, highest, placed,
+		barrier_heights[0] if not barrier_heights.is_empty() else 0.0,
+		barrier_heights[barrier_heights.size() - 1] if not barrier_heights.is_empty() else 0.0,
+		_road_collider_heights(host), banks, bank_closest,
+		float(report["closest"]),
+		"OK" if flat_ok and slopes_ok and collider_ok and banks_ok \
+			and bool(report["clears"]) else "FAIL"])
+	var ok: bool = flat_ok and slopes_ok and collider_ok and banks_ok \
+		and bool(report["clears"]) and placed > 0
+	host.free()
+	return 0 if ok else 1
+
+
+## Closest plan approach of every box collider under bodies whose name starts
+## with `prefix`, for props that have to stay off the racing surface.
+func _solid_clearance(root: Node, spline: RefCounted,
+		prefix: String) -> float:
+	var closest: float = INF
+	for node: Node in _all_nodes(root):
+		var body := node as StaticBody3D
+		if body == null or not str(body.name).begins_with(prefix):
 			continue
 		for child: Node in body.get_children():
 			var collision := child as CollisionShape3D
@@ -140,27 +231,10 @@ func _audit_terrain() -> int:
 				continue
 			var xform: Transform3D = _world_transform(collision)
 			var half: Vector3 = box.size * 0.5
-			var low: float = INF
-			for point: Vector3 in TileKit._box_samples(half):
-				low = minf(low, TileKit.spline_distance(spline, xform * point))
-			if low < TileKit.BARRIER_CLEARANCE - 0.02:
-				print("  OFFENDER %s at %s size %s closest %.2f" % [
-					str(body.name), xform.origin, box.size, low])
-	var flat_ok: bool = absf(highest) > 0.5 and absf(lowest) < 0.5
-	var slopes_ok: bool = not barrier_heights.is_empty() \
-		and highest > barrier_heights[0]
-	var collider_ok: bool = _road_collider_heights(host) > 1.0
-	print("TERRAIN %s: road height %.2f..%.2f m, %d barrier piece(s) %.2f..%.2f m, road collider top %.2f m, closest %.2f m -> %s" % [
-		TERRAIN_MAP, lowest, highest, placed,
-		barrier_heights[0] if not barrier_heights.is_empty() else 0.0,
-		barrier_heights[barrier_heights.size() - 1] if not barrier_heights.is_empty() else 0.0,
-		_road_collider_heights(host), float(report["closest"]),
-		"OK" if flat_ok and slopes_ok and collider_ok \
-			and bool(report["clears"]) else "FAIL"])
-	var ok: bool = flat_ok and slopes_ok and collider_ok \
-		and bool(report["clears"]) and placed > 0
-	host.free()
-	return 0 if ok else 1
+			for point: Vector3 in TileKit.box_samples(half):
+				closest = minf(closest,
+					TileKit.spline_distance(spline, xform * point))
+	return closest
 
 
 ## Lowest and highest barrier piece origin under `root`, in metres.

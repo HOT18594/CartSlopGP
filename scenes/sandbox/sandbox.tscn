@@ -38,6 +38,9 @@ script = ExtResource("3")
 [node name="SpawnPoint" type="Marker3D" parent="." groups=["spawn_point"]]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.25, 13)
 
+[node name="LoopGate" type="Marker3D" parent="." groups=["loop_gate"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.25, -6)
+
 [node name="CartPlayer" parent="." instance=ExtResource("2")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.25, 13)
 

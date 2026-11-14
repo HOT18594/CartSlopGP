@@ -1,37 +1,52 @@
 extends Node3D
 ## Cartoon TEST FACILITY for the sandbox, rebuilt on the Kenney 16 m tile grid.
 ##
-## The old park was a realistic heightfield with scanned textures and bespoke
-## boxes. This version is flat, bold and built from the CC0 Kenney racing and
-## nature kits, on the same 16 m module the race maps use. Every zone is a whole
-## number of tiles, and every prop the kit places sits on a cell centre (or a
-## cell edge for a two-cell piece), so nothing half-overlaps a neighbour.
+## The facility is authored around ONE axis: the start grid faces -Z, straight
+## down the paddock, through the pit gate and onto the handling loop's first
+## tile. Everything that faces the player is placed against that axis:
+##   - behind the grid (+Z): a raised spectator terrace with the covered
+##     grandstand on it, flanked by the park's south fence;
+##   - west of the grid: the pit block, with the service yard and its tents in
+##     front of it (the old pit pad);
+##   - in front (-Z): the tarmac link, the pit gate and the loop's armco;
+##   - east: the skidpad, now reached over the terrace's drive-up ramp.
+## `_audit_facility` prints the spawn transform and the loop's first tile each
+## boot and errors if the two ever disagree again (they are read from the live
+## scene's SpawnPoint marker, not from a copy of the numbers).
 ##
 ## The five zones keep the destinations the sandbox bots already drive to:
 ##   - PADDOCK: painted apron, six grid slots (the multiplayer contract),
-##     two kit pit garages, a grandstand, flags and floodlights.
+##     two kit pit garages, the raised terrace with the covered grandstand, the
+##     service yard (kit tents, a cone pen) and the pit gate's banner towers.
 ##   - HANDLING LOOP: a five-by-three grid oval of roadStraight/roadCornerSmall
-##     pieces, 178 m of cartoon tarmac with a start band and tyre stacks.
+##     pieces, 178 m of cartoon tarmac, a checkered start band at the pit gate
+##     and a red barrier ring with one 16 m gate - the armco the bots expect.
 ##   - SKIDPAD: a 28 m painted circle inscribed in a 2x2 tile concrete pad.
 ##   - JUMP LANE: a full-tile roadRamp and a two-cell roadRampLong in one line,
 ##     with a checkered launch band.
-##   - OFF-ROAD: a dirt block with the cone slalom and the lower-grip zone.
+##   - OFF-ROAD: a dirt block with the cone slalom, the lower-grip zone and a
+##     grass berm on the outfield beside it.
+##
+## The racing kit ships no trailer, so the service yard is dressed with the kit's
+## own tents and cones instead, and every kit unit is scaled by PROP_SCALE (16 m)
+## rather than by raw model units.
 ##
 ## The ground is ONE flat collision slab. Kit road pieces carry their own thin
 ## WORLD colliders (flush with the visible deck); ramps get convex wedges that
-## match the slope. Every barrier, building, light, flag, billboard, tyre stack
-## and tree the kit adds is solid on CollisionLayers.WORLD, and every solid
-## carries a real shape instead of trusting the GLB (the Kenney exports ship
-## without colliders).
+## match the slope. Every barrier, building, light, flag, billboard, tent, tyre
+## stack and tree the kit adds is solid on CollisionLayers.WORLD, and every
+## solid carries a real shape instead of trusting the GLB (the Kenney exports
+## ship without colliders).
 ##
-## The handling loop is the one lattice that is phase-shifted: its cell centres
-## are anchored at (0, -38) so the oval lines up with the racing line the sandbox
-## bots pre-compute from the old spline. It still uses the same 16 m tiles and
-## the same quarter-tile rules as every other zone.
+## Clearance is an invariant, not a suggestion. The perimeter wall and the loop
+## armco are both placed by TileKit.barrier_line, which walks the true road edge
+## and asserts BARRIER_CLEARANCE; `_audit_clearance` then measures every solid
+## collider sample against the loop centreline and the jump lane and errors if
+## anything reaches the tarmac.
 ##
 ## Pushables keep the "pushable" group and the PROP/SOLID_PROP layers sandbox.gd
 ## syncs. The dirt Area3D keeps the `surface_grip` contract (lower grip on dirt,
-## restored on exit).
+## restored on exit) and now excludes the raised terrace.
 
 const TileKit := preload("res://scripts/minigames/tile_kit.gd")
 const TileCatalog := preload("res://scripts/minigames/tiles/tile_catalog.gd")
@@ -48,34 +63,62 @@ const ROAD_TOP: float = 0.04
 const ZONE_Y: float = 0.015
 const PAINT_Y: float = 0.03
 
-# World boundary: barriers stand on the tile edge at +/-64.
+# World boundary: barriers stand outside the tile edge at +/-64.
 const FIELD: float = 64.0
 const BARRIER_IN: float = 6.5
 const PERIMETER_HALF: float = FIELD - BARRIER_IN
 const CORNER_RADIUS: float = 16.0
 const ENTRY_GAP: float = 16.0
 
+# Authored spawn: grid slot 5 (index 4), facing -Z. sandbox.tscn's SpawnPoint is
+# the single source of truth; this mirrors it for tooling and cold builds.
+const SPAWN_POINT := Vector3(0.0, 0.25, 13.0)
+# Loop entry: the pit gate. sandbox_bot.gd drives to the same plan point
+# (LOOP_GATE) and expects the only opening in the loop's armco to be here.
+const LOOP_GATE := Vector2(0.0, -6.0)
+const LOOP_GATE_WIDTH: float = 16.0
+
 # Zone rectangles in world x/z, every edge a multiple of the 16 m tile.
 const PADDOCK := Rect2(-32.0, -16.0, 64.0, 32.0)
-const PIT_PAD := Rect2(-48.0, -16.0, 32.0, 16.0)
+const YARD := Rect2(-48.0, -12.0, 32.0, 12.0)
 const SKID_BLOCK := Rect2(32.0, 0.0, 32.0, 32.0)
 const SKID_CENTRE := Vector2(48.0, 16.0)
 const SKID_RADIUS: float = 14.0
 const DIRT := Rect2(-32.0, 16.0, 64.0, 48.0)
 const DIRT_GRIP: float = 0.72
 
-# Handling loop: 5 x 3 ring of 16 m cells centred on the old lap centre.
+# Raised spectator terrace behind the start grid, with a drive-up ramp on its
+# skidpad side. It is the park's "raised pad" elevation feature.
+const RAISED_PAD := Rect2(12.0, 16.0, 20.0, 14.0)
+const PAD_TOP: float = 0.7
+const PAD_RAMP: float = 2.0
+# Covered grandstand on the terrace, facing the grid (-Z).
+const STAND_CELL := Vector2(22.0, 23.0)
+const STAND_SCALE: float = 0.8
+# Grass berm in the south-east outfield, the park's small hill.
+const BERM_CENTRE := Vector2(44.0, 52.0)
+const BERM_RADIUS: float = 7.0
+const BERM_HEIGHT: float = 1.55
+
+# Handling loop: 5 x 3 ring of 16 m cells centred on the old lap centre. The ring
+# starts at the paddock-side straight so LOOP_RING[0] IS the start/finish tile,
+# and it runs +X (the direction a kart turns onto when it leaves the pit gate).
 const LOOP_CELL_X: float = -32.0
 const LOOP_CELL_Z: float = -54.0
 const LOOP_CENTRE := Vector2(0.0, -38.0)
 const LOOP_RING: Array[Vector2i] = [
-	Vector2i(0, 0), Vector2i(1, 0), Vector2i(2, 0), Vector2i(3, 0),
-	Vector2i(4, 0), Vector2i(4, 1), Vector2i(4, 2), Vector2i(3, 2),
-	Vector2i(2, 2), Vector2i(1, 2), Vector2i(0, 2), Vector2i(0, 1),
+	Vector2i(2, 2), Vector2i(3, 2), Vector2i(4, 2), Vector2i(4, 1),
+	Vector2i(4, 0), Vector2i(3, 0), Vector2i(2, 0), Vector2i(1, 0),
+	Vector2i(0, 0), Vector2i(0, 1), Vector2i(0, 2), Vector2i(1, 2),
 ]
+## Loop AABB grown by this much: outside it a prop is provably clear, so the
+## clearance audit can skip the spline walk.
+const LOOP_AUDIT_PAD: float = 14.0
 
 # Jump lane: one tile wide, centred on the bots' staging line at x = -52.
 const JUMP_X: float = -56.0
+const JUMP_LANE_Z0: float = 48.0
+const JUMP_LANE_Z1: float = -32.0
 const JUMP_PIECES: Array[Dictionary] = [
 	{"model": "roadStraight", "z": 40.0, "flat": true, "yscale": 1.0},
 	{"model": "roadRamp", "z": 24.0, "flat": false, "yscale": 0.60},
@@ -92,6 +135,17 @@ const GRID_SLOTS: Array[Vector2] = [
 ]
 const GRID_HALF := Vector2(2.1, 2.7)
 
+# Clearance audit. A solid may never come inside SOLID_LIMIT of a racing
+# centreline; the kit's own run-off furniture (tyre stacks at ROAD_HALF + 2 m)
+# is reported separately as "tight" rather than as a failure.
+const SOLID_LIMIT: float = TileCatalog.ROAD_HALF + 1.0
+## Bodies that ARE the racing surface, so they are not audited against it.
+const SOLID_SKIP: Array[String] = [
+	"GroundPlane", "LoopRoadCollision", "JumpLaneCollision",
+]
+## Static cones in the service yard use the same cartoon cone as the pushables.
+const CONE_SCALE: float = TILE * 0.45
+
 # Cartoon palette. Flat vertex colours only: no scans, no normal maps.
 const GRASS_A := Color("7bd34f")
 const GRASS_B := Color("6cc143")
@@ -99,6 +153,8 @@ const OUTFIELD := Color("58ab3f")
 const APRON := Color("f4ead2")
 const PIT_PAD_TINT := Color("d9d2c0")
 const CONCRETE := Color("c9d3d8")
+const PAD_CONCRETE := Color("c8c3b6")
+const PAD_WALL := Color("a8a294")
 const SKID_TARMAC := Color("3f9fd1")
 const DIRT_TAN := Color("d9a066")
 const DIRT_ALT := Color("caa06b")
@@ -207,6 +263,54 @@ class SurfaceBuf:
 		line(d, a, width, y, color)
 
 
+## One merged, solid vertex-colour layer for raised terrain (the spectator
+## terrace, its ramp and the berm).
+##
+## Unlike SurfaceBuf this keeps real slopes: every triangle carries the normal
+## its vertices produce, and each quad is wound so its normal points along the
+## outward direction the builder names. That is what makes a berm read as a hill
+## instead of as flat paint.
+class SolidBuf:
+	var verts: PackedVector3Array = PackedVector3Array()
+	var normals: PackedVector3Array = PackedVector3Array()
+	var colors: PackedColorArray = PackedColorArray()
+	var indices: PackedInt32Array = PackedInt32Array()
+
+	## Adds one quad, re-wound until its normal points along `outward`.
+	func face(a: Vector3, b: Vector3, c: Vector3, d: Vector3, color: Color,
+			outward: Vector3) -> void:
+		var normal: Vector3 = (b - a).cross(c - a)
+		if normal.dot(outward) < 0.0:
+			var swap: Vector3 = b
+			b = d
+			d = swap
+		_triangle(a, b, c, color)
+		_triangle(a, c, d, color)
+
+	## Adds one triangle facing along `outward`.
+	func tri_face(a: Vector3, b: Vector3, c: Vector3, color: Color,
+			outward: Vector3) -> void:
+		if (b - a).cross(c - a).dot(outward) < 0.0:
+			var swap: Vector3 = b
+			b = c
+			c = swap
+		_triangle(a, b, c, color)
+
+	## Appends a shaded triangle from its own geometric normal.
+	func _triangle(a: Vector3, b: Vector3, c: Vector3, color: Color) -> void:
+		var normal: Vector3 = (b - a).cross(c - a)
+		normal = normal.normalized() if normal.length_squared() > 0.0000001 \
+			else Vector3.UP
+		var base: int = verts.size()
+		for point: Vector3 in [a, b, c]:
+			verts.append(point)
+			normals.append(normal)
+			colors.append(color)
+		indices.append(base)
+		indices.append(base + 1)
+		indices.append(base + 2)
+
+
 ## Closed polyline with the small spline surface the dressing helpers need
 ## (`total_length`, `sample`, `closest`). Distances are metres, the y is 0.
 class RingSpline:
@@ -286,8 +390,11 @@ var _font: Font
 
 var _ground: SurfaceBuf = SurfaceBuf.new()
 var _paint: SurfaceBuf = SurfaceBuf.new()
+var _solid: SolidBuf = SolidBuf.new()
 var _loop_spline: RingSpline
 var _perimeter_spline: RingSpline
+var _perimeter_barriers: Node3D
+var _loop_barriers: Node3D
 var _vertex_mat: StandardMaterial3D
 var _prop_material: PhysicsMaterial
 var _grip_before: Dictionary = {}
@@ -299,6 +406,8 @@ func _ready() -> void:
 	_vertex_mat = _make_vertex_material()
 	_ground_plane()
 	_zone_paint()
+	_raised_pad()
+	_berm()
 	_paddock()
 	_handling_loop()
 	_jump_lane()
@@ -306,8 +415,10 @@ func _ready() -> void:
 	_pushable_props()
 	_grip_zone()
 	_commit_layers()
+	_audit_facility()
 	if OS.get_environment("CART_DEBUG_PARK") == "1":
 		_report_stats()
+		_bot_probe.call_deferred()
 
 
 # --------------------------------------------------------------------------
@@ -357,29 +468,37 @@ func _ground_plane() -> void:
 	add_child(body)
 
 
-## Painted zones: paddock apron, pit pad, skid block, dirt block and links.
+## Painted zones: paddock apron, service yard, skid block, dirt block, the pit
+## gate lane and the terrace base.
 func _zone_paint() -> void:
 	# Paddock apron and its bold outline.
 	_paint.rect(PADDOCK, ZONE_Y, APRON)
 	_paint.outline(PADDOCK.grow(-0.9), 0.5, PAINT_Y, PAINT_DARK)
 	_paint.outline(PADDOCK.grow(-1.8), 0.22, PAINT_Y, PAINT_YELLOW)
-	# Pit pad in front of the garages, west of the paddock.
-	_paint.rect(PIT_PAD, ZONE_Y + 0.002, PIT_PAD_TINT)
-	_paint.outline(PIT_PAD.grow(-0.7), 0.4, PAINT_Y + 0.002, PAINT_YELLOW)
-	# Tarmac link from the paddock to the loop gate.
-	_paint.rect(Rect2(-16.0, -16.0, 32.0, 16.0), ZONE_Y + 0.004, TARMAC)
-	_paint.line(Vector2(-16.0, -15.0), Vector2(16.0, -15.0), 0.26,
+	# Service yard in front of the pit block, west of the paddock.
+	_paint.rect(YARD, ZONE_Y + 0.002, PIT_PAD_TINT)
+	_paint.outline(YARD.grow(-0.7), 0.4, PAINT_Y + 0.002, PAINT_YELLOW)
+	# Pit gate lane: apron -> gate -> loop's first tile. This is the one line the
+	# player's spawn points down.
+	_paint.rect(Rect2(-9.0, -14.0, 18.0, 14.0), ZONE_Y + 0.004, TARMAC)
+	_paint.line(Vector2(-8.6, -1.0), Vector2(-8.6, -13.0), 0.26,
 		PAINT_Y + 0.004, PAINT_BLUE)
-	_paint.line(Vector2(-15.0, -16.0), Vector2(-15.0, -9.0), 0.26,
+	_paint.line(Vector2(8.6, -1.0), Vector2(8.6, -13.0), 0.26,
 		PAINT_Y + 0.004, PAINT_BLUE)
-	_paint.line(Vector2(15.0, -16.0), Vector2(15.0, -9.0), 0.26,
-		PAINT_Y + 0.004, PAINT_BLUE)
-	# Paddock link to the jump lane: one grid cell at (-40, 8).
-	_paint.rect(Rect2(-48.0, 0.0, 16.0, 16.0), ZONE_Y + 0.003, TARMAC)
-	_paint.line(Vector2(-48.0, 0.8), Vector2(-32.0, 0.8), 0.26,
-		PAINT_Y + 0.003, PAINT_CREAM)
-	_paint.line(Vector2(-48.0, 15.2), Vector2(-32.0, 15.2), 0.26,
-		PAINT_Y + 0.003, PAINT_CREAM)
+	for chevron in 3:
+		var z: float = -4.5 - float(chevron) * 3.0
+		_paint.line(Vector2(-4.0, z + 1.6), Vector2(0.0, z), 0.34,
+			PAINT_Y + 0.004, PAINT_CREAM)
+		_paint.line(Vector2(4.0, z + 1.6), Vector2(0.0, z), 0.34,
+			PAINT_Y + 0.004, PAINT_CREAM)
+	# Checkered start line on the apron, right in front of the grid.
+	for i in 16:
+		var shade: Color = PAINT_CREAM if i % 2 == 0 else PAINT_DARK
+		_paint.rect(Rect2(-9.0 + float(i) * 1.125, -0.6, 1.125, 1.2),
+			PAINT_Y + 0.005, shade)
+	# Terrace base outline under the raised pad.
+	_paint.outline(Rect2(RAISED_PAD.position - Vector2(1.2, 1.2),
+		RAISED_PAD.size + Vector2(2.4, 2.4)), 0.3, PAINT_Y, PAINT_YELLOW)
 	# Skid block: concrete pad with the painted 28 m circle.
 	_paint.rect(SKID_BLOCK, ZONE_Y + 0.003, CONCRETE)
 	_paint.disc(SKID_CENTRE, SKID_RADIUS, 64, ZONE_Y + 0.008, SKID_TARMAC)
@@ -449,15 +568,119 @@ func _paint_slot(centre: Vector2, color: Color) -> void:
 
 
 # --------------------------------------------------------------------------
+# elevation
+
+
+## Raised spectator terrace: a 0.7 m concrete pad with a drive-up ramp on its
+## skidpad side. One merged mesh, one box collider plus a ramp wedge on WORLD.
+func _raised_pad() -> void:
+	var x0: float = RAISED_PAD.position.x
+	var z0: float = RAISED_PAD.position.y
+	var x1: float = RAISED_PAD.end.x
+	var z1: float = RAISED_PAD.end.y
+	var top: float = PAD_TOP
+	# Deck, then a painted lip so the step reads from the grid.
+	_solid.face(Vector3(x0, top, z0), Vector3(x0, top, z1),
+		Vector3(x1, top, z1), Vector3(x1, top, z0), PAD_CONCRETE, Vector3.UP)
+	_solid.face(Vector3(x0 + 0.45, top + 0.006, z0 + 0.45),
+		Vector3(x0 + 0.45, top + 0.006, z1 - 0.45),
+		Vector3(x1 - 0.45, top + 0.006, z1 - 0.45),
+		Vector3(x1 - 0.45, top + 0.006, z0 + 0.45), PAINT_YELLOW, Vector3.UP)
+	# Three vertical walls; the east face is the ramp.
+	_solid.face(Vector3(x0, 0.0, z0), Vector3(x0, top, z0),
+		Vector3(x1, top, z0), Vector3(x1, 0.0, z0), PAD_WALL,
+		Vector3(0.0, 0.0, -1.0))
+	_solid.face(Vector3(x0, 0.0, z1), Vector3(x1, 0.0, z1),
+		Vector3(x1, top, z1), Vector3(x0, top, z1), PAD_WALL,
+		Vector3(0.0, 0.0, 1.0))
+	_solid.face(Vector3(x0, 0.0, z0), Vector3(x0, 0.0, z1),
+		Vector3(x0, top, z1), Vector3(x0, top, z0), PAD_WALL,
+		Vector3(-1.0, 0.0, 0.0))
+	var ramp_x: float = x1 + PAD_RAMP
+	_solid.face(Vector3(x1, top, z1), Vector3(ramp_x, 0.0, z1),
+		Vector3(ramp_x, 0.0, z0), Vector3(x1, top, z0), CONCRETE,
+		Vector3(1.0, 0.6, 0.0))
+	_solid.tri_face(Vector3(x1, top, z0), Vector3(ramp_x, 0.0, z0),
+		Vector3(x1, 0.0, z0), PAD_WALL, Vector3(0.0, 0.0, -1.0))
+	_solid.tri_face(Vector3(x1, top, z1), Vector3(ramp_x, 0.0, z1),
+		Vector3(x1, 0.0, z1), PAD_WALL, Vector3(0.0, 0.0, 1.0))
+	var body := _static_body("RaisedPadCollision")
+	_add_box_shape(body, Transform3D(Basis.IDENTITY,
+		Vector3((x0 + x1) * 0.5, top * 0.5, (z0 + z1) * 0.5)),
+		Vector3(x1 - x0, top, z1 - z0))
+	_add_wedge_shape(body, Vector3(x1, 0.0, z0), Vector3(ramp_x, 0.0, z1),
+		top)
+
+
+## Faceted grass berm: four colour bands on a lathe profile, one convex collider
+## so a kart rolls over it instead of clipping through it.
+func _berm() -> void:
+	var centre: Vector2 = BERM_CENTRE
+	var segments: int = 14
+	var rings: Array[Dictionary] = [
+		{"radius": BERM_RADIUS, "y": 0.0, "color": OUTFIELD},
+		{"radius": BERM_RADIUS * 0.76, "y": BERM_HEIGHT * 0.46,
+			"color": GRASS_B},
+		{"radius": BERM_RADIUS * 0.45, "y": BERM_HEIGHT * 0.82,
+			"color": GRASS_A},
+		{"radius": BERM_RADIUS * 0.18, "y": BERM_HEIGHT, "color": GRASS_B},
+	]
+	for band in rings.size() - 1:
+		var inner: Dictionary = rings[band]
+		var outer: Dictionary = rings[band + 1]
+		for segment in segments:
+			var a0: float = TAU * float(segment) / float(segments)
+			var a1: float = TAU * float(segment + 1) / float(segments)
+			var p0_in := Vector3(centre.x + cos(a0) * float(inner["radius"]),
+				float(inner["y"]), centre.y + sin(a0) * float(inner["radius"]))
+			var p0_out := Vector3(centre.x + cos(a0) * float(outer["radius"]),
+				float(outer["y"]), centre.y + sin(a0) * float(outer["radius"]))
+			var p1_out := Vector3(centre.x + cos(a1) * float(outer["radius"]),
+				float(outer["y"]), centre.y + sin(a1) * float(outer["radius"]))
+			var p1_in := Vector3(centre.x + cos(a1) * float(inner["radius"]),
+				float(inner["y"]), centre.y + sin(a1) * float(inner["radius"]))
+			var mid: float = (a0 + a1) * 0.5
+			var outward := Vector3(cos(mid), 0.55, sin(mid))
+			_solid.face(p0_in, p0_out, p1_out, p1_in,
+				outer["color"] as Color, outward)
+	var top: Dictionary = rings[rings.size() - 1]
+	var apex := Vector3(centre.x, float(top["y"]) + 0.02, centre.y)
+	for segment in segments:
+		var a0: float = TAU * float(segment) / float(segments)
+		var a1: float = TAU * float(segment + 1) / float(segments)
+		var p0 := Vector3(centre.x + cos(a0) * float(top["radius"]),
+			float(top["y"]), centre.y + sin(a0) * float(top["radius"]))
+		var p1 := Vector3(centre.x + cos(a1) * float(top["radius"]),
+			float(top["y"]), centre.y + sin(a1) * float(top["radius"]))
+		_solid.tri_face(p0, p1, apex, top["color"] as Color, Vector3.UP)
+	var points := PackedVector3Array()
+	for ring: Dictionary in rings:
+		for segment in segments:
+			var angle: float = TAU * float(segment) / float(segments)
+			points.append(Vector3(centre.x + cos(angle) * float(ring["radius"]),
+				float(ring["y"]), centre.y + sin(angle) * float(ring["radius"])))
+	points.append(apex)
+	var body := _static_body("BermCollision")
+	var shape := ConvexPolygonShape3D.new()
+	shape.points = points
+	var collision := CollisionShape3D.new()
+	collision.shape = shape
+	body.add_child(collision)
+
+
+# --------------------------------------------------------------------------
 # paddock
 
 
-## Paddock furniture: six numbered slots, two kit garages and their sign.
+## Paddock furniture: six numbered slots, the pit block and its sign.
 func _paddock() -> void:
 	for i in GRID_SLOTS.size():
 		_grid_number(i + 1, GRID_SLOTS[i])
-	TileKit.pit_building(self, [Vector2i(-3, -1), Vector2i(-2, -1)])
-	_wall_label("PADDOCK", Vector3(-32.0, 7.4, 1.2), 0.0, 128, 0.0085)
+	# Pit block on the paddock's west edge, in front of the service yard. Cell
+	# row 0 keeps its north face 13.7 m clear of the loop's armco; the old row
+	# (-1) clipped the wall's inner corner by 0.2 m.
+	TileKit.pit_building(self, [Vector2i(-3, 0), Vector2i(-2, 0)])
+	_wall_label("PADDOCK", Vector3(-15.6, 6.6, 8.0), PI * 0.5, 128, 0.009)
 
 
 ## Big painted grid number, lying flat and readable from the south.
@@ -480,7 +703,7 @@ func _grid_number(number: int, centre: Vector2) -> void:
 # handling loop
 
 
-## Five-by-three grid oval of kit road pieces, its colliders and its spline.
+## Five-by-three grid oval of kit road pieces, its colliders, armco and spline.
 func _handling_loop() -> void:
 	_loop_spline = RingSpline.new(_loop_path())
 	var batches: Dictionary = {}
@@ -504,6 +727,7 @@ func _handling_loop() -> void:
 	for model: String in batches:
 		_batch_road("LoopRoad", model, batches[model] as Array)
 	_loop_start_band()
+	_loop_barrier()
 	_loop_dressing()
 
 
@@ -568,11 +792,18 @@ func _ring_yaw(din: Vector2i, dout: Vector2i) -> float:
 	return atan2(float(din.y), -float(din.x))
 
 
-## Checkered start/finish band at the loop's paddock-side straight.
+## Travel direction (plan) of the loop's first tile, as the audit reports it.
+func _loop_first_direction() -> Vector2:
+	var cell: Vector2i = LOOP_RING[0]
+	var prev: Vector2i = LOOP_RING[LOOP_RING.size() - 1]
+	return Vector2(float(cell.x - prev.x), float(cell.y - prev.y))
+
+
+## Checkered start/finish band across the loop at the pit gate.
 func _loop_start_band() -> void:
 	if _loop_spline == null:
 		return
-	var distance: float = _nearest_distance(_loop_spline, Vector2(0.0, -22.0))
+	var distance: float = _nearest_distance(_loop_spline, _gate_point())
 	var before: Dictionary = _loop_spline.sample(distance - 1.4)
 	var after: Dictionary = _loop_spline.sample(distance + 1.4)
 	var pb: Vector3 = before["position"]
@@ -590,15 +821,42 @@ func _loop_start_band() -> void:
 			pa + ra * t0 + Vector3.UP * (ROAD_TOP + 0.012), shade)
 
 
-## Five cartoon tyre stacks on the outside of the loop, clear of the lane.
+## Red armco round the whole loop, open for 16 m at the pit gate. The run is
+## placed on the true road edge at BARRIER_CLEARANCE, so no piece can reach the
+## racing surface even on the 8 m corner arcs. The ring travels +X along the
+## paddock-side straight, so the kit's "right of travel" IS the outside here -
+## passing -1 (the old ring's side) would drop the whole wall into the infield.
+func _loop_barrier() -> void:
+	if _loop_spline == null:
+		return
+	var gate: float = _nearest_distance(_loop_spline, _gate_point())
+	var half_gap: float = LOOP_GATE_WIDTH * 0.5
+	_loop_barriers = _holder("LoopBarriers")
+	TileKit.barrier_line(_loop_barriers, _loop_spline, gate + half_gap,
+		gate - half_gap, 1.0, "barrierRed")
+
+
+## Cartoon tyre stacks and the pit-gate banner towers on the loop.
 func _loop_dressing() -> void:
 	var anchors: Array[Vector2] = [
 		Vector2(-24.0, -54.0), Vector2(0.0, -54.0), Vector2(24.0, -54.0),
-		Vector2(-32.0, -38.0), Vector2(32.0, -38.0),
+		Vector2(-32.0, -38.0), Vector2(32.0, -38.0), Vector2(-22.0, -22.0),
+		Vector2(22.0, -22.0),
 	]
 	for anchor: Vector2 in anchors:
 		var distance: float = _nearest_distance(_loop_spline, anchor)
-		TileKit.tyre_stack(self, _loop_spline, distance, -1.0)
+		TileKit.tyre_stack(self, _loop_spline, distance, 1.0)
+	_gate_towers()
+
+
+## Two kit banner towers framing the pit gate, outside the armco's outer face and
+## far enough out that they never pinch the 16 m opening.
+func _gate_towers() -> void:
+	var body := _static_body("GateTowers")
+	_kit_solid("bannerTowerRed", Vector3(-17.0, 0.0, -8.5), 0.0,
+		TileCatalog.sign_scale("bannerTower"), body)
+	_kit_solid("bannerTowerGreen", Vector3(17.0, 0.0, -8.5), 0.0,
+		TileCatalog.sign_scale("bannerTower"), body)
 
 
 # --------------------------------------------------------------------------
@@ -630,18 +888,20 @@ func _jump_lane() -> void:
 # perimeter and kit dressing
 
 
-## Park boundary: rounded-rect spline, barrierLine run with one south entry gap.
+## Park boundary: rounded-rect spline, barrierLine run with one south entry gap,
+## the terrace stand, lights, flags, signage, tents, foliage and the berm view.
 func _dressing() -> void:
 	_perimeter_spline = RingSpline.new(_perimeter_path())
 	_barrier_line()
 	_grandstand()
 	_lights()
+	_signage()
 	_flags()
-	_billboards()
+	_yard()
 	_trees()
 
 
-## Sampled rounded-rectangle path inset so the kit barriers land on +/-64.
+## Sampled rounded-rectangle path inset so the kit barriers land outside +/-64.
 func _perimeter_path() -> PackedVector3Array:
 	var path := PackedVector3Array()
 	var half: float = PERIMETER_HALF
@@ -694,44 +954,64 @@ func _barrier_line() -> void:
 	if (point + right * BARRIER_IN).length_squared() \
 			< point.length_squared():
 		side = -1.0
-	TileKit.barrier_line(self, _perimeter_spline, gap + half_gap,
+	_perimeter_barriers = _holder("PerimeterBarriers")
+	TileKit.barrier_line(_perimeter_barriers, _perimeter_spline, gap + half_gap,
 		gap - half_gap, side, "barrierRed")
 
 
-## Covered grandstand on the paddock side of the loop's south straight.
+## One grouping node for a barrier run, so the clearance audit can measure that
+## run alone instead of every wall in the park.
+func _holder(node_name: String) -> Node3D:
+	var holder := Node3D.new()
+	holder.name = node_name
+	add_child(holder)
+	return holder
+
+
+## Covered grandstand on the terrace, behind the start grid and facing it.
 func _grandstand() -> void:
-	if _loop_spline == null:
+	var model: String = TileCatalog.GRANDSTAND_COVERED
+	var info: Dictionary = TileCatalog.model_info(model)
+	if not bool(info.get("ok", false)):
 		return
-	var distance: float = _nearest_distance(_loop_spline, Vector2(24.0, -22.0))
-	var frame: Dictionary = _loop_spline.sample(distance)
-	var right: Vector3 = frame["right"]
-	var side: float = 1.0 if right.z > 0.0 else -1.0
-	TileKit.grandstand(self, _loop_spline, distance, side, true)
+	var packed: PackedScene = load(str(info["path"])) as PackedScene
+	if packed == null:
+		return
+	var node: Node3D = packed.instantiate() as Node3D
+	if node == null:
+		return
+	# One kit unit is PROP_SCALE metres; STAND_SCALE keeps the 16 m model on the
+	# terrace's 20 x 14 m deck.
+	var stand_scale: float = TileCatalog.PROP_SCALE * STAND_SCALE
+	node.name = "Grandstand"
+	node.transform = _fit_model(model,
+		Vector3(STAND_CELL.x, PAD_TOP, STAND_CELL.y), 0.0,
+		Vector3.ONE * stand_scale)
+	add_child(node)
+	var size: Vector3 = (info["aabb"] as AABB).size * stand_scale
+	var body := _static_body("GrandstandCollision")
+	_add_box_shape(body, Transform3D(Basis.IDENTITY,
+		Vector3(STAND_CELL.x, PAD_TOP + size.y * 0.5, STAND_CELL.y)),
+		Vector3(size.x, size.y, size.z))
+	if OS.get_environment("CART_DEBUG_PARK") == "1":
+		print("KIT SOLID %s at (%.1f, %.1f) size=(%.1f, %.1f, %.1f)" % [
+			model, STAND_CELL.x, STAND_CELL.y, size.x, size.y, size.z])
+	_wall_label("CART SLOP GP", Vector3(STAND_CELL.x,
+		PAD_TOP + size.y * 0.52, STAND_CELL.y - size.z * 0.5 - 0.3), PI, 112,
+		0.012)
 
 
-## Four tall floodlights on the grass, clear of tarmac and buildings.
+## Six tall floodlights on the grass, clear of tarmac and buildings.
 func _lights() -> void:
 	TileKit.lights(self, [
 		Vector3(-56.0, 0.0, 56.0), Vector3(56.0, 0.0, 56.0),
-		Vector3(56.0, 0.0, -8.0), Vector3(-56.0, 0.0, -40.0),
+		Vector3(56.0, 0.0, -8.0), Vector3(-56.0, 0.0, -56.0),
+		Vector3(-40.0, 0.0, 56.0), Vector3(40.0, 0.0, -56.0),
 	])
 
 
-## Flags on the paddock corners and the dirt strip.
-func _flags() -> void:
-	TileKit.flags(self, [
-		{"position": Vector3(-24.0, 0.0, 8.0), "kind": "flagCheckers",
-			"yaw": 0.0},
-		{"position": Vector3(24.0, 0.0, 8.0), "kind": "flagRed", "yaw": 0.0},
-		{"position": Vector3(-24.0, 0.0, 24.0), "kind": "flagGreen",
-			"yaw": 0.0},
-		{"position": Vector3(24.0, 0.0, 24.0), "kind": "flagCheckersSmall",
-			"yaw": 0.0},
-	])
-
-
-## Three billboards facing their zones, each with a readable cartoon label.
-func _billboards() -> void:
+## Billboards on the three zone approaches plus two paddock banner towers.
+func _signage() -> void:
 	TileKit.signage(self, [
 		{"position": Vector3(40.0, 0.0, 40.0), "kind": "billboard",
 			"yaw": PI},
@@ -739,6 +1019,8 @@ func _billboards() -> void:
 			"yaw": PI * 0.5},
 		{"position": Vector3(56.0, 0.0, -40.0), "kind": "billboard",
 			"yaw": -PI * 0.5},
+		{"position": Vector3(24.0, 0.0, 8.0), "kind": "bannerTowerGreen",
+			"yaw": 0.0},
 	])
 	_billboard_label("HANDLING LOOP", Vector3(56.0, 0.0, -40.0), -PI * 0.5)
 	_billboard_label("SKIDPAD", Vector3(40.0, 0.0, 40.0), PI)
@@ -762,7 +1044,48 @@ func _billboard_label(text: String, at: Vector3, yaw: float) -> void:
 	add_child(label)
 
 
-## Cartoon tree line outside the barriers on the 16 m grid.
+## Flags on the paddock's north corners, on the 16 m kit lattice.
+func _flags() -> void:
+	TileKit.flags(self, [
+		{"position": Vector3(-8.0, 0.0, -8.0), "kind": "flagRed",
+			"yaw": 0.0},
+		{"position": Vector3(8.0, 0.0, -8.0), "kind": "flagCheckersSmall",
+			"yaw": 0.0},
+		{"position": Vector3(24.0, 0.0, -8.0), "kind": "flagCheckers",
+			"yaw": 0.0},
+		{"position": Vector3(24.0, 0.0, 8.0), "kind": "flagGreen",
+			"yaw": 0.0},
+	])
+
+
+## Service yard: kit tents, a cone pen and tyre dressing behind the pit block.
+## A kit unit is 16 m, so the tents are scaled to 8-11 m to fit the yard.
+func _yard() -> void:
+	var body := _static_body("YardProps")
+	_kit_solid("tent", Vector3(-42.0, 0.0, -7.0), 0.0,
+		TileCatalog.PROP_SCALE * 0.55, body)
+	_kit_solid("tentLong", Vector3(-30.0, 0.0, -7.0), 0.0,
+		TileCatalog.PROP_SCALE * 0.35, body)
+	_kit_solid("tentClosed", Vector3(-19.0, 0.0, -7.0), 0.0,
+		TileCatalog.PROP_SCALE * 0.50, body)
+	_cone_row(body, Vector2(-46.0, -1.6), Vector2(-19.0, -1.6), 6)
+
+
+## A row of static cones: one MultiMesh for the visuals, one box each on WORLD.
+func _cone_row(body: StaticBody3D, from: Vector2, to: Vector2,
+		count: int) -> void:
+	var transforms: Array = []
+	for index in count:
+		var t: float = float(index) / float(maxi(count - 1, 1))
+		var at := Vector3(lerpf(from.x, to.x, t), 0.0, lerpf(from.y, to.y, t))
+		transforms.append(_fit_model("pylon", at, 0.0,
+			Vector3.ONE * CONE_SCALE))
+		_add_box_shape(body, Transform3D(Basis.IDENTITY,
+			at + Vector3.UP * 0.3), Vector3(0.55, 0.6, 0.55))
+	_batch_road("YardCones", "pylon", transforms)
+
+
+## Cartoon tree line outside the barriers, plus the east grass clumps.
 func _trees() -> void:
 	var spots: Array = []
 	for x: float in [-88.0, -72.0, -40.0, -8.0, 24.0, 56.0, 88.0]:
@@ -778,10 +1101,16 @@ func _trees() -> void:
 	for z: float in [-56.0, -24.0, 8.0, 40.0]:
 		spots.append(Vector3(-88.0, 0.0, z))
 		spots.append(Vector3(88.0, 0.0, z))
+	# Clumps on the grass inside the fence but outside every zone. The kit snaps
+	# each spot to a cell centre and refuses anything inside its own clearance
+	# band, so these are east of the loop where the grass strip is widest.
+	for spot: Vector3 in [Vector3(56.0, 0.0, -56.0), Vector3(56.0, 0.0, -24.0),
+			Vector3(56.0, 0.0, 40.0)]:
+		spots.append(spot)
 	TileKit.trees(self, spots, _loop_spline)
 
 
-## Small text panel standing on the pit buildings' front face.
+## Small text panel standing on a kit building's face.
 func _wall_label(text: String, at: Vector3, yaw: float, font_size: int,
 		pixel_size: float) -> void:
 	var label := Label3D.new()
@@ -826,7 +1155,7 @@ func _pylon(prop_name: String, at: Vector3) -> void:
 	body.continuous_cd = false
 	body.physics_material_override = _prop_physics()
 	body.position = at + Vector3.UP * 0.02
-	_prop_visual(body, PYLON_MODEL, TILE * 0.45)
+	_prop_visual(body, PYLON_MODEL, CONE_SCALE)
 	var shape := CylinderShape3D.new()
 	shape.height = 0.86
 	shape.radius = 0.36
@@ -894,18 +1223,27 @@ func _prop_physics() -> PhysicsMaterial:
 
 
 ## Area over the dirt that drops a kart's surface_grip while it stays inside.
+## The raised terrace is carved out, so concrete is not reported as dirt.
 func _grip_zone() -> void:
 	var area := Area3D.new()
 	area.name = "DirtGripZone"
 	area.collision_layer = 0
 	area.collision_mask = CollisionLayers.PLAYER | CollisionLayers.GHOST
-	var box := BoxShape3D.new()
-	box.size = Vector3(DIRT.size.x, 4.0, DIRT.size.y)
-	var collision := CollisionShape3D.new()
-	collision.shape = box
-	collision.position = Vector3(DIRT.get_center().x, 2.0,
-		DIRT.get_center().y)
-	area.add_child(collision)
+	var rects: Array[Rect2] = [
+		Rect2(DIRT.position.x, DIRT.position.y,
+			RAISED_PAD.position.x - DIRT.position.x, DIRT.size.y),
+		Rect2(RAISED_PAD.position.x, RAISED_PAD.end.y,
+			DIRT.end.x - RAISED_PAD.position.x,
+			DIRT.end.y - RAISED_PAD.end.y),
+	]
+	for rect: Rect2 in rects:
+		var box := BoxShape3D.new()
+		box.size = Vector3(rect.size.x, 4.0, rect.size.y)
+		var collision := CollisionShape3D.new()
+		collision.shape = box
+		collision.position = Vector3(rect.get_center().x, 2.0,
+			rect.get_center().y)
+		area.add_child(collision)
 	area.body_entered.connect(_on_dirt_entered)
 	area.body_exited.connect(_on_dirt_exited)
 	add_child(area)
@@ -946,10 +1284,11 @@ func _surface_grip_of(body: Node3D) -> float:
 # geometry helpers
 
 
-## Commits the merged ground and paint meshes. One draw call each.
+## Commits the merged ground, paint and raised-terrain meshes.
 func _commit_layers() -> void:
 	_add_merged("Ground", _ground, _vertex_mat, false)
 	_add_merged("PaintedZones", _paint, _vertex_mat, false)
+	_add_solid("RaisedTerrain", _solid, _vertex_mat)
 
 
 ## Adds one SurfaceBuf as a single-surface mesh under this node.
@@ -971,6 +1310,28 @@ func _add_merged(node_name: String, buffer: SurfaceBuf, material: Material,
 	instance.material_override = material
 	instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON \
 		if shadows else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(instance)
+	return instance
+
+
+## Adds one SolidBuf (sloped, shaded terrain) as a single-surface mesh.
+func _add_solid(node_name: String, buffer: SolidBuf,
+		material: Material) -> MeshInstance3D:
+	if buffer.indices.is_empty():
+		return null
+	var arrays: Array = []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = buffer.verts
+	arrays[Mesh.ARRAY_NORMAL] = buffer.normals
+	arrays[Mesh.ARRAY_COLOR] = buffer.colors
+	arrays[Mesh.ARRAY_INDEX] = buffer.indices
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	var instance := MeshInstance3D.new()
+	instance.name = node_name
+	instance.mesh = mesh
+	instance.material_override = material
+	instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 	add_child(instance)
 	return instance
 
@@ -1007,6 +1368,31 @@ func _fit_model(model: String, at: Vector3, yaw: float,
 	var lift: float = -aabb.position.y * scale.y
 	return Transform3D(basis,
 		at - yaw_basis * centre_m + Vector3.UP * lift)
+
+
+## One unique kit GLB (tent, tower, terrace stand) plus a box collider sized from
+## its own measured footprint, so the prop is solid without trusting the export.
+func _kit_solid(model: String, at: Vector3, yaw: float, scale: float,
+		body: StaticBody3D) -> Node3D:
+	var info: Dictionary = TileCatalog.model_info(model)
+	if not bool(info.get("ok", false)):
+		return null
+	var packed: PackedScene = load(str(info["path"])) as PackedScene
+	if packed == null:
+		return null
+	var node: Node3D = packed.instantiate() as Node3D
+	if node == null:
+		return null
+	node.name = "Kit_" + model
+	node.transform = _fit_model(model, at, yaw, Vector3.ONE * scale)
+	add_child(node)
+	var size: Vector3 = (info["aabb"] as AABB).size * scale
+	_add_box_shape(body, Transform3D(Basis(Vector3.UP, yaw),
+		at + Vector3.UP * (size.y * 0.5)), size)
+	if OS.get_environment("CART_DEBUG_PARK") == "1":
+		print("KIT SOLID %s at (%.1f, %.1f) size=(%.1f, %.1f, %.1f)" % [
+			model, at.x, at.z, size.x, size.y, size.z])
+	return node
 
 
 ## One MultiMesh per GLB part for a set of world transforms.
@@ -1059,6 +1445,17 @@ func _add_road_box(body: StaticBody3D, at: Vector3,
 	body.add_child(collision)
 
 
+## Adds one world-space box collider to a body.
+func _add_box_shape(body: StaticBody3D, xform: Transform3D,
+		size: Vector3) -> void:
+	var shape := BoxShape3D.new()
+	shape.size = size
+	var collision := CollisionShape3D.new()
+	collision.shape = shape
+	collision.transform = xform
+	body.add_child(collision)
+
+
 ## Adds the convex wedge of a roadRamp piece, rising toward -Z.
 func _add_ramp_collider(body: StaticBody3D, at: Vector3, scale: Vector3,
 		model: String) -> void:
@@ -1086,12 +1483,214 @@ func _add_ramp_collider(body: StaticBody3D, at: Vector3, scale: Vector3,
 	body.add_child(collision)
 
 
+## Adds a terrace ramp wedge: level at the deck from `high_x`, dropping to 0 at
+## `toe`, spanning `from_z`..`to_z`.
+func _add_wedge_shape(body: StaticBody3D, high: Vector3, toe: Vector3,
+		height: float) -> void:
+	var shape := ConvexPolygonShape3D.new()
+	shape.points = PackedVector3Array([
+		Vector3(high.x, 0.0, high.z), Vector3(toe.x, 0.0, high.z),
+		Vector3(high.x, height, high.z),
+		Vector3(high.x, 0.0, toe.z), Vector3(toe.x, 0.0, toe.z),
+		Vector3(high.x, height, toe.z),
+	])
+	var collision := CollisionShape3D.new()
+	collision.shape = shape
+	body.add_child(collision)
+
+
 ## Arc-length position on a spline nearest a world x/z point.
 func _nearest_distance(spline: RingSpline, at: Vector2) -> float:
 	if spline == null:
 		return 0.0
 	var hit: Dictionary = spline.closest(Vector3(at.x, 0.0, at.y))
 	return float(hit.get("s", 0.0))
+
+
+# --------------------------------------------------------------------------
+# invariants
+
+
+## Publishes the two invariants this facility must hold on every boot.
+##
+## 1. The authored spawn looks down the paddock at the loop's first tile, with
+##    the grandstand behind it. Both come from the live scene marker, so a scene
+##    edit that flips the spawn fails here instead of shipping.
+## 2. No solid prop reaches the tarmac. Every WORLD collider sample is measured
+##    against the loop centreline and the jump lane; anything inside
+##    SOLID_LIMIT of a racing centreline is an error.
+func _audit_facility() -> void:
+	var spawn: Transform3D = _spawn_transform()
+	var forward: Vector3 = -spawn.basis.z
+	forward.y = 0.0
+	forward = forward.normalized()
+	var spawn_flat := Vector3(spawn.origin.x, 0.0, spawn.origin.z)
+	var gate_point: Vector2 = _gate_point()
+	var gate := Vector3(gate_point.x, 0.0, gate_point.y)
+	var to_gate: Vector3 = (gate - spawn_flat).normalized()
+	var tile0: Vector3 = _loop_cell_centre(LOOP_RING[0])
+	var to_tile: Vector3 = tile0 - spawn_flat
+	to_tile.y = 0.0
+	to_tile = to_tile.normalized()
+	var gate_dot: float = forward.dot(to_gate)
+	var tile_dot: float = forward.dot(to_tile)
+	var first: Vector2 = _loop_first_direction()
+	var stand := Vector3(STAND_CELL.x, PAD_TOP, STAND_CELL.y)
+	var stand_gap: float = (stand - spawn.origin).dot(forward)
+	print("SANDBOX FACING spawn=(%.2f, %.2f, %.2f) forward=(%.2f, %.2f, %.2f) gate=(%.1f, %.1f) gate_dot=%.3f | loop tile0=%s centre=(%.1f, %.1f) travel=(%.0f, %.0f) tile_dot=%.3f | stand=(%.1f, %.1f) behind=%.1f m" % [
+		spawn.origin.x, spawn.origin.y, spawn.origin.z,
+		forward.x, forward.y, forward.z, gate_point.x, gate_point.y, gate_dot,
+		LOOP_RING[0], tile0.x, tile0.z, first.x, first.y, tile_dot,
+		stand.x, stand.z, -stand_gap])
+	if gate_dot < 0.95 or tile_dot < 0.90 or stand_gap > -4.0:
+		push_error("sandbox_park: the paddock faces the wrong way (gate_dot=%.3f tile_dot=%.3f stand_behind=%.1f m). The spawn must look down the paddock at the loop with the grandstand behind it." % [
+			gate_dot, tile_dot, -stand_gap])
+	_audit_clearance()
+
+
+## The spawn marker from the live sandbox scene, or the authored fallback.
+func _spawn_transform() -> Transform3D:
+	var marker: Node3D = get_tree().get_first_node_in_group("spawn_point") \
+		as Node3D
+	if marker != null:
+		return marker.global_transform
+	return Transform3D(Basis.IDENTITY, SPAWN_POINT)
+
+
+## The pit gate from the live sandbox scene, or the authored fallback. The scene
+## marker and the bots' LOOP_GATE are the same plan point.
+func _gate_point() -> Vector2:
+	var marker: Node3D = get_tree().get_first_node_in_group("loop_gate") \
+		as Node3D
+	if marker != null:
+		return Vector2(marker.global_position.x, marker.global_position.z)
+	return LOOP_GATE
+
+
+## Measures every solid collider sample against the racing surfaces and reports
+## the closest approach, plus how many pieces sit between the road edge and the
+## barrier clearance (the kit's own run-off furniture).
+func _audit_clearance() -> void:
+	var closest: float = INF
+	var closest_name: String = ""
+	var solids: int = 0
+	var shapes: int = 0
+	var tight: int = 0
+	var offenders: int = 0
+	for child: Node in _solid_bodies():
+		var body_name: String = String(child.name)
+		var found: bool = false
+		for part: Node in child.get_children():
+			var collision := part as CollisionShape3D
+			if collision == null or collision.shape == null:
+				continue
+			shapes += 1
+			found = true
+			var distance: float = INF
+			for point: Vector3 in _shape_points(collision.shape,
+					collision.global_transform):
+				distance = minf(distance, _road_distance(point))
+			if distance < closest:
+				closest = distance
+				closest_name = body_name
+			if distance < TileKit.BARRIER_CLEARANCE - 0.02:
+				tight += 1
+			if distance < SOLID_LIMIT:
+				offenders += 1
+		if found:
+			solids += 1
+	if closest == INF:
+		closest = 0.0
+	print("SOLID CLEARANCE solids=%d shapes=%d closest=%.2f m at %s (hard limit %.2f, barrier clearance %.2f) tight=%d offenders=%d -> %s" % [
+		solids, shapes, closest, closest_name if closest_name != "" else "-",
+		SOLID_LIMIT, TileKit.BARRIER_CLEARANCE, tight, offenders,
+		"CLEARS" if offenders == 0 else "ON THE ROAD"])
+	if offenders > 0:
+		push_error("sandbox_park: %d solid collider(s) inside %.2f m of a racing centreline (closest %.2f m at %s)." % [
+			offenders, SOLID_LIMIT, closest, closest_name])
+
+
+## Every solid body under the park, barrier holders included, minus the bodies
+## that ARE the racing surface.
+func _solid_bodies() -> Array[Node]:
+	var bodies: Array[Node] = []
+	var stack: Array[Node] = [self]
+	while not stack.is_empty():
+		var node: Node = stack.pop_back()
+		for child: Node in node.get_children():
+			if SOLID_SKIP.has(String(child.name)):
+				continue
+			if child is StaticBody3D or child is RigidBody3D:
+				bodies.append(child)
+				continue
+			stack.append(child)
+	return bodies
+
+
+## Plan distance from a world point to the nearest racing surface.
+func _road_distance(point: Vector3) -> float:
+	var best: float = _segment_distance(point,
+		Vector3(JUMP_X, 0.0, JUMP_LANE_Z0), Vector3(JUMP_X, 0.0, JUMP_LANE_Z1))
+	if _loop_spline == null:
+		return best
+	var pad: float = LOOP_AUDIT_PAD
+	var box := Rect2(-32.0 - pad, LOOP_CELL_Z - pad, 64.0 + pad * 2.0,
+		32.0 + pad * 2.0)
+	var flat := Vector2(point.x, point.z)
+	if not box.has_point(flat):
+		# Outside the loop's grown bounds: the spline is provably further away
+		# than the padding, so the box distance is a safe lower bound.
+		return minf(best, pad + Vector2(flat.x - clampf(flat.x, box.position.x,
+			box.end.x), flat.y - clampf(flat.y, box.position.y,
+			box.end.y)).length())
+	return minf(best, TileKit.spline_distance(_loop_spline, point))
+
+
+## Plan distance from a world point to a line segment.
+func _segment_distance(point: Vector3, from: Vector3, to: Vector3) -> float:
+	var flat := Vector2(point.x, point.z)
+	var a := Vector2(from.x, from.z)
+	var b := Vector2(to.x, to.z)
+	var ab: Vector2 = b - a
+	var t: float = 0.0
+	if ab.length_squared() > 0.000001:
+		t = clampf((flat - a).dot(ab) / ab.length_squared(), 0.0, 1.0)
+	return flat.distance_to(a + ab * t)
+
+
+## World sample points of one collision shape, for the clearance audit.
+func _shape_points(shape: Shape3D, xform: Transform3D) -> Array[Vector3]:
+	var points: Array[Vector3] = []
+	var box := shape as BoxShape3D
+	if box != null:
+		var half: Vector3 = box.size * 0.5
+		for ix: float in [-1.0, 1.0]:
+			for iy: float in [-1.0, 1.0]:
+				for iz: float in [-1.0, 1.0]:
+					points.append(xform * Vector3(half.x * ix, half.y * iy,
+						half.z * iz))
+		return points
+	var cylinder := shape as CylinderShape3D
+	if cylinder != null:
+		for ix: float in [-1.0, 1.0]:
+			for iy: float in [-1.0, 1.0]:
+				for iz: float in [-1.0, 1.0]:
+					points.append(xform * Vector3(cylinder.radius * ix,
+						cylinder.height * 0.5 * iy, cylinder.radius * iz))
+		return points
+	var sphere := shape as SphereShape3D
+	if sphere != null:
+		for axis: Vector3 in [Vector3.RIGHT, Vector3.LEFT, Vector3.UP,
+				Vector3.DOWN, Vector3.FORWARD, Vector3.BACK]:
+			points.append(xform * (axis * sphere.radius))
+		return points
+	var convex := shape as ConvexPolygonShape3D
+	if convex != null:
+		for point: Vector3 in convex.points:
+			points.append(xform * point)
+		return points
+	points.append(xform.origin)
+	return points
 
 
 # --------------------------------------------------------------------------
@@ -1130,3 +1729,50 @@ func _report_stats() -> void:
 		get_tree().get_node_count(), meshes, multimeshes, surfaces, labels,
 		surfaces + labels, bodies, colliders,
 		get_tree().get_nodes_in_group("pushable").size()])
+	var gpu: int = int(RenderingServer.get_rendering_info(
+		RenderingServer.RENDERING_INFO_TOTAL_DRAW_CALLS_IN_FRAME))
+	print("SANDBOX PARK GPU draw_calls=%d (0 under the headless dummy renderer)" % gpu)
+	TileKit.assert_barrier_clearance(_perimeter_barriers, _perimeter_spline,
+		"PERIMETER")
+	TileKit.assert_barrier_clearance(_loop_barriers, _loop_spline, "LOOP")
+
+
+## Debug-only bot sanity probe. CART_DEBUG_PARK=1 prints how far each free-roam
+## bot drove in 12 simulated seconds, which is the contract
+## pi_setup/tests/sandbox_bot_sim.gd enforces. Deferred so sandbox.gd has already
+## spawned the bots, and counted in physics frames so a headless soak measures
+## the same window as the test.
+func _bot_probe() -> void:
+	await get_tree().process_frame
+	if not is_inside_tree():
+		return
+	var carts: Array[Node] = get_tree().get_nodes_in_group("ai_player")
+	if carts.is_empty():
+		print("BOT TRAVEL carts=0 (bots are opt-in; enable them in settings to run the free-roam probe)")
+		return
+	var from: Array[Vector3] = []
+	for cart: Node in carts:
+		from.append((cart as Node3D).global_position)
+	var start: int = Engine.get_physics_frames()
+	while Engine.get_physics_frames() - start < 720:
+		await get_tree().process_frame
+		if not is_inside_tree():
+			return
+	for index in mini(carts.size(), from.size()):
+		var cart: Node = carts[index]
+		if not is_instance_valid(cart):
+			continue
+		var drove: float = (cart as Node3D).global_position.distance_to(
+			from[index])
+		print("BOT TRAVEL bot=%d drove=%.1f m in 12 s" % [index, drove])
+	print("BOT TRAVEL carts=%d" % carts.size())
+	var root: Node = get_parent()
+	var bots: Array = []
+	if root != null and root.get("_bots") is Array:
+		bots = root.get("_bots")
+	for index in bots.size():
+		var bot: Variant = bots[index]
+		print("BOT STATE %d dest=%s drove=%.0f m stuck=%.2f stranded=%.2f zones=%d" % [
+			index, str(bot.get("destination_name")),
+			float(bot.get("distance_driven")), float(bot.get("stuck")),
+			float(bot.get("stranded")), int(bot.get("distinct_zones"))])

@@ -1,17 +1,18 @@
 extends RefCounted
 ## Race furniture for the Dockyard Quay theme.
 ##
-## Barriers run the two straights on either side of every straight tile
-## (`barrierWall` outside, alternating red/white blocks inside), with stacked
-## tyres marking the apex of each hairpin, covered and open grandstands on the
-## four outside corners, overhead light gantries spanning the long straights and
-## a dense layer of billboards, banner towers, pylons and flags around the quay.
+## The barrier ring is the owner's invariant made visible: one continuous wall
+## follows the true road edge on both sides of the whole lap at
+## TileKit.BARRIER_CLEARANCE, using the clearance-path geometry so even the
+## inside of an 8 m quay hairpin cannot pinch onto the racing surface. The
+## outside is a concrete wall; the inside alternates red/white sections.
 ##
-## All of it goes through TileKit's public helpers, so the placements use the
-## same quarter-tile distance snap and half-metre lateral snap as the rest of
-## the grid maps, and every solid piece gets a WORLD collider. Signs, flags and
-## floodlights take a cell from the plan before they are placed, which keeps the
-## fence ring and the treeline from stacking props on the same tile.
+## On top of that ring: covered and open grandstands on the major corners, tyre
+## stacks at the apexes, overhead light gantries on the straights, billboards,
+## low boards, banner towers and pylons around the apron, flags on the infield
+## and floodlights down the quay edge. Every placement is measured against the
+## spline before it is emitted; the cells a prop takes are claimed in the plan so
+## the yard and the treeline cannot stack on top of them.
 
 const TileKit := preload("res://scripts/minigames/tile_kit.gd")
 const TileCatalog := preload("res://scripts/minigames/tiles/tile_catalog.gd")
@@ -21,9 +22,17 @@ const Parts := preload("res://scripts/minigames/maps/dockyard/dockyard_parts.gd"
 const GANTRY_MIN_RUN: float = 24.0
 ## Keep gantries clear of the race's own start/finish gate at distance 0.
 const START_CLEARANCE: float = 40.0
-## Straight barrier style. The inside gets a shorter block for tighter fences.
-const OUTSIDE_BARRIER: String = "barrierWall"
+## Barrier style: the short red/white race blocks, alternated in lap sections.
 const INSIDE_BARRIERS: Array[String] = ["barrierRed", "barrierWhite"]
+## Barrier ring alternation: one colour change every sixth of a lap.
+const INSIDE_SECTIONS: int = 6
+const LIGHT_LIMIT: int = 14
+
+const FLAG_KINDS: Array[String] = ["flagRed", "flagCheckers", "flagGreen"]
+const SIGN_KINDS: Array[String] = [
+	"billboard", "billboardLow", "pylon", "bannerTowerRed",
+	"bannerTowerGreen",
+]
 
 
 ## Builds every track-side prop, returning {objects, draws, barriers, ...}.
@@ -39,9 +48,11 @@ static func build(parent: Node3D, spline: RefCounted,
 	_grandstands(parent, spline, plan, stats)
 	_gantries(parent, spline, plan, stats)
 	_tyres(parent, spline, plan, stats)
-	_flags(parent, spline, plan, stats)
-	_signage(parent, spline, plan, stats)
+	# Lights claim their quay-edge cells before the optional signage and flags,
+	# so a full container yard can never squeeze the floodlights out.
 	_lights(parent, spline, plan, stats)
+	_signage(parent, spline, plan, stats)
+	_flags(parent, spline, plan, stats)
 	return stats
 
 
@@ -49,7 +60,7 @@ static func build(parent: Node3D, spline: RefCounted,
 ## is built by the yard pass, before the stands, so this pre-pass keeps the two
 ## passes from clipping a grandstand into a fence panel.
 static func reserve_stand_ring(spline: RefCounted, plan: RefCounted) -> void:
-	if spline == null or plan == null:
+	if spline == null or plan == null or not plan.is_grid():
 		return
 	for corner: Dictionary in plan.major_corners(4):
 		var curve: float = float(corner["curve"])
@@ -69,25 +80,36 @@ static func reserve_stand_ring(spline: RefCounted, plan: RefCounted) -> void:
 # barriers and tyres
 
 
+## The full barrier ring. Both sides run the whole lap; the run is split at a
+## half-tile seam so the wall crosses the start/finish without a snapped
+## zero-length span, and the inside is split again into colour sections.
 static func _barriers(parent: Node3D, spline: RefCounted, plan: RefCounted,
 		stats: Dictionary) -> void:
-	if plan.is_grid():
-		var runs: Array = plan.straight_runs()
-		for index in runs.size():
-			var run: Dictionary = runs[index]
-			var from_distance: float = float(run["from"])
-			var to_distance: float = float(run["to"])
-			_barrier_run(parent, spline, from_distance, to_distance, 1.0,
-				OUTSIDE_BARRIER, stats)
-			var inside: String = INSIDE_BARRIERS[index % INSIDE_BARRIERS.size()]
-			_barrier_run(parent, spline, from_distance, to_distance, -1.0,
-				inside, stats)
+	if not plan.is_grid():
+		# A legacy spline has no tile edges; the clearance path still follows the
+		# ribbon, but one run is enough.
+		_barrier_run(parent, spline, 0.0, plan.total - TileKit.SNAP_STEP, 1.0,
+			"barrierRed", stats)
+		_barrier_run(parent, spline, 0.0, plan.total - TileKit.SNAP_STEP, -1.0,
+			"barrierWhite", stats)
 		return
-	# The legacy oval has no straight tile edges to stop at; a continuous run of
-	# short blocks follows its corners without chording the road.
-	var end: float = plan.total - TileKit.SNAP_STEP
-	_barrier_run(parent, spline, 0.0, end, 1.0, "barrierRed", stats)
-	_barrier_run(parent, spline, 0.0, end, -1.0, "barrierWhite", stats)
+	var total: float = maxf(float(plan.total), 1.0)
+	# Both sides use the short 4 m red/white blocks. The 16 m concrete wall is
+	# cheaper per metre, but on this grid the top chicane brings two strands
+	# within 16 m, and a 16 m block's end can reach the neighbouring lane even
+	# when its centre samples clear. Short blocks follow the edge honestly.
+	var section: float = total / float(INSIDE_SECTIONS)
+	for side: float in [1.0, -1.0]:
+		var phase: int = 0 if side > 0.0 else 1
+		for index in INSIDE_SECTIONS:
+			var from_distance: float = section * float(index)
+			var to_distance: float = section * float(index + 1)
+			if index == INSIDE_SECTIONS - 1:
+				to_distance = total
+			var kind: String = INSIDE_BARRIERS[(index + phase)
+				% INSIDE_BARRIERS.size()]
+			_barrier_run(parent, spline, from_distance, to_distance, side,
+				kind, stats)
 
 
 static func _barrier_run(parent: Node3D, spline: RefCounted,
@@ -102,7 +124,8 @@ static func _barrier_run(parent: Node3D, spline: RefCounted,
 	stats["draws"] = int(stats["draws"]) + 1
 
 
-## Two stacks per corner on the apex side, just outside the road edge.
+## Two stacks per corner on the apex side, just outside the road edge. The stack
+## is a primitive torus batch in the kit palette; its collider is on WORLD.
 static func _tyres(parent: Node3D, spline: RefCounted, plan: RefCounted,
 		stats: Dictionary) -> void:
 	for corner: Dictionary in plan.major_corners(4):
@@ -121,8 +144,9 @@ static func _tyres(parent: Node3D, spline: RefCounted, plan: RefCounted,
 # grandstands
 
 
-## Covered and open stands on the four hairpins. reserve_stand_ring() has
-## already cleared the fence cells under each footprint.
+## Covered and open stands on the four major corners. reserve_stand_ring() has
+## already cleared the fence cells under each footprint; the stand itself is one
+## kit model with one WORLD box.
 static func _grandstands(parent: Node3D, spline: RefCounted, plan: RefCounted,
 		stats: Dictionary) -> void:
 	var corners: Array = plan.major_corners(4)
@@ -144,7 +168,7 @@ static func _grandstands(parent: Node3D, spline: RefCounted, plan: RefCounted,
 
 
 # --------------------------------------------------------------------------
-# gantries and floodlights
+# gantries
 
 
 static func _gantries(parent: Node3D, spline: RefCounted, plan: RefCounted,
@@ -166,31 +190,14 @@ static func _gantries(parent: Node3D, spline: RefCounted, plan: RefCounted,
 		for other: float in chosen:
 			var gap: float = absf(fposmod(candidate - other + plan.total * 0.5,
 				plan.total) - plan.total * 0.5)
-			if gap < 50.0:
+			if gap < 55.0:
 				clear = false
 				break
 		if not clear:
 			continue
 		chosen.append(candidate)
-		if chosen.size() >= 4:
-			break
-	# A free oval can be too wobbly for four straight runs; keep the gantries
-	# spread around the lap instead of dropping to one.
-	for fraction: float in [0.18, 0.48, 0.78]:
 		if chosen.size() >= 3:
 			break
-		var distance: float = plan.total * fraction
-		if _near_start(distance, plan.total):
-			continue
-		var clear: bool = true
-		for other: float in chosen:
-			var gap: float = absf(fposmod(distance - other + plan.total * 0.5,
-				plan.total) - plan.total * 0.5)
-			if gap < 50.0:
-				clear = false
-				break
-		if clear:
-			chosen.append(distance)
 	for distance: float in chosen:
 		var count: int = TileKit.gantry(parent, spline, distance)
 		if count > 0:
@@ -199,22 +206,24 @@ static func _gantries(parent: Node3D, spline: RefCounted, plan: RefCounted,
 			stats["draws"] = int(stats["draws"]) + 1
 
 
+static func _near_start(distance: float, total: float) -> bool:
+	var wrapped: float = fposmod(distance, total)
+	return minf(wrapped, total - wrapped) < START_CLEARANCE
+
+
+# --------------------------------------------------------------------------
+# lights
+
+
+## Fourteen floodlight posts, evenly spread around the outer band and the ring
+## beyond it: the quay should read as a lit working dock at speed.
 static func _lights(parent: Node3D, spline: RefCounted, plan: RefCounted,
 		stats: Dictionary) -> void:
 	var points: Array[Vector3] = []
 	if plan.is_grid():
-		var candidates: Array = [
-			Vector2i(1, 0), Vector2i(5, 0), Vector2i(9, 0), Vector2i(13, 0),
-			Vector2i(2, 0), Vector2i(12, 0),
-			Vector2i(1, 9), Vector2i(5, 9), Vector2i(9, 9), Vector2i(13, 9),
-			Vector2i(2, 9), Vector2i(12, 9),
-			Vector2i(0, 2), Vector2i(0, 7), Vector2i(14, 2), Vector2i(14, 7),
-			Vector2i(0, 1), Vector2i(14, 1), Vector2i(0, 8), Vector2i(14, 8),
-		]
-		points = plan.take_cells(candidates, 10)
+		points = _outer_sites(plan, spline, LIGHT_LIMIT, 2)
 	else:
-		var slots: Array = plan.arc_slots(32.0, 26.0, true, 20.0)
-		for slot: Variant in slots:
+		for slot: Variant in plan.arc_slots(32.0, 26.0, true, 20.0):
 			if points.size() >= 10:
 				break
 			if slot is Vector3:
@@ -233,9 +242,33 @@ static func _lights(parent: Node3D, spline: RefCounted, plan: RefCounted,
 	stats["draws"] = int(stats["draws"]) + 1
 
 
-static func _near_start(distance: float, total: float) -> bool:
-	var wrapped: float = fposmod(distance, total)
-	return minf(wrapped, total - wrapped) < START_CLEARANCE
+## Up to `limit` spaced sites on the outer bands, free cells first and the
+## beyond ring second. Every lattice site is claimed before it is returned.
+static func _outer_sites(plan: RefCounted, spline: RefCounted, limit: int,
+		stride: int) -> Array[Vector3]:
+	var points: Array[Vector3] = []
+	var candidates: Array[Vector2i] = plan.outer_band_cells()
+	candidates.append_array(plan.beyond_band_cells())
+	candidates.append_array(plan.far_band_cells())
+	var seen: int = 0
+	for cell: Vector2i in candidates:
+		if points.size() >= limit:
+			break
+		seen += 1
+		if (seen - 1) % stride != 0:
+			continue
+		var point: Vector3 = plan.cell_point(cell)
+		if Parts.track_distance(spline, point) < 16.0:
+			continue
+		if plan.is_used(cell):
+			continue
+		if plan.in_grid(cell):
+			if not plan.take(cell):
+				continue
+		else:
+			plan.mark(cell)
+		points.append(point)
+	return points
 
 
 # --------------------------------------------------------------------------
@@ -247,38 +280,38 @@ static func _signage(parent: Node3D, spline: RefCounted, plan: RefCounted,
 	var centre: Vector3 = plan.centre()
 	var entries: Array = []
 	if plan.is_grid():
-		for point: Vector3 in plan.take_cells([
-				Vector2i(3, 0), Vector2i(11, 0),
-				Vector2i(3, 9), Vector2i(11, 9),
-				Vector2i(6, 0), Vector2i(6, 9)], 6):
-			entries.append(_sign_entry(point, "billboard", centre))
-		for point: Vector3 in plan.take_cells([
-				Vector2i(4, 0), Vector2i(8, 0),
-				Vector2i(4, 9), Vector2i(8, 9)], 4):
-			entries.append(_sign_entry(point, "billboardLow", centre))
-		var banner_index: int = 0
-		for point: Vector3 in plan.take_cells([
-				Vector2i(2, 0), Vector2i(12, 0),
-				Vector2i(2, 9), Vector2i(12, 9)], 4):
-			var kind: String = "bannerTowerRed" if banner_index % 2 == 0 \
-				else "bannerTowerGreen"
-			entries.append(_sign_entry(point, kind, centre))
-			banner_index += 1
-		var pylons: Array[Vector3] = plan.take_cells([
-			Vector2i(0, 0), Vector2i(1, 0), Vector2i(5, 0), Vector2i(7, 0),
-			Vector2i(9, 0), Vector2i(13, 0), Vector2i(14, 0),
-			Vector2i(0, 9), Vector2i(1, 9), Vector2i(5, 9), Vector2i(7, 9),
-			Vector2i(9, 9), Vector2i(13, 9), Vector2i(14, 9),
-			Vector2i(0, 2), Vector2i(0, 7), Vector2i(14, 2), Vector2i(14, 7),
-			Vector2i(1, 3), Vector2i(1, 6), Vector2i(13, 3), Vector2i(13, 6),
-		], 14)
-		for point: Vector3 in pylons:
-			entries.append(_sign_entry(point, "pylon", centre))
+		for index in 20:
+			var point: Vector3 = Vector3.ZERO
+			var found: bool = false
+			var cells: Array[Vector2i] = plan.outer_band_cells()
+			cells.append_array(plan.beyond_band_cells())
+			cells.append_array(plan.far_band_cells())
+			for cell: Vector2i in cells:
+				var probe: Vector3 = plan.cell_point(cell)
+				if Parts.track_distance(spline, probe) < 20.0:
+					continue
+				if plan.is_used(cell):
+					continue
+				if plan.in_grid(cell):
+					if not plan.take(cell):
+						continue
+				else:
+					plan.mark(cell)
+				point = probe
+				found = true
+				break
+			if not found:
+				continue
+			var kind: String = SIGN_KINDS[index % SIGN_KINDS.size()]
+			entries.append({
+				"position": point, "kind": kind,
+				"yaw": _face_yaw(point, centre),
+			})
 	else:
 		var slots: Array = plan.arc_slots(20.0, 24.0, true, 18.0)
 		var index: int = 0
 		for slot: Variant in slots:
-			if entries.size() >= 28:
+			if entries.size() >= 24:
 				break
 			if not (slot is Vector3):
 				continue
@@ -289,7 +322,10 @@ static func _signage(parent: Node3D, spline: RefCounted, plan: RefCounted,
 					else "bannerTowerGreen"
 			elif index < 14:
 				kind = "billboardLow" if index % 4 == 0 else "billboard"
-			entries.append(_sign_entry(point, kind, centre))
+			entries.append({
+				"position": point, "kind": kind,
+				"yaw": _face_yaw(point, centre),
+			})
 			index += 1
 	if entries.is_empty():
 		return
@@ -301,14 +337,9 @@ static func _signage(parent: Node3D, spline: RefCounted, plan: RefCounted,
 	stats["draws"] = int(stats["draws"]) + _sign_draws(entries)
 
 
-static func _sign_entry(point: Vector3, kind: String,
-		centre: Vector3) -> Dictionary:
-	return {"position": point, "kind": kind, "yaw": _face_yaw(point, centre)}
-
-
 ## Yaw that turns a billboard's local +Z front towards the circuit centre. The
-## Kenney billboard panel sits on +Z of its legs (the OBJ's back plate is at
-## -Z), so a board outside the loop looks at the track instead of at the sea.
+## Kenney billboard panel sits on +Z of its legs, so a board outside the loop
+## looks at the track instead of at the sea.
 static func _face_yaw(point: Vector3, centre: Vector3) -> float:
 	var direction := Vector3(centre.x - point.x, 0.0, centre.z - point.z)
 	if direction.length_squared() < 0.01:
@@ -324,7 +355,10 @@ static func _sign_draws(entries: Array) -> int:
 			continue
 		var data: Dictionary = entry as Dictionary
 		models[_sign_model(str(data.get("kind", "billboard")))] = true
-	return models.size()
+	var total: int = 0
+	for model: String in models:
+		total += Parts.part_count(model)
+	return total
 
 
 static func _sign_model(kind: String) -> String:
@@ -345,21 +379,45 @@ static func _sign_model(kind: String) -> String:
 # flags
 
 
+## Flags on the free infield cells and the outer band. A flag pole is a thin
+## solid, so the cell has to be off the road by at least the barrier line.
 static func _flags(parent: Node3D, spline: RefCounted, plan: RefCounted,
 		stats: Dictionary) -> void:
 	var centre: Vector3 = plan.centre()
 	var points: Array[Vector3] = []
 	if plan.is_grid():
-		# The infield cells between the chicane, the garages and the pit apron:
-		# flag poles there never fight the outer-band billboards for a cell.
-		points = plan.take_cells([
-			Vector2i(6, 2), Vector2i(7, 2),
-			Vector2i(5, 4), Vector2i(6, 4), Vector2i(7, 4), Vector2i(8, 4),
-			Vector2i(3, 5), Vector2i(11, 5),
-		], 8)
+		for cell: Vector2i in plan.free_cells():
+			if points.size() >= 12:
+				break
+			var point: Vector3 = plan.cell_point(cell)
+			var distance: float = Parts.track_distance(spline, point)
+			if distance < 13.0 or distance > 40.0:
+				continue
+			if plan.is_ring_cell(cell):
+				continue
+			if not plan.take(cell):
+				continue
+			points.append(point)
+		if points.size() < 12:
+			var outer: Array[Vector2i] = plan.outer_band_cells()
+			outer.append_array(plan.beyond_band_cells())
+			outer.append_array(plan.far_band_cells())
+			for cell: Vector2i in outer:
+				if points.size() >= 12:
+					break
+				if plan.is_used(cell):
+					continue
+				var point: Vector3 = plan.cell_point(cell)
+				if Parts.track_distance(spline, point) < 13.0:
+					continue
+				if plan.in_grid(cell):
+					if not plan.take(cell):
+						continue
+				else:
+					plan.mark(cell)
+				points.append(point)
 	else:
-		var slots: Array = plan.arc_slots(16.0, 14.0, true, 14.0)
-		for slot: Variant in slots:
+		for slot: Variant in plan.arc_slots(16.0, 14.0, true, 14.0):
 			if points.size() >= 12:
 				break
 			if slot is Vector3:
@@ -368,10 +426,9 @@ static func _flags(parent: Node3D, spline: RefCounted, plan: RefCounted,
 		return
 	var entries: Array = []
 	for index in points.size():
-		var kind: String = "flagRed" if index % 2 == 0 else "flagCheckers"
 		entries.append({
 			"position": points[index],
-			"kind": kind,
+			"kind": FLAG_KINDS[index % FLAG_KINDS.size()],
 			"yaw": _face_yaw(points[index], centre),
 		})
 	var placed: int = TileKit.flags(parent, entries)

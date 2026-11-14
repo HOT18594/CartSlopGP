@@ -27,7 +27,6 @@ extends Node
 
 const TrackDefs := preload("res://scripts/minigames/track_defs.gd")
 const KenneyTiles := preload("res://scripts/minigames/tiles/kenney_tiles.gd")
-const TILEKIT_PATH: String = "res://scripts/minigames/tile_kit.gd"
 
 const RACE_SCENE: String = "res://scenes/minigames/grass_race.tscn"
 const THEME_PATH: String = "res://scripts/minigames/maps/%s_theme.gd"
@@ -47,12 +46,22 @@ const WAIT_FRAMES: int = 8
 ## Three-quarter isometric: a 38 degree lens, a 40 degree look-down and one of
 ## twelve fixed yaws, whichever frames the circuit and the start line best.
 const CAMERA_FOV: float = 38.0
-const CAMERA_PITCH_DEG: float = 40.0
-const CAMERA_YAW_STEPS: int = 12
+const CAMERA_PITCH_DEG: float = 33.0
+const CAMERA_YAW_STEPS: int = 24
 ## Fraction of the frame the circuit plus its margin may occupy.
-const FRAME_FILL: float = 0.90
+const FRAME_FILL: float = 0.95
 ## Room around the circuit bounds for barriers, stands and run-off, in metres.
-const FRAME_PAD: float = 14.0
+const FRAME_PAD: float = 10.0
+## The palette sky is a menu chip, not a painted sky: the gradient leans on
+## this canonical cartoon blue while keeping the map's own hue in the mix.
+const SKY_BLUE := Color("4a9fd8")
+const SKY_HORIZON := Color("cfe9f5")
+## The fallback ground plate: a flat cartoon colour under the grid map.
+const GROUND_SIZE: float = 900.0
+## Oversized backdrop planes (the race scene's 1400 m meadow) are trimmed to
+## BACKDROP_TRIM of their size so the sky is visible above the horizon.
+const BACKDROP_MIN_SIZE: float = 600.0
+const BACKDROP_TRIM: float = 0.52
 ## Height of the tallest trackside prop, kept in frame while fitting.
 const SCENERY_HEIGHT: float = 10.0
 ## A minigame arena has no centreline; its floor is 100 m across, so frame that.
@@ -136,6 +145,7 @@ func _render_preset(preset: Dictionary) -> Dictionary:
 			built_from_scene = _build_grid_fallback(preset, stage)
 	# Lighting is installed after the map so the map's own sky and sun can be
 	# replaced by the palette grade rather than stacking on top of them.
+	_trim_backdrop(stage)
 	_install_lighting(stage, preset)
 	var framing: Dictionary = _framing_for(preset, stage)
 	var camera: Camera3D = _install_camera(stage, framing)
@@ -177,6 +187,21 @@ func _render_preset(preset: Dictionary) -> Dictionary:
 # --------------------------------------------------------------------------
 # map building
 # --------------------------------------------------------------------------
+
+
+## The race scene lays a 1400 m meadow under every map, which fills the whole
+## frame from a three-quarter camera and hides the palette sky. Trimming the
+## oversized backdrop planes (never the map-sized theme ground) to a plate that
+## ends inside the shot gives the card a horizon and a visible sky gradient.
+func _trim_backdrop(stage: Node3D) -> void:
+	for node: Node in _nodes_of_type(stage, "MeshInstance3D"):
+		var instance := node as MeshInstance3D
+		if instance.mesh == null:
+			continue
+		var box: AABB = instance.mesh.get_aabb()
+		if box.size.x < BACKDROP_MIN_SIZE or box.size.z < BACKDROP_MIN_SIZE:
+			continue
+		instance.scale = Vector3(BACKDROP_TRIM, 1.0, BACKDROP_TRIM)
 
 
 ## Instantiates the real race scene against `preset` and hides its HUD. The
@@ -227,12 +252,13 @@ func _build_grid_fallback(preset: Dictionary, stage: Node3D) -> bool:
 func _build_ground(stage: Node3D, preset: Dictionary) -> void:
 	var palette: Dictionary = _palette(preset)
 	var plane := PlaneMesh.new()
-	plane.size = Vector2(3000.0, 3000.0)
+	plane.size = Vector2(GROUND_SIZE, GROUND_SIZE)
 	var ground := MeshInstance3D.new()
 	ground.name = "PreviewGround"
 	ground.mesh = plane
 	var material := StandardMaterial3D.new()
-	material.albedo_color = palette.get("ground", FALLBACK_GROUND)
+	material.albedo_color = _grade_colour(palette.get("ground", FALLBACK_GROUND),
+		0.90, 1.12)
 	material.roughness = 1.0
 	material.specular_mode = BaseMaterial3D.SPECULAR_DISABLED
 	ground.material_override = material
@@ -290,23 +316,53 @@ func _palette(preset: Dictionary) -> Dictionary:
 		"haze": FALLBACK_HAZE, "kerb": FALLBACK_KERB}
 
 
+## Keeps a palette hue but pushes its value and saturation, so the sky gradient
+## reads as painted cartoon art instead of a menu-chip tint. Godot's Color has
+## no HSV accessor, so the conversion is written out.
+func _grade_colour(colour: Color, value: float,
+		saturation: float) -> Color:
+	var maximum: float = maxf(colour.r, maxf(colour.g, colour.b))
+	var minimum: float = minf(colour.r, minf(colour.g, colour.b))
+	var delta: float = maximum - minimum
+	var hue: float = 0.0
+	if delta > 0.00001:
+		if maximum == colour.r:
+			hue = fmod((colour.g - colour.b) / delta, 6.0)
+		elif maximum == colour.g:
+			hue = (colour.b - colour.r) / delta + 2.0
+		else:
+			hue = (colour.r - colour.g) / delta + 4.0
+		hue = fposmod(hue / 6.0, 1.0)
+	var hsv_saturation: float = 0.0 if maximum <= 0.00001 \
+		else delta / maximum
+	return Color.from_hsv(hue,
+		clampf(hsv_saturation * saturation, 0.0, 1.0),
+		clampf(maximum * value, 0.02, 1.0), 1.0)
+
+
 ## Sky gradient, sun and ambient derived from the map palette: the sky runs from
 ## the palette sky at the zenith to its haze at the horizon, the sun is a warm
 ## white biased towards that sky, and the ambient is the haze.
 func _install_lighting(stage: Node3D, preset: Dictionary) -> void:
 	var palette: Dictionary = _palette(preset)
-	var sky_colour: Color = palette.get("sky", FALLBACK_SKY)
-	var haze: Color = palette.get("haze", FALLBACK_HAZE)
-	var ground: Color = palette.get("ground", FALLBACK_GROUND)
+	# The palette is authored for flat UI chips, so the preview pushes its
+	# saturation and value into a card-grade sky gradient instead of copying the
+	# washed-out menu tints straight into the 3D scene.
+	var sky_colour: Color = _grade_colour(
+		(palette.get("sky", FALLBACK_SKY) as Color).lerp(SKY_BLUE, 0.55),
+		0.86, 1.35)
+	var haze: Color = _grade_colour(
+		(palette.get("haze", FALLBACK_HAZE) as Color).lerp(SKY_HORIZON, 0.55),
+		1.0, 1.05)
 	for node: Node in _nodes_of_type(stage, "DirectionalLight3D"):
 		node.get_parent().remove_child(node)
 		node.free()
 	var sun := DirectionalLight3D.new()
 	sun.name = "PreviewSun"
 	sun.rotation_degrees = Vector3(-52.0, -34.0, 0.0)
-	sun.light_color = Color(1.0, 0.96, 0.88).lerp(sky_colour.lightened(0.45),
-		0.35)
-	sun.light_energy = 1.30
+	sun.light_color = Color(1.0, 0.96, 0.88).lerp(
+		palette.get("sky", FALLBACK_SKY), 0.30)
+	sun.light_energy = 1.18
 	sun.shadow_enabled = true
 	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS
 	sun.directional_shadow_max_distance = 1200.0
@@ -316,11 +372,14 @@ func _install_lighting(stage: Node3D, preset: Dictionary) -> void:
 		node.get_parent().remove_child(node)
 		node.free()
 	var sky_material := ProceduralSkyMaterial.new()
-	sky_material.sky_top_color = sky_colour.darkened(0.06)
+	sky_material.sky_top_color = sky_colour
 	sky_material.sky_horizon_color = haze
-	sky_material.sky_curve = 0.12
+	sky_material.sky_curve = 0.38
+	# The preview camera always looks down, so the rays behind the map hit the
+	# sky material's lower hemisphere. Painting that hemisphere as sky keeps the
+	# card's backdrop a gradient instead of another slab of ground colour.
 	sky_material.ground_horizon_color = haze
-	sky_material.ground_bottom_color = ground.darkened(0.22)
+	sky_material.ground_bottom_color = sky_colour.darkened(0.18)
 	sky_material.sun_angle_max = 9.0
 	sky_material.sky_energy_multiplier = 1.05
 	var sky := Sky.new()
@@ -329,21 +388,21 @@ func _install_lighting(stage: Node3D, preset: Dictionary) -> void:
 	environment.background_mode = Environment.BG_SKY
 	environment.sky = sky
 	environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	environment.ambient_light_color = haze.lightened(0.18)
-	environment.ambient_light_energy = 0.62
+	environment.ambient_light_color = haze.lightened(0.05)
+	environment.ambient_light_energy = 0.35
 	environment.tonemap_mode = Environment.TONE_MAPPER_FILMIC
-	environment.tonemap_exposure = 1.02
-	environment.tonemap_white = 1.20
+	environment.tonemap_exposure = 0.95
+	environment.tonemap_white = 1.00
 	environment.fog_enabled = true
 	environment.fog_light_color = haze
 	environment.fog_light_energy = 1.0
-	environment.fog_density = 0.0006
-	environment.fog_sky_affect = 0.45
+	environment.fog_density = 0.0005
+	environment.fog_sky_affect = 0.30
 	environment.fog_aerial_perspective = 0.35
 	environment.adjustment_enabled = true
 	environment.adjustment_brightness = 1.00
-	environment.adjustment_contrast = 1.05
-	environment.adjustment_saturation = 1.12
+	environment.adjustment_contrast = 1.15
+	environment.adjustment_saturation = 1.30
 	var world := WorldEnvironment.new()
 	world.name = "PreviewEnvironment"
 	world.environment = environment
@@ -390,16 +449,13 @@ func _expand_framing(points: PackedVector3Array) -> Dictionary:
 		max_point = max_point.max(point)
 	var centre: Vector3 = (min_point + max_point) * 0.5
 	centre.y = 0.0
-	var half: Vector3 = (max_point - min_point) * 0.5
-	var radius: float = maxf(Vector2(half.x, half.z).length(), 8.0)
-	var margin: float = FRAME_PAD / radius
 	var expanded := PackedVector3Array()
 	for point: Vector3 in points:
 		var offset: Vector3 = point - centre
 		offset.y = 0.0
 		expanded.append(Vector3(point.x, 0.0, point.z)
 			+ offset.normalized() * FRAME_PAD)
-	return {"centre": centre, "points": expanded, "margin": margin}
+	return {"centre": centre, "points": expanded}
 
 
 ## Fits a three-quarter isometric camera around the expanded circuit. Twelve
@@ -444,12 +500,12 @@ func _camera_score(centre: Vector3, points: PackedVector3Array, eye: Vector3,
 	if extent > FRAME_FILL:
 		return 100.0 + extent
 	var ndc: Vector2 = _project(eye, centre, start)
-	var score: float = absf(ndc.x) * 0.6 + eye.distance_to(centre) * 0.001
-	# y grows downwards: +1 is the bottom of the frame, and the near foreground
-	# is where a start line reads best.
-	score += maxf(0.0, 0.9 - ndc.y) * 1.6
-	if absf(ndc.x) > 0.82 or ndc.y < -0.82:
-		score += 3.0
+	# NDC y grows upwards; the lower-middle third of the frame is where the
+	# start/finish reads best, so penalise distance from (0, -0.3).
+	var score: float = absf(ndc.x) * 1.2 + absf(ndc.y + 0.3) * 1.5
+	score += absf(extent - FRAME_FILL) * 2.0
+	if absf(ndc.x) > 0.85 or ndc.y < -0.9:
+		score += 4.0
 	return score
 
 

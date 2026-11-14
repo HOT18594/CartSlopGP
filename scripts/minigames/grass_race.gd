@@ -286,8 +286,11 @@ func _ready() -> void:
 	# Older free-form presets still fall back to the spline builder.
 	var grid_rows: PackedStringArray = TrackDefs.grid_of(_preset)
 	if grid_rows.size() > 0:
-		_spline = KenneyTiles.build(self, grid_rows,
-			{"id": TrackDefs.theme_id_of(_preset)})
+		var theme_dict: Dictionary = {"id": TrackDefs.theme_id_of(_preset)}
+		var height_rows: PackedStringArray = TrackDefs.heights_of(_preset)
+		if height_rows.size() > 0:
+			theme_dict["heights"] = height_rows
+		_spline = KenneyTiles.build(self, grid_rows, theme_dict)
 	else:
 		_spline = TrackSpline.new(_preset)
 	_track_points = _spline.points

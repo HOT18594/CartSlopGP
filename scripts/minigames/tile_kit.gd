@@ -64,8 +64,9 @@ const BARRIER_META: String = "tile_barrier"
 const CLEARANCE_STEP: float = 0.75
 ## Nature-kit bank geometry: the inner face of a bank sits BARRIER_CLEARANCE
 ## from the centreline, so the models extend BANK_INSET further out.
-const BANK_INSET: float = 3.2
+const BANK_INSET: float = 5.0
 const BANK_SPACING: float = 7.0
+const BANK_COLLIDER: float = 4.0
 const BANK_MODELS: Array[String] = [
 	"rock_largeA", "rock_largeB", "rock_tallA", "rock_largeF",
 ]
@@ -309,7 +310,7 @@ static func _measure_barrier_box(collision: CollisionShape3D, box: BoxShape3D,
 	var xform: Transform3D = _world_transform(collision)
 	var half: Vector3 = box.size * 0.5
 	var closest: float = INF
-	for point: Vector3 in _box_samples(half):
+	for point: Vector3 in box_samples(half):
 		closest = minf(closest, spline_distance(spline, xform * point))
 	if closest == INF:
 		return
@@ -321,7 +322,7 @@ static func _measure_barrier_box(collision: CollisionShape3D, box: BoxShape3D,
 
 ## Eight corners plus the four face centres of a box, so the audit does not only
 ## look at the ends of a long barrier piece.
-static func _box_samples(half: Vector3) -> Array[Vector3]:
+static func box_samples(half: Vector3) -> Array[Vector3]:
 	var points: Array[Vector3] = []
 	for ix: int in [-1, 1]:
 		for iy: int in [-1, 1]:
@@ -424,7 +425,7 @@ static func terrain_banks(parent: Node3D, spline: RefCounted, from_dist: float,
 			float(index) * 1.7, Vector3.ONE * bank_scale, true))
 		_add_box_shape(body, Transform3D(Basis.IDENTITY,
 			point + Vector3.UP * (height * 0.5)),
-			Vector3(BANK_INSET * 1.6, height, BANK_INSET * 1.6))
+			Vector3(BANK_COLLIDER, height, BANK_COLLIDER))
 		placed += 1
 	for model: String in batches:
 		_batch_model(body, model, batches[model] as Array, "Bank_" + model,

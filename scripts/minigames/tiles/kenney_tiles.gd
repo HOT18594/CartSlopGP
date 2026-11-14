@@ -19,13 +19,26 @@ class_name KenneyTiles
 ## (`points`, `cumulative`, `total_length`, `wrap_distance`, `sample`, `closest`,
 ## `yaw_at`, `curvature_at`), so bots, lap logic, surfaces and the server
 ## contract keep working without knowing a grid was involved. Extra helpers:
-## `tiles`, `tile_at`, `cell_at`, `surface_at`, `half_width_at`, `gap_length`.
+## `tiles`, `tile_at`, `cell_at`, `surface_at`, `half_width_at`, `gap_length`,
+## `height_at`, `plan_distance`.
 ##
 ## Map contract (see also scripts/minigames/tile_kit.gd):
 ##   maps/<id>_theme.gd :  static func build(race: Node3D, spline) -> void
 ## The theme dresses the map with tile_kit.* and returns nothing. This engine
-## owns the road, its colliders and the spline. Tiles are flat: the Kenney kit
-## is planar, so ramps and bumps are props with their own ramp colliders.
+## owns the road, its colliders and the spline.
+##
+## Elevation is opt-in: a map may carry per-cell heights (`heights` grid or a
+## smooth `elevation` profile, read from the theme dictionary or from its
+## registry preset). The spline points, the road pieces and the road colliders
+## then all follow the slope, a raised straight gets the kit's bridge support
+## and jump/bump cells keep their wedge and hump. A grid without height data is
+## built exactly as before, so every existing map stays flat.
+##
+## Clearance helpers (`clearance_path`, `plan_clearance`) walk the real road
+## edge geometry at a constant lateral distance and return a path a barrier or a
+## terrain bank can follow without ever being placed on the racing surface, even
+## around the inside of an 8 m corner. tile_kit.barrier_line and
+## tile_kit.terrain_banks are built on them.
 ##
 ## Wiring (the race scene, not this file, does it once per race):
 ##   _spline = KenneyTiles.build(self, TrackDefs.grid_of(preset),
@@ -34,9 +47,9 @@ class_name KenneyTiles
 ## Until that call exists the race keeps sampling the old TrackSpline and the
 ## grid engine is only exercised by the headless harness.
 ##
-## Every road cell collides on CollisionLayers.WORLD with a box, and jump/bump
-## cells get a real wedge/hump concave shape instead of a box so a kart drives
-## up the slope it sees.
+## Every road cell collides on CollisionLayers.WORLD with a box (tilted on an
+## elevated grid), and jump/bump cells get a real wedge/hump concave shape
+## instead of a box so a kart drives up the slope it sees.
 
 const TileCatalog := preload("res://scripts/minigames/tiles/tile_catalog.gd")
 const CollisionLayers := preload("res://scripts/systems/collision_layers.gd")
@@ -420,13 +433,14 @@ static func _where(cell: Vector2i) -> String:
 #               and '0'..'9' for digit * `height_step` metres, or
 #               a flat row-major Array/PackedFloat32Array of metres,
 #   "height_step": metres per digit (default HEIGHT_STEP),
-#   "bridges": cells that get a bridge support under an elevated deck,
 #   "elevation": Array of {at, height} lap fractions (a smooth profile).
+# A straight cell whose deck is at least BRIDGE_MIN_HEIGHT high automatically
+# gets the kit's bridge piece under it, so a raised road reads as a bridge.
 # A flat grid (no data, or all zeros) keeps the old flat pipeline untouched.
 
 
-## Normalised height data: {cells: Dictionary[Vector2i, float], bridges:
-## Dictionary[Vector2i, bool], profile: Array, max_height: float, flat: bool}.
+## Normalised height data: {cells: Dictionary[Vector2i, float], profile: Array,
+## step: float, max_height: float, flat: bool}.
 static func _height_spec(theme: Variant, width: int, height: int) -> Dictionary:
 	var spec: Dictionary = {
 		"cells": {}, "profile": [], "step": HEIGHT_STEP,
