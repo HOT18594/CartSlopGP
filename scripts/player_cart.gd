@@ -70,13 +70,15 @@ const FALL_RESET_HEIGHT: float = -4.0
 @export var max_speed: float = 18.0 ## Fastest forward speed (m/s).
 @export var reverse_speed: float = 7.0 ## Fastest reverse speed (m/s).
 @export var acceleration: float = 16.0 ## Base speed gain per second (m/s^2), tapers near top speed.
-@export var brake_power: float = 26.0 ## Speed removed per second while braking (m/s^2).
+@export var brake_power: float = 34.0 ## Speed removed per second while braking (m/s^2).
+@export var brake_lateral_grip: float = 14.0 ## Sideways bite while braking, so a stop also kills a slide.
 @export var friction: float = 6.0 ## Speed lost per second when coasting (m/s^2).
 @export var min_turn_speed: float = 3.0 ## Speed (m/s) at which steering reaches full authority.
 
 @export_group("Grip & Drift")
 @export var lateral_grip: float = 10.0 ## How fast sideways slip is cancelled (m/s^2).
 @export var drift_grip: float = 2.5 ## Lateral grip while the handbrake is held (m/s^2).
+@export var slip_drag: float = 0.9 ## Forward speed lost per second per m/s of lateral slide.
 @export var drift_detection_threshold: float = 2.0 ## Sideways speed (m/s) that counts as drifting.
 @export var landing_stability_strength: float = 0.6 ## Fraction of sideways speed removed on landing (0-1).
 @export var slip_grip_falloff_start: float = 3.5 ## Sideways speed (m/s) where lateral grip starts to saturate.
@@ -1112,6 +1114,10 @@ func _update_drive(delta: float, handbrake_held: bool) -> void:
 		# cancel out and keep it accelerating.
 		fwd_speed = move_toward(fwd_speed, 0.0,
 			brake_power * braking * delta * grip_scale)
+		# A stop must kill the slide too. Braking only the forward component let a
+		# drifting kart keep most of its speed while pointing sideways.
+		lat_speed = move_toward(lat_speed, 0.0,
+			brake_lateral_grip * braking * delta * grip_scale)
 	elif throttle > 0.05:
 		var accel_scale: float = clampf(1.0 - fwd_speed / maxf(eff_max_speed, 0.001), 0.25, 1.0)
 		fwd_speed = move_toward(fwd_speed, eff_max_speed,
@@ -1141,12 +1147,18 @@ func _update_drive(delta: float, handbrake_held: bool) -> void:
 	if grounded and handbrake_held:
 		grip = drift_grip * grip_scale
 		fwd_speed = move_toward(fwd_speed, 0.0,
-			brake_power * 0.4 * delta * grip_scale)
+			brake_power * 0.55 * delta * grip_scale)
 	if not grounded:
 		grip *= 0.25
 	else:
 		# Grip saturates past the slip angle: small slides stay planted, big
 		# ones keep sliding so a handbrake drift or a heavy landing can rotate.
+		# Sliding sideways costs speed. Without this a kart carried almost full
+		# speed through a corner while sideways, which is the 'too much speed held'
+		# feel. Scrub scales with how sideways the kart actually is.
+		if absf(lat_speed) > drift_detection_threshold:
+			fwd_speed = move_toward(fwd_speed, 0.0,
+				slip_drag * absf(lat_speed) * delta)
 		var slip_speed: float = absf(lat_speed)
 		var slip_t: float = clampf((slip_speed - slip_grip_falloff_start)
 			/ maxf(slip_grip_falloff_end - slip_grip_falloff_start, 0.001), 0.0, 1.0)
