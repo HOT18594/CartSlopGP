@@ -2,6 +2,10 @@ class_name CartFeedback
 extends Node3D
 
 const SkidTrailScript := preload("res://scripts/feedback/skid_trail.gd")
+## Every catalog vehicle must leave a visible mark; flavor widths stay wider
+## for heavier vehicles but never collapse to zero.
+const MIN_SKID_WIDTH: float = 0.12
+const MAX_SKID_WIDTH: float = 0.40
 
 const IMPACT_LIGHT_PATHS: PackedStringArray = [
 	"res://assets/audio/sfx/impacts/metal_light_0.ogg",
@@ -111,10 +115,12 @@ func _ready() -> void:
 	_impact_sparks = $ImpactSparks as GPUParticles3D
 	_paint_chips = $PaintChips as GPUParticles3D
 	_camera = get_viewport().get_camera_3d()
+	# Spawn ribbons before the rival early-out. Every catalog vehicle - cart,
+	# racing class, truck, van and the AI drivers of any of them - must mark.
+	_spawn_skid_trails()
 	if _cart != null and _cart.ai_mode:
-		# Rivals do not need 11 audio streams, skid ribbons or per-frame
-		# particle/audio work. The nodes stay so the parent's typed reference
-		# remains valid, but they never load or emit.
+		# Rivals need no audio streams or per-frame particle work. Their skid
+		# ribbons stay: those only do work while the rival is actually sliding.
 		enable_audio = false
 		enable_dust = false
 		enable_speed_feedback = false
@@ -128,22 +134,29 @@ func _ready() -> void:
 				particle.visible = false
 		return
 	_load_audio()
-	_spawn_skid_trails()
 
 
 func _spawn_skid_trails() -> void:
 	## One ribbon per rear wheel, in world space so the marks stay put.
+	## Rivals get the same ribbons on a shorter sample window; the local cart
+	## keeps the full-length trail because the player sees it up close.
+	var is_ai: bool = _cart != null and _cart.ai_mode
 	for side: float in [-1.0, 1.0]:
 		var trail: Node3D = SkidTrailScript.new()
 		trail.cart = _cart
 		trail.wheel_offset = Vector3(0.43 * side, 0.0, 0.55)
+		if is_ai:
+			trail.max_points = 128
+			trail.fade_time = 4.5
+			trail.sample_distance = 0.26
 		trail.set_meta("wheel_side", side)
 		add_child(trail)
 		_skid_trails.append(trail)
 
 
 func set_remote_mode(remote: bool) -> void:
-	## Ghost carts need no smoke/skid simulation at all.
+	## A ghost streams a pose, not a slide state, so its ribbons stay parked
+	## with physics off instead of paying for another cart's marks.
 	set_physics_process(not remote)
 	for trail: Node3D in _skid_trails:
 		if is_instance_valid(trail):
@@ -152,29 +165,47 @@ func set_remote_mode(remote: bool) -> void:
 
 func apply_vehicle_profile(entry: Dictionary) -> void:
 	## Per-vehicle feel: smoke volume, skid width/track and its own sound loop.
-	if entry.is_empty() or (_cart != null and _cart.ai_mode):
+	## AI carts take the skid values too; their audio stays disabled.
+	if entry.is_empty():
 		return
+	var is_ai: bool = _cart != null and _cart.ai_mode
 	smoke_intensity = clampf(float(entry.get("smoke", smoke_intensity)), 0.05, 1.0)
 	smoke_lifetime = 1.15 + smoke_intensity * 0.55
 	_has_engine = bool(entry.get("has_engine", true))
 	_loop_idle = bool(entry.get("loop_idle", _has_engine))
 	_loop_base_pitch = float(entry.get("loop_pitch", 0.8))
 	_loop_pitch_span = float(entry.get("loop_pitch_span", 0.7))
-	var loop_sound: String = str(entry.get("loop_sound", ""))
-	if loop_sound != "" and ResourceLoader.exists(loop_sound):
-		_set_stream(_engine_audio, loop_sound, "")
-		_loop_stream(_engine_audio.stream)
-		if not _has_engine and _engine_audio != null:
-			_engine_audio.stop()
+	if not is_ai:
+		var loop_sound: String = str(entry.get("loop_sound", ""))
+		if loop_sound != "" and ResourceLoader.exists(loop_sound):
+			_set_stream(_engine_audio, loop_sound, "")
+			_loop_stream(_engine_audio.stream)
+			if not _has_engine and _engine_audio != null:
+				_engine_audio.stop()
 	var side: float = float(entry.get("skid_side", 0.43))
 	var back: float = float(entry.get("skid_back", 0.55))
-	var mark_width: float = float(entry.get("skid_width", 0.17))
+	var mark_width: float = _profile_skid_width(entry)
 	for trail: Node3D in _skid_trails:
 		if is_instance_valid(trail):
 			var trail_side: float = float(trail.get_meta("wheel_side", 1.0))
 			trail.set("wheel_offset", Vector3(side * trail_side, 0.0, back))
 			trail.set("width", mark_width)
-			trail.set("opacity", 0.55 + smoke_intensity * 0.10)
+			trail.set("opacity", clampf(0.55 + smoke_intensity * 0.10, 0.58, 0.68))
+
+
+static func _profile_skid_width(entry: Dictionary) -> float:
+	## The authored per-vehicle width is used when sane. A missing, zero or
+	## non-finite value falls back to a share of the body width, and every
+	## result is clamped so a save, a composed racing car or a future catalog
+	## entry can never emit an invisible zero-width ribbon. The shopping cart's
+	## authored 0.09 m is lifted to the visible floor; heavier vehicles keep
+	## their wider marks.
+	var mark_width: float = float(entry.get("skid_width", 0.0))
+	if not is_finite(mark_width) or mark_width <= 0.0:
+		mark_width = float(entry.get("width", 1.4)) * 0.16
+	if not is_finite(mark_width) or mark_width <= 0.0:
+		mark_width = MIN_SKID_WIDTH
+	return clampf(mark_width, MIN_SKID_WIDTH, MAX_SKID_WIDTH)
 
 
 func _load_audio() -> void:

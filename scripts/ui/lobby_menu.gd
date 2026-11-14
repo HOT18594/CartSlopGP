@@ -5,7 +5,7 @@ const UiAnim := preload("res://scripts/ui/ui_anim.gd")
 ##   header: title / back
 ##   profile row: name + tag colour (idle only, compact)
 ##   idle: HOST | JOIN segmented control
-##         HOST: one BOTS slider + two equal host tiles (LAN / ONLINE)
+##         HOST: one BOTS tile strip + two equal host tiles (LAN / ONLINE)
 ##         JOIN: one code field + equal JOIN / SEARCH tiles
 ##   room: real code + COPY/LEAVE, 8 player slots, host settings, START
 ##   client: title LOBBY, real code, read-only setup summary
@@ -26,6 +26,11 @@ const SERVER_DOWN: String = "Game server is down. Try again later."
 const OFFLINE_TEXT: String = "Online play is unavailable right now. LAN play still works."
 const LEAVE_WARNING: String = "Leaving will close the room for everyone."
 const MAX_SLOTS: int = 8
+
+## Same BOTS tile strip the single-player PLAY menu shows: six equal tiles,
+## 0 = NONE. The lobby reuses UiKit.segmented instead of inventing a style.
+const BOT_LABELS: PackedStringArray = ["NONE", "1", "2", "3", "4", "5"]
+const BOT_VALUES: Array[int] = [0, 1, 2, 3, 4, 5]
 
 const TAG_COLORS: Array[Dictionary] = [
 	{"name": "YELLOW", "hex": "ffd22e"},
@@ -55,8 +60,7 @@ var _retry_button: Button
 var _mode_switch: Button
 var _host_page: VBoxContainer
 var _join_page: VBoxContainer
-var _bots_slider: HSlider
-var _bots_value_label: Label
+var _bots_strip: Button
 var _room_box: VBoxContainer
 var _join_input: LineEdit
 var _join_button: Button
@@ -154,8 +158,8 @@ func _focus_mode() -> void:
 		MenuNav.focus(_host_pi_button)
 	elif _lan_button != null:
 		MenuNav.focus(_lan_button)
-	elif _bots_slider != null:
-		MenuNav.focus(_bots_slider)
+	elif _bots_strip != null:
+		MenuNav.focus(_bots_strip)
 
 
 func _set_mode(mode: String, move_focus: bool = true) -> void:
@@ -289,6 +293,18 @@ func _apply_soft_disabled(button: Button) -> void:
 
 func _bots_text(total: int) -> String:
 	return "%d BOT%s" % [total, "" if total == 1 else "S"]
+
+
+func _make_bots_strip(start: int) -> Button:
+	## The same segmented BOTS strip the single-player PLAY menu uses, built
+	## from the shared UiKit helper so this screen adds no third selection
+	## style. One focus stop, like every other strip: left/right (or the d-pad)
+	## moves the selection, a click picks the tile under the pointer.
+	var strip: Button = UiKit.segmented(BOT_LABELS, BOT_VALUES,
+		clampi(start, 0, BOT_VALUES.size() - 1), 84.0, 52.0)
+	strip.tooltip_text = "How many AI carts join the room."
+	strip.connect("option_changed", _on_bots_option)
+	return strip
 
 
 func _make_bots_slider(start: int) -> HSlider:
@@ -470,20 +486,15 @@ func _build_host_page() -> void:
 	host_col.add_theme_constant_override("separation", UiKit.SPACING)
 	host_col.add_child(_heading("HOST A ROOM"))
 
-	# BOTS: one real slider, integer steps 0-5, live value on the right. It
-	# writes the same field the old pills used (GameSettings.set_bot_total),
+	# BOTS: the same selectable tile strip as single player, not a slider. It
+	# writes the same field the old slider did (GameSettings.set_bot_total),
 	# which Network.host_game() reads when it opens the session.
-	var bots_row := HBoxContainer.new()
-	bots_row.add_theme_constant_override("separation", UiKit.SPACING)
-	host_col.add_child(bots_row)
 	var bots_caption: Label = _caption("BOTS")
-	bots_caption.custom_minimum_size = Vector2(64, 0)
-	bots_caption.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	bots_row.add_child(bots_caption)
-	_bots_slider = _make_bots_slider(GameSettings.effective_bot_count())
-	bots_row.add_child(_bots_slider)
-	_bots_value_label = _bots_value()
-	bots_row.add_child(_bots_value_label)
+	bots_caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	host_col.add_child(bots_caption)
+	_bots_strip = _make_bots_strip(GameSettings.effective_bot_count())
+	_bots_strip.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	host_col.add_child(_bots_strip)
 
 	# Two equal doors: the choice is LAN or ONLINE, nothing below it.
 	var actions := HBoxContainer.new()
@@ -1231,13 +1242,24 @@ func _on_game_mode(mode: String) -> void:
 	_refresh_config()
 
 
+func _on_bots_option(value: Variant) -> void:
+	## Tile strip in the HOST panel. The selected tile is the value, so the
+	## strip already shows it; only the settings and the room copy move.
+	_apply_bot_total(int(value))
+
+
 func _on_bots_slider_value(value: float) -> void:
+	## In-room BOTS slider. Same write contract, still one control per host.
+	_apply_bot_total(clampi(int(round(value)), 0, 5))
+
+
+func _apply_bot_total(total: int) -> void:
 	## Same contract the old BOTS pill used: GameSettings.set_bot_total() is the
 	## field Network.host_game() reads, and a live host also re-broadcasts the
 	## session config so clients see the new count.
-	var total: int = clampi(int(round(value)), 0, 5)
-	GameSettings.set_bot_total(total)
-	_set_bots_views(total)
+	var clean: int = clampi(total, 0, 5)
+	GameSettings.set_bot_total(clean)
+	_set_bots_views(clean)
 	if Network.is_host:
 		Network.configure_session(GameSettings.multiplayer_mode,
 			GameSettings.bots_enabled, GameSettings.effective_bot_count())
@@ -1245,15 +1267,13 @@ func _on_bots_slider_value(value: float) -> void:
 
 
 func _set_bots_views(total: int) -> void:
-	## Keep the two sliders (idle host page and in-room host settings) and
-	## their live labels on the same value without re-emitting value_changed.
+	## Keep the idle host strip and the in-room slider on the same value
+	## without re-emitting either change signal.
 	var clean: int = clampi(total, 0, 5)
-	if _bots_slider != null:
-		_bots_slider.set_value_no_signal(float(clean))
+	if _bots_strip != null:
+		_bots_strip.call("set_index", clean)
 	if _room_bots_slider != null:
 		_room_bots_slider.set_value_no_signal(float(clean))
-	if _bots_value_label != null:
-		_bots_value_label.text = _bots_text(clean)
 	if _room_bots_value_label != null:
 		_room_bots_value_label.text = _bots_text(clean)
 

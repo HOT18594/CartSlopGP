@@ -5,10 +5,11 @@ class_name KenneyTileCatalog
 ## Every road piece in assets/models/kenney_racing_kit is authored on a 1.0
 ## model-unit module: roadStraight is 1x1, roadStraightLong is 1x2,
 ## roadCornerSmall is 1x1 and roadCornerLarge is 2x2. The drivable lane on every
-## piece is 0.69027 units wide, its centre sits 0.15 units into the footprint
-## and each connector is the midpoint of a footprint edge. That is the grid
-## contract the engine trusts; the model origin is an arbitrary export pivot and
-## is never used for placement.
+## piece is 0.69027 units wide and each connector is the midpoint of a footprint
+## edge. The lane's asphalt plane is the model's local Y = 0 (the kerbs are
+## raised 0.01 units above it), NOT the AABB bottom: the AABB runs from -0.01 to
+## +0.01 units around that plane. The engine aligns the lane plane with the
+## spline and never uses the export pivot for placement.
 ##
 ## One model unit is scaled to TILE_SIZE metres. At 16 m the measured lane is
 ## 11.04 m wide, which keeps the existing race handling (track_spline/grass_race
@@ -48,8 +49,16 @@ const TILE_SIZE: float = 16.0
 const ROAD_LANE_UNITS: float = 0.69027
 ## Half width of the drivable lane in metres.
 const ROAD_HALF: float = TILE_SIZE * ROAD_LANE_UNITS * 0.5
+## Model-space Y of the asphalt plane inside every road GLB. The kerbs sit
+## +0.01 units (16 cm) above it; the slab underside is -0.01 units below.
+const LANE_PLANE_Y: float = 0.0
 ## Half a tile: the radius the 1-cell corner pieces are authored with.
 const HALF_TILE: float = TILE_SIZE * 0.5
+## Metres above the grid spline at which the Kenney lane plane is placed. The
+## race's legacy dirt-ribbon collider sits at +0.04, so the tiled road is 5 mm
+## above it: the cartoon Kenney road is the visible surface and the watertight
+## tile collider owns the physics, while the old ribbon stays buried.
+const ROAD_SURFACE: float = 0.045
 
 ## Prop scale for the racing kit: same unit-to-metre ratio as the road.
 const PROP_SCALE: float = TILE_SIZE
@@ -68,7 +77,9 @@ const ROAD_MODELS: Dictionary = {
 	"W": {"model": "roadCornerSmall", "scale": Vector3.ONE},
 	"C": {"model": "roadStraight", "scale": Vector3.ONE},
 	"B": {"model": "roadBump", "scale": Vector3(1.0, 0.35, 0.5)},
-	"J": {"model": "roadRamp", "scale": Vector3(1.0, 0.6, 1.0)},
+	# J uses the walled kicker so the launch ramp reads as a built structure.
+	# The side walls are part of the GLB; KenneyTiles adds a base and lip decal.
+	"J": {"model": "roadRampWall", "scale": Vector3(1.0, 0.6, 1.0)},
 	"P": {"model": "roadPitStraight", "scale": Vector3.ONE},
 	"E": {"model": "roadPitStraight", "scale": Vector3.ONE},
 	"G": {"model": "roadPitGarage", "scale": Vector3.ONE},

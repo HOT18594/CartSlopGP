@@ -21,6 +21,11 @@ class_name TileKit
 ## BARRIER_CLEARANCE of the centreline, so nothing solid can sit on the racing
 ## surface even on the inside of an 8 m corner.
 ##
+## `dress_track` is the shared detail pass KenneyTiles.build calls once per race:
+## a painted kerb line, evenly spaced advertising hoardings and a marker on every
+## corner, merged into one vertex-coloured mesh. It carries no collider, so it is
+## pure trackside detail and cannot narrow or catch the racing surface.
+##
 ## Repeated props of the same model are batched into one MultiMesh per mesh
 ## part; one-off pieces (grandstands, gantries, overhead lights) are instantiated
 ## normally. Every solid piece carries a StaticBody3D collider on
@@ -92,6 +97,31 @@ const BANK_MODELS: Array[String] = [
 ]
 const TYRE_OFFSET: float = 2.0
 
+## Trackside detail (detail only: no colliders, so it can never narrow the road).
+## A painted kerb line sits on the kit's raised kerb at the lane edge; low
+## advertising hoardings stand on the verge between the invisible kart barrier
+## and the themed catch wall; a marker stands on the outside of every corner.
+const DETAIL_META: String = "tile_kit_track_detail"
+const DETAIL_HOLDER: String = "TrackDetail"
+const KERB_LATERAL: float = ROAD_HALF + 0.32
+const KERB_HALF_WIDTH: float = 0.20
+const KERB_LIFT: float = TileCatalog.ROAD_SURFACE + 0.172
+const HOARDING_LATERAL: float = ROAD_HALF + 2.05
+const HOARDING_SPACING: float = 3.4
+const HOARDING_WIDTH: float = 3.2
+const HOARDING_HEIGHT: float = 1.25
+const HOARDING_DEPTH: float = 0.16
+const HOARDING_SINK: float = 0.12
+const MARKER_LATERAL: float = ROAD_HALF + 2.45
+const MARKER_HEIGHT: float = 2.30
+const MARKER_SINK: float = 0.20
+const DETAIL_RED: Color = Color("c23a2c")
+const DETAIL_CREAM: Color = Color("fff6e3")
+const DETAIL_PALETTE: Array[Color] = [
+	Color("c23a2c"), Color("e8c34a"), Color("2e86ab"), Color("4fbf52"),
+	Color("f26ca7"), Color("ff9f45"),
+]
+
 const FLAG_SCALE: float = TILE_SIZE * 0.65
 const TYRE_RADIUS: float = 0.30
 const TYRE_TUBE: float = 0.16
@@ -135,6 +165,7 @@ static var _material_cache: Dictionary = {}
 static var _mesh_cache: Dictionary = {}
 static var _shape_cache: Dictionary = {}
 static var _decal_cache: Dictionary = {}
+static var _detail_material_cache: StandardMaterial3D = null
 
 
 # --------------------------------------------------------------------------
@@ -807,6 +838,272 @@ static func tyre_stack(parent: Node3D, spline: RefCounted, dist: float,
 	var height: float = TYRE_TUBE * 2.0 + float(TYRE_LEVELS) * TYRE_LEVEL_STEP
 	_add_cylinder_shape(body, point, TYRE_COLLIDER_RADIUS, height)
 	return 1
+
+
+# --------------------------------------------------------------------------
+# trackside detail
+
+
+## The shared trackside detail pass: a painted kerb line on both lane edges, low
+## advertising hoardings on the verge and a marker on the outside of every
+## corner. Everything is merged into one vertex-coloured mesh (one draw call)
+## and carries no collider, so it can never narrow the racing surface. Called
+## once by KenneyTiles.build; a theme can skip it with
+## `race.set_meta("kenney_skip_track_detail", true)`.
+##
+## Returns {kerbs, hoardings, markers}.
+static func dress_track(parent: Node3D, spline: RefCounted,
+		theme_id: String = "") -> Dictionary:
+	if parent == null or spline == null:
+		return {}
+	var root: Node = _scene_root(parent)
+	if root == null:
+		return {}
+	if root.has_meta(DETAIL_META):
+		var cached: Variant = root.get_meta(DETAIL_META)
+		return cached as Dictionary if cached is Dictionary else {}
+	var verts := PackedVector3Array()
+	var normals := PackedVector3Array()
+	var colors := PackedColorArray()
+	var kerbs: int = _build_kerb_detail(spline, verts, normals, colors)
+	var hoardings: int = _build_hoarding_detail(spline, verts, normals, colors)
+	var markers: int = _build_corner_marker_detail(spline, verts, normals,
+		colors)
+	var stats: Dictionary = {
+		"kerbs": kerbs, "hoardings": hoardings, "markers": markers,
+	}
+	if not verts.is_empty():
+		var holder := Node3D.new()
+		holder.name = DETAIL_HOLDER
+		parent.add_child(holder)
+		var mesh := ArrayMesh.new()
+		var arrays: Array = []
+		arrays.resize(Mesh.ARRAY_MAX)
+		arrays[Mesh.ARRAY_VERTEX] = verts
+		arrays[Mesh.ARRAY_NORMAL] = normals
+		arrays[Mesh.ARRAY_COLOR] = colors
+		mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+		mesh.surface_set_material(0, _detail_material())
+		var instance := MeshInstance3D.new()
+		instance.name = "TrackDetail"
+		instance.mesh = mesh
+		instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		holder.add_child(instance)
+	root.set_meta(DETAIL_META, stats)
+	print("TRACK DETAIL %s: %d kerb quads, %d hoardings, %d corner markers, %s" % [
+		theme_id if theme_id != "" else "grid", kerbs, hoardings, markers,
+		"1 batched draw" if not verts.is_empty() else "no geometry"])
+	return stats
+
+
+## A painted red/cream band on the kit's raised kerb along both lane edges. The
+## band follows the true clearance path, so it never cuts inside a corner.
+static func _build_kerb_detail(spline: RefCounted,
+		verts: PackedVector3Array, normals: PackedVector3Array,
+		colors: PackedColorArray) -> int:
+	var quads: int = 0
+	for side: float in [-1.0, 1.0]:
+		var path: Dictionary = TileGeometry.clearance_path(spline, side,
+			KERB_LATERAL, CLEARANCE_STEP)
+		if not bool(path.get("ok", false)):
+			continue
+		var points: PackedVector3Array = path["points"] as PackedVector3Array
+		if points.size() < 2:
+			continue
+		var travelled: float = 0.0
+		for index in range(0, points.size() - 1):
+			var a: Vector3 = points[index]
+			var b: Vector3 = points[index + 1]
+			var delta: Vector3 = b - a
+			var length: float = delta.length()
+			if length < 0.05:
+				continue
+			var tangent := Vector3(delta.x, 0.0, delta.z)
+			if tangent.length_squared() < 0.000001:
+				continue
+			tangent = tangent.normalized()
+			var across: Vector3 = tangent.cross(Vector3.UP).normalized()
+			var a0: Vector3 = a + across * KERB_HALF_WIDTH \
+				+ Vector3.UP * KERB_LIFT
+			var a1: Vector3 = a - across * KERB_HALF_WIDTH \
+				+ Vector3.UP * KERB_LIFT
+			var b0: Vector3 = b + across * KERB_HALF_WIDTH \
+				+ Vector3.UP * KERB_LIFT
+			var b1: Vector3 = b - across * KERB_HALF_WIDTH \
+				+ Vector3.UP * KERB_LIFT
+			var color: Color = DETAIL_CREAM \
+				if int(travelled / 2.4) % 2 == 0 else DETAIL_RED
+			_append_detail_quad(verts, normals, colors, a0, b0, b1, a1,
+				color)
+			travelled += length
+			quads += 1
+	return quads
+
+
+## Low hoarding boards on the verge, evenly repeated around the lap. Each board
+## is a cream frame with a coloured inset, so the line reads as advertising even
+## without a text texture.
+static func _build_hoarding_detail(spline: RefCounted,
+		verts: PackedVector3Array, normals: PackedVector3Array,
+		colors: PackedColorArray) -> int:
+	var placed: int = 0
+	for side: float in [-1.0, 1.0]:
+		var path: Dictionary = TileGeometry.clearance_path(spline, side,
+			HOARDING_LATERAL, CLEARANCE_STEP)
+		if not bool(path.get("ok", false)):
+			continue
+		var total: float = float(path["total_length"])
+		if total < HOARDING_SPACING:
+			continue
+		var count: int = maxi(int(floor(total / HOARDING_SPACING)), 1)
+		var step: float = total / float(count)
+		for index in count:
+			var at: float = float(index) * step + step * 0.5
+			var point: Vector3 = _path_point(path, at)
+			var ahead: Vector3 = _path_point(path, at + 0.6)
+			var behind: Vector3 = _path_point(path, at - 0.6)
+			var tangent := Vector3(ahead.x - behind.x, 0.0,
+				ahead.z - behind.z)
+			if tangent.length_squared() < 0.000001:
+				continue
+			tangent = tangent.normalized()
+			var right: Vector3 = tangent.cross(Vector3.UP).normalized()
+			var outward: Vector3 = right * side
+			var base: float = point.y - HOARDING_SINK
+			var centre := Vector3(point.x, base + HOARDING_HEIGHT * 0.5,
+				point.z)
+			var basis := Basis(tangent, Vector3.UP, right)
+			_append_detail_box(verts, normals, colors,
+				Transform3D(basis, centre),
+				Vector3(HOARDING_WIDTH, HOARDING_HEIGHT, HOARDING_DEPTH),
+				DETAIL_CREAM)
+			var inset_centre: Vector3 = centre - outward \
+				* (HOARDING_DEPTH * 0.5)
+			_append_detail_box(verts, normals, colors,
+				Transform3D(basis, inset_centre),
+				Vector3(HOARDING_WIDTH - 0.22, HOARDING_HEIGHT - 0.22,
+					HOARDING_DEPTH + 0.06),
+				_detail_color(DETAIL_PALETTE, placed, DETAIL_RED))
+			placed += 1
+	return placed
+
+
+## One striped marker on the outside of every corner, on the verge, well clear
+## of the barrier clearance so it is pure trackside detail.
+static func _build_corner_marker_detail(spline: RefCounted,
+		verts: PackedVector3Array, normals: PackedVector3Array,
+		colors: PackedColorArray) -> int:
+	var tiles_value: Variant = spline.get("tiles")
+	if not (tiles_value is Array):
+		return 0
+	var placed: int = 0
+	for tile: Dictionary in tiles_value as Array:
+		var tile_char: String = str(tile.get("tile", ""))
+		if tile_char != "L" and tile_char != "R" and tile_char != "W":
+			continue
+		var centre: Vector3 = TileGeometry._cell_center(tile["cell"])
+		var entry: int = int(tile.get("entry", 0))
+		var exit: int = int(tile.get("exit", 2))
+		var din: Vector3 = -TileGeometry._edge_3d(entry)
+		var right: Vector3 = din.cross(Vector3.UP).normalized()
+		var corner: Vector3 = centre \
+			+ TileGeometry._edge_3d(entry) * (TILE_SIZE * 0.5) \
+			+ TileGeometry._edge_3d(exit) * (TILE_SIZE * 0.5)
+		var side_out: float = -1.0 if (corner - centre).dot(right) > 0.0 \
+			else 1.0
+		var mid: float = (float(tile.get("from", 0.0)) \
+			+ float(tile.get("to", 0.0))) * 0.5
+		var frame: Dictionary = spline.sample(mid)
+		var origin: Vector3 = frame["position"]
+		var point: Vector3 = origin \
+			+ (frame["right"] as Vector3) * (MARKER_LATERAL * side_out)
+		if spline_distance(spline, point) < ROAD_HALF + 1.0:
+			continue
+		var base: float = origin.y - MARKER_SINK
+		var segment: float = MARKER_HEIGHT / 3.0
+		for band in 3:
+			_append_detail_box(verts, normals, colors,
+				Transform3D(Basis.IDENTITY, Vector3(point.x,
+					base + segment * (float(band) + 0.5), point.z)),
+				Vector3(0.22, segment, 0.22),
+				DETAIL_RED if band % 2 == 0 else DETAIL_CREAM)
+		_append_detail_box(verts, normals, colors,
+			Transform3D(Basis.IDENTITY, Vector3(point.x,
+				base + MARKER_HEIGHT + 0.28, point.z)),
+			Vector3(0.62, 0.56, 0.62), DETAIL_CREAM)
+		_append_detail_box(verts, normals, colors,
+			Transform3D(Basis.IDENTITY, Vector3(point.x,
+				base + MARKER_HEIGHT + 0.62, point.z)),
+			Vector3(0.64, 0.12, 0.64), DETAIL_RED)
+		placed += 1
+	return placed
+
+
+static func _detail_material() -> StandardMaterial3D:
+	if _detail_material_cache != null:
+		return _detail_material_cache
+	var material := StandardMaterial3D.new()
+	material.vertex_color_use_as_albedo = true
+	material.albedo_color = Color.WHITE
+	material.roughness = 1.0
+	material.metallic = 0.0
+	material.specular_mode = BaseMaterial3D.SPECULAR_DISABLED
+	material.cull_mode = BaseMaterial3D.CULL_DISABLED
+	_detail_material_cache = material
+	return material
+
+
+static func _detail_color(palette: Array[Color], index: int,
+		fallback: Color) -> Color:
+	if palette.is_empty():
+		return fallback
+	return palette[posmod(index, palette.size())]
+
+
+static func _append_detail_quad(verts: PackedVector3Array,
+		normals: PackedVector3Array, colors: PackedColorArray,
+		a: Vector3, b: Vector3, c: Vector3, d: Vector3, color: Color) -> void:
+	var normal: Vector3 = (b - a).cross(c - a)
+	if normal.length_squared() > 0.0000001:
+		normal = normal.normalized()
+	else:
+		normal = Vector3.UP
+	_append_detail_tri(verts, normals, colors, a, b, c, normal, color)
+	_append_detail_tri(verts, normals, colors, a, c, d, normal, color)
+
+
+static func _append_detail_tri(verts: PackedVector3Array,
+		normals: PackedVector3Array, colors: PackedColorArray,
+		a: Vector3, b: Vector3, c: Vector3, normal: Vector3,
+		color: Color) -> void:
+	for point: Vector3 in [a, b, c]:
+		verts.append(point)
+		normals.append(normal)
+		colors.append(color)
+
+
+static func _append_detail_box(verts: PackedVector3Array,
+		normals: PackedVector3Array, colors: PackedColorArray,
+		xform: Transform3D, size: Vector3, color: Color) -> void:
+	var half: Vector3 = size * 0.5
+	var p: Array[Vector3] = []
+	for ix: float in [-1.0, 1.0]:
+		for iy: float in [-1.0, 1.0]:
+			for iz: float in [-1.0, 1.0]:
+				p.append(xform * Vector3(half.x * ix, half.y * iy,
+					half.z * iz))
+	_append_detail_quad(verts, normals, colors, p[0], p[1], p[3], p[2],
+		color.darkened(0.10))
+	_append_detail_quad(verts, normals, colors, p[4], p[6], p[7], p[5],
+		color.darkened(0.06))
+	_append_detail_quad(verts, normals, colors, p[0], p[4], p[5], p[1],
+		color.darkened(0.16))
+	_append_detail_quad(verts, normals, colors, p[2], p[3], p[7], p[6],
+		color.darkened(0.16))
+	_append_detail_quad(verts, normals, colors, p[0], p[2], p[6], p[4],
+		color.darkened(0.20))
+	_append_detail_quad(verts, normals, colors, p[1], p[5], p[7], p[3],
+		color)
 
 
 # --------------------------------------------------------------------------

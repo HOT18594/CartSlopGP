@@ -34,6 +34,19 @@ class_name KenneyTiles
 ## and jump/bump cells keep their wedge and hump. A grid without height data is
 ## built exactly as before, so every existing map stays flat.
 ##
+## On an elevated grid a rigid pitched slab cannot join a neighbour: a Kenney
+## corner is a quarter annulus, so pitching it makes its exit edge slope across
+## the lane. Every road vertex is instead warped onto the tile's own entry/exit
+## heights, which makes both edge rows of a seam identical; the same warped top
+## triangles become the road collider. `KENNEY SEAMS` / `KENNEY DRIVE` print the
+## measured gap, height step and normal jump once per circuit at boot, and the
+## loop closure error, so a broken lap is visible without driving it.
+##
+## Jump/bump tiles keep the modular wedge, but now sit on a solid base with
+## outer side walls and a painted lip, and a merged trackside detail pass (kerb
+## line, advertising hoardings, corner markers, no colliders) dresses the walls
+## for every circuit.
+##
 ## Clearance helpers (`clearance_path`, `plan_clearance`) walk the real road
 ## edge geometry at a constant lateral distance and return a path a barrier or a
 ## terrain bank can follow without ever being placed on the racing surface, even
@@ -53,7 +66,7 @@ class_name KenneyTiles
 ##
 ## Z-FIGHTING LADDER (mirrored from tile_kit.gd, which owns the policy):
 ## ground -0.020 m, road 0.000 m, decal +0.012 m, prop +0.024 m. Road pieces
-## stay on Z_ROAD, the crossing's second arm moves up to Z_DECAL instead of a
+## stay on ROAD_SURFACE, the crossing's second arm moves up to Z_DECAL instead of a
 ## magic number, and a deferred TileKit audit finishes the map once the theme
 ## has added its props.
 
@@ -85,6 +98,23 @@ const Z_GROUND: float = -0.020
 const Z_ROAD: float = 0.000
 const Z_DECAL: float = 0.012
 const Z_PROP: float = 0.024
+## The Kenney lane plane rides this far above the spline. The race's legacy
+## dirt ribbon sits at +0.04, so the tiled road wins the visible surface and its
+## watertight collider owns the floor; keep this in sync with TileCatalog.
+const ROAD_SURFACE: float = TileCatalog.ROAD_SURFACE
+
+## Watertight seam budget. A shared road edge must match in plan and height to
+## within this many metres; the boot report prints the measured maximum.
+const SEAM_TOLERANCE: float = 0.005
+## A ramp/jump tile is a solid structure: base block, two outer walls and a
+## painted lip band. The walls sit outside the 11.04 m lane, so they can never
+## catch a cart on the join, and they carry no collider (detail only).
+const RAMP_BASE_DEPTH: float = 0.45
+const RAMP_WALL_LATERAL: float = ROAD_HALF + 0.72
+const RAMP_WALL_THICKNESS: float = 0.28
+const RAMP_WALL_LIFT: float = 0.40
+const RAMP_LIP_HEIGHT: float = 0.55
+const RAMP_LIP_BAND: float = 0.42
 
 ## Clearance sampling. A barrier path is walked along the real road edge in
 ## steps this small, so a chord across a corner can never cut onto the surface.
@@ -369,11 +399,16 @@ static func build(parent: Node3D, rows: PackedStringArray,
 		return null
 
 	_fill_tile_distances(spline)
-	_build_road(parent, tiles, heights)
-	_build_road_collision(parent, tiles, heights)
-	_schedule_prop_audit(parent)
-
 	var theme_id: String = _theme_id(theme)
+	spline.set_meta("theme", theme_id)
+	var road_audit: Dictionary = _build_road(parent, tiles, heights, spline)
+	_build_road_collision(parent, tiles, heights,
+		road_audit.get("faces", PackedVector3Array()) as PackedVector3Array)
+	_report_seams(spline, tiles, heights,
+		road_audit.get("tile_tris", []) as Array)
+	_schedule_prop_audit(parent)
+	_schedule_track_detail(parent, spline, theme_id)
+
 	parent.set_meta("kenney_spline", spline)
 	parent.set_meta(HEIGHTS_META, heights)
 	parent.set_meta("kenney_grid_stats", {
@@ -406,6 +441,22 @@ static func _schedule_prop_audit(parent: Node3D) -> void:
 	if script == null or not script.has_method("schedule_prop_audit"):
 		return
 	script.call("schedule_prop_audit", parent)
+
+
+## Adds the shared trackside detail pass (painted kerb line, advertising
+## hoardings, corner markers) once per race. The lazy load avoids a parse-time
+## cycle because tile_kit preloads this file. A theme can opt out by setting
+## `kenney_skip_track_detail` on the race root before build().
+static func _schedule_track_detail(parent: Node3D, spline: GridSpline,
+		theme_id: String) -> void:
+	if parent == null or spline == null:
+		return
+	if bool(parent.get_meta("kenney_skip_track_detail", false)):
+		return
+	var script: Script = load("res://scripts/minigames/tile_kit.gd") as Script
+	if script == null or not script.has_method("dress_track"):
+		return
+	script.call("dress_track", parent, spline, theme_id)
 
 
 ## ASCII character of every placed tile, in lap order. Diagnostics helper.
@@ -1078,50 +1129,554 @@ static func _fill_tile_distances(spline: GridSpline) -> void:
 
 # --------------------------------------------------------------------------
 # visuals
+#
+# A flat grid keeps the historical MultiMesh path: every piece sits on the
+# lattice, the lane plane is on ROAD_SURFACE and the box colliders share exact edge
+# heights. An elevated grid cannot use rigid pitched slabs: a Kenney corner is
+# a quarter annulus on a 1x1 footprint, and pitching it about local X makes the
+# exit edge slope across the lane. Instead every road vertex is warped to the
+# spline height under its own plan position, so adjacent pieces evaluate the
+# same spline point on the shared edge and the road is watertight by
+# construction. The same warped top triangles become the road collider.
+#
+# All road geometry is merged by material into one MeshInstance3D, so an
+# elevated map costs the same handful of draw calls as the flat MultiMesh path.
+
+## Merged material groups for the elevated road, keyed by material instance id.
+static var _road_material_cache: StandardMaterial3D = null
+static var _ramp_detail_material_cache: StandardMaterial3D = null
 
 
+## Builds the road visuals and returns {faces, tile_tris}. `faces` is the
+## world-space triangle soup of the drivable top and becomes the elevated road
+## collider; `tile_tris` keeps one list per tile for the seam report.
 static func _build_road(parent: Node3D, tiles: Array[Dictionary],
-		heights: Dictionary = {}) -> void:
+		heights: Dictionary, spline: GridSpline) -> Dictionary:
 	var holder := Node3D.new()
 	holder.name = HOLDER_NAME
 	parent.add_child(holder)
-	var batches: Dictionary = {}
+	var elevated: bool = not bool(heights.get("flat", true))
 	var supports: Array = []
-	for tile: Dictionary in tiles:
+	var ramp_batches: Dictionary = {}
+	var faces := PackedVector3Array()
+	var tile_tris: Array = []
+	if not elevated:
+		var batches: Dictionary = {}
+		for tile: Dictionary in tiles:
+			var tile_char: String = str(tile["tile"])
+			var center: Vector3 = _cell_center(tile["cell"])
+			var yaw: float = float(tile["yaw"])
+			var deck: Vector3 = center + Vector3.UP * (float(tile.get("height", 0.0))
+				+ ROAD_SURFACE)
+			var model: String = _tile_model(tile)
+			var scale: Vector3 = _tile_scale(tile)
+			_add_batch(batches, model, _fit_tile(model, deck, yaw, scale, 0.0))
+			if tile_char == "C":
+				_add_batch(batches, TileCatalog.road_model("S"),
+					_fit_tile(TileCatalog.road_model("S"),
+						deck + Vector3.UP * Z_DECAL, yaw + PI * 0.5,
+						Vector3.ONE * TILE_SIZE, 0.0))
+			_collect_support(supports, tile)
+		for model: String in batches:
+			_batch_model(holder, model, batches[model] as Array, "Road_" + model,
+				false)
+		_build_ramp_structures(holder, tiles, heights)
+		_build_bridge_supports(holder, supports)
+		return {"faces": faces, "tile_tris": tile_tris}
+
+	var groups: Dictionary = {}
+	for index in tiles.size():
+		var tile: Dictionary = tiles[index]
 		var tile_char: String = str(tile["tile"])
 		var center: Vector3 = _cell_center(tile["cell"])
 		var yaw: float = float(tile["yaw"])
 		var deck: Vector3 = center + Vector3.UP * (float(tile.get("height", 0.0))
-			+ Z_ROAD)
-		var pitch: float = _tile_pitch(tile)
-		var model: String = TileCatalog.START_MODEL \
-			if bool(tile["start"]) and _is_straight_char(tile_char) \
-			else TileCatalog.road_model(tile_char)
-		var scale: Vector3 = TileCatalog.road_scale(tile_char) * TILE_SIZE
-		if model == TileCatalog.START_MODEL:
-			scale = Vector3.ONE * TILE_SIZE
-		_add_batch(batches, model, _fit_tile(model, deck, yaw, scale, pitch))
+			+ ROAD_SURFACE)
+		var model: String = _tile_model(tile)
+		var scale: Vector3 = _tile_scale(tile)
+		if tile_char == "J" or tile_char == "B":
+			# Ramps keep the kit wedge: only their lane plane follows the deck.
+			# They own a purpose-built concave collider, so they are not warped
+			# into the road soup.
+			var ramp_deck: Vector3 = center + Vector3.UP * (
+				float(tile.get("height_in", 0.0)) + ROAD_SURFACE)
+			_add_batch(ramp_batches, model,
+				_fit_tile(model, ramp_deck, yaw, scale, 0.0))
+			_collect_support(supports, tile)
+			tile_tris.append([])
+			continue
+		var base: Transform3D = _fit_tile(model, deck, yaw, scale, 0.0)
+		var tris: Array = []
+		_append_deformed_tile(groups, tris, tile, index, model, base, deck,
+			spline, tiles.size())
 		if tile_char == "C":
-			# Two straights crossing on the same cell: the read of a junction
-			# without a 2x2 piece that would spill into the neighbours. The
-			# cross arm takes the decal rung so the two coplanar verge slabs
-			# cannot z-fight in the overlap.
-			_add_batch(batches, TileCatalog.road_model("S"),
-				_fit_tile(TileCatalog.road_model("S"),
-					deck + Vector3.UP * Z_DECAL, yaw + PI * 0.5,
-					Vector3.ONE * TILE_SIZE, pitch))
-		if float(tile.get("height", 0.0)) >= BRIDGE_MIN_HEIGHT \
-				and _is_straight_char(tile_char):
-			supports.append({"deck": deck, "yaw": yaw})
-	for model: String in batches:
-		_batch_model(holder, model, batches[model] as Array, "Road_" + model,
-			false)
+			var cross_model: String = TileCatalog.road_model("S")
+			var cross_base: Transform3D = _fit_tile(cross_model,
+				deck + Vector3.UP * Z_DECAL, yaw + PI * 0.5,
+				Vector3.ONE * TILE_SIZE, 0.0)
+			var cross_tris: Array = []
+			_append_deformed_tile(groups, cross_tris, tile, index, cross_model,
+				cross_base, deck, spline, tiles.size())
+		_collect_support(supports, tile)
+		tile_tris.append(tris)
+		for tri: Dictionary in tris:
+			faces.append(tri["a"] as Vector3)
+			faces.append(tri["b"] as Vector3)
+			faces.append(tri["c"] as Vector3)
+	for model: String in ramp_batches:
+		_batch_model(holder, model, ramp_batches[model] as Array,
+			"Ramp_" + model, false)
+	var mesh := ArrayMesh.new()
+	for key: Variant in groups:
+		var group: Dictionary = groups[key] as Dictionary
+		var arrays: Array = []
+		arrays.resize(Mesh.ARRAY_MAX)
+		arrays[Mesh.ARRAY_VERTEX] = group["verts"]
+		arrays[Mesh.ARRAY_NORMAL] = group["normals"]
+		arrays[Mesh.ARRAY_TEX_UV] = group["uvs"]
+		arrays[Mesh.ARRAY_COLOR] = group["colors"]
+		var surface: int = mesh.get_surface_count()
+		mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+		mesh.surface_set_material(surface, group["material"] as Material)
+	if mesh.get_surface_count() > 0:
+		var instance := MeshInstance3D.new()
+		instance.name = "Road"
+		instance.mesh = mesh
+		instance.cast_shadow = \
+			GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		holder.add_child(instance)
+	_build_ramp_structures(holder, tiles, heights)
 	_build_bridge_supports(holder, supports)
+	return {"faces": faces, "tile_tris": tile_tris}
+
+
+static func _tile_model(tile: Dictionary) -> String:
+	if bool(tile["start"]) and _is_straight_char(str(tile["tile"])):
+		return TileCatalog.START_MODEL
+	return TileCatalog.road_model(str(tile["tile"]))
+
+
+static func _tile_scale(tile: Dictionary) -> Vector3:
+	if _tile_model(tile) == TileCatalog.START_MODEL:
+		return Vector3.ONE * TILE_SIZE
+	return TileCatalog.road_scale(str(tile["tile"])) * TILE_SIZE
+
+
+static func _collect_support(supports: Array, tile: Dictionary) -> void:
+	if float(tile.get("height", 0.0)) < BRIDGE_MIN_HEIGHT \
+			or not _is_straight_char(str(tile["tile"])):
+		return
+	# The support must stay under the *lowest* point of a sloped deck, or its
+	# flat top would poke through the road surface and become an invisible wall.
+	var rise: float = absf(float(tile.get("height_out", 0.0)) \
+		- float(tile.get("height_in", 0.0)))
+	var support_height: float = maxf(float(tile.get("height", 0.0))
+		+ ROAD_SURFACE - rise * 0.5 - 0.05, 0.01)
+	supports.append({
+		"deck": _cell_center(tile["cell"]) \
+			+ Vector3.UP * (float(tile.get("height", 0.0)) + ROAD_SURFACE),
+		"yaw": float(tile["yaw"]),
+		"height": support_height,
+	})
+
+
+## Warps one fitted road piece onto the spline surface and appends its triangles
+## to the merged material groups. Every vertex is shifted by the height
+## difference between the spline under its plan position and the tile's deck;
+## the lane plane stays at ROAD_SURFACE and both sides of a seam evaluate the same
+## spline point.
+static func _append_deformed_tile(groups: Dictionary, tris: Array,
+		tile: Dictionary, tile_index: int, model: String, base: Transform3D,
+		deck: Vector3, spline: GridSpline, tile_count: int) -> void:
+	var info: Dictionary = TileCatalog.model_info(model)
+	if not bool(info.get("ok", false)):
+		return
+	for part: Dictionary in info["parts"] as Array:
+		var mesh: Mesh = part["mesh"] as Mesh
+		if mesh == null:
+			continue
+		var part_xform: Transform3D = base * (part["transform"] as Transform3D)
+		for surface in mesh.get_surface_count():
+			var arrays: Array = mesh.surface_get_arrays(surface)
+			if arrays.is_empty():
+				continue
+			var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX] \
+				as PackedVector3Array
+			if verts.is_empty():
+				continue
+			var uvs := PackedVector2Array()
+			if arrays[Mesh.ARRAY_TEX_UV] is PackedVector2Array:
+				uvs = arrays[Mesh.ARRAY_TEX_UV] as PackedVector2Array
+			var colors := PackedColorArray()
+			if arrays[Mesh.ARRAY_COLOR] is PackedColorArray:
+				colors = arrays[Mesh.ARRAY_COLOR] as PackedColorArray
+			var indices := PackedInt32Array()
+			if arrays[Mesh.ARRAY_INDEX] is PackedInt32Array:
+				indices = arrays[Mesh.ARRAY_INDEX] as PackedInt32Array
+			# Godot's front faces are clockwise, so a cross product would point
+			# into the slab. The imported vertex normals are the truth; transform
+			# them with the placement basis and keep them for shading.
+			var source_normals := PackedVector3Array()
+			if arrays[Mesh.ARRAY_NORMAL] is PackedVector3Array:
+				source_normals = arrays[Mesh.ARRAY_NORMAL] as PackedVector3Array
+			var normal_basis: Basis = part_xform.basis.inverse().transposed()
+			var material: Material = mesh.surface_get_material(surface)
+			if material == null:
+				material = _road_material()
+			var group: Dictionary = _geometry_group(groups, material)
+			var group_verts: PackedVector3Array = group["verts"] \
+				as PackedVector3Array
+			var group_normals: PackedVector3Array = group["normals"] \
+				as PackedVector3Array
+			var group_uvs: PackedVector2Array = group["uvs"] \
+				as PackedVector2Array
+			var group_colors: PackedColorArray = group["colors"] \
+				as PackedColorArray
+			var tri_count: int = indices.size() / 3 if not indices.is_empty() \
+				else verts.size() / 3
+			for tri_index in tri_count:
+				var i0: int = indices[tri_index * 3] \
+					if not indices.is_empty() else tri_index * 3
+				var i1: int = indices[tri_index * 3 + 1] \
+					if not indices.is_empty() else tri_index * 3 + 1
+				var i2: int = indices[tri_index * 3 + 2] \
+					if not indices.is_empty() else tri_index * 3 + 2
+				if i0 >= verts.size() or i1 >= verts.size() \
+						or i2 >= verts.size():
+					continue
+				var a: Vector3 = part_xform * verts[i0]
+				var b: Vector3 = part_xform * verts[i1]
+				var c: Vector3 = part_xform * verts[i2]
+				a.y += _road_delta(spline, tile, tile_index, tile_count,
+					a.x, a.z, deck.y)
+				b.y += _road_delta(spline, tile, tile_index, tile_count,
+					b.x, b.z, deck.y)
+				c.y += _road_delta(spline, tile, tile_index, tile_count,
+					c.x, c.z, deck.y)
+				var edge_a: Vector3 = (b - a).cross(c - a)
+				if edge_a.length_squared() < 0.0000001:
+					continue
+				var na: Vector3 = _surface_normal(source_normals, i0,
+					normal_basis)
+				var nb: Vector3 = _surface_normal(source_normals, i1,
+					normal_basis)
+				var nc: Vector3 = _surface_normal(source_normals, i2,
+					normal_basis)
+				var face_normal: Vector3 = (na + nb + nc).normalized()
+				if face_normal.length_squared() < 0.5:
+					face_normal = edge_a.normalized() if edge_a.y >= 0.0 \
+						else -edge_a.normalized()
+				var geo_normal: Vector3 = edge_a.normalized()
+				if geo_normal.y < 0.0:
+					geo_normal = -geo_normal
+				group_verts.append(a)
+				group_verts.append(b)
+				group_verts.append(c)
+				group_normals.append(na)
+				group_normals.append(nb)
+				group_normals.append(nc)
+				group_uvs.append(_uv_at(uvs, i0))
+				group_uvs.append(_uv_at(uvs, i1))
+				group_uvs.append(_uv_at(uvs, i2))
+				var color_a: Color = _color_at(colors, i0)
+				var color_b: Color = _color_at(colors, i1)
+				var color_c: Color = _color_at(colors, i2)
+				group_colors.append(color_a)
+				group_colors.append(color_b)
+				group_colors.append(color_c)
+				if face_normal.y > 0.15:
+					tris.append({"a": a, "b": b, "c": c, "n": geo_normal})
+			group["verts"] = group_verts
+			group["normals"] = group_normals
+			group["uvs"] = group_uvs
+			group["colors"] = group_colors
+
+
+static func _uv_at(uvs: PackedVector2Array, index: int) -> Vector2:
+	return uvs[index] if index < uvs.size() else Vector2.ZERO
+
+
+static func _color_at(colors: PackedColorArray, index: int) -> Color:
+	return colors[index] if index < colors.size() else Color.WHITE
+
+
+## Transforms one authored vertex normal into world space. A missing normal is
+## treated as up so a simple custom mesh still contributes a drivable top.
+static func _surface_normal(source: PackedVector3Array, index: int,
+		basis: Basis) -> Vector3:
+	if index < source.size():
+		var normal: Vector3 = basis * source[index]
+		if normal.length_squared() > 0.0000001:
+			return normal.normalized()
+	return Vector3.UP
+
+
+static func _geometry_group(groups: Dictionary, material: Material) -> Dictionary:
+	var key: int = material.get_instance_id()
+	if groups.has(key):
+		return groups[key] as Dictionary
+	var group: Dictionary = {
+		"material": material,
+		"verts": PackedVector3Array(),
+		"normals": PackedVector3Array(),
+		"uvs": PackedVector2Array(),
+		"colors": PackedColorArray(),
+	}
+	groups[key] = group
+	return group
+
+
+## Height difference from a fitted tile's deck to the warp at (x, z). The warp
+## uses the tile's own entry/exit geometry, not a nearest-point search: the
+## entry edge is exactly h_in across its whole row, the exit edge exactly h_out,
+## and the lane twists between them. That is what makes the shared edge rows of
+## two neighbouring tiles identical to the millimetre.
+static func _road_delta(_spline: GridSpline, tile: Dictionary,
+		_tile_index: int, _tile_count: int, x: float, z: float,
+		deck_y: float) -> float:
+	var center: Vector3 = _cell_center(tile["cell"])
+	var entry: int = int(tile.get("entry", EDGE_N))
+	var exit: int = int(tile.get("exit", EDGE_S))
+	var h_in: float = float(tile.get("height_in", 0.0))
+	var h_out: float = float(tile.get("height_out", 0.0))
+	var t: float = 0.0
+	if _opposite(entry) == exit:
+		var din: Vector3 = -_edge_3d(entry)
+		var along: float = (x - center.x) * din.x + (z - center.z) * din.z
+		t = clampf((along + HALF_TILE) / TILE_SIZE, 0.0, 1.0)
+	else:
+		var corner: Vector3 = center + _edge_3d(entry) * HALF_TILE \
+			+ _edge_3d(exit) * HALF_TILE
+		var p_in: Vector3 = center + _edge_3d(entry) * HALF_TILE
+		var p_out: Vector3 = center + _edge_3d(exit) * HALF_TILE
+		var start_angle: float = atan2(p_in.z - corner.z,
+			p_in.x - corner.x)
+		var end_angle: float = atan2(p_out.z - corner.z, p_out.x - corner.x)
+		var sweep: float = angle_difference(start_angle, end_angle)
+		if absf(sweep) > 0.0001:
+			var angle: float = atan2(z - corner.z, x - corner.x)
+			t = clampf(angle_difference(start_angle, angle) / sweep, 0.0, 1.0)
+	return lerpf(h_in, h_out, t) + ROAD_SURFACE - deck_y
+
+
+## The shared ramp/base/lip material: flat cartoon shading with vertex colours.
+static func _ramp_detail_material() -> StandardMaterial3D:
+	if _ramp_detail_material_cache != null:
+		return _ramp_detail_material_cache
+	var material := StandardMaterial3D.new()
+	material.vertex_color_use_as_albedo = true
+	material.albedo_color = Color.WHITE
+	material.roughness = 1.0
+	material.metallic = 0.0
+	material.specular_mode = BaseMaterial3D.SPECULAR_DISABLED
+	material.cull_mode = BaseMaterial3D.CULL_DISABLED
+	_ramp_detail_material_cache = material
+	return material
+
+
+static func _road_material() -> StandardMaterial3D:
+	if _road_material_cache != null:
+		return _road_material_cache
+	var material := StandardMaterial3D.new()
+	material.albedo_color = Color("4b4f55")
+	material.roughness = 1.0
+	material.metallic = 0.0
+	_road_material_cache = material
+	return material
+
+
+## Solid base, outer side walls and painted lip for every jump/bump tile. The
+## structures sit outside the 11.04 m lane and carry no collider, so a cart can
+## never catch on them where the ramp meets the road.
+static func _build_ramp_structures(holder: Node3D, tiles: Array[Dictionary],
+		heights: Dictionary) -> void:
+	var verts := PackedVector3Array()
+	var normals := PackedVector3Array()
+	var colors := PackedColorArray()
+	var found: int = 0
+	for tile: Dictionary in tiles:
+		var tile_char: String = str(tile["tile"])
+		if tile_char != "J" and tile_char != "B":
+			continue
+		found += 1
+		var center: Vector3 = _cell_center(tile["cell"])
+		var deck: Vector3 = center + Vector3.UP * (
+			float(tile.get("height_in", 0.0)) + ROAD_SURFACE)
+		var frame := Transform3D(Basis(Vector3.UP, float(tile["yaw"])), deck)
+		var base_color := Color("3c4048") if tile_char == "J" \
+			else Color("5c4c3c")
+		_append_colored_box(verts, normals, colors,
+			Transform3D(frame.basis, deck + Vector3.DOWN
+				* (RAMP_BASE_DEPTH * 0.5 + 0.02)),
+			Vector3(TILE_SIZE - 0.2, RAMP_BASE_DEPTH, TILE_SIZE - 0.2),
+			base_color)
+		if tile_char == "B":
+			var rail_x: float = RAMP_WALL_LATERAL
+			for side: float in [-1.0, 1.0]:
+				_append_colored_box(verts, normals, colors,
+					Transform3D(frame.basis, deck + Vector3.UP * 0.16
+						+ frame.basis * Vector3(rail_x * side, 0.0, 0.0)),
+					Vector3(RAMP_WALL_THICKNESS, 0.32, TILE_SIZE - 0.6),
+					Color("e8c34a"))
+			continue
+		var ramp_height: float = _ramp_face_height()
+		var wall_color := Color("e8c34a")
+		for side: float in [-1.0, 1.0]:
+			_append_ramp_wall(verts, normals, colors, frame,
+				RAMP_WALL_LATERAL * side, side, ramp_height, wall_color)
+		_append_lip(verts, normals, colors, frame, ramp_height)
+	if found == 0 or verts.is_empty():
+		return
+	var mesh := ArrayMesh.new()
+	var arrays: Array = []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = verts
+	arrays[Mesh.ARRAY_NORMAL] = normals
+	arrays[Mesh.ARRAY_COLOR] = colors
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	mesh.surface_set_material(0, _ramp_detail_material())
+	var instance := MeshInstance3D.new()
+	instance.name = "RampDetail"
+	instance.mesh = mesh
+	instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	holder.add_child(instance)
+
+
+## One triangular outer wall along a ramp: low at the entry edge, rising to the
+## crest, with a thickness so it reads as a built structure from every angle.
+static func _append_ramp_wall(verts: PackedVector3Array,
+		normals: PackedVector3Array, colors: PackedColorArray,
+		frame: Transform3D, lateral: float, side: float, ramp_height: float,
+		color: Color) -> void:
+	var inner: float = lateral
+	var outer: float = lateral + RAMP_WALL_THICKNESS * side
+	var bottom: float = -RAMP_BASE_DEPTH
+	var top_entry: float = RAMP_WALL_LIFT
+	var top_exit: float = ramp_height + RAMP_WALL_LIFT
+	var entry_z: float = HALF_TILE
+	var exit_z: float = -HALF_TILE
+	var points: Array[Vector3] = [
+		Vector3(inner, bottom, entry_z),
+		Vector3(inner, bottom, exit_z),
+		Vector3(inner, top_entry, entry_z),
+		Vector3(inner, top_exit, exit_z),
+		Vector3(outer, bottom, entry_z),
+		Vector3(outer, bottom, exit_z),
+		Vector3(outer, top_entry, entry_z),
+		Vector3(outer, top_exit, exit_z),
+	]
+	_append_frame_quad(verts, normals, colors, frame,
+		points[0], points[1], points[3], points[2], color, Vector3(-side, 0, 0))
+	_append_frame_quad(verts, normals, colors, frame,
+		points[4], points[6], points[7], points[5],
+		color.darkened(0.18), Vector3(side, 0, 0))
+	_append_frame_quad(verts, normals, colors, frame,
+		points[2], points[3], points[7], points[6], color, Vector3.UP)
+	_append_frame_quad(verts, normals, colors, frame,
+		points[0], points[2], points[6], points[4],
+		color.darkened(0.12), Vector3(0, 0, 1))
+	_append_frame_quad(verts, normals, colors, frame,
+		points[1], points[5], points[7], points[3],
+		color.darkened(0.12), Vector3(0, 0, -1))
+
+
+## Bright painted band on the ramp surface plus the vertical lip face below it.
+static func _append_lip(verts: PackedVector3Array, normals: PackedVector3Array,
+		colors: PackedColorArray, frame: Transform3D,
+		ramp_height: float) -> void:
+	var entry_z: float = -HALF_TILE + RAMP_LIP_BAND
+	var exit_z: float = -HALF_TILE
+	var entry_y: float = ramp_height * (HALF_TILE - entry_z) / TILE_SIZE
+	var exit_y: float = ramp_height
+	var lip_color := Color("fff6e3")
+	var edge_color := Color("c23a2c")
+	_append_frame_quad(verts, normals, colors, frame,
+		Vector3(-ROAD_HALF, entry_y + Z_DECAL, entry_z),
+		Vector3(ROAD_HALF, entry_y + Z_DECAL, entry_z),
+		Vector3(ROAD_HALF, exit_y + Z_DECAL, exit_z),
+		Vector3(-ROAD_HALF, exit_y + Z_DECAL, exit_z), lip_color,
+		Vector3.UP)
+	_append_frame_quad(verts, normals, colors, frame,
+		Vector3(-ROAD_HALF, exit_y - RAMP_LIP_HEIGHT, exit_z + 0.01),
+		Vector3(ROAD_HALF, exit_y - RAMP_LIP_HEIGHT, exit_z + 0.01),
+		Vector3(ROAD_HALF, exit_y, exit_z + 0.01),
+		Vector3(-ROAD_HALF, exit_y, exit_z + 0.01), edge_color,
+		Vector3(0, 0, 1))
+
+
+static func _append_frame_quad(verts: PackedVector3Array,
+		normals: PackedVector3Array, colors: PackedColorArray,
+		frame: Transform3D, a: Vector3, b: Vector3, c: Vector3, d: Vector3,
+		color: Color, outward: Vector3 = Vector3.ZERO) -> void:
+	var wa: Vector3 = frame * a
+	var wb: Vector3 = frame * b
+	var wc: Vector3 = frame * c
+	var wd: Vector3 = frame * d
+	var normal: Vector3 = (wb - wa).cross(wc - wa)
+	if normal.length_squared() > 0.0000001:
+		normal = normal.normalized()
+	else:
+		normal = Vector3.UP
+	if outward != Vector3.ZERO \
+			and normal.dot((frame.basis * outward).normalized()) < 0.0:
+		normal = -normal
+	_append_tri(verts, normals, colors, wa, wb, wc, normal, color)
+	_append_tri(verts, normals, colors, wa, wc, wd, normal, color)
+
+
+static func _append_tri(verts: PackedVector3Array,
+		normals: PackedVector3Array, colors: PackedColorArray,
+		a: Vector3, b: Vector3, c: Vector3, normal: Vector3,
+		color: Color) -> void:
+	for point: Vector3 in [a, b, c]:
+		verts.append(point)
+		normals.append(normal)
+		colors.append(color)
+
+
+static func _append_colored_box(verts: PackedVector3Array,
+		normals: PackedVector3Array, colors: PackedColorArray,
+		xform: Transform3D, size: Vector3, color: Color) -> void:
+	var half: Vector3 = size * 0.5
+	var corners: Array[Vector3] = []
+	for x: float in [-1.0, 1.0]:
+		for y: float in [-1.0, 1.0]:
+			for z: float in [-1.0, 1.0]:
+				corners.append(xform * Vector3(half.x * x, half.y * y,
+					half.z * z))
+	# Corners are ordered x-major, then y, then z: 0=(-,-,-), 1=(-,-,+),
+	# 2=(-,+,-), 3=(-,+,+), 4=(+,-,-), 5=(+,-,+), 6=(+,+,-), 7=(+,+,+).
+	# Every quad is wound so its face normal points out of the box.
+	_append_face(verts, normals, colors, corners[0], corners[1], corners[3],
+		corners[2], color.darkened(0.10))
+	_append_face(verts, normals, colors, corners[4], corners[6], corners[7],
+		corners[5], color.darkened(0.06))
+	_append_face(verts, normals, colors, corners[0], corners[4], corners[5],
+		corners[1], color.darkened(0.16))
+	_append_face(verts, normals, colors, corners[2], corners[3], corners[7],
+		corners[6], color.darkened(0.16))
+	_append_face(verts, normals, colors, corners[0], corners[2], corners[6],
+		corners[4], color.darkened(0.20))
+	_append_face(verts, normals, colors, corners[1], corners[5], corners[7],
+		corners[3], color)
+
+
+static func _append_face(verts: PackedVector3Array,
+		normals: PackedVector3Array, colors: PackedColorArray,
+		a: Vector3, b: Vector3, c: Vector3, d: Vector3, color: Color) -> void:
+	var normal: Vector3 = (b - a).cross(c - a)
+	if normal.length_squared() > 0.0000001:
+		normal = normal.normalized()
+	else:
+		normal = Vector3.UP
+	_append_tri(verts, normals, colors, a, b, c, normal, color)
+	_append_tri(verts, normals, colors, a, c, d, normal, color)
 
 
 ## Elevated straight cells get the kit's bridge piece under the deck, squashed
 ## to the deck height, so a raised road reads as a bridge over the terrain
-## instead of a floating slab. Purely visual; the road collider owns the deck.
+## instead of a floating slab. The top stops 5 cm under the lane so the bridge
+## deck can never z-fight the road surface. Purely visual.
 static func _build_bridge_supports(holder: Node3D, decks: Array) -> void:
 	if decks.is_empty():
 		return
@@ -1134,7 +1689,7 @@ static func _build_bridge_supports(holder: Node3D, decks: Array) -> void:
 	var transforms: Array = []
 	for entry: Dictionary in decks:
 		var deck: Vector3 = entry["deck"]
-		var height: float = float(deck.y)
+		var height: float = maxf(float(entry.get("height", deck.y - 0.05)), 0.01)
 		var scale := Vector3(TILE_SIZE,
 			height / maxf(aabb.size.y, 0.001), TILE_SIZE)
 		var base := Vector3(deck.x, 0.0, deck.z)
@@ -1143,17 +1698,23 @@ static func _build_bridge_supports(holder: Node3D, decks: Array) -> void:
 	_batch_model(holder, BRIDGE_MODEL, transforms, "BridgeSupports", true)
 
 
-## Places a road piece at `at` and tilts it along its travel direction. The tilt
-## axis is the model's local X (Kenney road pieces run along local -Z), so a
-## sloped cell reads as a ramp between its two edge heights.
+## Places a road piece so its authored lane plane (local Y = 0) sits on `at`.
+## Pitch is applied about that lane plane, and the piece is stretched along
+## travel just enough that a pitched straight keeps its 16 m plan footprint, so
+## its two edge rows land exactly on the neighbouring tiles' rows.
 static func _fit_tile(model: String, at: Vector3, yaw: float, scale: Vector3,
 		pitch: float) -> Transform3D:
-	var xform: Transform3D = _fit_transform(model, at, yaw, scale)
-	if absf(pitch) < 0.0001:
-		return xform
-	var axis: Vector3 = Basis(Vector3.UP, yaw) * Vector3(1.0, 0.0, 0.0)
-	var turn := Basis(axis, pitch)
-	return Transform3D(turn * xform.basis, at + turn * (xform.origin - at))
+	var info: Dictionary = TileCatalog.model_info(model)
+	if not bool(info.get("ok", false)):
+		return Transform3D(Basis(Vector3.UP, yaw).scaled(scale), at)
+	var center: Vector2 = info["center"]
+	var stretch: Vector3 = scale
+	if absf(pitch) > 0.0001:
+		stretch.z /= maxf(cos(pitch), 0.10)
+	var basis: Basis = Basis(Vector3.UP, yaw) * Basis(Vector3(1.0, 0.0, 0.0),
+		pitch) * Basis.IDENTITY.scaled(stretch)
+	var pivot := Vector3(center.x, 0.0, center.y)
+	return Transform3D(basis, at - basis * pivot)
 
 
 static func _fit_transform(model: String, at: Vector3, yaw: float,
@@ -1214,11 +1775,18 @@ static func _batch_model(parent: Node3D, model: String, transforms: Array,
 # road colliders
 
 
+## Road colliders. A flat grid keeps one tilted box per cell, all sharing the
+## same deck plane. An elevated grid uses the exact warped top triangles from
+## the visual pass as one concave surface, so the collider and the road the
+## player sees are the same watertight mesh; ramp/jump tiles keep their own
+## concave wedge because they are deliberately non-flat.
 static func _build_road_collision(parent: Node3D,
-		tiles: Array[Dictionary], heights: Dictionary = {}) -> void:
+		tiles: Array[Dictionary], heights: Dictionary = {},
+		top_faces: PackedVector3Array = PackedVector3Array()) -> void:
 	var holder: Node3D = parent.get_node_or_null(HOLDER_NAME) as Node3D
 	if holder == null:
 		return
+	var elevated: bool = not bool(heights.get("flat", true))
 	var body := StaticBody3D.new()
 	body.name = "RoadCollision"
 	body.collision_layer = CollisionLayers.WORLD
@@ -1228,24 +1796,34 @@ static func _build_road_collision(parent: Node3D,
 	for tile: Dictionary in tiles:
 		var tile_char: String = str(tile["tile"])
 		var center: Vector3 = _cell_center(tile["cell"])
-		var deck: Vector3 = center + Vector3.UP * float(tile.get("height", 0.0))
-		var pitch: float = _tile_pitch(tile)
+		var deck: Vector3 = center + Vector3.UP * (float(tile.get("height", 0.0))
+			+ ROAD_SURFACE)
 		if tile_char == "J" or tile_char == "B":
 			_append_ramp_faces(ramp_faces, tile, tile_char == "B")
-		else:
-			# The box follows the same tilt as the visible slab, so a kart on a
-			# hill drives the plane it sees rather than a flat staircase.
-			_add_box_shape(body, _tilted_box(deck, float(tile["yaw"]), pitch,
+		elif not elevated:
+			_add_box_shape(body, _tilted_box(deck, float(tile["yaw"]), 0.0,
 				Vector3(TILE_SIZE, ROAD_THICKNESS, TILE_SIZE)),
 				Vector3(TILE_SIZE, ROAD_THICKNESS, TILE_SIZE))
 		if float(tile.get("height", 0.0)) >= BRIDGE_MIN_HEIGHT \
 				and _is_straight_char(tile_char):
-			# A raised deck is a hill: the space under it is solid terrain.
+			# A raised deck is a hill: the space under it is solid terrain. The
+			# fill stops below the low edge of a sloped deck so it can never
+			# protrude through the racing surface.
+			var rise: float = absf(float(tile.get("height_out", 0.0)) \
+				- float(tile.get("height_in", 0.0)))
+			var fill: float = maxf(float(tile.get("height", 0.0))
+				+ ROAD_SURFACE - rise * 0.5 - 0.05, 0.01)
 			_add_box_shape(body, Transform3D(Basis.IDENTITY,
-				Vector3(center.x, float(tile.get("height", 0.0)) * 0.5,
-					center.z)),
-				Vector3(TILE_SIZE, float(tile.get("height", 0.0)),
-					TILE_SIZE))
+				Vector3(center.x, fill * 0.5, center.z)),
+				Vector3(TILE_SIZE, fill, TILE_SIZE))
+	if not top_faces.is_empty():
+		var road_shape := ConcavePolygonShape3D.new()
+		road_shape.set_faces(top_faces)
+		road_shape.backface_collision = true
+		var road_collision := CollisionShape3D.new()
+		road_collision.name = "RoadSurface"
+		road_collision.shape = road_shape
+		body.add_child(road_collision)
 	if not ramp_faces.is_empty():
 		var shape := ConcavePolygonShape3D.new()
 		shape.set_faces(ramp_faces)
@@ -1254,6 +1832,142 @@ static func _build_road_collision(parent: Node3D,
 		collision.name = "Ramps"
 		collision.shape = shape
 		body.add_child(collision)
+
+
+## Measures the built road at every shared tile edge and prints one line per
+## circuit. The two edge rows are sampled at the same lateral positions from
+## each adjacent tile's warped top triangles, so a step, hole or normal kink is
+## visible in the boot log instead of hiding until a kart reaches the corner.
+static func _report_seams(spline: GridSpline, tiles: Array[Dictionary],
+		heights: Dictionary, tile_tris: Array) -> void:
+	var theme: String = str(spline.get_meta("theme", "grid"))
+	var elevated: bool = not bool(heights.get("flat", true))
+	var closure: float = 0.0
+	if not tiles.is_empty():
+		var last: Dictionary = tiles[tiles.size() - 1]
+		var last_seg: PackedVector3Array = _segment_points(
+			_cell_center(last["cell"]), int(last["entry"]), int(last["exit"]),
+			str(last["tile"]), float(last.get("height_in", 0.0)),
+			float(last.get("height_out", 0.0)))
+		closure = spline.points[0].distance_to(last_seg[last_seg.size() - 1])
+	var max_gap: float = 0.0
+	var max_step: float = 0.0
+	var max_normal: float = 0.0
+	var max_offset: float = 0.0
+	var samples: int = 0
+	var misses: int = 0
+	if elevated and tile_tris.size() == tiles.size():
+		for index in tiles.size():
+			var tile: Dictionary = tiles[index]
+			var next: Dictionary = tiles[(index + 1) % tiles.size()]
+			if _is_ramp(str(tile["tile"])) or _is_ramp(str(next["tile"])):
+				continue
+			var p: Vector3 = spline.points[int(tile["to_index"])] \
+				if index < tiles.size() - 1 else spline.points[0]
+			var travel: Vector3 = _edge_3d(int(tile["exit"]))
+			var right: Vector3 = travel.cross(Vector3.UP).normalized()
+			var expected_y: float = p.y + ROAD_SURFACE
+			for step in 13:
+				var lateral: float = -ROAD_HALF * 0.96 \
+					+ (ROAD_HALF * 1.92) * float(step) / 12.0
+				var q: Vector3 = p + right * lateral
+				var a: Dictionary = _sample_top(tile_tris[index] as Array, q)
+				var b: Dictionary = _sample_top(
+					tile_tris[(index + 1) % tiles.size()] as Array, q)
+				samples += 1
+				if not bool(a["hit"]) or not bool(b["hit"]):
+					misses += 1
+					max_gap = maxf(max_gap, maxf(float(a["gap"]),
+						float(b["gap"])))
+					continue
+				var ya: float = float(a["y"])
+				var yb: float = float(b["y"])
+				max_step = maxf(max_step, absf(ya - yb))
+				max_offset = maxf(max_offset,
+					maxf(absf(ya - expected_y), absf(yb - expected_y)))
+				var na: Vector3 = a["n"]
+				var nb: Vector3 = b["n"]
+				max_normal = maxf(max_normal,
+					rad_to_deg(acos(clampf(na.dot(nb), -1.0, 1.0))))
+	var watertight: bool = max_gap <= SEAM_TOLERANCE \
+		and max_step <= SEAM_TOLERANCE \
+		and max_offset <= SEAM_TOLERANCE \
+		and max_normal <= 30.0 \
+		and closure <= SEAM_TOLERANCE and misses == 0
+	print("KENNEY SEAMS %s: gap %.1f mm, height step %.1f mm, normal jump %.1f deg, deck offset %.1f mm, closure %.1f mm, %d/%d samples -> %s" % [
+		theme, max_gap * 1000.0, max_step * 1000.0, max_normal,
+		max_offset * 1000.0, closure * 1000.0, samples - misses, samples,
+		"WATERTIGHT" if watertight else "LEAKY"])
+	print("KENNEY DRIVE %s: %s%s" % [
+		theme, "YES" if watertight else "NO",
+		"" if watertight else " (fix the seam metrics before racing)"])
+	# Publish the numbers for probes and the race HUD/debug tools.
+	spline.set_meta("seam_gap", max_gap)
+	spline.set_meta("seam_step", max_step)
+	spline.set_meta("seam_normal", max_normal)
+	spline.set_meta("seam_offset", max_offset)
+	spline.set_meta("seam_closure", closure)
+	spline.set_meta("seam_watertight", watertight)
+
+
+static func _is_ramp(tile_char: String) -> bool:
+	return tile_char == "J" or tile_char == "B"
+
+
+## Topmost upward-facing triangle of one tile at plan point `q`.
+## Returns {hit, y, n, gap}; a miss reports the plan distance to the nearest
+## triangle edge so the boot log can say how wide the hole is.
+static func _sample_top(tris: Array, q: Vector3) -> Dictionary:
+	var best_y: float = -INF
+	var best_normal := Vector3.UP
+	for tri: Dictionary in tris:
+		var a: Vector3 = tri["a"]
+		var b: Vector3 = tri["b"]
+		var c: Vector3 = tri["c"]
+		var bary: Vector3 = _plan_barycentric(a, b, c, q)
+		if bary.x < -0.0001 or bary.y < -0.0001 or bary.z < -0.0001:
+			continue
+		var y: float = bary.x * a.y + bary.y * b.y + bary.z * c.y
+		if y > best_y:
+			best_y = y
+			best_normal = tri["n"]
+	if best_y > -INF:
+		return {"hit": true, "y": best_y, "n": best_normal, "gap": 0.0}
+	var best_gap: float = INF
+	for tri: Dictionary in tris:
+		var a: Vector3 = tri["a"]
+		var b: Vector3 = tri["b"]
+		var c: Vector3 = tri["c"]
+		best_gap = minf(best_gap, _plan_segment_distance(q, a, b))
+		best_gap = minf(best_gap, _plan_segment_distance(q, b, c))
+		best_gap = minf(best_gap, _plan_segment_distance(q, c, a))
+	return {"hit": false, "y": 0.0, "n": Vector3.UP,
+		"gap": 0.0 if best_gap == INF else best_gap}
+
+
+static func _plan_barycentric(a: Vector3, b: Vector3, c: Vector3,
+		q: Vector3) -> Vector3:
+	var v0 := Vector2(b.x - a.x, b.z - a.z)
+	var v1 := Vector2(c.x - a.x, c.z - a.z)
+	var v2 := Vector2(q.x - a.x, q.z - a.z)
+	var den: float = v0.x * v1.y - v0.y * v1.x
+	if absf(den) < 0.0000001:
+		return Vector3(-1.0, -1.0, -1.0)
+	var u: float = (v2.x * v1.y - v2.y * v1.x) / den
+	var v: float = (v0.x * v2.y - v0.y * v2.x) / den
+	return Vector3(1.0 - u - v, u, v)
+
+
+static func _plan_segment_distance(q: Vector3, a: Vector3,
+		b: Vector3) -> float:
+	var qp := Vector2(q.x, q.z)
+	var ap := Vector2(a.x, a.z)
+	var bp := Vector2(b.x, b.z)
+	var ab: Vector2 = bp - ap
+	var length_sq: float = ab.length_squared()
+	var t: float = 0.0 if length_sq < 0.000001 \
+		else clampf((qp - ap).dot(ab) / length_sq, 0.0, 1.0)
+	return qp.distance_to(ap + ab * t)
 
 
 ## A box whose top face passes through `deck`, pitched along the tile travel.
@@ -1273,9 +1987,9 @@ static func _append_ramp_faces(faces: PackedVector3Array, tile: Dictionary,
 	var din: Vector3 = -_edge_3d(int(tile["entry"]))
 	var right: Vector3 = din.cross(Vector3.UP).normalized()
 	var entry_center: Vector3 = center - din * HALF_TILE \
-		+ Vector3.UP * float(tile.get("height_in", 0.0))
+		+ Vector3.UP * (float(tile.get("height_in", 0.0)) + ROAD_SURFACE)
 	var exit_center: Vector3 = center + din * HALF_TILE \
-		+ Vector3.UP * float(tile.get("height_out", 0.0))
+		+ Vector3.UP * (float(tile.get("height_out", 0.0)) + ROAD_SURFACE)
 	var e_l: Vector3 = entry_center - right * ROAD_HALF
 	var e_r: Vector3 = entry_center + right * ROAD_HALF
 	var x_l: Vector3 = exit_center - right * ROAD_HALF

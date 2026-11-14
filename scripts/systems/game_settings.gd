@@ -69,32 +69,34 @@ const QUALITY_SCALES: PackedFloat32Array = [0.72, 0.92, 1.0]
 @export var show_fps: bool = false ## Read by the HUD owner; off by default.
 
 @export_group("Sandbox")
-@export var selected_vehicle: String = "shopping_cart" ## Vehicle id from the catalog.
+## Vehicle id from the catalog. The stock shopping cart is the default for
+## every channel; a saved id is honoured only while it still names a vehicle.
+@export var selected_vehicle: String = VehicleCatalog.DEFAULT_ID
 @export var player_name: String = "PLAYER" ## Name shown in multiplayer lobbies.
 @export_range(0, 2) var minigame_difficulty: int = 1
 @export_range(3, 7, 2) var minigame_rounds: int = 3
 ## Racing-class build. Kept apart from the sandbox and minigame cars so picking
-## a race car never changes what SANDBOX or CARGO RUSH spawns.
+## a race car never changes what SANDBOX or CARGO RUSH spawns. The stock shopping
+## cart is the default pick; the four Kenney chassis remain selectable.
 var racing_vehicle: String = VehicleCatalog.DEFAULT_RACING_ID
 var racing_build: Dictionary = {} ## Four allocation keys; empty = balanced default.
 ## Backing store for the exported minigame car. The property below resolves to
-## the racing car only while a racing scene or racing garage is active, which is
-## how grass_race.gd reuses its existing `minigame_vehicle` read without a
+## the racing pick only while a racing scene or racing garage is active, which
+## is how grass_race.gd reuses its existing `minigame_vehicle` read without a
 ## second vehicle channel, while cargo_rush.gd keeps seeing the normal car.
-var _minigame_vehicle: String = "shopping_cart"
-## grass_race.gd temporarily writes the racing car into selected_vehicle while
+var _minigame_vehicle: String = VehicleCatalog.DEFAULT_ID
+## grass_race.gd temporarily writes the racing pick into selected_vehicle while
 ## it runs. A settings save from the pause menu must still persist the SANDBOX
 ## choice, so keep the last authoritative sandbox pick here.
-var _sandbox_vehicle: String = "shopping_cart"
+var _sandbox_vehicle: String = VehicleCatalog.DEFAULT_ID
 
-@export var minigame_vehicle: String = "shopping_cart":
+@export var minigame_vehicle: String = VehicleCatalog.DEFAULT_ID:
 	get:
 		if racing_mode_active():
-			return racing_vehicle if VehicleCatalog.is_racing_id(racing_vehicle) \
-				else VehicleCatalog.DEFAULT_RACING_ID
+			return racing_vehicle_id()
 		return _minigame_vehicle
 	set(value):
-		_minigame_vehicle = value
+		_minigame_vehicle = sanitize_vehicle_id(value)
 @export var player_tag_color: String = "ffd22e" ## Name tag colour, RRGGBB hex.
 
 @export_group("Session")
@@ -541,9 +543,29 @@ static func sanitize_name(raw_name: String) -> String:
 	return cleaned if cleaned != "" else "PLAYER"
 
 
+static func sanitize_vehicle_id(raw: String) -> String:
+	## Any id that still exists in the catalog is honoured, including a racing
+	## chassis saved in the sandbox slot. An unset, blank or removed id opens on
+	## the shopping cart, which is the game's default everywhere.
+	var key: String = raw.strip_edges()
+	if key != "" and not VehicleCatalog.find(key).is_empty():
+		return key
+	return VehicleCatalog.DEFAULT_ID
+
+
+static func sanitize_racing_vehicle_id(raw: String) -> String:
+	## A racing pick survives only when it is the stock cart default or one of
+	## the four Kenney chassis. Corrupt, blank or sandbox ids fall back to the
+	## cart instead of silently becoming a race car.
+	var key: String = raw.strip_edges()
+	if VehicleCatalog.is_racing_choice(key):
+		return key
+	return VehicleCatalog.DEFAULT_RACING_ID
+
+
 func set_selected_vehicle(vehicle_id: String) -> void:
-	selected_vehicle = vehicle_id
-	_sandbox_vehicle = vehicle_id
+	selected_vehicle = sanitize_vehicle_id(vehicle_id)
+	_sandbox_vehicle = selected_vehicle
 	save_settings()
 
 
@@ -582,10 +604,9 @@ func racing_mode_active() -> bool:
 
 
 func racing_vehicle_id() -> String:
-	## Always a real racing chassis id, even after a corrupt save.
-	if VehicleCatalog.is_racing_id(racing_vehicle):
-		return racing_vehicle
-	return VehicleCatalog.DEFAULT_RACING_ID
+	## Always a legal racing pick, even after a corrupt or older save: the stock
+	## shopping cart unless the player deliberately kept a Kenney chassis.
+	return sanitize_racing_vehicle_id(racing_vehicle)
 
 
 func racing_allocation() -> Dictionary:
@@ -597,8 +618,9 @@ func racing_allocation() -> Dictionary:
 
 
 func set_racing_vehicle(vehicle_id: String) -> void:
-	racing_vehicle = vehicle_id if VehicleCatalog.is_racing_id(vehicle_id) \
-		else VehicleCatalog.DEFAULT_RACING_ID
+	## The cart default is a valid racing pick; every other non-chassis id is
+	## rejected so a bad caller can never remove the cart fallback.
+	racing_vehicle = sanitize_racing_vehicle_id(vehicle_id)
 	save_settings()
 
 
@@ -685,19 +707,21 @@ func load_settings() -> void:
 	boost_toggle = _cfg_bool(config, "gameplay", "boost_toggle", boost_toggle)
 	drift_toggle = _cfg_bool(config, "gameplay", "drift_toggle", drift_toggle)
 	stick_deadzone = _cfg_num(config, "gameplay", "stick_deadzone", stick_deadzone, 0.0, 0.4)
-	selected_vehicle = _cfg_str(config, "gameplay", "vehicle", selected_vehicle)
+	selected_vehicle = sanitize_vehicle_id(
+		_cfg_str(config, "gameplay", "vehicle", selected_vehicle))
 	_sandbox_vehicle = selected_vehicle
 	player_name = sanitize_name(_cfg_str(config, "gameplay", "player_name", player_name))
 	minigame_difficulty = _cfg_int(config, "gameplay", "minigame_difficulty", minigame_difficulty, 0, 2)
 	minigame_rounds = _cfg_int(config, "gameplay", "minigame_rounds", minigame_rounds, 3, 7)
+	# The property setter validates this against the catalog, so an old save
+	# naming a real vehicle is kept and a removed id opens on the cart.
 	minigame_vehicle = _cfg_str(config, "gameplay", "minigame_vehicle", _minigame_vehicle)
 	# Racing class is a separate save block. A missing block (every save made
-	# before this feature) keeps the balanced build without touching any
-	# existing setting.
+	# before this feature) opens on the stock shopping cart. A block naming a
+	# real Kenney chassis survives; anything else falls back to the cart.
 	var saved_racing: String = _cfg_str(config, "racing", "vehicle",
 		VehicleCatalog.DEFAULT_RACING_ID)
-	racing_vehicle = saved_racing if VehicleCatalog.is_racing_id(saved_racing) \
-		else VehicleCatalog.DEFAULT_RACING_ID
+	racing_vehicle = sanitize_racing_vehicle_id(saved_racing)
 	racing_build = {}
 	var saved_build: Variant = config.get_value("racing", "allocation", {})
 	if saved_build is Dictionary and not (saved_build as Dictionary).is_empty():
