@@ -18,7 +18,7 @@ const UiAnim := preload("res://scripts/ui/ui_anim.gd")
 
 @export_group("Hover Wiggle")
 @export var hover_scale: float = 1.03 ## Peak scale while hovered/focused.
-@export var hover_wobble_degrees: float = 0.8 ## Side-to-side tilt.
+@export var hover_wobble_degrees: float = 0.3 ## Side-to-side tilt.
 @export var hover_speed: float = 3.6 ## Wiggle speed.
 @export var press_scale: float = 0.96 ## Squash while the button is held.
 
@@ -60,7 +60,7 @@ func _process(delta: float) -> void:
 		# Focused buttons wobble a little less: a keyboard selection should feel
 		# deliberate, not jittery while the player reads the screen.
 		var energy: float = 1.0 if _hovered else 0.30
-		target_scale = hover_scale + 0.012 * sin(_time * hover_speed * 2.0) * energy
+		target_scale = hover_scale + 0.004 * sin(_time * hover_speed * 2.0) * energy
 		target_rotation = deg_to_rad(hover_wobble_degrees) \
 			* sin(_time * hover_speed) * energy
 	_scale_now = UiAnim.damp(_scale_now, target_scale, delta, 18.0)

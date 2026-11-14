@@ -46,7 +46,7 @@ func _process(delta: float) -> void:
 	if disabled:
 		_held = false
 	var target_scale: float = 0.97 if _held else (1.03 if active else 1.0)
-	var target_rotation: float = deg_to_rad(1.2) * sin(_time * 3.0) if active else 0.0
+	var target_rotation: float = deg_to_rad(0.4) * sin(_time * 3.0) if active else 0.0
 	_scale_now = UiAnim.damp(_scale_now, target_scale, delta, 16.0)
 	_rotation_now = UiAnim.damp(_rotation_now, target_rotation, delta, 14.0)
 	scale = Vector2.ONE * _scale_now

@@ -168,15 +168,6 @@ func _build_games() -> void:
 		var preset: Dictionary = TrackDefs.PRESETS[index]
 		if TrackDefs.is_minigame(preset):
 			_games.append(_minigame_entry(preset))
-	_games.append({
-		"id": GAME_SANDBOX,
-		"kind": GAME_SANDBOX,
-		"name": "SANDBOX",
-		"desc": "Drive the test facility on your own. No laps, no rivals.",
-		"detail": "FREE ROAM  ·  TEST FACILITY",
-		"accent": UiPalette.BLUE,
-		"preview": _texture_at(SANDBOX_PREVIEW),
-	})
 	_deliver_entry = {}
 	for entry: Dictionary in _games:
 		if str(entry.get("kind", "")) == GAME_MINIGAME:
