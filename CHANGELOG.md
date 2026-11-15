@@ -2,8 +2,62 @@
 
 Player-facing notes, newest first.
 
-## [0.7.1] - 2026-11-13
+## [0.7.1] - 2026-11-14
 
+### The whole game is now built from the Kenney cartoon kits
+
+- Every circuit, the sandbox and Cargo Rush are built from real modular kit
+  pieces: road tiles, barriers, grandstands, pit garages, floodlights, flags and
+  signage. No more placeholder geometry dressed with photo textures.
+- Race maps are authored as a tile grid and must form one closed lap, so the road
+  always connects. Seam gaps, height steps and loop closure all measure 0 mm.
+- Terrain is no longer flat: stadium climbs 0-6 m with a banked straight, the
+  dockyard has a raised wharf and a sunken container lane, and Glacier climbs to
+  9 m before a fast descent.
+- Trees are placed as designed woodland - clustered, several rows deep, with
+  clearings at the grandstands - between 432 and 751 trees per map.
+
+### Driving
+
+- Player collisions conserve momentum: two carts shove each other apart instead
+  of one stopping dead, and heavy vehicles push light ones.
+- Drifting now costs speed in proportion to how sideways you are, instead of
+  carrying almost all your momentum through a corner.
+- Brakes are stronger and also kill a slide, so stopping works while drifting.
+- Bumps give a brief loss of steering rather than a dead stop, and no cart can
+  tunnel through a wall, a crate or another cart at any tick rate.
+
+### Bots
+
+- Bots choose between four racing lines with per-driver braking points, and make
+  overtaking and defensive moves.
+- Bots ride ramps properly, recover when beached, and never drive through them.
+
+### UI
+
+- One spacing system across every screen, with nothing clipped at 1280x720.
+- Settings use real sliders grouped by a single label column; menus use square
+  tiles instead of stretched pills, and no divider lines anywhere.
+- The speedometer is an arc with the number as the hero; the standings show every
+  player; ping has its own corner so it cannot overlap the race order.
+- The speed zone is a soft blue aurora field instead of a painted chevron.
+- Racing and Deliver are games you pick, then pick a map or arena inside them,
+  and the lobby handles both - including team assignment for Deliver.
+
+### Modes
+
+- Deliver: presents are scattered around the arena, hold the interact key for two
+  seconds to load one, then carry it home. Teams are Alpha and Beta, and the host
+  can move players between them.
+- Sandbox is a five zone test facility: paddock, handling loop, skidpad, jump lane
+  and a dirt strip.
+
+### Fixes
+
+- Over 40 logic defects found and fixed across every mode, including later
+  finishers outranking earlier ones, a present claimed by two players at once, a
+  carrier disconnect freezing the crate, settings switches wired backwards, and
+  corrupt settings wiping progress instead of recovering.
 ### Bumps that move you
 
 - Hitting another cart now transfers momentum properly: two karts shove each

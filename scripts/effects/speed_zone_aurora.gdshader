@@ -9,7 +9,7 @@ render_mode unshaded, blend_add, depth_draw_never, cull_disabled, shadows_disabl
 uniform vec4 deep_color : source_color = vec4(0.02, 0.08, 0.55, 1.0);
 uniform vec4 glow_color : source_color = vec4(0.08, 0.42, 1.00, 1.0);
 uniform vec4 crest_color : source_color = vec4(0.32, 0.86, 1.00, 1.0);
-uniform float intensity : hint_range(0.0, 2.0) = 1.0;
+uniform float intensity : hint_range(0.0, 3.0) = 1.9;
 uniform float pulse_speed : hint_range(0.0, 2.0) = 0.5;
 uniform float drift_speed : hint_range(0.0, 0.5) = 0.05;
 uniform float curtain_speed : hint_range(0.0, 2.0) = 0.22;
@@ -68,7 +68,7 @@ void fragment() {
 	color *= shimmer;
 
 	float pulse = 0.88 + 0.12 * sin(t * pulse_speed * TAU);
-	float alpha = falloff * (0.10 + 0.5 * curtain) * length_var * intensity * pulse;
+	float alpha = falloff * (0.34 + 0.95 * curtain) * length_var * intensity * pulse;
 
 	ALBEDO = color;
 	ALPHA = clamp(alpha, 0.0, 0.55);
