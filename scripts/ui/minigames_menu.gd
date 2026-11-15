@@ -4,9 +4,10 @@ const UiAnim := preload("res://scripts/ui/ui_anim.gd")
 ##
 ## The top page lists games, never individual maps: RACING groups every grid
 ## circuit in TrackDefs, DELIVER is the cargo minigame and owns the arena theme
-## strip, SANDBOX is the free-roam park, and any other registry minigame gets its
-## own game card. Choosing RACING or DELIVER opens that game's page inside this
-## screen; BACK and Escape walk back one page and never leave the games list.
+## strip, and any other registry minigame gets its own game card. Choosing
+## RACING or DELIVER opens that game's page inside this screen; BACK and Escape
+## walk back one page and never leave the games list. The free-roam park has its
+## own door in PLAY -> SINGLE, so it is not repeated as a game card here.
 ##
 ## A map card carries the real preview image, the circuit name, a one-line
 ## tagline, the built lap length and a difficulty chip. The chosen card is
@@ -37,7 +38,7 @@ const GAME_RACING: String = "racing"
 const GAME_MINIGAME: String = "minigame"
 const GAME_SANDBOX: String = "sandbox"
 
-const MAP_CARD_WIDTH: float = 280.0
+const MAP_CARD_WIDTH: float = 268.0
 const MAP_CARD_HEIGHT: float = 300.0
 const MAP_PREVIEW_HEIGHT: float = 150.0
 const GAME_CARD_HEIGHT: float = 150.0
@@ -47,6 +48,8 @@ const GAMES_SCROLL_HEIGHT: float = 476.0
 const MAPS_SCROLL_HEIGHT: float = 316.0
 const DELIVER_SCROLL_HEIGHT: float = 250.0
 const CHIP_RADIUS: int = 8
+const GAME_LIST_WIDTH: float = 760.0 ## Card row width; the page centres it.
+const MAP_GRID_WIDTH: float = MAP_CARD_WIDTH * 3.0 + float(GRID_GAP) * 2.0
 
 var _body: VBoxContainer
 var _title: Label
@@ -98,8 +101,22 @@ func _ready() -> void:
 	else:
 		_show_games(false)
 	call_deferred("_enter")
+	if OS.get_environment("CART_UI_MEASURE") == "1":
+		_report_layout.call_deferred()
 	if OS.get_environment("CART_MINIGAMES_SELFTEST") == "1":
 		_run_selftest.call_deferred()
+
+
+func _report_layout() -> void:
+	## Verification hook (CART_UI_MEASURE=1): measures the game list, then the
+	## RACING and minigame selector pages, in one boot.
+	await UiKit.report_screen(self, "minigames:games")
+	if not _game_cards.is_empty():
+		_show_selector(GAME_RACING)
+		await UiKit.report_screen(self, "minigames:racing")
+	if not _deliver_entry.is_empty():
+		_show_selector(str(_deliver_entry.get("id", "")))
+		await UiKit.report_screen(self, "minigames:minigame")
 
 
 func _enter() -> void:
@@ -134,7 +151,7 @@ func _build_ui() -> void:
 	header.add_child(_title)
 	_back_button = _button("BACK", UiPalette.RED, 46, 17)
 	_back_button.name = "BackButton"
-	_back_button.custom_minimum_size = Vector2(124, 46)
+	UiKit.cap_button(_back_button, 124.0)
 	_back_button.tooltip_text = "Back to PLAY."
 	_back_button.pressed.connect(_on_back)
 	header.add_child(_back_button)
@@ -237,10 +254,13 @@ func _build_games_page() -> void:
 	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
 	scroll.follow_focus = true
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	# Card rows are centred at a readable width instead of stretching the whole
+	# 960 px page: a 915 px game card is what made the screen look broken.
+	scroll.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	_games_page.add_child(scroll)
 	_game_list = VBoxContainer.new()
 	_game_list.name = "GameList"
-	_game_list.custom_minimum_size = Vector2(860, 0)
+	_game_list.custom_minimum_size = Vector2(GAME_LIST_WIDTH, 0)
 	_game_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_game_list.add_theme_constant_override("separation", 12)
 	scroll.add_child(_game_list)
@@ -270,18 +290,22 @@ func _build_selector_page() -> void:
 	_selector_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
 	_selector_scroll.follow_focus = true
 	_selector_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_selector_scroll.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	_selector_page.add_child(_selector_scroll)
 
 	_selector_list = VBoxContainer.new()
 	_selector_list.name = "SelectorList"
+	_selector_list.custom_minimum_size = Vector2(GAME_LIST_WIDTH, 0)
 	_selector_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_selector_list.add_theme_constant_override("separation", 12)
 	_selector_scroll.add_child(_selector_list)
 
 	# The three circuits share one row of large cards so lap length, difficulty
-	# and the preview art can be compared at a glance.
+	# and the preview art can be compared at a glance. A fixed grid width keeps
+	# the rightmost card clear of the scrollbar and the panel edge.
 	_map_grid = GridContainer.new()
 	_map_grid.name = "MapGrid"
+	_map_grid.custom_minimum_size = Vector2(MAP_GRID_WIDTH, 0)
 	_map_grid.columns = GRID_COLUMNS
 	_map_grid.add_theme_constant_override("h_separation", GRID_GAP)
 	_map_grid.add_theme_constant_override("v_separation", GRID_GAP)
@@ -306,8 +330,7 @@ func _build_selector_page() -> void:
 
 	_vehicle_button = _button("VEHICLE: SHOPPING CART", Color("8ed8f6"), 60, 17)
 	_vehicle_button.name = "VehicleButton"
-	_vehicle_button.custom_minimum_size = Vector2(230, 60)
-	_vehicle_button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	UiKit.cap_button(_vehicle_button, 230.0)
 	_vehicle_button.tooltip_text = "Pick the cart you will race."
 	_vehicle_button.pressed.connect(_on_change_vehicle)
 	# Hosts already pick a car in the lobby's HOST SETTINGS. Showing a second
@@ -317,8 +340,7 @@ func _build_selector_page() -> void:
 
 	_play_button = _button("RACE", UiPalette.YELLOW, 60, 22)
 	_play_button.name = "PlayButton"
-	_play_button.custom_minimum_size = Vector2(300, 60)
-	_play_button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	UiKit.cap_button(_play_button, 300.0)
 	_play_button.pressed.connect(_on_confirm)
 	action_row.add_child(_play_button)
 
@@ -825,7 +847,12 @@ func _scene_for(data: Dictionary) -> String:
 func _launch(data: Dictionary, minigame: bool) -> void:
 	if data.is_empty() or not bool(data.get("available", true)):
 		return
+	if Network.is_session_active() and not Network.is_host:
+		return
 	var target: Dictionary = _confirm_target(data, minigame)
+	var scene: String = str(target.get("scene", ""))
+	if scene not in [Network.RACE_SCENE, Network.CARGO_SCENE]:
+		return
 	if minigame:
 		# The arena theme travels in selected_minigame, the exact field
 		# cargo_rush.gd resolves; configure_session copies it into
@@ -915,16 +942,27 @@ func _refresh_play_label() -> void:
 	if data.is_empty():
 		_play_button.disabled = true
 		_play_button.text = "UNAVAILABLE"
+		_play_button.fit_text()
+		return
+	# Only the host can launch a room. A client used to get an enabled button
+	# that silently did nothing when pressed.
+	if Network.is_session_active() and not Network.is_host:
+		_play_button.disabled = true
+		_play_button.text = "HOST STARTS THE RACE"
+		_play_button.fit_text()
 		return
 	_play_button.disabled = not bool(data.get("available", true))
 	if _play_button.disabled:
 		_play_button.text = "UNAVAILABLE"
+		_play_button.fit_text()
 		return
 	var minigame: bool = TrackDefs.is_minigame(data)
 	var verb: String = "PLAY" if minigame else "RACE"
 	if Network.is_session_active():
 		verb = "SELECT MINIGAME" if minigame else "SELECT MAP"
 	_play_button.text = "%s  ·  %s" % [verb, str(data.get("name", "MAP"))]
+	# The pill keeps its cap; a long circuit name shrinks the label instead.
+	_play_button.fit_text()
 
 
 # --------------------------------------------------------------------------
@@ -937,6 +975,7 @@ func _refresh_vehicle() -> void:
 		entry = Catalog.find(Catalog.DEFAULT_ID)
 	_vehicle_button.text = "VEHICLE: " + str(entry.get("name", "SHOPPING CART"))
 	_vehicle_button.set("fill_color", Color("8ed8f6"))
+	_vehicle_button.fit_text()
 
 
 func _on_change_vehicle() -> void:

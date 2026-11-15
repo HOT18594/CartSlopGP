@@ -1,22 +1,23 @@
 extends RefCounted
 ## Authoritative route data for the Glacier Pass alpine circuit.
 ##
-## The circuit is a pinched figure-of-eight pass instead of the flat ring the
-## map shipped with:
+## The circuit is a two-level alpine pass instead of the flat ring the map
+## shipped with:
 ##
-##   * a summit plateau (6.0 m) on the start/finish straight, with a bump and a
-##     crest ramp right after the line so the first thing a driver meets is a
-##     kicker over the summit lip, then a landing slope off it;
-##   * a long descent off the summit down the east side (6.0 -> 4.5 -> 3.0 ->
-##     1.5 m) with the ice section on it;
+##   * a 9.0 m summit plateau on the start/finish straight, with a bump and a
+##     crest ramp right after the line, and a J kicker at the summit lip so the
+##     car launches as the deck falls away into the first sweeper;
+##   * a fast descent off the summit down the east side (9.0 -> 7.5 -> 6.0 ->
+##     4.5 -> 3.0 -> 1.5 m, one 1.5 m step per cell) with the ice section on it;
 ##   * a lower return leg at the base (1.5 m) that runs beneath the summit on
-##     the far side of the map, with a hairpin at its west end (two 90 degree
-##     corners 32 m apart, the tightest 180 the 16 m grid allows);
-##   * a crossing tile (C) at the waist of the eight, where the climbing leg and
-##     the descending leg pass each other 32 m apart at different heights, so
-##     the crossing paint reads as the knot of the eight;
-##   * a summit climb back up the west side, and a split-style pit-lane apron
-##     and garage block laid beside the base straight by glacier_layout.
+##     the far side of the map, with a 3.0 m crest on its east corner, a hairpin
+##     at its west end (two 90 degree corners 32 m apart, the tightest 180 the
+##     16 m grid allows) and the crossing tile (C) at the waist of the eight,
+##     where the climbing leg and the descending leg pass each other 32 m apart
+##     at different heights so the crossing paint reads as the knot;
+##   * a long summit climb back up the west side, thirteen cells of one-digit
+##     staircase from 1.5 m to 9.0 m, and the pit-lane apron and garage block
+##     laid beside the base straight by glacier_layout.
 ##
 ## Why the crossing is paint and not a second drivable arm: KenneyTiles traces
 ## one closed cell loop and refuses a grid where a cell is entered twice (it
@@ -25,27 +26,25 @@ extends RefCounted
 ## paints the cross at the waist and the heights separate the two legs, which is
 ## the closest honest reading of an eight on this grid.
 ##
-## Integration: the grid, heights and surfaces live in the map registry
-## (scripts/minigames/track_defs.gd) because that is what grass_race reads when
-## it builds the road. `preset_fields()` returns exactly the keys to merge into
-## the glacier preset:
+## Heights are one digit per cell at HEIGHT_STEP metres, read as the deck at the
+## cell's entry edge. A step is never more than one digit and every step sits on
+## a straight cell, so the B/J cells repeat the next cell's digit and the
+## engine's warped road and collider stay watertight; the kit's rigid ramp wedge
+## can never float. The decks run 1.5 m (base) to 9.0 m (summit): a 7.5 m range
+## that reads as a pass, not a plateau.
 ##
-##   {
-##       "grid": GlacierCourse.grid(), "heights": GlacierCourse.heights(),
-##       "elevation": GlacierCourse.elevation(),
-##       "surfaces": GlacierCourse.surfaces(),
-##       "start": GlacierCourse.START_CELL, "lap_length": 695,
-##   }
-##
-## Nothing here builds nodes: it is data plus the grid legend, so the registry
-## stays the single place a lap is authored.
+## Integration: the registry in scripts/minigames/track_defs.gd routes `grid` and
+## `heights` through this module (TrackDefs.grid_of / heights_of), so the race
+## always builds the tables below. `preset_fields()` is only for tools that
+## build a preset by hand. Nothing here builds nodes: it is data plus the legend.
 
 ## 14 columns x 12 rows, one character per 16 m cell, drawn top-down.
 ##   S straight  L/R corner  W wide sweeper  C crossing (paint)
 ##   B bump      J jump ramp  P pit straight  X empty
+## The J on row 1 is the summit-lip kicker at the east end of the start straight.
 const GRID: PackedStringArray = [
 	"XXXXXXXXXXXXXX",
-	"XXXRSBSJSSSSWX",
+	"XXXRSBSSSSSJWX",
 	"XXXSXXXXXXXXSX",
 	"XXXSXXXXXXXXSX",
 	"XXXRSSSLXLSSRX",
@@ -59,43 +58,45 @@ const GRID: PackedStringArray = [
 ]
 
 ## Road height per cell, one digit per cell in 1.5 m steps ('.' = flat). The
-## digit is the deck height at the cell's entry edge; the summit plateau is
-## digit 4 (6.0 m) and the base is digit 1 (1.5 m).
+## digit is the deck height at the cell's entry edge: the summit plateau is
+## digit 6 (9.0 m), the base is digit 1 (1.5 m).
 ##
-## Every corner cell carries the same digit as the cell it leads into. The
-## clearance path around the inside of a 1-cell corner is a mitre between the
-## two neighbouring straights, so the corner's own height span is never walked;
-## matching the two makes that skipped span zero and keeps the wall level
-## instead of tilted into the lane. All the climbing therefore happens on
-## straights, and every step between two cells that share an edge is at most one
-## digit, so no grade exceeds 1.5 m / 16 m = 9.4 percent.
+## Every height change sits on a straight cell, so every corner span is level:
+## that is both the smoothest line into a turn and what keeps the barrier ring
+## level through it, because a barrier piece tilted along a slope leans a few
+## centimetres further in on the inside of a bend. One digit per 16 m straight
+## is a 5.4 degree grade, so the whole 7.5 m drop and climb stay drivable. The B
+## and J tiles repeat the next cell's digit, which keeps the kit's rigid ramp
+## wedge on the same plane as the warped road at both of its seams.
 const HEIGHTS: PackedStringArray = [
 	"..............",
-	"...4444443321.",
-	"...4........1.",
-	"...4........1.",
-	"...44444.1111.",
-	".......4.1....",
+	"...6666666666.",
+	"...5........6.",
+	"...4........5.",
+	"...44433.2344.",
+	".......3.2....",
 	".......3.1....",
-	".......2.111..",
-	"....1112...1..",
+	".......2.112..",
+	"....1122...2..",
 	"....1......1..",
 	"....11111111..",
 	"..............",
 ]
 
-## Smooth fallback profile, used only when the registry merges `elevation`
-## without `heights`. Cell heights win whenever both are present.
+## Smooth fallback profile, used only when a preset merges `elevation` without
+## `heights`. Cell heights always win whenever both are present.
 const ELEVATION: Array[Dictionary] = [
-	{"at": 0.0, "height": 6.0},
-	{"at": 0.20, "height": 6.0},
-	{"at": 0.36, "height": 1.5},
+	{"at": 0.0, "height": 9.0},
+	{"at": 0.19, "height": 9.0},
+	{"at": 0.33, "height": 1.5},
+	{"at": 0.41, "height": 3.0},
+	{"at": 0.46, "height": 1.5},
 	{"at": 0.72, "height": 1.5},
-	{"at": 0.90, "height": 6.0},
+	{"at": 0.96, "height": 9.0},
 ]
 
-## Grip spans. The ice sits on the long descent (lap fractions 0.14-0.33 are the
-## cells from the summit lip down to the waist) so the slippery section is a
+## Grip spans. The ice sits on the fast descent (lap fractions 0.17-0.33 are the
+## cells from the summit lip down to the base) so the slippery section is a
 ## downhill, which is where an ice map wants it.
 const SURFACES: Array[Dictionary] = [
 	{"kind": "normal", "from": 0.0, "to": 0.14},
@@ -107,6 +108,8 @@ const SURFACES: Array[Dictionary] = [
 ## straight in row-major order). Kept explicit so the spec is self-contained.
 const START_CELL: Vector2i = Vector2i(4, 1)
 
+## Metres per height digit, mirroring KenneyTiles.HEIGHT_STEP.
+const HEIGHT_STEP: float = 1.5
 ## Approximate lap length in metres: 46 cells, twelve 8 m radius corners.
 const LAP_LENGTH: int = 695
 
@@ -137,9 +140,9 @@ static func surfaces() -> Array[Dictionary]:
 	return copy
 
 
-## Registry fields for the glacier preset. Merging these is the whole
-## integration: grass_race builds the road from `grid` and KenneyTiles reads
-## `heights` per cell when the preset carries it.
+## Registry fields for a hand-built glacier preset. The race already routes
+## `grid` and `heights` through TrackDefs.grid_of / heights_of, so merging these
+## is only needed by a tool that builds a preset by itself.
 static func preset_fields() -> Dictionary:
 	return {
 		"grid": grid(),
@@ -154,18 +157,31 @@ static func preset_fields() -> Dictionary:
 ## The KenneyTiles theme dictionary for this course, which is what a builder
 ## that has the grid already can pass to get the same elevation:
 ##   {"id": "glacier", "heights": [...], "elevation": [...]}
+## The per-cell heights win; the profile only matters if they are ever dropped.
 static func theme_dict() -> Dictionary:
 	return {"id": "glacier", "heights": heights(),
 		"elevation": elevation()}
 
 
 ## One-line description of the route, for build logs and the verification
-## harness.
+## harness. The summit and base are measured from HEIGHTS, so the line can never
+## disagree with the table the engine builds.
 static func summary() -> String:
 	var drivable: int = 0
 	for row: String in GRID:
 		for index in row.length():
 			if row[index] != "X":
 				drivable += 1
-	return "%d drivable cells, ~%d m, summit 6.0 m, base 1.5 m, crossing at the waist, base hairpin" % [
-		drivable, LAP_LENGTH]
+	var lowest: int = 9
+	var highest: int = 0
+	for row: String in HEIGHTS:
+		for index in row.length():
+			var glyph: String = row[index]
+			if not glyph.is_valid_int():
+				continue
+			lowest = mini(lowest, glyph.to_int())
+			highest = maxi(highest, glyph.to_int())
+	return "%d drivable cells, ~%d m, summit %.1f m, base %.1f m, %d m of climb, crossing at the waist, base hairpin" % [
+		drivable, LAP_LENGTH, float(highest) * HEIGHT_STEP,
+		float(lowest) * HEIGHT_STEP,
+		float(highest - lowest) * HEIGHT_STEP]

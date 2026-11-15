@@ -7,6 +7,10 @@ const UiAnim := preload("res://scripts/ui/ui_anim.gd")
 ## independent damping. The button reacts to the mouse and to keyboard/gamepad
 ## focus: a focused pill keeps a small, deliberate wiggle so the player can see
 ## where Enter/Space will land, and UiKit paints the focus ring.
+##
+## A pill never grows to fit a long label: the authored width is the cap and the
+## label shrinks its font inside it (UiKit.fit_button), so a rewritten label such
+## as "SELECT MAP · ..." cannot push a button over the screen edge.
 
 @export var fill_color: Color = Color("45b6f0"):
 	set(value):
@@ -23,6 +27,7 @@ const UiAnim := preload("res://scripts/ui/ui_anim.gd")
 @export var press_scale: float = 0.96 ## Squash while the button is held.
 
 const UiPalette := preload("res://scripts/ui/ui_palette.gd")
+const MIN_LABEL_FONT: int = 13 ## Floor for the shrink-to-fit label ramp.
 
 var _gloss := StyleBoxFlat.new()
 var _hovered: bool = false
@@ -43,6 +48,26 @@ func _ready() -> void:
 	mouse_exited.connect(_set_hovered.bind(false))
 	button_down.connect(_set_held.bind(true))
 	button_up.connect(_set_held.bind(false))
+	fit_text()
+
+
+func fit_text(max_width: float = -1.0, min_font: int = MIN_LABEL_FONT) -> void:
+	## Shrink the label into the pill instead of letting the pill widen.
+	## Screens that rewrite `text` at runtime (a selected map name, a room code)
+	## call this again; UiKit measures the real theme font, never a guess.
+	if text.is_empty():
+		return
+	var kit: Node = get_node_or_null("/root/UiKit")
+	if kit == null or not kit.has_method("fit_button"):
+		return
+	var cap: float = max_width
+	if cap <= 0.0:
+		cap = custom_minimum_size.x if custom_minimum_size.x > 0.0 else size.x
+	if cap <= 0.0:
+		return
+	if not has_meta("kit_font_size"):
+		set_meta("kit_font_size", maxi(get_theme_font_size("font_size"), 1))
+	kit.call("fit_button", self, cap, min_font)
 
 
 func _process(delta: float) -> void:

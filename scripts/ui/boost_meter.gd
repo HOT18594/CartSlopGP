@@ -1,76 +1,47 @@
 extends Control
-## Clean, unbroken boost bar. No bolt icon, no segment noise: one rounded
-## frame and a bright cyan fill. hud.gd feeds `ratio` and `boosting`.
 
 @export var ratio: float = 1.0:
 	set(value):
 		var clamped: float = clampf(value, 0.0, 1.0)
-		if is_equal_approx(clamped, ratio) and is_node_ready():
-			return
-		ratio = clamped
-		if is_node_ready():
+		if not is_equal_approx(clamped, ratio):
+			ratio = clamped
 			queue_redraw()
 @export var boosting: bool = false:
 	set(value):
-		if boosting == value:
-			return
-		boosting = value
-		if is_node_ready():
+		if boosting != value:
+			boosting = value
 			queue_redraw()
 
-const INK := Color("1e1b3a")
-const FRAME := Color(0.06, 0.16, 0.30, 0.94)
-const FILL_HI := Color("9af4ff")
-const FILL_LO := Color("2fa9e8")
+const CYAN := Color("55dfef")
+const GOLD := Color("ffd166")
+const LOW := Color("ff887e")
 
 var _frame := StyleBoxFlat.new()
-var _fill := StyleBoxFlat.new()
-var _glow_box := StyleBoxFlat.new()
+var _cell := StyleBoxFlat.new()
 
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_frame.bg_color = FRAME
-	_frame.border_width_left = 4
-	_frame.border_width_top = 4
-	_frame.border_width_right = 4
-	_frame.border_width_bottom = 4
-	_frame.border_color = INK
-	_glow_box.bg_color = Color(0.22, 0.88, 1.0, 0.16)
-	_glow_box.set_corner_radius_all(14)
+	_frame.bg_color = Color(0.04, 0.08, 0.14, 0.94)
+	_frame.set_corner_radius_all(7)
+	_frame.set_border_width_all(1)
+	_frame.border_color = Color(0.6, 0.8, 1.0, 0.23)
+	_cell.set_corner_radius_all(2)
 	resized.connect(queue_redraw)
 
 
 func _draw() -> void:
-	var radius: int = maxi(int(size.y * 0.5), 2)
-	_frame.corner_radius_top_left = radius
-	_frame.corner_radius_top_right = radius
-	_frame.corner_radius_bottom_left = radius
-	_frame.corner_radius_bottom_right = radius
-	if boosting:
-		draw_style_box(_glow_box, Rect2(Vector2(-3.0, -3.0),
-			size + Vector2(6.0, 6.0)))
 	draw_style_box(_frame, Rect2(Vector2.ZERO, size))
-
-	var inner := Rect2(Vector2(5.0, 5.0), Vector2(size.x - 10.0, size.y - 10.0))
+	var inner := Rect2(Vector2(5.0, 5.0), size - Vector2(10.0, 10.0))
 	if inner.size.x <= 0.0 or inner.size.y <= 0.0:
 		return
-	var fill_width: float = inner.size.x * clampf(ratio, 0.0, 1.0)
-	if fill_width > 0.5:
-		_fill.bg_color = FILL_HI.lerp(FILL_LO, 1.0 - clampf(ratio, 0.0, 1.0))
-		if boosting:
-			_fill.bg_color = _fill.bg_color.lightened(0.22)
-		_fill.corner_radius_top_left = maxi(int(inner.size.y * 0.5), 2)
-		_fill.corner_radius_top_right = maxi(int(inner.size.y * 0.5), 2)
-		_fill.corner_radius_bottom_left = maxi(int(inner.size.y * 0.5), 2)
-		_fill.corner_radius_bottom_right = maxi(int(inner.size.y * 0.5), 2)
-		draw_style_box(_fill, Rect2(inner.position, Vector2(fill_width, inner.size.y)))
-		# A thin top highlight makes the fill feel like liquid rather than a block.
-		draw_line(inner.position + Vector2(3.0, 3.0),
-			inner.position + Vector2(maxf(fill_width - 3.0, 3.0), 3.0),
-			Color(1, 1, 1, 0.35), 2.0, true)
-	# Five 20% cells: readable at a glance and still one continuous bar.
-	for i in range(1, 5):
-		var x: float = inner.position.x + inner.size.x * float(i) / 5.0
-		draw_line(Vector2(x, inner.position.y + 1.0),
-			Vector2(x, inner.end.y - 1.0), Color(INK, 0.42), 2.0, true)
+	var cell_width: float = (inner.size.x - 27.0) / 10.0
+	var fill_color: Color = GOLD if boosting else (LOW if ratio <= 0.15 else CYAN)
+	for index in 10:
+		var position: Vector2 = inner.position + Vector2(float(index) * (cell_width + 3.0), 0.0)
+		_cell.bg_color = Color(0.5, 0.7, 0.85, 0.14)
+		draw_style_box(_cell, Rect2(position, Vector2(cell_width, inner.size.y)))
+		var amount: float = clampf(ratio * 10.0 - float(index), 0.0, 1.0)
+		if amount > 0.001:
+			_cell.bg_color = fill_color
+			draw_style_box(_cell, Rect2(position, Vector2(cell_width * amount, inner.size.y)))

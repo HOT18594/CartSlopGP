@@ -2,7 +2,7 @@ extends Node3D
 ## CARGO RUSH: a two-team present relay in a compact cartoon arena.
 ##
 ## Presents sit on the 16 m lattice all over the yard. A kart stops on one and
-## HOLDS the interact action for three seconds to load it, then drives it home
+## HOLDS the interact action for two seconds to load it, then drives it home
 ## and the present drops the moment the kart touches its own base pad. First
 ## team to BASE_TARGET deliveries wins; a five minute cap with a tied score
 ## goes to sudden-death overtime.
@@ -27,7 +27,7 @@ extends Node3D
 ## is read from the InputMap on every peer, never from a hard-coded key.
 ##
 ## The headless self-test (CART_CARGO_SELFTEST=1) prints one line per step:
-## select a present, drive to it, hold three seconds, pick it up, drive it to
+## select a present, drive to it, hold two seconds, pick it up, drive it to
 ## the team base and watch the score increment. It exits non-zero on failure.
 
 const CART_SCENE := preload("res://scenes/player/cart_player.tscn")
@@ -89,7 +89,7 @@ const FLAG_MODEL_GREEN: String = "flagGreen"
 const PRESENT_COUNT: int = 7
 const PRESENT_RESPAWN: float = 1.1
 const PICK_RADIUS: float = 4.2
-const HOLD_SECONDS: float = 3.0
+const HOLD_SECONDS: float = 2.0
 const CARRY_SLOW_SPEED: float = 0.86
 const CARRY_SLOW_ACCEL: float = 0.90
 const PRESENT_FLOAT: float = 0.78
@@ -360,11 +360,21 @@ func _interact_key_name() -> String:
 func _team_of_local_peer() -> int:
 	if not _multiplayer:
 		return 0
-	var ids: Array[int] = Network.participants()
-	var index: int = ids.find(multiplayer.get_unique_id())
-	if index < 0:
-		return 0
-	return index % TEAM_COUNT
+	return Network.team_for_peer(multiplayer.get_unique_id())
+
+
+func _on_teams_changed() -> void:
+	## TEAM ASSIGNMENT HOOK: the host moved this player in the lobby. Score
+	## ownership already follows Network.team_for_peer; mirror the change
+	## locally so the team HUD and the "drive it home" prompt use the new pad.
+	if not _multiplayer:
+		return
+	var team: int = _team_of_local_peer()
+	if team == _local_team:
+		return
+	_local_team = team
+	_refresh_team_texts()
+	_refresh_prompt()
 
 
 func _upgrade_graphics() -> void:
@@ -1275,9 +1285,28 @@ func _update_present_ring(index: int, progress: float) -> void:
 func _place_local_cart() -> void:
 	if _cart == null:
 		return
+	if _local_team < 0 or _local_team >= TEAM_COUNT:
+		_cart.set_physics_process(false)
+		return
 	var side: float = 1.0 if _local_team == 0 else -1.0
+	var position := Vector3(0.0, 0.35, side * (absf(BASE_Z[_local_team]) - 3.5))
+	if _multiplayer:
+		var teammates: Array[int] = []
+		for peer_id: int in Network.participants():
+			if Network.team_for_peer(peer_id) == _local_team:
+				teammates.append(peer_id)
+		teammates.sort()
+		var slot: int = teammates.find(_local_key())
+		if slot >= 0:
+			# Keep humans on the rear, flat part of the pad, clear of bot starts.
+			var columns: int = mini(teammates.size(), 3)
+			var rows: int = ceili(float(teammates.size()) / float(columns))
+			var row: int = slot / columns
+			position.x = (float(slot % columns) - float(columns - 1) * 0.5) * 5.5
+			position.z = side * (absf(BASE_Z[_local_team]) + 3.0
+				- 4.0 * float(row) / float(maxi(rows - 1, 1)))
 	var spawn := Transform3D(Basis(Vector3.UP, 0.0 if _local_team == 0 else PI),
-		Vector3(0.0, 0.35, side * (absf(BASE_Z[_local_team]) - 3.5)))
+		position)
 	_cart.global_transform = spawn
 	_cart.velocity = Vector3.ZERO
 	_cart.set_spawn_transform(spawn)
@@ -1419,12 +1448,11 @@ func _team_for_key(key: int) -> int:
 		if index >= 0 and index < _bots.size():
 			return int(_bots[index].get("team", 1))
 		return 1
+	if key == 0:
+		return -1
 	if _multiplayer:
-		var ids: Array[int] = Network.participants()
-		var slot: int = ids.find(key)
-		if slot >= 0:
-			return slot % TEAM_COUNT
-	return _local_team
+		return Network.team_for_peer(key)
+	return _local_team if key == _local_key() else -1
 
 
 func _tick_bots(delta: float) -> void:
@@ -2375,6 +2403,8 @@ func _setup_multiplayer() -> void:
 		Network.names_changed.connect(_refresh_name_labels)
 	if not Network.tag_colors_changed.is_connected(_refresh_name_labels):
 		Network.tag_colors_changed.connect(_refresh_name_labels)
+	if not Network.teams_changed.is_connected(_on_teams_changed):
+		Network.teams_changed.connect(_on_teams_changed)
 	Network.notify_scene_ready()
 	if _is_host:
 		_broadcast_state()
@@ -2822,7 +2852,7 @@ func _run_self_test() -> void:
 	## Runs the real mode with one scripted bot and prints every relay step.
 	## The bot uses the live hold/carry/delivery systems, not a shortcut: it
 	## selects through _bot_choose, stops on the present, waits out the real
-	## three second hold, carries the present and watches the score increment.
+	## two second hold, carries the present and watches the score increment.
 	## Run with CART_CARGO_SELFTEST=1. Exit code 0 means the loop passed.
 	var started: int = Time.get_ticks_msec()
 	print("CARGO_SELFTEST step=boot theme=%s presents=%d bots=%d action=%s key=%s"
@@ -2876,7 +2906,7 @@ func _run_self_test() -> void:
 		% [_selftest_present, HOLD_SECONDS])
 	var held: bool = await _selftest_wait_for_pickup()
 	if not held:
-		_fail_selftest("three second hold did not load the present")
+		_fail_selftest("two second hold did not load the present")
 		return
 	print("CARGO_SELFTEST step=pickup collected=%d present_state=%d"
 		% [_selftest_collected, int(_presents[_selftest_present]["state"])])
@@ -2923,7 +2953,7 @@ func _face_target(cart: CartPlayer, target: Vector3) -> void:
 func _selftest_steer(target: Vector3) -> void:
 	## Direct short-range steering for the proof bot. The arena is open, so a
 	## simple heading controller is enough; it slows before the target so the
-	## three second hold starts inside the pickup radius.
+	## two second hold starts inside the pickup radius.
 	var cart: CartPlayer = _selftest_cart
 	if cart == null or not is_instance_valid(cart):
 		return

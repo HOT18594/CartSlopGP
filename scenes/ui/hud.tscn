@@ -1,8 +1,7 @@
-[gd_scene load_steps=6 format=3]
+[gd_scene load_steps=5 format=3]
 
 [ext_resource type="Theme" path="res://assets/ui/theme.tres" id="1"]
 [ext_resource type="Script" path="res://scripts/hud.gd" id="2"]
-[ext_resource type="Script" path="res://scripts/ui/speedometer.gd" id="3"]
 [ext_resource type="Script" path="res://scripts/ui/boost_meter.gd" id="4"]
 
 [sub_resource type="StyleBoxFlat" id="pill_navy"]
@@ -54,10 +53,10 @@ layout_mode = 1
 anchors_preset = 2
 anchor_top = 1.0
 anchor_bottom = 1.0
-offset_left = 24.0
-offset_top = -82.0
-offset_right = 344.0
-offset_bottom = -24.0
+offset_left = 28.0
+offset_top = -89.0
+offset_right = 308.0
+offset_bottom = -28.0
 grow_vertical = 0
 mouse_filter = 2
 theme_override_constants/separation = 5
@@ -73,7 +72,7 @@ text = "BOOST"
 
 [node name="BoostMeter" type="Control" parent="BoostBox"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(320, 22)
+custom_minimum_size = Vector2(280, 26)
 layout_mode = 2
 mouse_filter = 2
 script = ExtResource("4")
@@ -86,17 +85,13 @@ anchor_left = 1.0
 anchor_top = 1.0
 anchor_right = 1.0
 anchor_bottom = 1.0
-offset_left = -194.0
-offset_top = -194.0
+offset_left = -236.0
+offset_top = -236.0
 offset_right = -24.0
 offset_bottom = -24.0
 grow_horizontal = 0
 grow_vertical = 0
-rotation = -0.07
-pivot_offset = Vector2(95.0, 95.0)
 mouse_filter = 2
-script = ExtResource("3")
-max_speed_kmh = 90.0
 
 [node name="SpeedValue" type="Label" parent="SpeedGauge"]
 unique_name_in_owner = true
@@ -106,42 +101,41 @@ anchor_left = 0.5
 anchor_top = 0.5
 anchor_right = 0.5
 anchor_bottom = 0.5
-offset_left = -80.0
-offset_top = 6.0
-offset_right = 80.0
-offset_bottom = 66.0
+offset_left = -84.0
+offset_top = -54.0
+offset_right = 84.0
+offset_bottom = 20.0
 grow_horizontal = 2
 grow_vertical = 2
-rotation = 0.07
-pivot_offset = Vector2(80, 30)
+mouse_filter = 2
 theme_type_variation = &"TitleLabel"
-theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_colors/font_color = Color(0.972549, 0.992157, 1, 1)
 theme_override_colors/font_outline_color = Color(0.117647, 0.105882, 0.227451, 1)
-theme_override_constants/outline_size = 10
-theme_override_font_sizes/font_size = 46
+theme_override_constants/outline_size = 7
+theme_override_font_sizes/font_size = 62
 text = "0"
 horizontal_alignment = 1
 vertical_alignment = 1
 
 [node name="SpeedUnit" type="Label" parent="SpeedGauge"]
+unique_name_in_owner = true
 layout_mode = 1
 anchors_preset = 8
 anchor_left = 0.5
 anchor_top = 0.5
 anchor_right = 0.5
 anchor_bottom = 0.5
-offset_left = -50.0
-offset_top = 62.0
-offset_right = 50.0
-offset_bottom = 82.0
+offset_left = -60.0
+offset_top = 26.0
+offset_right = 60.0
+offset_bottom = 46.0
 grow_horizontal = 2
 grow_vertical = 2
-rotation = 0.07
-pivot_offset = Vector2(50, 10)
-theme_override_colors/font_color = Color(0.74, 0.91, 1, 1)
+mouse_filter = 2
+theme_override_colors/font_color = Color(0.619608, 0.737255, 0.815686, 1)
 theme_override_colors/font_outline_color = Color(0.117647, 0.105882, 0.227451, 1)
-theme_override_constants/outline_size = 5
-theme_override_font_sizes/font_size = 14
+theme_override_constants/outline_size = 3
+theme_override_font_sizes/font_size = 12
 text = "KM/H"
 horizontal_alignment = 1
 
@@ -173,9 +167,9 @@ anchors_preset = 5
 anchor_left = 0.5
 anchor_right = 0.5
 offset_left = -320.0
-offset_top = 84.0
+offset_top = 148.0
 offset_right = 320.0
-offset_bottom = 140.0
+offset_bottom = 204.0
 grow_horizontal = 2
 theme_override_colors/font_color = Color(1, 1, 1, 0.9)
 theme_override_colors/font_outline_color = Color(0.117647, 0.105882, 0.227451, 1)

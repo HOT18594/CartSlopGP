@@ -1,13 +1,36 @@
 extends Control
-## In-game HUD: round speedometer, segmented boost meter, drive state, race
-## plaque and live standings. F3 toggles the debug readout.
+## In-game HUD: speed dial, segmented boost meter, drive state, race plaque and
+## live standings. F3 toggles the debug readout.
 ##
 ## The race readout is one quiet plaque in the top-left corner (position, lap,
 ## time, best) instead of a stack of bordered pills. `show_position_badge` /
 ## `show_lap_badge` stay part of the API and are fed by set_race_position() and
 ## set_lap(); the plaque itself appears as soon as either is called.
+##
+## The speed dial is painted by _draw_dial(): one thin arc carries the speed,
+## the number is the biggest thing on the dial and the units sit below it. The
+## old needle script is gone from hud.tscn, so nothing sweeps across the digits
+## at speed. SpeedGauge is the layout anchor for the dial, the digits and the
+## gear chip underneath them.
+##
+## Network and standings share the top-right corner: the ping readout is its own
+## block above the standings plate, so the two can never overlap, and the list
+## grows to every player instead of clipping at five.
 
 const UiPalette := preload("res://scripts/ui/ui_palette.gd")
+
+const DIAL_START: float = PI * 0.75 ## Dial arc opens at the lower left.
+const DIAL_SWEEP: float = PI * 1.5 ## 270 degrees, leaving the bottom gap free.
+const DIAL_SURFACE: Color = Color("101e32")
+const DIAL_MUTED: Color = Color("71859a")
+const DIAL_CYAN: Color = Color("55dfef")
+const DIAL_GOLD: Color = Color("ffd166")
+
+const NET_TOP: float = 18.0 ## Own corner block, above the standings plate.
+const NET_HEIGHT: float = 26.0
+const STANDINGS_TOP: float = 52.0
+const STANDINGS_ROW_HEIGHT: float = 26.0
+const STANDINGS_MAX_ROWS: int = 12 ## Room for every cart plus a few spectators.
 
 @export_group("Minigame HUD")
 @export var show_position_badge: bool = false ## Race placement readout (1st/2nd/...).
@@ -23,6 +46,7 @@ const UiPalette := preload("res://scripts/ui/ui_palette.gd")
 
 var _debug_visible: bool = false
 var _hint_timer: float = 12.0
+var _net_panel: PanelContainer
 var _net_label: Label
 var _net_timer: float = 0.0
 var _scoreboard: PanelContainer
@@ -70,7 +94,15 @@ var _explicit_position_ms: int = 0
 var _network_standings_timer: float = 0.0
 var _standings_panel: PanelContainer
 var _standings_rows: VBoxContainer
-var _standings_signature: String = ""
+var _standings_row_cache: Array[Dictionary] = []
+var _boost_caption: Label
+var _last_boost_caption: String = ""
+var _last_place: int = 0
+var _position_tween: Tween
+var _standings_title: Label
+var _dial_ratio: float = 0.0 ## Smoothed 0..1 arc fill.
+var _dial_boost: float = 0.0 ## Smoothed accent tint while boosting.
+var _dial_max_kmh: float = 120.0 ## Dial top speed, recomputed from the cart.
 
 
 func _ready() -> void:
@@ -79,22 +111,7 @@ func _ready() -> void:
 	_hint_label.visible = false
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	if Network.is_session_active():
-		_net_label = Label.new()
-		_net_label.name = "NetStats"
-		_net_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		_net_label.anchor_left = 1.0
-		_net_label.anchor_right = 1.0
-		_net_label.offset_left = -350.0
-		_net_label.offset_top = 24.0
-		_net_label.offset_right = -24.0
-		_net_label.offset_bottom = 48.0
-		_net_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-		_net_label.custom_minimum_size = Vector2(326, 0)
-		_net_label.add_theme_font_size_override("font_size", 14)
-		_net_label.add_theme_color_override("font_color", Color(1, 1, 1, 0.86))
-		_net_label.add_theme_color_override("font_outline_color", Color(0.10, 0.08, 0.18, 0.9))
-		_net_label.add_theme_constant_override("outline_size", 4)
-		add_child(_net_label)
+		_build_net_block()
 		_build_scoreboard()
 	_debug_label.visible = false
 	_build_boost_percent()
@@ -109,28 +126,24 @@ func _ready() -> void:
 
 
 func _build_boost_percent() -> void:
-	## Overlay the remaining boost inside the right edge of the meter. A separate
-	## Label avoids redrawing a font glyph from `_draw()` every frame.
-	_boost_percent = Label.new()
+	_boost_caption = $BoostBox/BoostCaption
+	_boost_caption.add_theme_font_size_override("font_size", 13)
+	_boost_caption.add_theme_constant_override("outline_size", 3)
+	_boost_percent = _label("100%", 13, Color("e7f3ff"), 3)
 	_boost_percent.name = "BoostPercent"
-	_boost_percent.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_boost_percent.anchor_left = 1.0
 	_boost_percent.anchor_right = 1.0
-	_boost_percent.anchor_top = 0.0
-	_boost_percent.anchor_bottom = 1.0
-	_boost_percent.offset_left = -58.0
-	_boost_percent.offset_right = -10.0
+	_boost_percent.offset_left = -64.0
+	_boost_percent.offset_top = -27.0
+	_boost_percent.offset_right = 0.0
+	_boost_percent.offset_bottom = -5.0
 	_boost_percent.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	_boost_percent.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	_boost_percent.add_theme_font_size_override("font_size", 13)
-	_boost_percent.add_theme_color_override("font_color", Color(0.06, 0.12, 0.22, 0.95))
-	_boost_percent.add_theme_color_override("font_outline_color", Color(1, 1, 1, 0.45))
-	_boost_percent.add_theme_constant_override("outline_size", 3)
 	_boost_meter.add_child(_boost_percent)
 
 
 func _apply_display_settings() -> void:
-	var scale_factor: float = clampf(GameSettings.hud_scale, 0.75, 1.5)
+	var available_scale: float = minf(size.x / 960.0, size.y / 600.0)
+	var scale_factor: float = minf(clampf(GameSettings.hud_scale, 0.75, 1.5), maxf(available_scale, 0.5))
 	if GameSettings.show_fps:
 		if _fps_label == null:
 			_fps_label = Label.new()
@@ -141,9 +154,9 @@ func _apply_display_settings() -> void:
 			_fps_label.anchor_right = 1.0
 			_fps_label.anchor_bottom = 1.0
 			_fps_label.offset_left = -150.0
-			_fps_label.offset_top = -52.0
-			_fps_label.offset_right = -20.0
-			_fps_label.offset_bottom = -22.0
+			_fps_label.offset_top = -270.0
+			_fps_label.offset_right = -28.0
+			_fps_label.offset_bottom = -246.0
 			_fps_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 			_fps_label.add_theme_font_size_override("font_size", 14)
 			_fps_label.add_theme_color_override("font_color", Color(1, 1, 1, 0.86))
@@ -162,6 +175,8 @@ func _apply_display_settings() -> void:
 		var control := child as Control
 		control.scale = Vector2.ONE * scale_factor
 		control.pivot_offset = _hud_pivot(control)
+	# The dial is painted from the scaled rect, so it must re-measure.
+	queue_redraw()
 
 
 func _hud_pivot(control: Control) -> Vector2:
@@ -215,7 +230,7 @@ func _build_race_plaque() -> void:
 	_race_plaque.offset_right = 24.0 + 340.0
 	_race_plaque.offset_bottom = 20.0 + 120.0
 	_race_plaque.add_theme_stylebox_override("panel",
-		_panel_style(Color(0.118, 0.106, 0.227, 0.80)))
+		_panel_style(Color(0.063, 0.118, 0.196, 0.94)))
 	add_child(_race_plaque)
 	var column := VBoxContainer.new()
 	column.add_theme_constant_override("separation", 2)
@@ -223,13 +238,13 @@ func _build_race_plaque() -> void:
 	var top := HBoxContainer.new()
 	top.add_theme_constant_override("separation", 8)
 	column.add_child(top)
-	_plaque_pos = _label("1ST", 52, UiPalette.YELLOW, 9)
+	_plaque_pos = _label("1ST", 44, Color("ffd166"))
 	top.add_child(_plaque_pos)
 	var pos_stack := VBoxContainer.new()
 	pos_stack.size_flags_vertical = Control.SIZE_SHRINK_END
 	pos_stack.add_theme_constant_override("separation", 0)
 	top.add_child(pos_stack)
-	_plaque_of = _label("OF 6", 14, Color(1, 1, 1, 0.72))
+	_plaque_of = _label("OF —", 14, Color(1, 1, 1, 0.72))
 	pos_stack.add_child(_plaque_of)
 	var spacer := Control.new()
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -269,32 +284,35 @@ func _build_race_plaque() -> void:
 
 
 func _build_gear_badge() -> void:
-	## Bottom-right, left of the dial: one quiet pill with the current gear.
-	## Kept outside the speedometer so the needle and big digits stay clean.
 	_gear_badge = PanelContainer.new()
 	_gear_badge.name = "GearBadge"
 	_gear_badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_gear_badge.anchor_left = 1.0
-	_gear_badge.anchor_top = 1.0
-	_gear_badge.anchor_right = 1.0
-	_gear_badge.anchor_bottom = 1.0
-	_gear_badge.offset_left = -330.0
-	_gear_badge.offset_top = -100.0
-	_gear_badge.offset_right = -206.0
-	_gear_badge.offset_bottom = -60.0
-	_gear_badge.add_theme_stylebox_override("panel",
-		_panel_style(Color(0.118, 0.106, 0.227, 0.76)))
+	_gear_badge.anchor_left = 0.5
+	_gear_badge.anchor_top = 0.5
+	_gear_badge.anchor_right = 0.5
+	_gear_badge.anchor_bottom = 0.5
+	_gear_badge.offset_left = -32.0
+	_gear_badge.offset_top = 54.0
+	_gear_badge.offset_right = 32.0
+	_gear_badge.offset_bottom = 80.0
+	var style := _panel_style(Color(0.5, 0.7, 0.85, 0.12))
+	style.set_corner_radius_all(5)
+	style.content_margin_left = 8.0
+	style.content_margin_right = 8.0
+	style.content_margin_top = 1.0
+	style.content_margin_bottom = 1.0
+	_gear_badge.add_theme_stylebox_override("panel", style)
 	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 8)
+	row.add_theme_constant_override("separation", 6)
 	row.alignment = BoxContainer.ALIGNMENT_CENTER
 	_gear_badge.add_child(row)
-	var caption := _label("GEAR", 12, Color(1, 1, 1, 0.6))
+	var caption := _label("GEAR", 9, Color("98aebf"))
 	caption.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	row.add_child(caption)
-	_gear_value = _label("N", 24, UiPalette.YELLOW, 6)
+	_gear_value = _label("N", 17, Color("55dfef"))
 	_gear_value.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	row.add_child(_gear_value)
-	add_child(_gear_badge)
+	_speed_gauge.add_child(_gear_badge)
 
 
 func _lap_pips_for(total: int) -> void:
@@ -335,23 +353,57 @@ func _update_lap_pips(current: int) -> void:
 			pip.color = Color(1, 1, 1, 0.22)
 
 
+func _build_net_block() -> void:
+	## Ping and peer count get their own corner block, stacked above the
+	## standings. They used to share the corner, so the server line could be
+	## drawn over the first standings row once the field grew.
+	_net_panel = PanelContainer.new()
+	_net_panel.name = "NetBlock"
+	_net_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_net_panel.anchor_left = 1.0
+	_net_panel.anchor_right = 1.0
+	_net_panel.offset_left = -336.0
+	_net_panel.offset_right = -24.0
+	_net_panel.offset_top = NET_TOP
+	_net_panel.offset_bottom = NET_TOP + NET_HEIGHT
+	var style := _panel_style(Color(0.063, 0.118, 0.196, 0.78))
+	style.set_corner_radius_all(10)
+	style.content_margin_left = 10.0
+	style.content_margin_right = 10.0
+	style.content_margin_top = 3.0
+	style.content_margin_bottom = 3.0
+	_net_panel.add_theme_stylebox_override("panel", style)
+	_net_label = _label("SERVER —", 13, Color(1, 1, 1, 0.86), 3)
+	_net_label.name = "NetStats"
+	_net_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	_net_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	# A long readout is trimmed inside its block instead of pushing the block
+	# past the screen edge.
+	_net_label.clip_text = true
+	_net_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	add_child(_net_panel)
+	_net_panel.add_child(_net_label)
+
+
 func _build_standings() -> void:
 	_standings_panel = PanelContainer.new()
 	_standings_panel.name = "LiveStandings"
 	_standings_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_standings_panel.anchor_left = 1.0
 	_standings_panel.anchor_right = 1.0
-	_standings_panel.offset_left = -284.0
+	_standings_panel.offset_left = -300.0
 	_standings_panel.offset_right = -24.0
-	_standings_panel.offset_top = 20.0
-	_standings_panel.offset_bottom = 20.0 + 250.0
+	# Below the network block, never behind it.
+	_standings_panel.offset_top = STANDINGS_TOP
+	_standings_panel.offset_bottom = STANDINGS_TOP
 	_standings_panel.add_theme_stylebox_override("panel",
-		_panel_style(Color(0.118, 0.106, 0.227, 0.76)))
+		_panel_style(Color(0.063, 0.118, 0.196, 0.92)))
 	add_child(_standings_panel)
 	var column := VBoxContainer.new()
 	column.add_theme_constant_override("separation", 3)
 	_standings_panel.add_child(column)
-	column.add_child(_label("STANDINGS", 13, Color(1, 1, 1, 0.62)))
+	_standings_title = _label("STANDINGS", 13, Color(1, 1, 1, 0.62))
+	column.add_child(_standings_title)
 	_standings_rows = VBoxContainer.new()
 	_standings_rows.add_theme_constant_override("separation", 2)
 	column.add_child(_standings_rows)
@@ -365,63 +417,75 @@ func set_standings(entries: Array[Dictionary]) -> void:
 
 
 func _apply_standings(entries: Array[Dictionary]) -> void:
-	if _standings_rows == null or entries.is_empty():
+	if _standings_rows == null:
 		return
-	var signature_parts: PackedStringArray = []
-	for entry: Dictionary in entries:
-		signature_parts.append("%s:%d" % [str(entry.get("name", "")),
-			int(float(entry.get("progress", 0.0)))])
-	var signature: String = "|".join(signature_parts)
-	if signature == _standings_signature:
+	_standings_panel.visible = entries.size() > 1
+	if entries.is_empty():
 		return
-	_standings_signature = signature
-	for child: Node in _standings_rows.get_children():
-		_standings_rows.remove_child(child)
-		child.queue_free()
-	var leader: float = float(entries[0].get("progress", 0.0))
-	var leader_time: float = float(entries[0].get("time", -1.0))
-	var visible_count: int = mini(entries.size(), 5)
-	for index in visible_count:
-		var entry: Dictionary = entries[index]
+	# Every cart gets a row. The old five-row cap silently deleted the back of
+	# the field (and then substituted the local cart into the last slot, which
+	# hid a real player); rows are 26 px tall so a full eight-cart room fits.
+	var visible_count: int = mini(entries.size(), STANDINGS_MAX_ROWS)
+	if entries.size() > 1:
+		_standings_title.text = "STANDINGS  %d" % entries.size()
+	else:
+		_standings_title.text = "STANDINGS"
+	while _standings_row_cache.size() < visible_count:
 		var row := PanelContainer.new()
 		row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		row.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
-		row.custom_minimum_size = Vector2(0.0, 36.0)
-		var local: bool = bool(entry.get("local", false))
-		var row_style := _panel_style(
-			Color(1.0, 0.96, 0.89, 0.16) if local else Color(1.0, 0.96, 0.89, 0.95))
-		row_style.set_corner_radius_all(12)
-		row.add_theme_stylebox_override("panel", row_style)
+		row.custom_minimum_size = Vector2(0, STANDINGS_ROW_HEIGHT)
+		var style := _panel_style(Color(1, 1, 1, 0.035))
+		style.set_corner_radius_all(6)
+		style.content_margin_left = 8.0
+		style.content_margin_right = 8.0
+		style.content_margin_top = 3.0
+		style.content_margin_bottom = 3.0
+		row.add_theme_stylebox_override("panel", style)
 		var line := HBoxContainer.new()
-		line.add_theme_constant_override("separation", 6)
+		line.add_theme_constant_override("separation", 7)
 		row.add_child(line)
-		line.add_child(_label("%d" % (index + 1), 14,
-			UiPalette.YELLOW if local else UiPalette.OUTLINE))
+		var place_label := _label("", 13, Color.WHITE)
+		place_label.custom_minimum_size.x = 16.0
+		line.add_child(place_label)
 		var dot := ColorRect.new()
-		var dot_color: Color = entry.get("color", Color.WHITE)
-		dot.color = dot_color
-		dot.custom_minimum_size = Vector2(7, 7)
+		dot.custom_minimum_size = Vector2(3, 12)
 		dot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		line.add_child(dot)
-		var name_label := _label(str(entry.get("name", "?")), 14,
-			Color(1, 1, 1, 1.0) if local else UiPalette.OUTLINE)
+		var name_label := _label("", 13, Color.WHITE)
 		name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		name_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 		name_label.clip_text = true
 		line.add_child(name_label)
-		var gap: float = maxf(leader - float(entry.get("progress", 0.0)), 0.0)
-		var gap_text: String = "—"
-		if not local:
+		var gap_label := _label("", 10, Color("98aebf"))
+		gap_label.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		line.add_child(gap_label)
+		_standings_rows.add_child(row)
+		_standings_row_cache.append({"row": row, "style": style, "place": place_label,
+			"dot": dot, "name": name_label, "gap": gap_label})
+	var leader: float = float(entries[0].get("progress", 0.0))
+	var leader_time: float = float(entries[0].get("time", -1.0))
+	for slot in _standings_row_cache.size():
+		var cached: Dictionary = _standings_row_cache[slot]
+		(cached["row"] as Control).visible = slot < visible_count
+		if slot >= visible_count:
+			continue
+		var entry: Dictionary = entries[slot]
+		var local: bool = bool(entry.get("local", false))
+		(cached["style"] as StyleBoxFlat).bg_color = Color(0.33, 0.87, 0.94, 0.16) if local else Color(1, 1, 1, 0.035)
+		var place: int = int(entry.get("place", 0))
+		(cached["place"] as Label).text = str(place if place > 0 else slot + 1)
+		(cached["place"] as Label).add_theme_color_override("font_color", Color("55dfef") if local else Color.WHITE)
+		(cached["dot"] as ColorRect).color = entry.get("color", Color.WHITE)
+		(cached["name"] as Label).text = str(entry.get("name", "PLAYER")) + (" · YOU" if local else "")
+		var gap_text: String = "LEADER"
+		if slot > 0:
 			var entry_time: float = float(entry.get("time", -1.0))
 			if entry_time > 0.0 and leader_time > 0.0:
-				# Server standings carry a race time instead of a distance.
 				gap_text = "+%.2fs" % maxf(entry_time - leader_time, 0.0)
 			else:
-				gap_text = "%dm" % int(gap)
-		line.add_child(_label(gap_text, 12,
-			Color(1, 1, 1, 0.55) if local else UiPalette.MUTED))
-		_standings_rows.add_child(row)
-	_standings_panel.visible = entries.size() > 1
+				gap_text = "+%dm" % int(maxf(leader - float(entry.get("progress", 0.0)), 0.0))
+		(cached["gap"] as Label).text = gap_text
 
 
 func set_race_position(place: int, field_size: int = 0) -> void:
@@ -433,6 +497,7 @@ func set_race_position(place: int, field_size: int = 0) -> void:
 func _show_position(place: int, field_size: int = 0) -> void:
 	if _race_plaque == null:
 		return
+	place = maxi(place, 1) ## A 0th place used to print "0TH".
 	show_position_badge = true
 	_race_plaque.visible = true
 	var suffix: String = "th"
@@ -445,6 +510,13 @@ func _show_position(place: int, field_size: int = 0) -> void:
 			3:
 				suffix = "rd"
 	_plaque_pos.text = ("%d%s" % [place, suffix]).to_upper()
+	if _last_place > 0 and place != _last_place:
+		if _position_tween != null and _position_tween.is_valid():
+			_position_tween.kill()
+		_plaque_pos.modulate = Color("55dfef") if place < _last_place else Color("ff887e")
+		_position_tween = create_tween()
+		_position_tween.tween_property(_plaque_pos, "modulate", Color.WHITE, 0.45)
+	_last_place = place
 	if field_size > 0:
 		_plaque_of.text = "OF %d" % field_size
 
@@ -493,6 +565,8 @@ func set_race_time(total_seconds: float, best_seconds: float = -1.0) -> void:
 		_last_lap_seen = 0
 		_hud_best_lap = -1.0
 		_external_lap_readout = false
+		_last_lap_delta_ms = 0
+		_last_place = 0
 	_race_clock = maxf(total_seconds, 0.0)
 	var total_text: String = _format_race_time(total_seconds)
 	if _plaque_time.text != total_text:
@@ -515,6 +589,7 @@ func _refresh_lap_readout() -> void:
 		return
 	var current: float = maxf(_race_clock - _lap_start_time, 0.0)
 	var parts: PackedStringArray = []
+	_plaque_delta.add_theme_color_override("font_color", Color("98aebf"))
 	if current >= 1.0:
 		parts.append("LAP %s" % _format_race_time(current))
 	if _last_lap_delta_ms > 0 \
@@ -547,23 +622,15 @@ func set_lap_time(lap_seconds: float, best_lap_seconds: float = -1.0) -> void:
 	var delta_text: String = "LAP %s" % _format_race_time(lap_seconds)
 	if best_lap_seconds > 0.0:
 		_hud_best_lap = best_lap_seconds
-		var delta: float = lap_seconds - best_lap_seconds
-		if delta >= 0.0:
-			delta_text += "  +%.2f" % delta
-			_plaque_delta.add_theme_color_override("font_color", Color(1, 0.55, 0.45))
-		else:
-			delta_text += "  -%.2f" % absf(delta)
-			_plaque_delta.add_theme_color_override("font_color", Color(0.55, 1.0, 0.65))
+	_plaque_delta.add_theme_color_override("font_color", Color("98aebf"))
 	if _plaque_delta.text != delta_text:
 		_plaque_delta.text = delta_text
 	_plaque_delta.visible = true
 
 
 func _format_race_time(seconds: float) -> String:
-	var safe: float = maxf(seconds, 0.0)
-	var minutes: int = int(safe) / 60
-	var remainder: float = fmod(safe, 60.0)
-	return "%d:%s" % [minutes, ("%.3f" % remainder).lpad(6, "0")]
+	var milliseconds: int = roundi(maxf(seconds, 0.0) * 1000.0)
+	return "%d:%02d.%03d" % [milliseconds / 60000, (milliseconds / 1000) % 60, milliseconds % 1000]
 
 
 func _process(delta: float) -> void:
@@ -595,15 +662,27 @@ func _process(delta: float) -> void:
 		_last_speed_text = speed_text
 		_speed_value.text = speed_text
 	# Vehicles have different top speeds, so scale the dial to the current car.
-	var gauge_max: float = cart.max_speed * cart.boost_speed_multiplier * 3.6 + 6.0
-	if not is_equal_approx(float(_speed_gauge.get("max_speed_kmh")), gauge_max):
-		_speed_gauge.set("max_speed_kmh", gauge_max)
-	_speed_gauge.speed_kmh = speed_kmh
+	_dial_max_kmh = ceilf((cart.max_speed * cart.boost_speed_multiplier * 3.6 + 6.0) / 20.0) * 20.0
+	var target_ratio: float = clampf(speed_kmh / maxf(_dial_max_kmh, 20.0), 0.0, 1.0)
+	var next_ratio: float = lerpf(_dial_ratio, target_ratio, 1.0 - exp(-delta * 15.0))
+	var next_boost: float = move_toward(_dial_boost, 1.0 if cart.boost_active else 0.0, delta * 5.0)
+	if absf(next_ratio - target_ratio) < 0.0015:
+		next_ratio = target_ratio
+	if not is_equal_approx(next_ratio, _dial_ratio) \
+			or not is_equal_approx(next_boost, _dial_boost):
+		_dial_ratio = next_ratio
+		_dial_boost = next_boost
+		queue_redraw()
 	_update_gear(cart, speed_kmh)
 
 	var boost_ratio: float = clampf(cart.boost_amount / maxf(cart.max_boost, 0.1), 0.0, 1.0)
 	_boost_meter.ratio = boost_ratio
 	_boost_meter.boosting = cart.boost_active
+	var boost_caption: String = "BOOST ACTIVE" if cart.boost_active else ("RECHARGING" if boost_ratio < 0.15 else "BOOST READY")
+	if boost_caption != _last_boost_caption:
+		_last_boost_caption = boost_caption
+		_boost_caption.text = boost_caption
+		_boost_caption.add_theme_color_override("font_color", Color("ffd166") if cart.boost_active else Color("e7f3ff"))
 	var boost_percent: int = int(round(boost_ratio * 100.0))
 	if boost_percent != _last_boost_percent and _boost_percent != null:
 		_last_boost_percent = boost_percent
@@ -645,20 +724,77 @@ func _apply_hint() -> void:
 
 
 func _draw() -> void:
-	# Drawn on the HUD root, so the glow sits behind the opaque speedometer dial
-	# and only its halo is visible. Three rings are cheaper than a shader.
-	if _boost_glow <= 0.001 or _speed_gauge == null or _speed_gauge.size.x <= 0.0:
+	# Two passes: the boost halo first, then the opaque dial on top of it, so
+	# only the halo ring outside the dial stays visible.
+	_draw_boost_glow()
+	_draw_dial()
+
+
+func _gauge_rect() -> Rect2:
+	## Dial rectangle in HUD-canvas space. get_global_rect() ignores the scale
+	## _apply_display_settings() puts on the dial's own Control, which made the
+	## painted dial shrink and drift away from its digits at 125-150% HUD scale.
+	if _speed_gauge == null or not is_instance_valid(_speed_gauge):
+		return Rect2()
+	var gauge_scale: Vector2 = _speed_gauge.get_global_transform().get_scale()
+	return Rect2(_speed_gauge.get_global_position(), _speed_gauge.size * gauge_scale)
+
+
+func _draw_boost_glow() -> void:
+	# Drawn on the HUD root, so the glow sits behind the opaque dial and only
+	# its halo is visible. Three rings are cheaper than a shader.
+	var gauge_rect: Rect2 = _gauge_rect()
+	if _boost_glow <= 0.001 or gauge_rect.size.x <= 0.0:
 		return
-	# get_global_rect includes the HUD-scale transform. Using position/size
-	# directly put the halo up-left of the dial at 150% HUD scale.
-	var gauge_rect: Rect2 = _speed_gauge.get_global_rect()
 	var center: Vector2 = gauge_rect.position + gauge_rect.size * 0.5
 	var radius: float = maxf(gauge_rect.size.x, gauge_rect.size.y) * 0.5
-	var pulse: float = 0.9 + 0.1 * sin(Time.get_ticks_msec() * 0.012)
+	var pulse: float = 1.0 if GameSettings.reduce_motion else 0.9 + 0.1 * sin(Time.get_ticks_msec() * 0.012)
 	for index in 3:
 		var spread: float = radius + 8.0 + float(index) * 9.0
 		var alpha: float = (0.16 - float(index) * 0.045) * _boost_glow * pulse
 		draw_circle(center, spread, Color(0.25, 0.85, 1.0, alpha))
+
+
+func _draw_dial() -> void:
+	## Arc-first speedometer: a 270 degree track carries the speed, a thin
+	## bright cap marks the exact value and the big number stays untouched.
+	## There is no needle, so nothing crosses the digits while driving, and no
+	## tick numerals either: the hero digits are the only number on the dial.
+	var gauge_rect: Rect2 = _gauge_rect()
+	var radius: float = minf(gauge_rect.size.x, gauge_rect.size.y) * 0.5 - 5.0
+	if radius < 24.0:
+		return
+	var center: Vector2 = gauge_rect.position + gauge_rect.size * 0.5
+	var accent: Color = DIAL_CYAN.lerp(DIAL_GOLD, _dial_boost)
+	var ring: float = radius * 0.92
+	draw_circle(center + Vector2(0.0, 4.0), radius + 3.0, Color(0.02, 0.04, 0.08, 0.22))
+	draw_circle(center, radius, Color(DIAL_SURFACE, 0.96))
+	draw_arc(center, radius - 1.0, 0.0, TAU, 80, Color(0.7, 0.85, 1.0, 0.16), 1.5, true)
+	draw_arc(center, ring, DIAL_START, DIAL_START + DIAL_SWEEP, 72,
+		Color(0.55, 0.7, 0.85, 0.16), 9.0, true)
+	if _dial_ratio > 0.004:
+		draw_arc(center, ring, DIAL_START, DIAL_START + DIAL_SWEEP * _dial_ratio,
+			maxi(3, int(72.0 * _dial_ratio)), accent, 9.0, true)
+		# Thin arc-style indicator: a short bright cap on the arc plus a 2 px
+		# outboard tick. It reads at a glance without hiding the arc.
+		var tip: float = DIAL_START + DIAL_SWEEP * _dial_ratio
+		draw_arc(center, ring, maxf(tip - 0.11, DIAL_START), tip, 12,
+			Color(1, 1, 1, 0.88), 3.0, true)
+		var direction := Vector2(cos(tip), sin(tip))
+		draw_line(center + direction * (radius * 0.955),
+			center + direction * (radius * 0.995), Color(1, 1, 1, 0.9), 2.0, true)
+	for index in 25:
+		var fraction: float = float(index) / 24.0
+		var angle: float = DIAL_START + DIAL_SWEEP * fraction
+		var direction := Vector2(cos(angle), sin(angle))
+		var major: bool = index % 6 == 0
+		var inner: float = 0.655 if major else 0.70
+		var outer: float = 0.75 if major else 0.735
+		var tick_color: Color = accent if fraction <= _dial_ratio + 0.0001 \
+			else Color(DIAL_MUTED, 0.55)
+		draw_line(center + direction * (radius * inner),
+			center + direction * (radius * outer), tick_color,
+			2.0 if major else 1.0, true)
 
 
 func _update_net_stats() -> void:
@@ -820,7 +956,10 @@ func _build_scoreboard() -> void:
 	_scoreboard.offset_left = -210.0
 	_scoreboard.offset_right = 210.0
 	_scoreboard.offset_top = 150.0
-	_scoreboard.offset_bottom = 64.0
+	# Zero height: the panel's own content sets the height, growing downward.
+	# The old offset_bottom (64) was above offset_top, a negative rect.
+	_scoreboard.offset_bottom = 150.0
+	_scoreboard.grow_vertical = Control.GROW_DIRECTION_END
 	_scoreboard.visible = false
 	var column := VBoxContainer.new()
 	column.add_theme_constant_override("separation", 6)

@@ -21,6 +21,20 @@ const ROOM_BROWSER_SCENE: String = "res://scenes/ui/room_browser.tscn"
 const Catalog := preload("res://scripts/vehicles/vehicle_catalog.gd")
 const UiPalette := preload("res://scripts/ui/ui_palette.gd")
 const FOCUS_SLIDER := preload("res://scripts/ui/focus_slider.gd")
+const CargoTheme := preload("res://scripts/minigames/cargo_rush_theme.gd")
+const TrackDefs := preload("res://scripts/minigames/track_defs.gd")
+
+## The room's game is one of these three. SANDBOX and the two MINIGAMES events
+## are written through Network.configure_session's scene argument, so the exact
+## scene (RACE vs CARGO) is part of the replicated session config.
+const KIND_SANDBOX: String = "sandbox"
+const KIND_RACE: String = "race"
+const KIND_DELIVER: String = "deliver"
+const KIND_LABELS: PackedStringArray = ["SANDBOX", "RACING", "DELIVER"]
+const KIND_VALUES: Array[String] = [KIND_SANDBOX, KIND_RACE, KIND_DELIVER]
+## Team columns are the ALPHA/BETA sides cargo_rush scores against.
+const TEAM_LABELS: PackedStringArray = ["ALPHA", "BETA"]
+const TEAM_COLORS: Array[Color] = [UiPalette.BLUE, UiPalette.RED]
 
 const SERVER_DOWN: String = "Game server is down. Try again later."
 const OFFLINE_TEXT: String = "Online play is unavailable right now. LAN play still works."
@@ -76,6 +90,12 @@ var _leave_button: Button
 var _host_hint: Label
 var _players_box: VBoxContainer
 var _players_header: Label
+var _teams_card: VBoxContainer
+var _teams_lock_button: Button
+var _teams_hint: Label
+var _team_lists: Array[VBoxContainer] = []
+var _team_headers: Array[Label] = []
+var _team_focus_peer: int = 0
 var _config_box: VBoxContainer
 var _settings_row: GridContainer
 var _setting_views: Dictionary = {} ## key -> Button / Control
@@ -110,8 +130,10 @@ func _ready() -> void:
 	Network.join_status_changed.connect(_on_join_status)
 	Network.peers_changed.connect(_on_peers_changed)
 	Network.names_changed.connect(_refresh_players)
+	Network.names_changed.connect(_refresh_teams)
 	Network.tag_colors_changed.connect(_refresh_players)
 	Network.ping_table_changed.connect(_refresh_players)
+	Network.teams_changed.connect(_refresh_teams)
 	Network.latency_changed.connect(func(_ms: int) -> void: _refresh_players())
 	Network.session_ended.connect(_on_session_ended)
 	Network.session_config_changed.connect(_refresh_config)
@@ -659,6 +681,8 @@ func _build_room() -> void:
 	_players_box.add_theme_constant_override("separation", 1)
 	right.add_child(_players_box)
 
+	_build_teams()
+
 	_config_box = VBoxContainer.new()
 	_config_box.add_theme_constant_override("separation", UiKit.SPACING_TIGHT)
 	_room_box.add_child(_config_box)
@@ -671,8 +695,8 @@ func _build_room() -> void:
 	_settings_row.add_theme_constant_override("v_separation", UiKit.SPACING_TIGHT)
 	_config_box.add_child(_settings_row)
 
-	_game_pill = _pill(PackedStringArray(["SANDBOX", "MINIGAMES"]),
-		[GameSettings.GAME_SANDBOX, GameSettings.GAME_MINIGAMES], 0, 108.0)
+	_game_pill = _pill(KIND_LABELS, KIND_VALUES, 0, 100.0)
+	_game_pill.tooltip_text = "SANDBOX: free roam.  RACING: a circuit.  DELIVER: Cargo Rush teams."
 	_game_pill.connect("option_changed", func(value: Variant) -> void: _on_game_mode(str(value)))
 	_settings_row.add_child(_setting_box("MODE", "mode", _game_pill, UiPalette.YELLOW, false))
 
@@ -721,6 +745,189 @@ func _build_room() -> void:
 	_client_note.add_theme_font_size_override("font_size", 13)
 	_client_note.add_theme_color_override("font_color", UiPalette.BLUE_DARK)
 	_room_box.add_child(_client_note)
+
+
+func _build_teams() -> void:
+	## DELIVER only: two columns, one per side. Every player row is a button,
+	## so click-to-move is always available; left/right on a focused row also
+	## picks a side. Nothing here is drag-and-drop-only.
+	_teams_card = _card(_room_box)
+	var header := HBoxContainer.new()
+	header.add_theme_constant_override("separation", UiKit.SPACING_TIGHT)
+	_teams_card.add_child(header)
+	var title := _section("TEAMS")
+	title.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	header.add_child(title)
+	var spacer := Control.new()
+	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	header.add_child(spacer)
+	_teams_lock_button = _candy("AUTO BALANCE", UiPalette.GRASS, 40, 13)
+	_teams_lock_button.custom_minimum_size = Vector2(170, 40)
+	_teams_lock_button.tooltip_text = "AUTO: joins and leaves are balanced. LOCKED: the split never moves."
+	_teams_lock_button.pressed.connect(_on_teams_lock_pressed)
+	header.add_child(_teams_lock_button)
+	var columns := HBoxContainer.new()
+	columns.add_theme_constant_override("separation", UiKit.SPACING)
+	columns.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_teams_card.add_child(columns)
+	for team in TEAM_LABELS.size():
+		var column := VBoxContainer.new()
+		column.add_theme_constant_override("separation", 4)
+		column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		columns.add_child(column)
+		var team_label := _section("%s  0" % TEAM_LABELS[team])
+		team_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		team_label.add_theme_font_size_override("font_size", 16)
+		team_label.add_theme_color_override("font_color", TEAM_COLORS[team])
+		column.add_child(team_label)
+		_team_headers.append(team_label)
+		var list := VBoxContainer.new()
+		list.add_theme_constant_override("separation", 4)
+		column.add_child(list)
+		_team_lists.append(list)
+	_teams_hint = _hint("")
+	_teams_card.add_child(_teams_hint)
+	_teams_card.visible = false
+
+
+func _on_teams_lock_pressed() -> void:
+	if not Network.is_host or not Network.is_session_active():
+		return
+	Network.set_teams_locked(not Network.teams_locked)
+
+
+func _on_team_row_pressed(peer_id: int) -> void:
+	## Click-to-move: a player row always sends that player to the other side.
+	_team_focus_peer = peer_id
+	_move_peer_to_team(peer_id, 1 - Network.team_for_peer(peer_id))
+
+
+func _on_team_row_input(event: InputEvent, peer_id: int) -> void:
+	## Arrow-key alternative to the click. LEFT = ALPHA, RIGHT = BETA.
+	if not (event is InputEventKey):
+		return
+	var key := event as InputEventKey
+	if not key.pressed or key.echo:
+		return
+	var team: int = -1
+	if key.keycode == KEY_LEFT:
+		team = 0
+	elif key.keycode == KEY_RIGHT:
+		team = 1
+	if team < 0 or team == Network.team_for_peer(peer_id):
+		return
+	_team_focus_peer = peer_id
+	_move_peer_to_team(peer_id, team)
+	accept_event()
+
+
+func _move_peer_to_team(peer_id: int, team: int) -> void:
+	if not Network.is_host or _state != "host":
+		return
+	if not Network.is_session_active():
+		return
+	Network.set_peer_team(peer_id, team)
+
+
+func _refresh_teams() -> void:
+	## Rebuild both columns from the replicated assignment table. Called on
+	## every team change, name change and peer join/leave, so a stale roster
+	## cannot survive a network event.
+	if _teams_card == null:
+		return
+	var show: bool = _state != "idle" and _is_deliver_room()
+	_teams_card.visible = show
+	if not show:
+		return
+	var ids: Array[int] = []
+	if Network.is_session_active():
+		ids = Network.participants()
+	var counts: Array[int] = [0, 0]
+	for peer_id: int in ids:
+		var side: int = clampi(Network.team_for_peer(peer_id), 0, 1)
+		counts[side] = counts[side] + 1
+	for list: VBoxContainer in _team_lists:
+		for child: Node in list.get_children():
+			list.remove_child(child)
+			child.queue_free()
+	if _team_headers.size() < TEAM_LABELS.size():
+		return
+	for team in TEAM_LABELS.size():
+		_team_headers[team].text = "%s  %d" % [TEAM_LABELS[team], counts[team]]
+	var movable: bool = Network.is_host and Network.is_session_active()
+	for peer_id: int in ids:
+		var side: int = clampi(Network.team_for_peer(peer_id), 0, 1)
+		if side >= _team_lists.size():
+			continue
+		var label_text: String = Network.name_of(peer_id)
+		if peer_id == multiplayer.get_unique_id():
+			label_text += "  (YOU)"
+		if peer_id == 1:
+			label_text = "HOST · " + label_text
+		var row: Button = _candy(label_text, TEAM_COLORS[side].lightened(0.08),
+			38, 14)
+		row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		row.disabled = not movable
+		if movable:
+			row.tooltip_text = "Click to switch %s to the other team. Left/right arrow keys also work." % label_text
+		else:
+			row.tooltip_text = "The host sets the teams."
+		row.pressed.connect(_on_team_row_pressed.bind(peer_id))
+		row.gui_input.connect(_on_team_row_input.bind(peer_id))
+		_team_lists[side].add_child(row)
+		if peer_id == _team_focus_peer:
+			call_deferred("_focus_team_row", row)
+	for team in TEAM_LABELS.size():
+		if counts[team] > 0:
+			continue
+		var empty_label := _caption("OPEN")
+		empty_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		_team_lists[team].add_child(empty_label)
+	if _teams_lock_button != null:
+		_teams_lock_button.visible = movable
+		_teams_lock_button.disabled = not movable
+		_teams_lock_button.text = "LOCKED" if Network.teams_locked \
+			else "AUTO BALANCE"
+		_teams_lock_button.set("fill_color",
+			UiPalette.YELLOW if Network.teams_locked else UiPalette.GRASS)
+	if _teams_hint != null:
+		if not movable:
+			_teams_hint.text = "THE HOST SET THIS SPLIT."
+		elif Network.teams_locked:
+			_teams_hint.text = "LOCKED · JOINS AND LEAVES LEAVE TEAMS AS THEY ARE."
+		else:
+			_teams_hint.text = "CLICK A PLAYER (OR LEFT/RIGHT) TO SWITCH SIDES · AUTO BALANCE ON."
+
+
+func _focus_team_row(row: Button) -> void:
+	if row != null and is_instance_valid(row) and row.is_inside_tree():
+		MenuNav.focus(row)
+
+
+func _is_deliver_room() -> bool:
+	return _current_kind() == KIND_DELIVER
+
+
+func _current_kind() -> String:
+	## The room's actual game. While a room exists the replicated session
+	## config is authoritative; the local pick is only a pre-host fallback.
+	if Network.is_session_active():
+		if Network.session_mode != GameSettings.GAME_MINIGAMES:
+			return KIND_SANDBOX
+		return KIND_DELIVER if Network.is_deliver_session() else KIND_RACE
+	if GameSettings.multiplayer_mode != GameSettings.GAME_MINIGAMES:
+		return KIND_SANDBOX
+	return KIND_DELIVER if TrackDefs.has_theme_id(GameSettings.selected_minigame) \
+		else KIND_RACE
+
+
+func _arena_name() -> String:
+	var theme_id: String = GameSettings.selected_minigame
+	if Network.is_session_active() and Network.session_minigame != "":
+		theme_id = Network.session_minigame
+	var theme: Dictionary = CargoTheme.get_theme(theme_id)
+	return str(theme.get("name", "DOCKYARD"))
 
 
 func _setting_box(label_text: String, key: String, control: Control, accent: Color,
@@ -937,6 +1144,7 @@ func _set_state(state: String) -> void:
 		UiAnim.fade_in(_room_box, 0.22)
 	_refresh_config()
 	_refresh_players()
+	_refresh_teams()
 	MenuNav.refresh()
 
 
@@ -944,55 +1152,88 @@ func _refresh_config() -> void:
 	if _game_pill == null:
 		return
 	var active: bool = Network.is_session_active()
-	var mode: String = Network.session_mode if active else GameSettings.multiplayer_mode
-	_game_pill.call("set_index", 0 if mode == GameSettings.GAME_SANDBOX else 1)
+	var host: bool = Network.is_host and _state == "host"
+	var kind: String = _current_kind()
+	var kind_index: int = KIND_VALUES.find(kind)
+	_game_pill.call("set_index", maxi(kind_index, 0))
+	_game_pill.disabled = not host
 	var bots: int = Network.session_bot_count if active else GameSettings.effective_bot_count()
 	_set_bots_views(clampi(bots, 0, 5))
-	# The host's session map is authoritative for the whole room, so a client
-	# shows the host's choice instead of its own local pick.
+	if _room_bots_slider != null:
+		_room_bots_slider.editable = host
+		_room_bots_slider.focus_mode = Control.FOCUS_ALL if host \
+			else Control.FOCUS_NONE
+	# The host's session choice is authoritative for the whole room, so a
+	# client shows the host's game/map instead of its own local pick.
 	var map_id: String = Network.session_map_id if active \
 		else GameSettings.selected_map
-	var map_text: String = GameSettings.minigame_name(map_id) \
-		if mode == GameSettings.GAME_MINIGAMES else "FREEROAM"
-	_set_badge("map", map_text,
-		UiPalette.CYAN if mode == GameSettings.GAME_MINIGAMES else UiPalette.TEXT_DIM)
-	_map_button.disabled = mode != GameSettings.GAME_MINIGAMES
+	var map_text: String = "FREEROAM"
+	var map_color: Color = UiPalette.TEXT_DIM
+	if kind == KIND_RACE:
+		map_text = GameSettings.minigame_name(map_id)
+		map_color = UiPalette.CYAN
+	elif kind == KIND_DELIVER:
+		map_text = "CARGO RUSH"
+		map_color = UiPalette.YELLOW
+	_set_badge("map", map_text, map_color)
+	_map_button.disabled = not host or kind == KIND_SANDBOX
+	if kind == KIND_DELIVER:
+		_map_button.tooltip_text = "CHOOSE ARENA · %s" % _arena_name()
+	else:
+		_map_button.tooltip_text = "CHOOSE MAP"
 	if _map_button.disabled:
 		_apply_soft_disabled(_map_button)
 	var vehicle_id: String = GameSettings.minigame_vehicle \
-		if mode == GameSettings.GAME_MINIGAMES else GameSettings.selected_vehicle
+		if kind != KIND_SANDBOX else GameSettings.selected_vehicle
 	var vehicle: Dictionary = Catalog.find(vehicle_id)
 	var vehicle_text: String = str(vehicle.get("name", "SHOPPING CART"))
-	if _state == "client" and mode == GameSettings.GAME_MINIGAMES:
-		# The race forces the host's car onto everyone; the client's local
-		# pick is not what it will drive.
+	if _state == "client" and kind != KIND_SANDBOX:
+		# A minigame forces the host's setup; the client's local pick is not
+		# what it will drive.
 		vehicle_text = "HOST CHOICE"
 	_set_badge("vehicle", vehicle_text, UiPalette.BLUE)
-	var public_room: bool = Network.room_public if active and Network.is_host else GameSettings.room_public
+	# room_public is replicated, so a client sees the host's PUBLIC/PRIVATE
+	# state instead of its own saved preference (the old label bug).
+	var public_room: bool = Network.room_public if active else GameSettings.room_public
 	_visibility_pill.call("set_index", 1 if public_room else 0)
-	_start_button.text = "START RACE" if mode == GameSettings.GAME_MINIGAMES else "START SANDBOX"
+	_visibility_pill.disabled = not host
+	if kind == KIND_RACE:
+		_start_button.text = "START RACE"
+	elif kind == KIND_DELIVER:
+		_start_button.text = "START MATCH"
+	else:
+		_start_button.text = "START SANDBOX"
+	_client_note.text = "ONLY THE HOST CAN START THE MATCH." \
+		if kind != KIND_SANDBOX else "ONLY THE HOST CAN START THE GAME."
 	_refresh_summary()
+	# The team card appears/disappears with the replicated game kind, so it is
+	# refreshed from the same config update as the MODE label.
+	_refresh_teams()
 
 
 func _setup_line() -> String:
 	var active: bool = Network.is_session_active()
-	var mode: String = Network.session_mode if active else GameSettings.multiplayer_mode
+	var kind: String = _current_kind()
 	var map_id: String = Network.session_map_id if active \
 		else GameSettings.selected_map
-	var map_text: String = GameSettings.minigame_name(map_id) \
-		if mode == GameSettings.GAME_MINIGAMES else "FREEROAM"
+	var map_text: String = "FREEROAM"
+	if kind == KIND_RACE:
+		map_text = GameSettings.minigame_name(map_id)
+	elif kind == KIND_DELIVER:
+		map_text = "CARGO RUSH · " + _arena_name()
 	var vehicle_id: String = GameSettings.minigame_vehicle \
-		if mode == GameSettings.GAME_MINIGAMES else GameSettings.selected_vehicle
+		if kind != KIND_SANDBOX else GameSettings.selected_vehicle
 	var vehicle: Dictionary = Catalog.find(vehicle_id)
 	var vehicle_text: String = str(vehicle.get("name", "SHOPPING CART"))
-	if _state == "client" and mode == GameSettings.GAME_MINIGAMES:
+	if _state == "client" and kind != KIND_SANDBOX:
 		vehicle_text = "HOST CHOICE"
 	var bots: int = Network.session_bot_count if active else GameSettings.effective_bot_count()
 	bots = clampi(bots, 0, 5)
 	var bot_text: String = "NO BOTS" if bots <= 0 else ("%d BOT%s" % [bots, "" if bots == 1 else "S"])
+	var kind_text: String = KIND_LABELS[clampi(KIND_VALUES.find(kind), 0,
+		KIND_LABELS.size() - 1)]
 	return "%s  ·  %s  ·  %s  ·  %s" % [
-		"MINIGAMES" if mode == GameSettings.GAME_MINIGAMES else "SANDBOX",
-		map_text, vehicle_text, bot_text]
+		kind_text, map_text, vehicle_text, bot_text]
 
 
 func _refresh_summary() -> void:
@@ -1092,11 +1333,15 @@ func _on_host_started(code: String) -> void:
 	_refresh_visibility_hint()
 	_refresh_config()
 	_refresh_players()
+	_refresh_teams()
 	call_deferred("_focus_host")
 
 
 func _on_visibility_changed(value: Variant) -> void:
 	if not Network.is_host:
+		# A client cannot change visibility; snap the pill back to the
+		# replicated room value instead of leaving a lie on screen.
+		_refresh_config()
 		return
 	var public_room: bool = bool(value)
 	GameSettings.set_room_public(public_room)
@@ -1194,6 +1439,7 @@ func _on_join_succeeded() -> void:
 	_title.text = "LOBBY"
 	_refresh_config()
 	_refresh_players()
+	_refresh_teams()
 	call_deferred("_focus_client")
 
 
@@ -1234,12 +1480,26 @@ func _refresh_status() -> void:
 # host configuration
 
 
-func _on_game_mode(mode: String) -> void:
+func _on_game_mode(kind: String) -> void:
+	## MODE strip: SANDBOX / RACING / DELIVER. Both minigames keep
+	## GameSettings.multiplayer_mode == MINIGAMES; the exact scene goes through
+	## the replicated session config, so a client can never load a race when
+	## the host picked DELIVER.
 	if not Network.is_host:
+		_refresh_config()
 		return
+	var mode: String = GameSettings.GAME_SANDBOX if kind == KIND_SANDBOX \
+		else GameSettings.GAME_MINIGAMES
+	var scene: String = Network.GAME_SCENE
+	if kind == KIND_RACE:
+		scene = Network.RACE_SCENE
+	elif kind == KIND_DELIVER:
+		scene = Network.CARGO_SCENE
 	GameSettings.set_multiplayer_mode(mode)
-	Network.configure_session(mode, GameSettings.bots_enabled, GameSettings.effective_bot_count())
+	Network.configure_session(mode, GameSettings.bots_enabled,
+		GameSettings.effective_bot_count(), "", scene)
 	_refresh_config()
+	_refresh_teams()
 
 
 func _on_bots_option(value: Variant) -> void:
@@ -1256,12 +1516,16 @@ func _on_bots_slider_value(value: float) -> void:
 func _apply_bot_total(total: int) -> void:
 	## Same contract the old BOTS pill used: GameSettings.set_bot_total() is the
 	## field Network.host_game() reads, and a live host also re-broadcasts the
-	## session config so clients see the new count.
+	## session config so clients see the new count. A client cannot edit the
+	## host's count, so a click on the read-only slider snaps straight back.
+	if _state != "idle" and not Network.is_host:
+		_refresh_config()
+		return
 	var clean: int = clampi(total, 0, 5)
 	GameSettings.set_bot_total(clean)
 	_set_bots_views(clean)
-	if Network.is_host:
-		Network.configure_session(GameSettings.multiplayer_mode,
+	if Network.is_host and Network.is_session_active():
+		Network.configure_session(Network.session_mode,
 			GameSettings.bots_enabled, GameSettings.effective_bot_count())
 	_refresh_summary()
 
@@ -1282,25 +1546,39 @@ func _on_choose_map() -> void:
 	if Network.is_session_active() and not Network.is_host:
 		_set_status("Only the host can change the map.")
 		return
-	if GameSettings.multiplayer_mode != GameSettings.GAME_MINIGAMES:
-		_set_status("Maps are for minigames. Switch MODE to MINIGAMES first.")
+	var kind: String = _current_kind()
+	if kind == KIND_SANDBOX:
+		_set_status("Switch MODE to RACING or DELIVER first.")
 		return
 	GameSettings.vehicle_return_scene = LOBBY_SCENE
-	SceneLoader.go_to(MINIGAMES_SCENE, "CHOOSE A MAP", "PICK A MAP")
+	SceneLoader.go_to(MINIGAMES_SCENE, "CHOOSE A MAP" if kind == KIND_RACE
+		else "CHOOSE AN ARENA", "PICK A MAP" if kind == KIND_RACE else "PICK AN ARENA")
 
 
 func _on_change_vehicle() -> void:
 	GameSettings.vehicle_return_scene = LOBBY_SCENE
 	GameSettings.vehicle_return_title = "MULTIPLAYER"
-	GameSettings.vehicle_edit_minigame = GameSettings.multiplayer_mode == GameSettings.GAME_MINIGAMES
+	GameSettings.vehicle_edit_minigame = _current_kind() != KIND_SANDBOX
 	SceneLoader.go_to(VEHICLE_SCENE, "VEHICLE", "Choose your ride")
 
 
 func _on_start_pressed() -> void:
-	var mode: String = GameSettings.multiplayer_mode
-	Network.start_game(
-		Network.RACE_SCENE if mode == GameSettings.GAME_MINIGAMES else Network.GAME_SCENE,
-		mode)
+	## START always pushes the room's visible game (mode + exact scene) before
+	## loading it, so the replicated config and the scene cannot disagree.
+	if not Network.is_host:
+		return
+	var kind: String = _current_kind()
+	var mode: String = GameSettings.GAME_SANDBOX if kind == KIND_SANDBOX \
+		else GameSettings.GAME_MINIGAMES
+	var scene: String = Network.GAME_SCENE
+	if kind == KIND_RACE:
+		scene = Network.RACE_SCENE
+	elif kind == KIND_DELIVER:
+		scene = Network.CARGO_SCENE
+	GameSettings.set_multiplayer_mode(mode)
+	Network.configure_session(mode, GameSettings.bots_enabled,
+		GameSettings.effective_bot_count(), "", scene)
+	Network.start_game("", mode)
 
 
 # --------------------------------------------------------------------------
@@ -1309,12 +1587,14 @@ func _on_start_pressed() -> void:
 
 func _on_peers_changed() -> void:
 	_refresh_players()
+	_refresh_teams()
 	# A joining client has no session config yet. Rebroadcast the host's
-	# current setup on every peer change so the read-only client summary is
-	# accurate instead of falling back to local defaults.
+	# current setup (including teams) on every peer change so the read-only
+	# client summary and team columns are accurate instead of falling back to
+	# local defaults. Network.refresh_session_config() never re-derives the
+	# mode from this machine's saved menu pick.
 	if Network.is_host and Network.is_session_active() and Network.is_connected_to_server():
-		Network.configure_session(GameSettings.multiplayer_mode,
-			GameSettings.bots_enabled, GameSettings.effective_bot_count())
+		Network.refresh_session_config()
 
 
 func _refresh_players() -> void:

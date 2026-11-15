@@ -17,6 +17,8 @@ signal join_failed(reason: String)
 signal session_ended(reason: String)
 signal peers_changed()
 signal names_changed()
+## Host -> everyone: the ALPHA/BETA split changed, so team columns redraw.
+signal teams_changed()
 signal latency_changed(ms: int)
 signal code_updated(code: String)
 signal session_config_changed()
@@ -34,6 +36,15 @@ const PORT_RANGE: int = 40
 const MAX_PLAYERS: int = 8
 const GAME_SCENE: String = "res://scenes/sandbox/sandbox.tscn"
 const RACE_SCENE: String = "res://scenes/minigames/grass_race.tscn"
+const CARGO_SCENE: String = "res://scenes/minigames/cargo_rush.tscn"
+## A MINIGAMES room is either a race or a DELIVER (cargo) match. The event is
+## part of the session config so every peer picks the host's scene; it is never
+## inferred from a client's own saved menu pick.
+const EVENT_RACE: String = "race"
+const EVENT_CARGO: String = "cargo"
+## Two symmetric sides. 0 = ALPHA (blue), 1 = BETA (red).
+const TEAM_COUNT: int = 2
+const TEAM_NAMES: PackedStringArray = ["ALPHA", "BETA"]
 const LOBBY_SCENE: String = "res://scenes/ui/lobby_menu.tscn"
 const MINIGAMES_SCENE: String = "res://scenes/ui/minigames_menu.tscn"
 const PING_INTERVAL: float = 2.0
@@ -66,7 +77,7 @@ const ROOM_CODE_ALPHABET: String = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 const ALLOWED_SCENES: Array[String] = [
 	GAME_SCENE,
 	RACE_SCENE,
-	"res://scenes/minigames/cargo_rush.tscn",
+	CARGO_SCENE,
 ]
 const MAX_BOT_COUNT: int = 5
 const MAX_LOBBY_ENTRIES: int = 200
@@ -214,9 +225,32 @@ var game_scene: String = GAME_SCENE
 var session_mode: String = GameSettings.GAME_SANDBOX
 var session_bots: bool = false
 var session_bot_count: int = 0
-## Legacy minigame/arena theme id carried for older scenes (cargo_rush). The
-## track a race builds comes from session_map_id, always a TrackDefs race map.
+## Event selection is separate from both the race map and Cargo arena theme.
+var session_event: String = EVENT_RACE ## EVENT_RACE or EVENT_CARGO when mode is MINIGAMES.
+## The exact gameplay scene the host will load: GAME_SCENE, RACE_SCENE or
+## CARGO_SCENE. Replicated in the session config so a join can never land on a
+## race when the host chose DELIVER (or the reverse).
+var session_scene: String = GAME_SCENE
 var session_minigame: String = "meadow_loop"
+## Host-owned assignments survive individual departures and lobby returns.
+## Only leave()/a brand-new session clears them; never derive teams from order.
+var _peer_teams: Dictionary = {} ## peer id -> 0 (ALPHA / blue) or 1 (BETA / red)
+## Auto-balance is on by default. The host locks the current split when the
+## room should keep manual teams; joins/leaves then never move anyone.
+var teams_locked: bool = false
+## Last map/theme the host picker wrote, so configure_session can tell a new
+## DELIVER pick from a new RACE pick without a second settings field. Cleared
+## by leave(); this is menu bookkeeping, not replicated state.
+var _last_pick_map: String = ""
+var _last_pick_theme: String = ""
+## Set the moment GameSettings writes a picker value (session_changed), before
+## the menu calls configure_session. Without it, re-picking the same DELIVER
+## theme after a race picked looked like "nothing changed".
+var _pending_event: String = ""
+## The last picker action this machine made (EVENT_RACE or EVENT_CARGO). It
+## survives leave() so re-hosting defaults to the game the host actually chose
+## last, instead of guessing from a possibly stale cargo theme.
+var _last_pick_event: String = ""
 ## Registry id (TrackDefs) of the track the host will race on. Sanitised on
 ## both send and receive; it is always an id, never a scene path.
 var session_map_id: String = TrackDefs.DEFAULT_ID
@@ -262,6 +296,14 @@ func _ready() -> void:
 	multiplayer.connected_to_server.connect(_on_connected_to_server)
 	multiplayer.connection_failed.connect(_on_connection_failed)
 	multiplayer.server_disconnected.connect(_on_server_disconnected)
+	# The map/arena picker writes GameSettings before it calls
+	# configure_session(). Listening to the write itself catches a second
+	# DELIVER pick of the same theme, which a value diff alone would miss.
+	GameSettings.session_changed.connect(_on_settings_session_changed)
+	# Baseline the picker snapshot from the saved settings, so a bot-count or
+	# visibility change can never look like a new map/arena pick.
+	_last_pick_map = GameSettings.selected_map
+	_last_pick_theme = GameSettings.selected_minigame
 
 
 func _process(delta: float) -> void:
@@ -865,6 +907,126 @@ func peer_count() -> int:
 
 
 # --------------------------------------------------------------------------
+# game event + teams
+
+
+static func event_for_scene(scene_path: String) -> String:
+	## "" for the sandbox, otherwise which minigame this scene belongs to.
+	match scene_path:
+		CARGO_SCENE:
+			return EVENT_CARGO
+		RACE_SCENE:
+			return EVENT_RACE
+	return ""
+
+
+func scene_for_event(event: String) -> String:
+	## The host's scene for an event. A blank event means the sandbox.
+	if event == EVENT_CARGO:
+		return CARGO_SCENE
+	if event == EVENT_RACE:
+		return RACE_SCENE
+	return GAME_SCENE
+
+
+func is_deliver_session() -> bool:
+	## True for a CARGO RUSH room. Uses the replicated scene/event, never the
+	## local player's menu pick, so a client cannot believe it is delivering
+	## while the host is racing.
+	if session_mode != GameSettings.GAME_MINIGAMES:
+		return false
+	if session_scene != "":
+		return session_scene == CARGO_SCENE
+	return session_event == EVENT_CARGO
+
+
+func team_for_peer(peer_id: int) -> int:
+	## 0 = ALPHA, 1 = BETA, always in range. An unassigned peer (a just-joined
+	## client before the config packet lands) falls back to a deterministic
+	## parity split, so every peer agrees on who is on which side.
+	if peer_id <= 0:
+		return 0
+	if _peer_teams.has(peer_id):
+		return 1 if int(_peer_teams[peer_id]) == 1 else 0
+	return peer_id % TEAM_COUNT
+
+
+func set_peer_team(peer_id: int, team: int) -> void:
+	## Host only. A manual move is authoritative and is not undone by the
+	## joiner/leaver balance pass.
+	if not is_host or not is_session_active():
+		return
+	if team < 0 or team >= TEAM_COUNT:
+		return
+	if not participants().has(peer_id):
+		return
+	_peer_teams[peer_id] = team
+	_push_session_config()
+	teams_changed.emit()
+
+
+func set_teams_locked(locked: bool) -> void:
+	## Host only. Locking freezes the current split; unlocking balances once.
+	if not is_host or not is_session_active():
+		return
+	teams_locked = locked
+	if not teams_locked:
+		_balance_teams()
+	_push_session_config()
+	teams_changed.emit()
+
+
+func refresh_session_config() -> void:
+	## Re-broadcast the host's current setup (mode, scene, teams) without
+	## re-deriving it from local settings. Used when a peer joins the room.
+	if not is_host or not is_session_active():
+		return
+	_push_session_config()
+
+
+func _smaller_team() -> int:
+	var counts: Array[int] = _team_counts()
+	return 0 if counts[0] <= counts[1] else 1
+
+
+func _team_counts() -> Array[int]:
+	var counts: Array[int] = [0, 0]
+	for peer_id: int in participants():
+		if _peer_teams.has(peer_id):
+			var team: int = team_for_peer(peer_id)
+			counts[team] = counts[team] + 1
+	return counts
+
+
+func _balance_teams() -> void:
+	## Host only, auto mode only. Every live peer gets a side, departed peers
+	## lose theirs, and the counts never differ by more than one. The host is
+	## moved last, so a late joiner is the one who switches sides.
+	if not is_host or teams_locked:
+		return
+	var ids: Array[int] = participants()
+	for peer_id: int in ids:
+		if not _peer_teams.has(peer_id):
+			_peer_teams[peer_id] = _smaller_team()
+	for _guard in ids.size() + TEAM_COUNT:
+		var counts: Array[int] = _team_counts()
+		if absi(counts[0] - counts[1]) <= 1:
+			break
+		var crowded: int = 0 if counts[0] > counts[1] else 1
+		var mover: int = -1
+		for peer_id: int in ids:
+			if peer_id != 1 and team_for_peer(peer_id) == crowded:
+				mover = peer_id
+		if mover < 0:
+			for peer_id: int in ids:
+				if team_for_peer(peer_id) == crowded:
+					mover = peer_id
+		if mover < 0:
+			break
+		_peer_teams[mover] = 1 - crowded
+
+
+# --------------------------------------------------------------------------
 # hosting
 
 
@@ -894,7 +1056,19 @@ func host_game(mode: String = "pi") -> void:
 	session_mode = GameSettings.multiplayer_mode
 	session_bots = GameSettings.bots_enabled
 	session_bot_count = GameSettings.effective_bot_count()
+	# The room carries its event/scene from the very first host frame. A
+	# DELIVER room hosts CARGO RUSH; everything else keeps its race/sandbox
+	# scene, so no path downstream has to guess from the mode alone.
+	session_event = _infer_session_event(session_mode)
+	session_scene = scene_for_event(session_event)
+	session_minigame = GameSettings.selected_minigame \
+		if session_event == EVENT_CARGO else ""
 	session_map_id = GameSettings.sanitize_map_id(GameSettings.selected_map)
+	# A fresh room starts with a clean, balanced team split.
+	_peer_teams.clear()
+	teams_locked = false
+	_peer_teams[1] = 0
+	_balance_teams()
 	session_racing_car_id = sanitize_racing_car_id(
 		GameSettings.racing_vehicle_id())
 	session_racing_allocation = sanitize_racing_allocation(
@@ -1119,6 +1293,7 @@ func _poll_lan_listener() -> void:
 			"port": port,
 			"players": peer_count(),
 			"mode": session_mode,
+			"event": session_event,
 			"state": room_state,
 			"map": session_map_id,
 			"version": str(ProjectSettings.get_setting("application/config/version", "")),
@@ -1169,6 +1344,7 @@ func scan_lan_rooms(timeout: float = 1.4) -> Array:
 				"port": open_port,
 				"players": maxi(int(room.get("players", 1)), 1),
 				"mode": str(room.get("mode", GameSettings.GAME_SANDBOX)),
+				"event": str(room.get("event", EVENT_RACE)),
 				"state": str(room.get("state", "lobby")),
 				"map": GameSettings.sanitize_map_id(str(room.get("map", ""))),
 			}
@@ -1710,6 +1886,9 @@ func set_room_public(value: bool) -> void:
 	if relay_active:
 		_relay_heartbeat = RELAY_HEARTBEAT_INTERVAL
 		_push_room_state()
+	# Clients show the room's PUBLIC/PRIVATE state; without this the lobby was
+	# reading each client's own saved setting and could label the room wrong.
+	_push_session_config()
 
 
 func _push_room_state() -> void:
@@ -1723,6 +1902,8 @@ func _push_room_state() -> void:
 		"state": room_state,
 		"players": peer_count(),
 		"public": room_public,
+		"mode": session_mode,
+		"event": session_event,
 		"map": session_map_id,
 	}
 	var http := HTTPRequest.new()
@@ -2101,6 +2282,17 @@ func leave() -> void:
 	# config packet; player_cart.gd treats empty as "use the local save".
 	session_racing_car_id = ""
 	session_racing_allocation = {}
+	# No room means no mode/scene/teams. A new session starts from its own
+	# host snapshot instead of inheriting the last room's DELIVER split.
+	session_scene = GAME_SCENE
+	session_event = ""
+	session_minigame = ""
+	_peer_teams.clear()
+	teams_locked = false
+	# Keep _last_pick_map/_last_pick_theme/_last_pick_event: they are the
+	# local picker's memory, not session state, and re-hosting should default
+	# to the game the host confirmed last.
+	_pending_event = ""
 
 
 # --------------------------------------------------------------------------
@@ -2108,7 +2300,11 @@ func leave() -> void:
 
 
 func configure_session(mode: String, bots: bool, count: int,
-		map_id: String = "") -> void:
+		map_id: String = "", scene: String = "") -> void:
+	## Host only. `scene` names the exact gameplay scene when the caller knows
+	## it (the lobby's RACING/DELIVER choice). When omitted, a changed pocket
+	## picker selection decides race vs DELIVER; otherwise the current event
+	## is kept, so adjusting bots never flips the gamemode.
 	if not is_host:
 		return
 	session_mode = mode
@@ -2118,7 +2314,20 @@ func configure_session(mode: String, bots: bool, count: int,
 	# means "use the host's current pick", which is what older call sites do.
 	session_map_id = GameSettings.sanitize_map_id(
 		map_id if map_id != "" else GameSettings.selected_map)
-	session_minigame = GameSettings.selected_minigame
+	if mode != GameSettings.GAME_MINIGAMES:
+		session_event = ""
+		_pending_event = ""
+		_last_pick_event = ""
+	elif scene != "" and scene in ALLOWED_SCENES and scene != GAME_SCENE:
+		session_event = event_for_scene(scene)
+		_pending_event = ""
+		_last_pick_event = session_event
+		_note_pick_snapshot()
+	else:
+		session_event = _infer_session_event(mode)
+	session_scene = scene_for_event(session_event)
+	session_minigame = GameSettings.selected_minigame \
+		if session_event == EVENT_CARGO else ""
 	# The racing build travels in the same reliable packet as the map id. It is
 	# sanitised before it leaves (the receiver sanitises again), and a peer
 	# that never receives the trailing fields keeps its own saved build.
@@ -2129,29 +2338,99 @@ func configure_session(mode: String, bots: bool, count: int,
 	_push_session_config()
 
 
+func _note_pick_snapshot() -> void:
+	## Remember which map/theme the menu just wrote. Called after a scene was
+	## supplied explicitly and after an inferred pick, so the next inference
+	## compares against the pick that is actually active.
+	_last_pick_map = GameSettings.selected_map
+	_last_pick_theme = GameSettings.selected_minigame
+
+
+func _on_settings_session_changed() -> void:
+	## A write from the map / arena picker (or a settings load) happened. Note
+	## which field actually moved; the next configure_session() consumes it.
+	var theme_id: String = GameSettings.selected_minigame
+	var map_id: String = GameSettings.selected_map
+	if theme_id != _last_pick_theme and TrackDefs.has_theme_id(theme_id):
+		_pending_event = EVENT_CARGO
+		_last_pick_event = EVENT_CARGO
+	elif map_id != _last_pick_map:
+		_pending_event = EVENT_RACE
+		_last_pick_event = EVENT_RACE
+
+
+func _infer_session_event(mode: String) -> String:
+	## Menu path (minigames_menu calls configure_session without a scene).
+	## A pending picker write identifies the card the host just confirmed;
+	## changed values are the fallback; then the last confirmed pick, so a
+	## re-host after a match keeps the game that was actually played.
+	if mode != GameSettings.GAME_MINIGAMES:
+		_note_pick_snapshot()
+		_pending_event = ""
+		return ""
+	var theme_id: String = GameSettings.selected_minigame
+	var map_id: String = GameSettings.selected_map
+	var theme_changed: bool = theme_id != _last_pick_theme
+	var map_changed: bool = map_id != _last_pick_map
+	var event: String = session_event
+	if _pending_event != "":
+		event = _pending_event
+	elif theme_changed and TrackDefs.has_theme_id(theme_id):
+		event = EVENT_CARGO
+	elif map_changed:
+		event = EVENT_RACE
+	_pending_event = ""
+	if event != EVENT_CARGO and event != EVENT_RACE:
+		event = _last_pick_event
+	if event != EVENT_CARGO and event != EVENT_RACE:
+		event = EVENT_CARGO if TrackDefs.has_theme_id(theme_id) else EVENT_RACE
+	_note_pick_snapshot()
+	_last_pick_event = event
+	return event
+
+
 func _push_session_config() -> void:
 	## One reliable host -> peer config packet. The trailing racing fields are
 	## optional on the receiver so a peer without them still gets mode, bots and
 	## map, then falls back to its local racing build.
+	if not is_session_active() or multiplayer.multiplayer_peer == null \
+			or not is_connected_to_server():
+		return
 	rpc("_net_session_config", session_mode, session_bots, session_bot_count,
-		session_map_id, session_racing_car_id, session_racing_allocation)
+		session_map_id, session_racing_car_id, session_racing_allocation,
+		session_event, session_scene, session_minigame, room_public,
+		_peer_teams.duplicate(), teams_locked)
 
 
 @rpc("authority", "call_local", "reliable")
 func _net_session_config(mode: String, bots: bool, count: int,
 		map_id: String = "", racing_car_id: String = "",
-		racing_allocation: Dictionary = {}) -> void:
+		racing_allocation: Dictionary = {}, event: String = "",
+		scene: String = "", theme_id: String = "", public_room: bool = false,
+		teams: Dictionary = {}, locked: bool = false) -> void:
 	if mode != GameSettings.GAME_SANDBOX and mode != GameSettings.GAME_MINIGAMES:
 		return
 	count = clampi(count, 0, MAX_BOT_COUNT)
 	session_mode = mode
 	session_bots = bots
 	session_bot_count = count
+	# Only a real gameplay scene may become the room's scene. A peer cannot
+	# smuggle a path through the config RPC, and a mismatch between the
+	# event and the scene resolves to a safe sandbox/race scene.
+	var clean_scene: String = scene if scene in ALLOWED_SCENES else ""
+	if clean_scene == "":
+		clean_scene = GAME_SCENE if mode == GameSettings.GAME_SANDBOX \
+			else (CARGO_SCENE if event == EVENT_CARGO else RACE_SCENE)
+	session_scene = clean_scene
+	session_event = event_for_scene(clean_scene) \
+		if mode == GameSettings.GAME_MINIGAMES else ""
 	# Receive-side sanitising: only a registry race-map id can become the
 	# session map, so a peer cannot smuggle a scene path through the config RPC.
-	# The legacy session_minigame field is left untouched for cargo_rush.
 	if map_id != "":
 		session_map_id = GameSettings.sanitize_map_id(map_id)
+	# The cargo arena theme is a registry theme id or nothing at all.
+	session_minigame = theme_id if TrackDefs.has_theme_id(theme_id) else ""
+	room_public = public_room
 	# An absent racing field is the old-client default: keep the peer's local
 	# build rather than overwriting it with an empty one.
 	if racing_car_id != "":
@@ -2159,10 +2438,36 @@ func _net_session_config(mode: String, bots: bool, count: int,
 	if not racing_allocation.is_empty():
 		session_racing_allocation = sanitize_racing_allocation(
 			racing_allocation)
+	var clean_teams: Dictionary = _sanitize_teams(teams)
+	var lock_changed: bool = locked != teams_locked
+	var assignment_changed: bool = clean_teams != _peer_teams
+	_peer_teams = clean_teams
+	teams_locked = locked
+	if assignment_changed or lock_changed:
+		teams_changed.emit()
 	if is_host:
 		GameSettings.set_session_config(GameSettings.MODE_MULTIPLAYER, mode,
 			bots, count, session_map_id)
 	session_config_changed.emit()
+
+
+func _sanitize_teams(raw: Dictionary) -> Dictionary:
+	## peer id -> 0/1 only, bounded, so a hostile packet cannot grow the table.
+	var clean: Dictionary = {}
+	for key: Variant in raw.keys():
+		if clean.size() >= MAX_PLAYERS + 1:
+			break
+		var peer_id: int = int(key)
+		if peer_id <= 0 or peer_id > 4096:
+			continue
+		var value: Variant = raw[key]
+		if not (value is int or value is float):
+			continue
+		var team: int = int(value)
+		if team != 0 and team != 1:
+			continue
+		clean[peer_id] = team
+	return clean
 
 
 func is_lan() -> bool:
@@ -2182,19 +2487,38 @@ func start_game(scene_path: String = "", mode: String = "") -> void:
 	var chosen_mode: String = mode
 	if chosen_mode == "":
 		chosen_mode = GameSettings.multiplayer_mode
-	if target == "":
-		target = RACE_SCENE if chosen_mode == GameSettings.GAME_MINIGAMES else GAME_SCENE
+	if chosen_mode != GameSettings.GAME_MINIGAMES:
+		# A sandbox room can never inherit a stale cargo/race scene.
+		chosen_mode = GameSettings.GAME_SANDBOX
+		target = GAME_SCENE
+		session_event = ""
+	elif target == "":
+		# The replicated event decides which minigame scene the host loads.
+		target = scene_for_event(session_event)
+	if target not in ALLOWED_SCENES:
+		target = GAME_SCENE if chosen_mode == GameSettings.GAME_SANDBOX \
+			else (CARGO_SCENE if session_event == EVENT_CARGO else RACE_SCENE)
+	if chosen_mode == GameSettings.GAME_MINIGAMES:
+		session_event = event_for_scene(target)
+		if session_event == "":
+			session_event = EVENT_RACE
+			target = RACE_SCENE
+	else:
+		session_event = ""
+	session_scene = target
 	in_game = true
 	game_scene = target
 	session_mode = chosen_mode
 	session_bots = GameSettings.bots_enabled
 	session_bot_count = GameSettings.effective_bot_count()
 	session_map_id = GameSettings.sanitize_map_id(GameSettings.selected_map)
-	session_minigame = GameSettings.selected_minigame
+	session_minigame = GameSettings.selected_minigame \
+		if session_event == EVENT_CARGO else ""
 	session_racing_car_id = sanitize_racing_car_id(
 		GameSettings.racing_vehicle_id())
 	session_racing_allocation = sanitize_racing_allocation(
 		GameSettings.racing_allocation())
+	_balance_teams()
 	race_seed = Time.get_ticks_msec()
 	clear_scene_ready()
 	set_room_state("playing")
@@ -2226,6 +2550,9 @@ func _net_begin_game(scene_path: String, mode: String, bots: bool, count: int,
 				current.rpc_id(1, "_net_client_ready", GameSettings.selected_vehicle)
 			elif scene_path == RACE_SCENE:
 				current.rpc_id(1, "_net_race_ready", GameSettings.minigame_vehicle)
+			elif scene_path == CARGO_SCENE:
+				current.rpc_id(1, "_net_cargo_ready", session_minigame,
+					GameSettings.minigame_vehicle)
 		return
 	if _scene_load_path == scene_path:
 		# A previous retry already asked SceneLoader for this scene. It may
@@ -2235,6 +2562,8 @@ func _net_begin_game(scene_path: String, mode: String, bots: bool, count: int,
 	in_game = true
 	game_scene = scene_path
 	session_mode = mode
+	session_scene = scene_path
+	session_event = event_for_scene(scene_path) if mode == GameSettings.GAME_MINIGAMES else ""
 	session_bots = bots
 	session_bot_count = count
 	if seed_value != 0:
@@ -2244,7 +2573,9 @@ func _net_begin_game(scene_path: String, mode: String, bots: bool, count: int,
 	# name save would silently persist the host's mode and bot count.
 	if is_host:
 		GameSettings.set_session_config(GameSettings.MODE_MULTIPLAYER, mode, bots, count)
-	var title: String = "STARTING RACE" if mode == GameSettings.GAME_MINIGAMES else "STARTING SANDBOX"
+	var title: String = "STARTING SANDBOX"
+	if mode == GameSettings.GAME_MINIGAMES:
+		title = "STARTING DELIVER" if scene_path == CARGO_SCENE else "STARTING RACE"
 	SceneLoader.go_to(scene_path, title, "Syncing players...")
 
 
@@ -2311,6 +2642,17 @@ func _on_peer_connected(id: int) -> void:
 		return
 	peers_changed.emit()
 	_push_room_state()
+	if is_host and is_session_active():
+		# Deliver rooms are team games: a joiner gets a side immediately, the
+		# split is balanced again unless the host locked it, and the whole
+		# table travels in the same config packet as the mode and scene. Push
+		# this BEFORE any begin-game packet so the new peer can read its team
+		# as soon as the arena loads.
+		if not _peer_teams.has(id):
+			_peer_teams[id] = _smaller_team()
+		_balance_teams()
+		_push_session_config()
+		teams_changed.emit()
 	if is_host:
 		# Send the existing name/colour table to the newcomer. Without this a
 		# client only learns colours from peers who change them later.
@@ -2388,6 +2730,7 @@ func _on_peer_disconnected(id: int) -> void:
 	player_names.erase(id)
 	player_colors.erase(id)
 	ping_table.erase(id)
+	_peer_teams.erase(id)
 	_name_stamp.erase(id)
 	_ping_stamp.erase(id)
 	_color_stamp.erase(id)
@@ -2399,6 +2742,11 @@ func _on_peer_disconnected(id: int) -> void:
 	_push_room_state()
 	if is_host and is_session_active():
 		_broadcast_ping_table()
+		# A departure can unbalance a deliver room. Rebalance unless locked
+		# and let every remaining peer redraw its team columns.
+		_balance_teams()
+		_push_session_config()
+		teams_changed.emit()
 
 
 func _on_connected_to_server() -> void:

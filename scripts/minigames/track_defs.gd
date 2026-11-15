@@ -16,9 +16,15 @@ extends RefCounted
 ##   static func build(race: Node3D, spline) -> void
 ## The theme calls tile_kit.* for dressing and returns nothing. The race scene
 ## builds the grid once with
-##   KenneyTiles.build(race, TrackDefs.grid_of(preset),
-##       {"id": TrackDefs.theme_id_of(preset)})
-## and hands the returned grid spline to that build() call.
+##   var theme := {"id": TrackDefs.theme_id_of(preset)}
+##   theme["heights"] = TrackDefs.heights_of(preset)
+##   KenneyTiles.build(race, TrackDefs.grid_of(preset), theme)
+## and hands the returned grid spline to that build() call. `grid_of` and
+## `heights_of` route both fields through the same map module, and get_preset()
+## overlays that routed course on the preset it returns, so a race, a probe, a
+## preview or a theme that reads the preset all build the same elevated map. The
+## inline `grid`/`elevation` a preset still carries is only a fallback for older
+## saves and unknown ids.
 ##
 ## `kind` is `map` for a grid circuit and `minigame` for a hand-built scene. A
 ## minigame also carries the `scene` the menu loads and its selectable theme
@@ -218,21 +224,42 @@ static func is_minigame(preset: Dictionary) -> bool:
 	return kind_of(preset) == KIND_MINIGAME
 
 
-## ASCII grid rows for a grid map, or an empty array for a minigame.
+## Course modules: each grid map authors its ASCII layout AND its per-cell height
+## table in its own file, and the accessors below route both through that one
+## module. They are preloaded here rather than referenced by path so a broken
+## course fails at parse time with the file that owns it.
 const StadiumGrid := preload("res://scripts/minigames/maps/stadium/stadium_grid.gd")
 const DockyardGrid := preload("res://scripts/minigames/maps/dockyard/dockyard_grid.gd")
 const GlacierCourse := preload("res://scripts/minigames/maps/glacier/glacier_course.gd")
 
 
-static func heights_of(preset: Dictionary) -> PackedStringArray:
-	## Per-cell road heights authored beside each course. Empty means flat.
-	match str(preset.get("id", "")):
+## A routed course as {"grid": PackedStringArray, "heights": PackedStringArray},
+## or an empty dictionary for an id no module owns. One lookup feeds the grid
+## accessor, the heights accessor and get_preset(), so the layout and its
+## terrain can never be read from two different modules.
+static func _course_of(id: String) -> Dictionary:
+	match id:
 		"stadium":
-			return StadiumGrid.height_rows()
+			return {"grid": StadiumGrid.grid_rows(),
+				"heights": StadiumGrid.height_rows()}
 		"dockyard":
-			return DockyardGrid.heights()
+			return {"grid": DockyardGrid.grid_rows(),
+				"heights": DockyardGrid.heights()}
 		"glacier":
-			return GlacierCourse.heights()
+			return {"grid": GlacierCourse.grid(),
+				"heights": GlacierCourse.heights()}
+	return {}
+
+
+static func heights_of(preset: Dictionary) -> PackedStringArray:
+	## Per-cell road heights authored beside each course, one digit per cell at
+	## HEIGHT_STEP metres. Empty means flat. Routed by the same map id as
+	## grid_of, so a preset can never pair one map's layout with another's
+	## terrain; a preset that carries its own `heights` still works for ids the
+	## registry does not route.
+	var routed: Variant = _course_of(str(preset.get("id", ""))).get("heights")
+	if routed is PackedStringArray:
+		return routed as PackedStringArray
 	var raw: Variant = preset.get("heights", PackedStringArray())
 	if raw is PackedStringArray:
 		return raw as PackedStringArray
@@ -248,13 +275,9 @@ static func grid_of(preset: Dictionary) -> PackedStringArray:
 	## Each map authors its course in its own module; the registry grid is only a
 	## fallback for older saves and for the menu. Without this dispatch the race
 	## silently builds the stale layout.
-	match str(preset.get("id", "")):
-		"stadium":
-			return StadiumGrid.grid_rows()
-		"dockyard":
-			return DockyardGrid.grid_rows()
-		"glacier":
-			return GlacierCourse.grid()
+	var routed: Variant = _course_of(str(preset.get("id", ""))).get("grid")
+	if routed is PackedStringArray:
+		return routed as PackedStringArray
 	var raw: Variant = preset.get("grid", PackedStringArray())
 	if raw is PackedStringArray:
 		return raw as PackedStringArray
@@ -341,6 +364,21 @@ static func _resolve(id: String) -> String:
 	return key
 
 
+## The registry view of a map preset, with the routed course laid over it: the
+## module's `grid` and `heights` replace the stale inline fallback, so every
+## caller of get_preset() (the race, a theme that checks for a height table, a
+## probe or a preview) builds the same elevated course. A minigame, or an id no
+## module owns, is returned unchanged.
+static func _with_course(preset: Dictionary) -> Dictionary:
+	var course: Dictionary = _course_of(str(preset.get("id", "")))
+	if course.is_empty():
+		return preset
+	var merged: Dictionary = preset.duplicate(true)
+	merged["grid"] = course["grid"]
+	merged["heights"] = course["heights"]
+	return merged
+
+
 ## The race map for `id`, or the first map when the id is unknown. Legacy ids
 ## (`meadow_loop`, `circuit`, `alpine`) map to their replacement so old saves
 ## keep working. Minigames and their theme ids are never returned here:
@@ -349,11 +387,11 @@ static func get_preset(id: String) -> Dictionary:
 	var key: String = _resolve(id)
 	for preset: Dictionary in PRESETS:
 		if is_map(preset) and str(preset.get("id", "")) == key:
-			return preset
+			return _with_course(preset)
 	for preset: Dictionary in PRESETS:
 		if is_map(preset):
-			return preset
-	return PRESETS[0]
+			return _with_course(preset)
+	return _with_course(PRESETS[0])
 
 
 ## Registry index for `id`, or 0 for an unknown/legacy id. A minigame theme id

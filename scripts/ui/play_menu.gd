@@ -38,6 +38,17 @@ func _ready() -> void:
 	_show_state("picker", false)
 	_refresh_bots()
 	call_deferred("_enter")
+	if OS.get_environment("CART_UI_MEASURE") == "1":
+		_report_layout.call_deferred()
+
+
+func _report_layout() -> void:
+	## Verification hook (CART_UI_MEASURE=1): measures both states of the screen
+	## in one boot and restores the picker, so nothing is left half-built.
+	await UiKit.report_screen(self, "play_menu:picker")
+	_show_state("single", false)
+	await UiKit.report_screen(self, "play_menu:single")
+	_show_state("picker", false)
 
 
 func _enter() -> void:
@@ -84,7 +95,7 @@ func _build_ui() -> void:
 	bots_caption.add_theme_color_override("font_color", UiPalette.MUTED)
 	_single_box.add_child(bots_caption)
 	_bots_pill = UiKit.segmented(BOT_LABELS, BOT_VALUES,
-		GameSettings.effective_bot_count(), 84.0, 52.0)
+		GameSettings.effective_bot_count(), 76.0, 52.0)
 	_bots_pill.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	_bots_pill.tooltip_text = "How many AI carts join the race."
 	_bots_pill.connect("option_changed", _on_bots_changed)
@@ -94,15 +105,13 @@ func _build_ui() -> void:
 	single_row.alignment = BoxContainer.ALIGNMENT_CENTER
 	_single_box.add_child(single_row)
 	var sandbox := _button("SANDBOX", UiPalette.YELLOW, 72, 22)
-	sandbox.custom_minimum_size.x = 250
-	sandbox.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	UiKit.cap_button(sandbox, 236.0)
 	sandbox.tooltip_text = "Drive around the park on your own. No laps, no rivals."
 	sandbox.pressed.connect(_on_single_sandbox)
 	single_row.add_child(sandbox)
 	_sandbox_button = sandbox
 	var minigames := _button("MINIGAMES", UiPalette.GRASS, 72, 22)
-	minigames.custom_minimum_size.x = 250
-	minigames.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	UiKit.cap_button(minigames, 236.0)
 	minigames.tooltip_text = "Race the field on a real track."
 	minigames.pressed.connect(_on_single_minigames)
 	single_row.add_child(minigames)
@@ -110,20 +119,21 @@ func _build_ui() -> void:
 
 	# One exit bar under everything, whatever state we are in.
 	_back_bar = _button("BACK", UiPalette.RED, 54, 19)
-	_back_bar.custom_minimum_size.x = 220
-	_back_bar.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	UiKit.cap_button(_back_bar, 220.0)
 	_back_bar.tooltip_text = "Back to the mode picker, then the main menu."
 	_back_bar.pressed.connect(_on_back)
 	_body.add_child(_back_bar)
 
 
 func _card(text: String, color: Color, two_carts: bool) -> Button:
+	## Two cards plus one 24 px gap stay well inside the 538 px body, so the
+	## cards never touch the panel border (their 9 px drop shadow needs room).
 	var button := Button.new()
 	button.set_script(load(PLAY_CARD))
 	button.set("fill_color", color)
 	button.set("label_text", text)
 	button.set("two_carts", two_carts)
-	button.custom_minimum_size = Vector2(250, 240)
+	button.custom_minimum_size = Vector2(232, 216)
 	button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	return button
 
@@ -142,6 +152,8 @@ func _show_state(state: String, animate: bool = true) -> void:
 	else:
 		_title.text = "PLAY"
 	_back_bar.text = "BACK" if state == "picker" else "BACK TO PLAY"
+	# The bar keeps its authored width; the longer label shrinks into it.
+	_back_bar.fit_text()
 	if animate:
 		UiAnim.fade_in(_cards_row if state == "picker" else _single_box, 0.22)
 	MenuNav.refresh()
