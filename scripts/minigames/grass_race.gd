@@ -66,6 +66,21 @@ const SERVER_BOT_MAX_EXTRAPOLATION: float = 0.35
 ## A correction larger than this is a respawn or a warp, not network jitter.
 const SERVER_BOT_SNAP_DISTANCE: float = 8.0
 
+## One UI scale for every card and badge in this scene: 24 px outer margins,
+## 16 px section gaps, 8 px quiet gaps, 16 px corner radius and no divider
+## lines. The result card is measured against these numbers so it cannot clip
+## at 1280x720.
+const UI_MARGIN: int = 24
+const UI_GAP: int = 16
+const UI_GAP_SMALL: int = 8
+const UI_RADIUS: int = 16
+## A landing only puffs tyre smoke when it is a real hit: enough air time to
+## leave the ground and enough downward speed to matter.
+const LANDING_SMOKE_MIN_AIR: float = 0.24
+const LANDING_SMOKE_MIN_FALL: float = 6.5
+## Forward speed lost in one step at the road edge that counts as a barrier hit.
+const BARRIER_HIT_SPEED_LOSS: float = 9.0
+
 const TOTAL_LAPS: int = 3
 var _total_laps: int = TOTAL_LAPS
 const ROAD_HALF: float = 5.5
@@ -160,6 +175,15 @@ var _rival_nearest_index: int = 0
 var _scenery: RefCounted
 var _scenery_stats: Dictionary = {}
 var _effects: Node3D
+## Start marshal: the pivot swings the flag arm, the flag spins on its pole.
+var _marshal_pivot: Node3D
+var _marshal_flag: Node3D
+var _marshal_time: float = 0.0
+## Pooled one-shot tyre-smoke puffs for hard landings.
+var _smoke: Array[GPUParticles3D] = []
+var _smoke_serial: int = 0
+var _air_time: float = 0.0
+var _fall_speed: float = 0.0
 var _bend_materials: Array = []
 var _start_lights: Array[MeshInstance3D] = []
 var _gate_beams: Array[MeshInstance3D] = []
@@ -184,6 +208,20 @@ var _skip_progress: bool = true
 var _last_cart_pos: Vector3 = Vector3.ZERO
 var _off_timer: float = 0.0
 var _was_off_track: bool = false
+## Unwrapped race time when the local cart crossed the line, -1 while racing.
+## Placements compare this instead of the leftover metres of an overshooting
+## progress value, so an earlier finisher is never passed by a later one.
+var _finish_time: float = -1.0
+## Peer id -> race time at which that peer's progress reached the finish.
+var _remote_finish_time: Dictionary = {}
+## The Pi's official result owns the big placement once it lands; the local
+## 2 Hz standings refresh must not overwrite it.
+var _official_applied: bool = false
+## Absolute progress of the local grid slot (solo START_DISTANCE, MP grid row),
+## used to re-base the race cleanly on a second countdown.
+var _start_s: float = START_DISTANCE
+var _barrier_cooldown: float = 0.0
+var _last_forward_speed: float = 0.0
 var _base_max_speed: float = 19.0
 var _saved_vehicle: String = ""
 var _toast_timer: float = 0.0
@@ -199,6 +237,9 @@ var _net_sync_timer: float = 0.0
 var _state_stream_timer: float = 0.0
 ## Server-authoritative race (Pi 1.6.0+): clock, official times, bot field.
 var _server_race_active: bool = false
+## Whether the Pi clock was usable when this race started. A client that could
+## not sync must still get a drivable race, so it falls back to its own clock.
+var _server_clock_ok: bool = false
 var _server_race_id: String = ""
 var _server_race_secret: String = ""
 var _server_start_ms: int = 0
@@ -225,6 +266,8 @@ var _canvas: CanvasLayer
 var _countdown_label: Label
 var _toast_label: Label
 var _offtrack_label: Label
+var _impact_label: Label
+var _impact_timer: float = 0.0
 var _result_root: Control
 var _result_title: Label
 var _result_subtitle: Label
@@ -243,7 +286,6 @@ var _result_standings_cache: Dictionary = {}
 var _result_row_style: StyleBoxFlat
 var _result_local_row_style: StyleBoxFlat
 var _result_refresh_timer: float = 0.0
-var _result_primary: Button
 var _ambient_audio: AudioStreamPlayer
 
 
@@ -316,6 +358,7 @@ func _ready() -> void:
 	_build_start_line()
 	_build_gates()
 	_build_start_lights()
+	_build_marshal()
 	_build_boost_pads()
 	_build_ramps()
 	_build_trackside_props()
@@ -324,6 +367,7 @@ func _ready() -> void:
 	_build_theme()
 	_build_rivals()
 	_build_overlay()
+	_build_tyre_smoke()
 	_start_ambience()
 
 	if _cart != null:
@@ -654,10 +698,13 @@ func _build_start_line() -> void:
 
 func _build_gates() -> void:
 	_build_gate(0.0, "START / FINISH", UiPalette.YELLOW, true)
+	# The three split gates are the track's zones: each one keeps its colour and
+	# carries a readable ZONE label, so a player always knows which quarter of
+	# the lap they are on even when the HUD is in a corner.
 	var quarter: float = _spline.total_length / 4.0
-	_build_gate(quarter, "SECTOR 1", UiPalette.CYAN, false)
-	_build_gate(quarter * 2.0, "SECTOR 2", UiPalette.PINK, false)
-	_build_gate(quarter * 3.0, "SECTOR 3", UiPalette.BLUE, false)
+	_build_gate(quarter, "ZONE 1", UiPalette.CYAN, false)
+	_build_gate(quarter * 2.0, "ZONE 2", UiPalette.PINK, false)
+	_build_gate(quarter * 3.0, "ZONE 3", UiPalette.BLUE, false)
 
 
 func _build_gate(distance: float, caption: String, color: Color, finish: bool) -> void:
@@ -718,21 +765,20 @@ func _build_gate(distance: float, caption: String, color: Color, finish: bool) -
 		strip.material_override = checker
 		gate.add_child(strip)
 
-	if finish:
-		# Sector gates are read from their colour and flash; three floating
-		# SECTOR labels were visual noise in the chase camera.
-		var label := Label3D.new()
-		label.text = caption
-		label.font = load(TITLE_FONT)
-		label.font_size = 64
-		label.pixel_size = 0.017
-		label.outline_size = 18
-		label.outline_modulate = UiPalette.OUTLINE
-		label.modulate = color
-		label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-		label.no_depth_test = true
-		label.position = Vector3(0.0, post_height + 1.0, 0.0)
-		gate.add_child(label)
+	# Zone gates are read from their colour and flash, and a small label names
+	# the quarter. It sits above the beam so it never crowds the road.
+	var label := Label3D.new()
+	label.text = caption
+	label.font = load(TITLE_FONT)
+	label.font_size = 64 if finish else 52
+	label.pixel_size = 0.017 if finish else 0.0125
+	label.outline_size = 18
+	label.outline_modulate = UiPalette.OUTLINE
+	label.modulate = color
+	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	label.no_depth_test = true
+	label.position = Vector3(0.0, post_height + (1.0 if finish else 0.85), 0.0)
+	gate.add_child(label)
 
 
 func _outline_material(thickness: float) -> ShaderMaterial:
@@ -799,6 +845,186 @@ func _set_start_lights(red_count: int, green: bool) -> void:
 		mat.emission_energy_multiplier = 3.2 if lit else 0.25
 		mat.albedo_color = Color(0.1, 0.35, 0.14, 1) if green \
 			else (Color(0.5, 0.1, 0.1, 1) if lit else Color(0.16, 0.14, 0.22, 1))
+
+
+func _build_marshal() -> void:
+	## A marshal on the outside of the grid waves the checkered flag through the
+	## countdown and drops it on GO. The chase camera sits behind the kart, so
+	## the figure reads even when the gantry lights are out of frame.
+	var root := Node3D.new()
+	root.name = "StartMarshal"
+	# 7.4 m out sits between the race's invisible barrier (6 m) and the theme's
+	# catch fence (~7.9 m), so the figure never clips a hoarding.
+	root.transform = _track_transform(START_DISTANCE + 6.0,
+		-(ROAD_HALF + 1.9), 0.0)
+	add_child(root)
+
+	var vest := StandardMaterial3D.new()
+	vest.albedo_color = Color("ff8a3d")
+	vest.roughness = 0.9
+	var skin := StandardMaterial3D.new()
+	skin.albedo_color = Color("f2c39b")
+	skin.roughness = 0.95
+	var dark := StandardMaterial3D.new()
+	dark.albedo_color = UiPalette.OUTLINE
+	dark.roughness = 1.0
+
+	var torso := MeshInstance3D.new()
+	var torso_mesh := CapsuleMesh.new()
+	torso_mesh.radius = 0.28
+	torso_mesh.height = 1.05
+	torso.mesh = torso_mesh
+	torso.position = Vector3(0.0, 0.85, 0.0)
+	torso.material_override = vest
+	root.add_child(torso)
+
+	var head := MeshInstance3D.new()
+	var head_mesh := SphereMesh.new()
+	head_mesh.radius = 0.19
+	head_mesh.height = 0.38
+	head.mesh = head_mesh
+	head.position = Vector3(0.0, 1.53, 0.0)
+	head.material_override = skin
+	root.add_child(head)
+
+	for side: float in [-1.0, 1.0]:
+		var leg := MeshInstance3D.new()
+		var leg_mesh := BoxMesh.new()
+		leg_mesh.size = Vector3(0.16, 0.62, 0.18)
+		leg.mesh = leg_mesh
+		leg.position = Vector3(side * 0.12, 0.32, 0.0)
+		leg.material_override = dark
+		root.add_child(leg)
+
+	_marshal_pivot = Node3D.new()
+	_marshal_pivot.position = Vector3(0.26, 1.32, 0.0)
+	_marshal_pivot.rotation.z = -0.35
+	root.add_child(_marshal_pivot)
+
+	var arm := MeshInstance3D.new()
+	var arm_mesh := BoxMesh.new()
+	arm_mesh.size = Vector3(0.12, 0.72, 0.12)
+	arm.mesh = arm_mesh
+	arm.position = Vector3(0.0, 0.34, 0.0)
+	arm.material_override = vest
+	_marshal_pivot.add_child(arm)
+
+	var pole := MeshInstance3D.new()
+	var pole_mesh := CylinderMesh.new()
+	pole_mesh.top_radius = 0.03
+	pole_mesh.bottom_radius = 0.03
+	pole_mesh.height = 1.25
+	pole.mesh = pole_mesh
+	pole.position = Vector3(0.0, 1.02, 0.0)
+	pole.material_override = dark
+	_marshal_pivot.add_child(pole)
+
+	_marshal_flag = Node3D.new()
+	_marshal_flag.position = Vector3(0.0, 1.62, 0.0)
+	_marshal_pivot.add_child(_marshal_flag)
+	var flag := MeshInstance3D.new()
+	var flag_mesh := QuadMesh.new()
+	flag_mesh.size = Vector2(0.95, 0.6)
+	flag.mesh = flag_mesh
+	flag.position = Vector3(0.48, 0.0, 0.0)
+	var flag_mat := ShaderMaterial.new()
+	flag_mat.shader = load(CHECKER_SHADER) as Shader
+	flag_mat.set_shader_parameter("cells", Vector2(6.0, 4.0))
+	flag.material_override = flag_mat
+	flag.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_marshal_flag.add_child(flag)
+
+
+func _animate_marshal(delta: float) -> void:
+	## Waved fast through the countdown, dropped once the race is live. A cheap
+	## damped swing instead of a tween, so a paused or reset countdown keeps the
+	## arm exactly where the state says it should be.
+	if _marshal_pivot == null:
+		return
+	_marshal_time += delta
+	var target: float = -1.25
+	if _phase == Phase.COUNTDOWN:
+		target = -0.35 + sin(_marshal_time * 8.0) * 0.35
+	var blend: float = 1.0 - exp(-6.0 * delta)
+	_marshal_pivot.rotation.z = lerpf(_marshal_pivot.rotation.z, target, blend)
+	if _marshal_flag != null:
+		_marshal_flag.rotation.y = sin(_marshal_time * 4.0) * 0.35
+
+
+func _build_tyre_smoke() -> void:
+	## A small pool of one-shot grey smoke puffs. A hard landing gets tyre smoke
+	## instead of the shared warm dust burst, which reads as an impact rather
+	## than as the speed dust already flowing off the rear wheels.
+	for index in 3:
+		var puff := GPUParticles3D.new()
+		puff.name = "TyreSmoke%d" % index
+		puff.amount = 18
+		puff.lifetime = 1.05
+		puff.one_shot = true
+		puff.emitting = false
+		puff.explosiveness = 0.92
+		puff.local_coords = false
+		puff.visibility_aabb = AABB(Vector3(-12, -3, -12), Vector3(24, 10, 24))
+		var process_mat := ParticleProcessMaterial.new()
+		process_mat.direction = Vector3(0.0, 1.0, 0.0)
+		process_mat.spread = 70.0
+		process_mat.gravity = Vector3(0.0, 1.1, 0.0)
+		process_mat.initial_velocity_min = 0.8
+		process_mat.initial_velocity_max = 2.4
+		process_mat.scale_min = 0.7
+		process_mat.scale_max = 1.7
+		process_mat.lifetime_randomness = 0.35
+		process_mat.color = Color(0.93, 0.93, 0.95, 1)
+		var ramp := Gradient.new()
+		ramp.colors = PackedColorArray([
+			Color(0.95, 0.95, 0.97, 0.0), Color(0.92, 0.92, 0.95, 0.5),
+			Color(0.86, 0.87, 0.90, 0.25), Color(0.86, 0.87, 0.90, 0.0)])
+		var ramp_texture := GradientTexture1D.new()
+		ramp_texture.gradient = ramp
+		process_mat.color_ramp = ramp_texture
+		puff.process_material = process_mat
+		var quad := QuadMesh.new()
+		quad.size = Vector2(0.5, 0.5)
+		var quad_material := StandardMaterial3D.new()
+		quad_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		quad_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		quad_material.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
+		quad_material.billboard_keep_scale = true
+		quad_material.vertex_color_use_as_albedo = true
+		quad_material.cull_mode = BaseMaterial3D.CULL_DISABLED
+		quad_material.albedo_texture = load(
+			"res://assets/textures/foliage/dust_puff.png")
+		quad.material = quad_material
+		puff.draw_pass_1 = quad
+		puff.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		add_child(puff)
+		_smoke.append(puff)
+
+
+func _update_landing_smoke(delta: float) -> void:
+	if _cart == null:
+		return
+	if not _cart.is_on_floor():
+		_air_time += delta
+		_fall_speed = maxf(_fall_speed, -_cart.velocity.y)
+		return
+	if _air_time >= LANDING_SMOKE_MIN_AIR \
+			and _fall_speed >= LANDING_SMOKE_MIN_FALL:
+		_puff_tyre_smoke()
+	_air_time = 0.0
+	_fall_speed = 0.0
+
+
+func _puff_tyre_smoke() -> void:
+	if _smoke.is_empty() or _cart == null:
+		return
+	var puff: GPUParticles3D = _smoke[_smoke_serial % _smoke.size()]
+	_smoke_serial += 1
+	var basis: Basis = _cart.global_transform.basis
+	puff.global_position = _cart.global_position - basis.z * 0.65 \
+		+ Vector3.UP * 0.10
+	puff.restart()
+	puff.emitting = true
 
 
 func _build_start_festival() -> void:
@@ -1470,9 +1696,11 @@ func _build_sponsor_boards() -> void:
 
 func _flash_gate(sector: int) -> void:
 	# Sector 0 is the start gantry; sectors 1..3 are the three split gates.
-	var index: int = sector % _gate_beams.size()
+	# Check for an empty list before the modulo: the old order divided by zero
+	# on a map that never built its gates.
 	if _gate_beams.is_empty():
 		return
+	var index: int = sector % _gate_beams.size()
 	var beam: MeshInstance3D = _gate_beams[index]
 	var mat: StandardMaterial3D = beam.material_override as StandardMaterial3D
 	if mat == null:
@@ -1744,6 +1972,8 @@ func _build_rivals() -> void:
 			"stuck": 0.0,
 			"off_time": 0.0,
 			"finished": false,
+			## Race time of the line crossing, -1 while still racing.
+			"finish_time": -1.0,
 			"driver": driver,
 			"server_pos": Vector3.ZERO,
 			"server_yaw": 0.0,
@@ -1877,6 +2107,10 @@ func _tick_rivals(delta: float) -> void:
 		rival["lateral"] = (node.global_position - frame["position"]).dot(frame["right"])
 		if progress >= limit:
 			rival["finished"] = true
+			# Bank WHEN the line was crossed: placements rank finishers by this
+			# time, never by the leftover metres past the line.
+			if float(rival["finish_time"]) < 0.0:
+				rival["finish_time"] = _race_time
 			node.collision_layer = 0
 			node.contact_enabled = false
 			node.set_ai_controls(0.0, 0.5, 0.0)
@@ -1906,13 +2140,42 @@ func _tick_rivals(delta: float) -> void:
 			_reset_rival(i)
 
 
+func _remote_finished(peer_id: int) -> bool:
+	## A peer is finished once its streamed progress reached the line. The
+	## crossing is latched, so a late or reordered packet cannot un-finish it.
+	if _remote_finish_time.has(peer_id):
+		return true
+	return float(_remote_progress.get(peer_id, 0.0)) \
+		>= _race_finish_distance() - 2.0
+
+
+func _cart_is_ahead(finished: bool, finish_time: float, progress: float) -> bool:
+	## True when another cart's result beats the local cart. Finished carts
+	## always beat racing ones; between two finishers the earlier crossing wins,
+	## not the leftover metres of progress. Server bots stop exactly on the line
+	## while the local cart overshoots it by up to one physics frame, which used
+	## to let the later finisher steal the place.
+	var local_finished: bool = _finish_time >= 0.0
+	if finished != local_finished:
+		return finished
+	if finished and finish_time >= 0.0 and _finish_time >= 0.0 \
+			and not is_equal_approx(finish_time, _finish_time):
+		return finish_time < _finish_time
+	if is_equal_approx(progress, _unwrapped):
+		return false
+	return progress > _unwrapped
+
+
 func _place() -> int:
 	var position: int = 1
 	for rival: Dictionary in _rivals:
-		if float(rival["progress"]) > _unwrapped:
+		if _cart_is_ahead(bool(rival["finished"]), float(rival["finish_time"]),
+				float(rival["progress"])):
 			position += 1
 	for peer_id: int in _remote_progress:
-		if float(_remote_progress[peer_id]) > _unwrapped:
+		if _cart_is_ahead(_remote_finished(peer_id),
+				float(_remote_finish_time.get(peer_id, -1.0)),
+				float(_remote_progress[peer_id])):
 			position += 1
 	return position
 
@@ -1941,13 +2204,18 @@ func _build_overlay() -> void:
 	_countdown_label.text = "3"
 
 	_toast_label = _make_label(root, 26, Color("ffffff"),
-		Vector2(-360.0, 96.0), Vector2(360.0, 146.0), 0.5, 0.0)
+		Vector2(-360.0, 118.0), Vector2(360.0, 168.0), 0.5, 0.0)
 	_toast_label.visible = false
 
 	_offtrack_label = _make_label(root, 22, UiPalette.RED,
-		Vector2(-260.0, 150.0), Vector2(260.0, 186.0), 0.5, 0.0)
-	_offtrack_label.text = "OFF TRACK"
+		Vector2(-300.0, 176.0), Vector2(300.0, 212.0), 0.5, 0.0)
+	_offtrack_label.text = "OFF TRACK  ·  EASE BACK IN"
 	_offtrack_label.visible = false
+
+	_impact_label = _make_label(root, 22, UiPalette.YELLOW,
+		Vector2(-300.0, 220.0), Vector2(300.0, 256.0), 0.5, 0.0)
+	_impact_label.text = "BARRIER!  ·  EASE OFF"
+	_impact_label.visible = false
 
 	_result_root = Control.new()
 	_result_root.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -1982,24 +2250,27 @@ func _build_overlay() -> void:
 	_result_root.add_child(center)
 
 	var panel := PanelContainer.new()
-	panel.custom_minimum_size = Vector2(620 if _multiplayer else 560, 0)
+	# Multiplayer grows a second column for the standings so the buttons never
+	# get pushed below the 720p safe height.
+	panel.custom_minimum_size = Vector2(900 if _multiplayer else 560, 0)
 	panel.add_theme_stylebox_override("panel", _make_result_panel_style())
 	center.add_child(panel)
 
-	var column := VBoxContainer.new()
-	column.add_theme_constant_override("separation", 0)
-	panel.add_child(column)
-
 	var pad := MarginContainer.new()
-	pad.add_theme_constant_override("margin_left", 30)
-	pad.add_theme_constant_override("margin_right", 30)
-	pad.add_theme_constant_override("margin_top", 12)
-	pad.add_theme_constant_override("margin_bottom", 18)
-	column.add_child(pad)
+	pad.add_theme_constant_override("margin_left", UI_MARGIN)
+	pad.add_theme_constant_override("margin_right", UI_MARGIN)
+	pad.add_theme_constant_override("margin_top", UI_MARGIN)
+	pad.add_theme_constant_override("margin_bottom", UI_MARGIN)
+	panel.add_child(pad)
 
-	var body := VBoxContainer.new()
-	body.add_theme_constant_override("separation", 14 if _multiplayer else 18)
+	var body := HBoxContainer.new()
+	body.add_theme_constant_override("separation", UI_GAP)
 	pad.add_child(body)
+
+	var column := VBoxContainer.new()
+	column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	column.add_theme_constant_override("separation", UI_GAP)
+	body.add_child(column)
 
 	var flag := Control.new()
 	flag.custom_minimum_size = Vector2(190, 30)
@@ -2009,40 +2280,41 @@ func _build_overlay() -> void:
 	flag.set("wave_amount", 0.0)
 	flag.set("columns", 8)
 	flag.set("rows", 3)
-	body.add_child(flag)
+	column.add_child(flag)
 
 	var title_banner := PanelContainer.new()
 	title_banner.add_theme_stylebox_override("panel",
 		_make_result_banner_style(UiPalette.YELLOW))
-	body.add_child(title_banner)
+	column.add_child(title_banner)
 	_result_title = Label.new()
 	_result_title.theme_type_variation = &"TitleLabel"
 	_result_title.add_theme_font_size_override("font_size", 34)
 	_result_title.add_theme_color_override("font_color", UiPalette.INK)
 	_result_title.add_theme_constant_override("outline_size", 0)
-	_result_title.text = "YOU WIN!"
+	_result_title.text = "RACE COMPLETE"
 	_result_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	title_banner.add_child(_result_title)
 
 	_result_subtitle = Label.new()
-	_result_subtitle.text = "%s  ·  %d LAPS" % [_race_title(), _total_laps]
+	_result_subtitle.text = _result_summary_text()
 	_result_subtitle.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_result_subtitle.add_theme_font_size_override("font_size", 14)
 	_result_subtitle.add_theme_color_override("font_color", UiPalette.MUTED)
-	body.add_child(_result_subtitle)
+	column.add_child(_result_subtitle)
 
-	# One compact table row of captions over a row of values.
+	# One caption row over one value row: no divider lines, just the shared
+	# 16 px column gap.
 	var stats := GridContainer.new()
 	stats.columns = 4
-	stats.add_theme_constant_override("h_separation", 10)
-	stats.add_theme_constant_override("v_separation", 2)
-	body.add_child(stats)
-	for caption_text: String in ["TOTAL", "BEST LAP", "POSITION", "LAPS"]:
+	stats.add_theme_constant_override("h_separation", UI_GAP)
+	stats.add_theme_constant_override("v_separation", UI_GAP_SMALL)
+	column.add_child(stats)
+	for caption_text: String in ["RACE TIME", "BEST LAP", "POSITION", "LAPS"]:
 		var caption := Label.new()
 		caption.text = caption_text
 		caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		caption.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		caption.add_theme_font_size_override("font_size", 18)
+		caption.add_theme_font_size_override("font_size", 15)
 		caption.add_theme_color_override("font_color", UiPalette.MUTED)
 		stats.add_child(caption)
 	_result_total = _make_result_value()
@@ -2054,18 +2326,69 @@ func _build_overlay() -> void:
 	stats.add_child(_result_place)
 	stats.add_child(_result_laps)
 
-	body.add_child(_make_result_divider())
+	# Lap table: lap name, time, delta to the previous lap. The best lap is
+	# tinted instead of separated by a rule.
+	var lap_header := HBoxContainer.new()
+	lap_header.add_theme_constant_override("separation", UI_GAP_SMALL)
+	column.add_child(lap_header)
+	lap_header.add_child(_make_lap_caption("LAP", 0.0,
+		HORIZONTAL_ALIGNMENT_LEFT, true))
+	lap_header.add_child(_make_lap_caption("TIME", 96.0,
+		HORIZONTAL_ALIGNMENT_RIGHT))
+	lap_header.add_child(_make_lap_caption("DELTA", 76.0,
+		HORIZONTAL_ALIGNMENT_RIGHT))
 	_result_lap_rows = VBoxContainer.new()
-	_result_lap_rows.add_theme_constant_override("separation", 2)
-	body.add_child(_result_lap_rows)
+	_result_lap_rows.add_theme_constant_override("separation", UI_GAP_SMALL)
+	column.add_child(_result_lap_rows)
 
-	# Multiplayer-only standings. Remote peers do not replicate lap times, so
-	# their total/best stay "—" and the gap is the real track distance behind
-	# the leader; the card never invents a time for another player.
+	if _multiplayer:
+		var standings_column := VBoxContainer.new()
+		standings_column.custom_minimum_size = Vector2(380, 0)
+		standings_column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		standings_column.add_theme_constant_override("separation", UI_GAP_SMALL)
+		body.add_child(standings_column)
+		_build_result_standings(standings_column)
+	else:
+		# The shared refresh path still expects the node to exist, just hidden.
+		# Keep it in the tree (hidden) so it is freed with the scene.
+		_result_standings_section = VBoxContainer.new()
+		_result_standings_section.visible = false
+		column.add_child(_result_standings_section)
+
+	if _multiplayer:
+		# Restarting only one peer would desync the field.
+		var lobby: Button = _make_button("BACK TO LOBBY", UiPalette.RED, 58.0)
+		lobby.pressed.connect(_on_back_to_lobby)
+		column.add_child(lobby)
+		var menu: Button = _make_button("MAIN MENU", UiPalette.RED, 52.0)
+		menu.pressed.connect(_on_main_menu)
+		column.add_child(menu)
+	else:
+		var again: Button = _make_button("RACE AGAIN", UiPalette.YELLOW, 58.0)
+		again.pressed.connect(_on_race_again)
+		column.add_child(again)
+		var secondary := HBoxContainer.new()
+		secondary.add_theme_constant_override("separation", UI_GAP)
+		column.add_child(secondary)
+		var lobby: Button = _make_button("BACK TO EVENTS", UiPalette.RED, 52.0)
+		lobby.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		lobby.pressed.connect(_on_back_to_lobby)
+		secondary.add_child(lobby)
+		var menu: Button = _make_button("MAIN MENU", UiPalette.RED, 52.0)
+		menu.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		menu.pressed.connect(_on_main_menu)
+		secondary.add_child(menu)
+
+
+func _build_result_standings(parent: VBoxContainer) -> void:
+	## Multiplayer-only standings column. Remote peers do not replicate lap
+	## times, so their total/best stay "—" and the gap is the real track
+	## distance behind the leader; the card never invents a time for another
+	## player. The wait banner sits above the table so it never covers a row.
 	_result_standings_section = VBoxContainer.new()
-	_result_standings_section.add_theme_constant_override("separation", 4)
+	_result_standings_section.add_theme_constant_override("separation", UI_GAP_SMALL)
 	_result_standings_section.visible = false
-	body.add_child(_result_standings_section)
+	parent.add_child(_result_standings_section)
 
 	var standings_title := Label.new()
 	standings_title.text = "STANDINGS"
@@ -2073,6 +2396,7 @@ func _build_overlay() -> void:
 	standings_title.add_theme_font_size_override("font_size", 18)
 	standings_title.add_theme_color_override("font_color", UiPalette.INK)
 	standings_title.add_theme_constant_override("outline_size", 0)
+	standings_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_result_standings_section.add_child(standings_title)
 
 	_result_wait_style = _make_result_banner_style(UiPalette.YELLOW)
@@ -2089,76 +2413,61 @@ func _build_overlay() -> void:
 	_result_wait_banner.add_child(_result_wait_label)
 
 	var standings_header_pad := MarginContainer.new()
-	standings_header_pad.add_theme_constant_override("margin_left", 8)
-	standings_header_pad.add_theme_constant_override("margin_right", 8)
+	standings_header_pad.add_theme_constant_override("margin_left", UI_GAP_SMALL)
+	standings_header_pad.add_theme_constant_override("margin_right", UI_GAP_SMALL)
 	_result_standings_section.add_child(standings_header_pad)
 	var standings_header := HBoxContainer.new()
-	standings_header.add_theme_constant_override("separation", 6)
+	standings_header.add_theme_constant_override("separation", UI_GAP_SMALL)
 	standings_header_pad.add_child(standings_header)
-	standings_header.add_child(_make_standings_header("POS", 26.0,
+	standings_header.add_child(_make_standings_header("POS", 30.0,
 		HORIZONTAL_ALIGNMENT_CENTER))
-	standings_header.add_child(_make_standings_header("", 12.0,
+	standings_header.add_child(_make_standings_header("", 10.0,
 		HORIZONTAL_ALIGNMENT_LEFT))
 	standings_header.add_child(_make_standings_header("DRIVER", 0.0,
 		HORIZONTAL_ALIGNMENT_LEFT, true))
-	standings_header.add_child(_make_standings_header("TOTAL", 58.0,
+	standings_header.add_child(_make_standings_header("TOTAL", 62.0,
 		HORIZONTAL_ALIGNMENT_RIGHT))
-	standings_header.add_child(_make_standings_header("BEST", 58.0,
+	standings_header.add_child(_make_standings_header("BEST", 62.0,
 		HORIZONTAL_ALIGNMENT_RIGHT))
-	standings_header.add_child(_make_standings_header("GAP", 56.0,
+	standings_header.add_child(_make_standings_header("GAP", 54.0,
 		HORIZONTAL_ALIGNMENT_RIGHT))
 
 	var standings_scroll := ScrollContainer.new()
 	standings_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	standings_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
-	standings_scroll.custom_minimum_size = Vector2(0, 108)
+	# Eight rows fit without a scrollbar (a full 2-human + 5-bot field is 7), so
+	# the header and rows keep the same width and never shift when a row lands.
+	standings_scroll.custom_minimum_size = Vector2(0, 344)
 	_result_standings_section.add_child(standings_scroll)
 	_result_standings_rows = VBoxContainer.new()
 	_result_standings_rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_result_standings_rows.add_theme_constant_override("separation", 2)
+	_result_standings_rows.add_theme_constant_override("separation", UI_GAP_SMALL)
 	standings_scroll.add_child(_result_standings_rows)
 
 	_result_row_style = StyleBoxFlat.new()
 	_result_row_style.bg_color = Color(0, 0, 0, 0)
-	_result_row_style.set_corner_radius_all(8)
-	_result_row_style.content_margin_left = 8.0
-	_result_row_style.content_margin_right = 8.0
-	_result_row_style.content_margin_top = 1.0
-	_result_row_style.content_margin_bottom = 1.0
+	_result_row_style.set_corner_radius_all(UI_RADIUS)
+	_result_row_style.content_margin_left = UI_GAP_SMALL
+	_result_row_style.content_margin_right = UI_GAP_SMALL
+	_result_row_style.content_margin_top = UI_GAP_SMALL
+	_result_row_style.content_margin_bottom = UI_GAP_SMALL
 	_result_local_row_style = StyleBoxFlat.new()
 	# "(YOU)" marks the local row; keep it neutral instead of a yellow bar.
 	_result_local_row_style.bg_color = Color(1.0, 1.0, 1.0, 0.10)
-	_result_local_row_style.set_corner_radius_all(8)
-	_result_local_row_style.content_margin_left = 8.0
-	_result_local_row_style.content_margin_right = 8.0
-	_result_local_row_style.content_margin_top = 1.0
-	_result_local_row_style.content_margin_bottom = 1.0
+	_result_local_row_style.set_corner_radius_all(UI_RADIUS)
+	_result_local_row_style.content_margin_left = UI_GAP_SMALL
+	_result_local_row_style.content_margin_right = UI_GAP_SMALL
+	_result_local_row_style.content_margin_top = UI_GAP_SMALL
+	_result_local_row_style.content_margin_bottom = UI_GAP_SMALL
 
-	if _multiplayer:
-		# Restarting only one peer would desync the field.
-		var lobby: Button = _make_button("BACK TO LOBBY", UiPalette.RED, 58.0)
-		lobby.pressed.connect(_on_back_to_lobby)
-		body.add_child(lobby)
-		_result_primary = lobby
-		var menu: Button = _make_button("MAIN MENU", UiPalette.RED, 52.0)
-		menu.pressed.connect(_on_main_menu)
-		body.add_child(menu)
-	else:
-		var again: Button = _make_button("RACE AGAIN", UiPalette.YELLOW, 58.0)
-		again.pressed.connect(_on_race_again)
-		body.add_child(again)
-		_result_primary = again
-		var secondary := HBoxContainer.new()
-		secondary.add_theme_constant_override("separation", 12)
-		body.add_child(secondary)
-		var lobby: Button = _make_button("BACK TO EVENTS", UiPalette.RED, 52.0)
-		lobby.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		lobby.pressed.connect(_on_back_to_lobby)
-		secondary.add_child(lobby)
-		var menu: Button = _make_button("MAIN MENU", UiPalette.RED, 52.0)
-		menu.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		menu.pressed.connect(_on_main_menu)
-		secondary.add_child(menu)
+
+func _result_summary_text() -> String:
+	## Track, distance and the official-time tag when the Pi has stamped the
+	## result. Used while building the card and again when the stamp lands.
+	var text: String = "%s  ·  %d LAPS" % [_race_title(), _total_laps]
+	if _official_applied:
+		text += "  ·  OFFICIAL"
+	return text
 
 
 func _make_label(parent: Control, font_size: int, color: Color,
@@ -2202,9 +2511,9 @@ func _make_result_panel_style() -> StyleBoxFlat:
 	style.bg_color = UiPalette.CREAM
 	style.border_color = UiPalette.OUTLINE
 	style.set_border_width_all(5)
-	style.set_corner_radius_all(26)
-	# Keep the body inside the 5 px border, following the inner
-	# radius (26 - 5 = 21) instead of painting over the outline.
+	style.set_corner_radius_all(UI_RADIUS)
+	# Keep the body inside the 5 px border instead of painting over the
+	# outline. The 24 px page margin is the MarginContainer, not this inset.
 	style.content_margin_left = 5.0
 	style.content_margin_top = 5.0
 	style.content_margin_right = 5.0
@@ -2219,11 +2528,11 @@ func _make_result_banner_style(color: Color) -> StyleBoxFlat:
 	style.bg_color = color
 	style.border_color = UiPalette.OUTLINE
 	style.set_border_width_all(4)
-	style.set_corner_radius_all(16)
-	style.content_margin_left = 16.0
-	style.content_margin_right = 16.0
-	style.content_margin_top = 4.0
-	style.content_margin_bottom = 4.0
+	style.set_corner_radius_all(UI_RADIUS)
+	style.content_margin_left = float(UI_GAP)
+	style.content_margin_right = float(UI_GAP)
+	style.content_margin_top = float(UI_GAP_SMALL)
+	style.content_margin_bottom = float(UI_GAP_SMALL)
 	return style
 
 
@@ -2232,17 +2541,23 @@ func _make_result_value() -> Label:
 	label.text = "—"
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	label.add_theme_font_size_override("font_size", 24)
+	label.add_theme_font_size_override("font_size", 22)
 	label.add_theme_color_override("font_color", UiPalette.INK)
 	return label
 
 
-func _make_result_divider() -> ColorRect:
-	var line := ColorRect.new()
-	line.color = Color(UiPalette.INK, 0.16)
-	line.custom_minimum_size = Vector2(0, 2)
-	line.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	return line
+func _make_lap_caption(text: String, width: float, align: int,
+		expand: bool = false) -> Label:
+	## Quiet table caption; the 8 px gap aligns it with the lap rows.
+	var label := Label.new()
+	label.text = text
+	label.custom_minimum_size = Vector2(width, 0)
+	label.horizontal_alignment = align
+	if expand:
+		label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	label.add_theme_font_size_override("font_size", 12)
+	label.add_theme_color_override("font_color", Color(UiPalette.MUTED, 0.9))
+	return label
 
 
 func _make_standings_header(text: String, width: float, align: int,
@@ -2253,26 +2568,26 @@ func _make_standings_header(text: String, width: float, align: int,
 	label.horizontal_alignment = align
 	if expand:
 		label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	label.add_theme_font_size_override("font_size", 13)
+	label.add_theme_font_size_override("font_size", 12)
 	label.add_theme_color_override("font_color", Color(UiPalette.INK, 0.62))
 	return label
 
 
 func _make_standings_row() -> Dictionary:
 	var panel := PanelContainer.new()
-	panel.custom_minimum_size = Vector2(0, 30)
+	panel.custom_minimum_size = Vector2(0, 36)
 	panel.add_theme_stylebox_override("panel", _result_row_style)
 	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 6)
+	row.add_theme_constant_override("separation", UI_GAP_SMALL)
 	panel.add_child(row)
 	var place := Label.new()
-	place.custom_minimum_size = Vector2(26, 0)
+	place.custom_minimum_size = Vector2(30, 0)
 	place.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	place.add_theme_font_size_override("font_size", 14)
 	place.add_theme_color_override("font_color", UiPalette.INK)
 	row.add_child(place)
 	var dot := ColorRect.new()
-	dot.custom_minimum_size = Vector2(12, 12)
+	dot.custom_minimum_size = Vector2(10, 12)
 	dot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	row.add_child(dot)
 	var name_label := Label.new()
@@ -2283,19 +2598,19 @@ func _make_standings_row() -> Dictionary:
 	name_label.add_theme_color_override("font_color", UiPalette.INK)
 	row.add_child(name_label)
 	var total := Label.new()
-	total.custom_minimum_size = Vector2(58, 0)
+	total.custom_minimum_size = Vector2(62, 0)
 	total.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	total.add_theme_font_size_override("font_size", 14)
 	total.add_theme_color_override("font_color", UiPalette.INK)
 	row.add_child(total)
 	var best := Label.new()
-	best.custom_minimum_size = Vector2(58, 0)
+	best.custom_minimum_size = Vector2(62, 0)
 	best.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	best.add_theme_font_size_override("font_size", 14)
 	best.add_theme_color_override("font_color", UiPalette.INK)
 	row.add_child(best)
 	var gap := Label.new()
-	gap.custom_minimum_size = Vector2(56, 0)
+	gap.custom_minimum_size = Vector2(54, 0)
 	gap.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	gap.add_theme_font_size_override("font_size", 14)
 	gap.add_theme_color_override("font_color", UiPalette.INK)
@@ -2331,63 +2646,84 @@ func _update_standings_row(row_data: Dictionary, entry: Dictionary, place: int,
 	else:
 		(row_data["best"] as Label).text = "—"
 	var gap_text: String = "—"
-	if place > 1:
-		if bool(entry["finished"]):
-			gap_text = "FINISHED"
-		else:
-			var behind: float = maxf(leader_progress - float(entry["progress"]), 0.0)
-			gap_text = "+%d m" % int(round(behind))
+	if place == 1:
+		gap_text = "WINNER" if bool(entry["finished"]) else "LEADER"
+	elif bool(entry["finished"]):
+		gap_text = "FINISHED"
+	else:
+		var behind: float = maxf(leader_progress - float(entry["progress"]), 0.0)
+		gap_text = "+%d m" % int(round(behind))
 	(row_data["gap"] as Label).text = gap_text
 
 
 func _result_entries() -> Array[Dictionary]:
 	var entries: Array[Dictionary] = []
 	var local_id: int = multiplayer.get_unique_id() if _multiplayer else 0
+	var local_finished: bool = _finish_time >= 0.0
 	entries.append({
 		"key": "local",
 		"id": local_id,
 		"name": (Network.name_of(local_id) + "  (YOU)") if _multiplayer else "YOU",
 		"color": Network.color_of(local_id) if _multiplayer else UiPalette.YELLOW,
 		"progress": _unwrapped,
-		"finished": true,
+		"finished": local_finished,
+		"finish_time": _finish_time,
 		"local": true,
-		"total": _race_time,
+		# Never invent a total time for a cart that is still racing: the live
+		# HUD standings reuse this list before the result card opens.
+		"total": _race_time if local_finished else -1.0,
 		"best": _best_lap_time(),
 	})
 	for index in _rivals.size():
-		var progress: float = float(_rivals[index]["progress"])
-		var rival_label: Label3D = _rivals[index]["label"]
+		var rival: Dictionary = _rivals[index]
+		var rival_label: Label3D = rival["label"]
 		entries.append({
 			"key": "rival_%d" % index,
 			"id": -1 - index,
 			"name": rival_label.text,
 			"color": rival_label.modulate,
-			"progress": progress,
-			"finished": progress >= _race_finish_distance() - 12.0,
+			"progress": float(rival["progress"]),
+			"finished": bool(rival["finished"]),
+			"finish_time": float(rival["finish_time"]),
 			"local": false,
 			"total": -1.0,
 			"best": -1.0,
 		})
 	for peer_id: int in _remote_progress:
-		var progress: float = float(_remote_progress[peer_id])
 		entries.append({
 			"key": "peer_%d" % peer_id,
 			"id": peer_id,
 			"name": Network.name_of(peer_id),
 			"color": Network.color_of(peer_id),
-			"progress": progress,
-			"finished": progress >= _race_finish_distance() - 12.0,
+			"progress": float(_remote_progress[peer_id]),
+			"finished": _remote_finished(peer_id),
+			"finish_time": float(_remote_finish_time.get(peer_id, -1.0)),
 			"local": false,
 			"total": -1.0,
 			"best": -1.0,
 		})
 	entries.sort_custom(Callable(self, "_standings_before"))
+	for index in entries.size():
+		entries[index]["place"] = index + 1
 	return entries
 
 
 func _standings_before(a: Dictionary, b: Dictionary) -> bool:
+	## Finished carts first (earlier crossing wins), then racing carts by
+	## distance, then the local cart on an exact tie. The old progress-only sort
+	## let a later finisher pass an earlier one because the local cart overshoots
+	## the line by up to one physics frame while bots stop exactly on it.
+	var a_finished: bool = bool(a["finished"])
+	var b_finished: bool = bool(b["finished"])
+	if a_finished != b_finished:
+		return a_finished
 	var pa: float = float(a["progress"])
 	var pb: float = float(b["progress"])
+	if a_finished:
+		var a_time: float = float(a["finish_time"])
+		var b_time: float = float(b["finish_time"])
+		if a_time >= 0.0 and b_time >= 0.0 and not is_equal_approx(a_time, b_time):
+			return a_time < b_time
 	if not is_equal_approx(pa, pb):
 		return pa > pb
 	if bool(a["local"]):
@@ -2428,9 +2764,10 @@ func _refresh_result_standings() -> void:
 			_result_standings_cache[key] = row_data
 		_update_standings_row(row_data, entry, index + 1, leader_progress)
 		_result_standings_rows.move_child(row_data["panel"] as Control, index)
-	if _result_place != null:
-		# Remote progress can arrive after our finish; keep the big position
-		# in sync with the live standings.
+	if _result_place != null and not _official_applied:
+		# Remote progress can arrive after our finish; keep the big position in
+		# sync with the live standings. The Pi's official placement wins once
+		# it lands; a local guess must never overwrite it.
 		var live_place: int = _place()
 		_result_place.text = "%s / %d" % [_ordinal(live_place), _field_size()]
 	var waiting: int = _waiting_peer_count()
@@ -2456,14 +2793,11 @@ func _on_pause_visibility_changed() -> void:
 	var menu_nav: Node = get_node_or_null("/root/MenuNav")
 	if menu_nav != null:
 		menu_nav.call("refresh")
-	if not pause_open and _result_primary != null:
-		pass
 
 
 func _waiting_peer_count() -> int:
 	if not _multiplayer:
 		return 0
-	var finish_distance: float = _race_finish_distance()
 	var local_id: int = multiplayer.get_unique_id()
 	var waiting: int = 0
 	for peer_id: int in Network.participants():
@@ -2477,7 +2811,7 @@ func _waiting_peer_count() -> int:
 				continue
 		elif not _remote_progress.has(peer_id):
 			continue
-		if float(_remote_progress.get(peer_id, 0.0)) < finish_distance - 12.0:
+		if not _remote_finished(peer_id):
 			waiting += 1
 	return waiting
 
@@ -2501,26 +2835,64 @@ func _best_lap_time() -> float:
 	return best
 
 
+func _last_lap_time() -> float:
+	## The lap just completed, 0 when no lap has run. The Pi's final report
+	## wants this lap time, not the accumulated race clock.
+	if _lap_times.is_empty():
+		return 0.0
+	return _lap_times[_lap_times.size() - 1]
+
+
 func _fill_result_laps() -> void:
 	for child: Node in _result_lap_rows.get_children():
 		_result_lap_rows.remove_child(child)
 		child.queue_free()
+	var best_index: int = -1
+	var best_time: float = -1.0
+	for index in mini(_lap_times.size(), _total_laps):
+		if best_time < 0.0 or _lap_times[index] < best_time:
+			best_time = _lap_times[index]
+			best_index = index
 	for index in _total_laps:
 		var row := HBoxContainer.new()
-		row.add_theme_constant_override("separation", 12)
+		row.add_theme_constant_override("separation", UI_GAP_SMALL)
 		var caption := Label.new()
 		caption.text = "LAP %d" % (index + 1)
 		caption.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		caption.add_theme_font_size_override("font_size", 16)
-		caption.add_theme_color_override("font_color", UiPalette.MUTED)
+		caption.add_theme_color_override("font_color",
+			UiPalette.YELLOW_DARK if index == best_index else UiPalette.MUTED)
 		row.add_child(caption)
 		var value := Label.new()
+		value.custom_minimum_size = Vector2(96, 0)
 		value.text = _format_time(_lap_times[index]) if index < _lap_times.size() else "—"
 		value.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-		value.add_theme_font_size_override("font_size", 18)
+		value.add_theme_font_size_override("font_size", 16)
 		value.add_theme_color_override("font_color", UiPalette.INK)
 		row.add_child(value)
+		var delta := Label.new()
+		delta.custom_minimum_size = Vector2(76, 0)
+		delta.text = "—"
+		delta.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		delta.add_theme_font_size_override("font_size", 14)
+		delta.add_theme_color_override("font_color", UiPalette.MUTED)
+		if index > 0 and index < _lap_times.size():
+			var change: float = _lap_times[index] - _lap_times[index - 1]
+			delta.text = _format_lap_delta(change)
+			if change < -0.005:
+				delta.add_theme_color_override("font_color", UiPalette.GRASS)
+			elif change > 0.005:
+				delta.add_theme_color_override("font_color", UiPalette.RED)
+		row.add_child(delta)
 		_result_lap_rows.add_child(row)
+
+
+func _format_lap_delta(seconds: float) -> String:
+	## Clean readout shared by the lap toast and the result table: two
+	## decimals, a real sign, and a single 0.00 for an exact repeat.
+	if absf(seconds) < 0.005:
+		return "0.00"
+	return ("+%.2f" if seconds > 0.0 else "−%.2f") % absf(seconds)
 
 
 func _toast(text: String, duration: float) -> void:
@@ -2586,6 +2958,7 @@ func _place_local_on_grid() -> void:
 	_cart.global_transform = spawn
 	_cart.velocity = Vector3.ZERO
 	_last_cart_pos = _cart.global_position
+	_start_s = start_s
 	_prev_s = start_s
 	_unwrapped = start_s
 
@@ -2605,6 +2978,7 @@ func _on_net_peer_disconnected(peer_id: int) -> void:
 	_name_labels.erase(peer_id)
 	_remote_progress.erase(peer_id)
 	_remote_progress_ms.erase(peer_id)
+	_remote_finish_time.erase(peer_id)
 
 
 func _spawn_remote(peer_id: int) -> void:
@@ -2860,7 +3234,10 @@ func _accept_remote_race_state(peer_id: int, cart: CartPlayer, position: Vector3
 	var finish_line: float = _race_finish_distance()
 	if clamped_progress >= finish_line - 2.0:
 		# A crossed cart is not an obstacle, and it must stay that way even
-		# though it keeps streaming state until the race ends.
+		# though it keeps streaming state until the race ends. Latch the time
+		# so a late packet cannot reorder the finished field.
+		if not _remote_finish_time.has(peer_id):
+			_remote_finish_time[peer_id] = _race_time
 		cart.mark_race_finished()
 
 
@@ -3035,6 +3412,8 @@ func _net_bot_states(positions: PackedVector3Array, yaws: PackedFloat32Array,
 		rival["progress"] = progresses[i]
 		if not bool(rival["finished"]) and progresses[i] >= finish - 2.0:
 			rival["finished"] = true
+			if float(rival["finish_time"]) < 0.0:
+				rival["finish_time"] = _race_time
 			node.mark_race_finished()
 
 
@@ -3069,6 +3448,13 @@ func _physics_process(delta: float) -> void:
 
 
 func _process(delta: float) -> void:
+	# The start marshal and the transient barrier badge keep ticking in every
+	# phase, including the wait for peers, so the grid never looks frozen.
+	_animate_marshal(delta)
+	if _impact_timer > 0.0:
+		_impact_timer -= delta
+		if _impact_timer <= 0.0 and _impact_label != null:
+			_impact_label.visible = false
 	if _waiting_for_peers:
 		_wait_elapsed += delta
 		if _is_host:
@@ -3137,13 +3523,63 @@ func _begin_race_countdown() -> void:
 	_start_local_countdown(3.0)
 
 
+func _reset_race_progress(force: bool = false) -> void:
+	## One reset for every countdown path. A race that restarts inside the same
+	## scene (server fallback, late join, re-issued start) must never inherit the
+	## previous clock, laps, sector flags or finish bookkeeping. A normal
+	## countdown never rewinds a cart that is already racing; an authoritative
+	## server start does.
+	if not force and (_phase == Phase.RACING or not _lap_times.is_empty()):
+		return
+	_race_time = 0.0
+	_lap = 1
+	_lap_start = 0.0
+	_lap_times.clear()
+	_sector_flags = 0
+	_last_sector = -1
+	_skip_progress = true
+	_prev_s = _spline.wrap_distance(_start_s) if _spline != null else _start_s
+	_unwrapped = _start_s
+	_off_timer = 0.0
+	_was_off_track = false
+	_barrier_cooldown = 0.0
+	_last_forward_speed = 0.0
+	_air_time = 0.0
+	_fall_speed = 0.0
+	_go_time = 0.0
+	_finish_time = -1.0
+	_remote_finish_time.clear()
+	_official_applied = false
+	_impact_timer = 0.0
+	if _impact_label != null:
+		_impact_label.visible = false
+	if _offtrack_label != null:
+		_offtrack_label.visible = false
+	_toast_timer = 0.0
+	if _toast_label != null:
+		_toast_label.visible = false
+	_set_start_lights(0, false)
+	if _result_root != null:
+		_result_root.visible = false
+	for rival: Dictionary in _rivals:
+		rival["finished"] = false
+		rival["finish_time"] = -1.0
+	if _hud != null:
+		_hud_last_lap = -1
+		_hud_last_place = -1
+		_hud.call("set_lap", 1, _total_laps)
+		_hud.call("set_race_time", 0.0, -1.0)
+
+
 func _start_local_countdown(seconds: float) -> void:
+	_reset_race_progress()
 	_waiting_for_peers = false
 	_countdown = maxf(seconds, 0.1)
 	_last_count = 0
 	_go_shown = false
 	_phase = Phase.COUNTDOWN
 	_countdown_label.visible = true
+	_countdown_label.add_theme_color_override("font_color", UiPalette.YELLOW)
 	_countdown_label.text = str(int(ceil(_countdown)))
 	if OS.get_environment("CART_DEBUG_NET") == "1":
 		print("RACE_COUNTDOWN_START host peers=", multiplayer.get_peers())
@@ -3158,6 +3594,8 @@ func _begin_server_race() -> void:
 		_total_laps, _bot_count(), GameSettings.minigame_difficulty,
 		_base_max_speed, Network.race_seed)
 	_server_race_pending = false
+	if not is_inside_tree():
+		return
 	if race.is_empty():
 		_start_local_countdown(3.0)
 		return
@@ -3179,6 +3617,9 @@ func _net_server_race_start(race_id: String, secret: String,
 		return
 	if not Network.server_clock_ready:
 		await Network.sync_server_clock(3)
+	# The peer can leave the race while the clock sync is in flight.
+	if not is_inside_tree():
+		return
 	_apply_server_race(race_id, secret, start_ms, bots)
 
 
@@ -3192,15 +3633,24 @@ func _apply_server_race(race_id: String, secret: String, start_ms: int,
 	_server_bots_pending = false
 	_server_bots_timer = 0.0
 	_waiting_for_peers = false
+	# A client that could not sync the relay clock must not run the whole race
+	# against a nonsense epoch: latch the fallback, derive a plain 3 s
+	# countdown, and let the local clock drive the timer and the laps.
+	_server_clock_ok = Network.server_clock_ready
+	_reset_race_progress(true)
 	_convert_rivals_to_server()
-	# The server starts the race on a fixed wall-clock instant; every peer
-	# derives the same countdown from it instead of running its own 3 s timer.
-	var remaining: float = float(start_ms - Network.server_now_ms()) / 1000.0
-	_countdown = clampf(remaining, 0.1, 20.0)
+	var remaining: float = 3.0
+	if _server_clock_ok:
+		# The server starts the race on a fixed wall-clock instant; every peer
+		# derives the same countdown from it instead of running its own timer.
+		remaining = clampf(float(start_ms - Network.server_now_ms()) / 1000.0,
+			0.1, 20.0)
+	_countdown = remaining
 	_last_count = 0
 	_go_shown = false
 	_phase = Phase.COUNTDOWN
 	_countdown_label.visible = true
+	_countdown_label.add_theme_color_override("font_color", UiPalette.YELLOW)
 	_countdown_label.text = str(int(ceil(_countdown)))
 	_state_stream_timer = 0.0
 	# The shared HUD reads Network.relay_rtt_ms / race_state_receiving directly;
@@ -3208,7 +3658,8 @@ func _apply_server_race(race_id: String, secret: String, start_ms: int,
 	Network.reset_race_state_stream()
 	if OS.get_environment("CART_DEBUG_NET") == "1":
 		print("RACE_SERVER start id=", race_id, " start_ms=", start_ms,
-			" remaining=", _countdown, " bots=", bots)
+			" remaining=", _countdown, " bots=", bots,
+			" clock_ok=", _server_clock_ok)
 
 
 func _convert_rivals_to_server() -> void:
@@ -3226,6 +3677,7 @@ func _convert_rivals_to_server() -> void:
 			node.set_vehicle_id(vehicle)
 		_rivals[i]["progress"] = START_DISTANCE + 5.0 + float(i) * 4.5
 		_rivals[i]["finished"] = false
+		_rivals[i]["finish_time"] = -1.0
 		# A sample from a previous race must never be extrapolated into this one.
 		_rivals[i]["has_server_sample"] = false
 		_rivals[i]["server_stamp_ms"] = 0
@@ -3272,19 +3724,26 @@ func _race_state_row(peer_id: int, cart: CartPlayer, progress: float) -> Array:
 	if not position.is_finite() or not velocity.is_finite() or not is_finite(yaw):
 		return []
 	var total: float = maxf(_spline.total_length, 1.0)
-	var lap: int = clampi(int(floor(progress / total)) + 1, 1, _total_laps)
+	# Match the Pi's own lap formula: the grid sits START_DISTANCE past the
+	# line, so lap 1 is progress in [START, START + total). The old version
+	# omitted the grid offset and reported the next lap 8 m early, which the
+	# /api/race/pos validator could flag as progress.
+	var lap: int = clampi(int(floor((progress - START_DISTANCE) / total)) + 1,
+		1, _total_laps + 1)
 	return [peer_id, position.x, position.y, position.z,
 		velocity.x, velocity.y, velocity.z, yaw, lap]
 
 
 @rpc("authority", "call_local", "reliable")
 func _net_race_countdown(seconds: float) -> void:
+	_reset_race_progress()
 	_waiting_for_peers = false
 	_countdown = maxf(seconds, 0.1)
 	_last_count = 0
 	_go_shown = false
 	_phase = Phase.COUNTDOWN
 	_countdown_label.visible = true
+	_countdown_label.add_theme_color_override("font_color", UiPalette.YELLOW)
 	_countdown_label.text = str(int(ceil(_countdown)))
 	if OS.get_environment("CART_DEBUG_NET") == "1":
 		print("RACE_COUNTDOWN_RECV seconds=", _countdown, " host=", _is_host)
@@ -3306,7 +3765,7 @@ func _net_race_join_now() -> void:
 
 
 func _tick_countdown(delta: float) -> void:
-	if _server_race_active:
+	if _server_race_active and _server_clock_ok:
 		# Derived from the Pi clock every frame: a slow frame or a late RPC
 		# cannot shift this client's GO.
 		_countdown = maxf(0.0, float(_server_start_ms - Network.server_now_ms()) / 1000.0)
@@ -3340,7 +3799,7 @@ func _tick_countdown(delta: float) -> void:
 
 
 func _tick_race(delta: float) -> void:
-	if _server_race_active:
+	if _server_race_active and _server_clock_ok:
 		# Official race clock: all peers read the same Pi timestamp.
 		_race_time = maxf(0.0, float(Network.server_now_ms() - _server_start_ms) / 1000.0)
 	else:
@@ -3368,6 +3827,10 @@ func _tick_race(delta: float) -> void:
 		# current lap; otherwise the lap completes mid-track after a reset.
 		_unwrapped = lap_index * total + s
 		_skip_progress = true
+		# A teleport is neither a landing nor a barrier hit.
+		_last_forward_speed = 0.0
+		_air_time = 0.0
+		_fall_speed = 0.0
 	_last_cart_pos = _cart.global_position
 
 	if _skip_progress:
@@ -3383,6 +3846,7 @@ func _tick_race(delta: float) -> void:
 		_unwrapped += clampf(step, -max_step, max_step)
 	_prev_s = s
 	_update_surface_grip(s)
+	_update_landing_smoke(delta)
 
 	var sector: int = clampi(int(s / (_spline.total_length / 4.0)), 0, 3)
 	_sector_flags |= 1 << sector
@@ -3392,6 +3856,10 @@ func _tick_race(delta: float) -> void:
 	if _unwrapped >= START_DISTANCE + float(_lap) * _spline.total_length \
 			and _sector_flags == 0b1111:
 		_complete_lap()
+		if _phase == Phase.FINISHED:
+			# The result card is built; do not run off-track, barrier or rival
+			# logic for the rest of this physics frame.
+			return
 
 	# Lateral offset from the centreline, not raw nearest-point distance: a
 	# barrier scrape or a tight hairpin can spike the 3D/nearest distance while
@@ -3404,11 +3872,16 @@ func _tick_race(delta: float) -> void:
 	# off every frame.
 	var off_limit: float = ROAD_HALF + 1.1
 	var back_on: float = ROAD_HALF + 0.5
+	var was_off: bool = _was_off_track
 	var off: bool = lateral > (back_on if _was_off_track else off_limit)
 	_was_off_track = off
 	if off:
 		_off_timer += delta
-		_offtrack_label.visible = true
+		if not was_off:
+			_offtrack_label.text = "OFF TRACK  ·  EASE BACK IN"
+			_offtrack_label.add_theme_color_override("font_color", UiPalette.RED)
+			_offtrack_label.visible = true
+			_pop_label(_offtrack_label)
 		_cart.max_speed = _base_max_speed * 0.55
 		# Only pull a kart back once it is really out (past the barrier or the
 		# grass) or has been stuck out there for a while. The respawn point is
@@ -3419,6 +3892,23 @@ func _tick_race(delta: float) -> void:
 		_off_timer = 0.0
 		_offtrack_label.visible = false
 		_cart.max_speed = _base_max_speed
+
+	# Barrier feedback: a hard scrape kills forward speed without pushing the
+	# kart off the road, so it needs its own cue. The cooldown keeps one hit
+	# from flashing the label on every physics frame.
+	_barrier_cooldown = maxf(_barrier_cooldown - delta, 0.0)
+	var forward: Vector3 = -_cart.global_transform.basis.z
+	var forward_speed: float = _cart.velocity.dot(forward)
+	var lost: float = _last_forward_speed - forward_speed
+	_last_forward_speed = forward_speed
+	if lost > BARRIER_HIT_SPEED_LOSS and lateral > ROAD_HALF - 1.4 \
+			and _barrier_cooldown <= 0.0:
+		_barrier_cooldown = 1.2
+		_impact_label.text = "BARRIER!  ·  EASE OFF"
+		_impact_label.add_theme_color_override("font_color", UiPalette.YELLOW)
+		_impact_label.visible = true
+		_impact_timer = 1.0
+		_pop_label(_impact_label)
 	if _effects != null:
 		_effects.set("off_track", off)
 	# Grass physically bends away from the kart: feed world position to the
@@ -3468,6 +3958,8 @@ func _fetch_server_bots() -> void:
 		# One transient HTTP miss should not freeze the field for a whole poll.
 		snapshot = await Network.fetch_server_bots(_server_race_id)
 	_server_bots_pending = false
+	if not is_inside_tree():
+		return
 	if snapshot.is_empty() or not _server_race_active:
 		return
 	var rows: Variant = snapshot.get("bots", [])
@@ -3510,6 +4002,8 @@ func _fetch_server_bots() -> void:
 		rival["progress"] = float(values[4])
 		rival["lap"] = int(values[5])
 		if values.size() > 6 and int(values[6]) == 1:
+			if not bool(rival["finished"]) and float(rival["finish_time"]) < 0.0:
+				rival["finish_time"] = _race_time
 			rival["finished"] = true
 			node.call("mark_race_finished")
 
@@ -3556,6 +4050,10 @@ func _report_server_lap_async(lap: int, lap_ms: float, finished: bool) -> void:
 		_server_race_id, _server_race_secret, peer,
 		GameSettings.player_name, lap, race_ms, int(round(lap_ms * 1000.0)),
 		finished)
+	# The scene can be left while the HTTP request is in flight; resuming on a
+	# freed node used to raise an error and drop the official result.
+	if not is_inside_tree():
+		return
 	if official.is_empty():
 		return
 	_server_official = official
@@ -3566,6 +4064,9 @@ func _report_server_lap_async(lap: int, lap_ms: float, finished: bool) -> void:
 func _apply_official_finish(official: Dictionary) -> void:
 	## Replace the local finish time with the server's authoritative one and
 	## use the server standings for the big placement label.
+	_official_applied = true
+	if _result_subtitle != null:
+		_result_subtitle.text = _result_summary_text()
 	var finish_ms: int = int(official.get("finish_ms", 0))
 	if finish_ms <= 0:
 		finish_ms = int(official.get("official_race_ms", 0))
@@ -3581,9 +4082,21 @@ func _apply_official_finish(official: Dictionary) -> void:
 	for index in (standings as Array).size():
 		var entry: Variant = (standings as Array)[index]
 		if entry is Dictionary and int((entry as Dictionary).get("peer", -2)) == peer:
-			_result_place.text = "%s / %d" % [_ordinal(index + 1),
+			var official_place: int = index + 1
+			_result_place.text = "%s / %d" % [_ordinal(official_place),
 				(standings as Array).size()]
+			# The official place can differ from the local estimate when a
+			# remote finish packet was late; the winning wording must match it.
+			_set_result_title(official_place)
 			return
+
+
+func _set_result_title(place: int) -> void:
+	## One wording ladder for both the local estimate and the official result.
+	if _result_title == null:
+		return
+	_result_title.text = "YOU WIN!" if place == 1 \
+		else ("PODIUM FINISH!" if place <= 3 else "RACE COMPLETE")
 
 
 func _safe_respawn_transform(s: float) -> Transform3D:
@@ -3616,23 +4129,39 @@ func _respawn(s: float) -> void:
 		rig.call("reset_camera")
 	_skip_progress = true
 	_off_timer = 0.0
+	# A teleport is not a hard landing or a barrier hit.
+	_air_time = 0.0
+	_fall_speed = 0.0
+	_last_forward_speed = 0.0
 	_toast("BACK ON TRACK", 1.3)
 
 
 func _complete_lap() -> void:
 	var lap_time: float = _race_time - _lap_start
+	var completed_lap: int = _lap
+	var previous_lap: float = _lap_times[_lap_times.size() - 1] \
+		if not _lap_times.is_empty() else -1.0
+	var previous_best: float = _best_lap_time()
 	_lap_times.append(lap_time)
 	_lap_start = _race_time
 	_sector_flags = 0
 	if _server_race_active:
-		var completed_lap: int = _lap
 		_report_server_lap_async(completed_lap, lap_time, false)
 	_lap += 1
 	if _lap > _total_laps:
 		_finish()
 		return
 	_hud.call("set_lap", _lap, _total_laps)
-	_toast("LAP %d / %d   ·   %s" % [_lap, _total_laps, _format_time(lap_time)], 2.0)
+	# The lap toast doubles as the live lap-delta readout: the completed lap's
+	# time, its change against the previous lap, and a BEST tag when it beat
+	# every earlier lap. One line, same spacing as the result table.
+	var parts: PackedStringArray = [
+		"LAP %d / %d" % [completed_lap, _total_laps], _format_time(lap_time)]
+	if previous_lap > 0.0:
+		parts.append(_format_lap_delta(lap_time - previous_lap))
+	if previous_best < 0.0 or lap_time < previous_best:
+		parts.append("BEST")
+	_toast("   ·   ".join(parts), 2.4)
 	_flash_gate(0)
 	if _effects != null:
 		_effects.call("lap_burst")
@@ -3641,7 +4170,11 @@ func _complete_lap() -> void:
 
 func _finish() -> void:
 	_phase = Phase.FINISHED
-	if Network.is_host:
+	# Bank the crossing time before anything reads a placement: finished carts
+	# are ranked by when they crossed, not by their leftover progress.
+	if _finish_time < 0.0:
+		_finish_time = _race_time
+	if _multiplayer and Network.is_host:
 		Network.set_room_state("finished")
 	if _cart != null:
 		_cart.set_physics_process(false)
@@ -3673,16 +4206,20 @@ func _finish() -> void:
 				Time.get_ticks_msec(), _cart.velocity)
 	CursorController.set_menu_mode(true)
 	_offtrack_label.visible = false
+	_impact_label.visible = false
+	_impact_timer = 0.0
 
 	var place: int = _place()
 	var suffix: String = _ordinal(place)
 	var best: float = _best_lap_time()
-	_result_title.text = "YOU WIN!" if place == 1 \
-		else ("ON THE PODIUM!" if place <= 3 else "FINISHED")
+	_set_result_title(place)
+	_result_subtitle.text = _result_summary_text()
 	_result_total.text = _format_time(_race_time) if not _lap_times.is_empty() else "—"
 	if _server_race_active and not _server_finished_reported:
 		_server_finished_reported = true
-		_report_server_lap_async(_total_laps + 1, _race_time, true)
+		# The final report carries the LAST lap's time, not the whole race:
+		# passing the total here corrupted the server's last-lap readout.
+		_report_server_lap_async(_total_laps + 1, _last_lap_time(), true)
 	_result_best.text = _format_time(best) if best >= 0.0 else "—"
 	_result_place.text = "%s / %d" % [suffix, _field_size()]
 	_result_laps.text = "%d / %d" % [mini(_lap_times.size(), _total_laps), _total_laps]
@@ -3697,16 +4234,12 @@ func _finish() -> void:
 		.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
 	_hud.call("set_race_time", _race_time, best)
 	_hud.call("set_lap", _total_laps, _total_laps)
-	var pause_open: bool = false
 	var pause_menu: Control = get_node_or_null("PauseMenu/Root") as Control
 	if pause_menu != null and pause_menu.visible:
-		pause_open = true
 		_result_root.remove_from_group("nav_scope")
 	var menu_nav: Node = get_node_or_null("/root/MenuNav")
 	if menu_nav != null:
 		menu_nav.call("refresh")
-	if not pause_open and _result_primary != null:
-		pass
 	if _effects != null:
 		_effects.call("lap_burst")
 	_play_one_shot(FINISH_FANFARE, -6.0, 1.0)
@@ -3740,9 +4273,12 @@ func _play_one_shot(stream: AudioStream, volume_db: float, pitch: float) -> void
 
 
 func _format_time(seconds: float) -> String:
-	var minutes: int = int(seconds) / 60
-	var remainder: float = fmod(seconds, 60.0)
-	return "%d:%s" % [minutes, ("%.3f" % remainder).lpad(6, "0")]
+	## Integer-millisecond formatting. The old float remainder could print
+	## "1:60.000" when a lap ended at 59.9995 s because the rounded string
+	## carried a 60 while the minutes had not rolled over.
+	var total_ms: int = maxi(roundi(maxf(seconds, 0.0) * 1000.0), 0)
+	return "%d:%02d.%03d" % [total_ms / 60000, (total_ms / 1000) % 60,
+		total_ms % 1000]
 
 
 func _ordinal(place: int) -> String:

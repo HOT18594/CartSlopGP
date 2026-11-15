@@ -24,6 +24,7 @@ const SOURCE_ONLINE: String = "online"
 @onready var _body: VBoxContainer = $Center/Panel/Body
 @onready var _panel: PanelContainer = %Panel
 @onready var _title: Label = %Title
+@onready var _count_label: Label = %RoomCount
 @onready var _close_button: Button = %CloseButton
 @onready var _search_field: LineEdit = %SearchField
 @onready var _refresh_button: Button = %RefreshButton
@@ -56,6 +57,8 @@ func _ready() -> void:
 	_refresh_button.pressed.connect(func() -> void: _refresh())
 	_search_field.text_changed.connect(_on_search_changed)
 	_search_field.set_meta("nav_default", true)
+	_title.text = _base_title()
+	_count_label.text = "0 ROOMS"
 	_close_button.tooltip_text = "Close the browser and go back to the lobby."
 	_refresh_button.tooltip_text = "Scan LAN and public online rooms again."
 	_search_field.tooltip_text = "Filter the merged list by host name. Rooms join with one click."
@@ -135,6 +138,10 @@ func _refresh() -> void:
 	_refresh_button.disabled = true
 	_refresh_button.text = "REFRESHING"
 	_clear_list()
+	# A refresh starts at the top of the list again, so a scan that returns
+	# fewer rooms can never leave the scroll past the new end.
+	_list_scroll.scroll_vertical = 0
+	_count_label.text = "SCANNING"
 	_set_state("loading", _loading_text() + "...", "", Callable())
 	_title.text = _base_title()
 	if _mode == "all":
@@ -233,6 +240,7 @@ func set_rooms(rooms: Array) -> void:
 	for entry: Variant in rooms:
 		if entry is Dictionary:
 			_rooms.append(entry as Dictionary)
+	_list_scroll.scroll_vertical = 0
 	_rebuild_list()
 
 
@@ -258,10 +266,13 @@ func _rebuild_list() -> void:
 			note = "  ·  ONLINE SEARCH UNAVAILABLE"
 		_set_state("idle", "%d ROOM%s%s  ·  TAB TO A ROOM, THEN PRESS ENTER" % [
 			shown, "" if shown == 1 else "S", note], "", Callable())
-		_title.text = "%s  ·  %d OPEN" % [_base_title(), shown]
+		_title.text = _base_title()
+		_count_label.text = "%d ROOM%s" % [shown, "" if shown == 1 else "S"]
 		MenuNav.refresh()
+		_restore_row_focus()
 		return
 	_title.text = _base_title()
+	_count_label.text = "0 FOUND" if _query != "" and not _rooms.is_empty() else "0 ROOMS"
 	if _error:
 		var error_text: String = "COULDN'T REACH THE ROOM SERVICE."
 		if _mode == "all":
@@ -280,6 +291,21 @@ func _rebuild_list() -> void:
 		_set_state("nomatch", "NO ROOMS MATCH \"%s\"." % _query, "CLEAR SEARCH",
 			_clear_search, UiPalette.BLUE)
 	MenuNav.refresh()
+
+
+func _restore_row_focus() -> void:
+	## A refresh replaces every row, and the focused row that was freed left the
+	## keyboard ring on nothing: Enter did nothing until the nav timer noticed.
+	## Put the ring on the first open row straight away, unless the search field
+	## (or another live control) still owns it.
+	var focused: Control = get_viewport().gui_get_focus_owner()
+	if focused != null and is_instance_valid(focused) and focused.is_visible_in_tree():
+		return
+	for child: Node in _list.get_children():
+		var row := child as Button
+		if row != null and not row.disabled:
+			if MenuNav.focus(row):
+				return
 
 
 func _room_row(room: Dictionary) -> Button:
@@ -311,9 +337,9 @@ func _room_row(room: Dictionary) -> Button:
 
 	var row := HBoxContainer.new()
 	row.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	row.offset_left = 18
-	row.offset_right = -18
-	row.add_theme_constant_override("separation", 12)
+	row.offset_left = UiKit.SPACING
+	row.offset_right = -UiKit.SPACING
+	row.add_theme_constant_override("separation", UiKit.SPACING)
 	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	button.add_child(row)
 
@@ -509,10 +535,10 @@ func _apply_soft_disabled(button: Button) -> void:
 	var style := StyleBoxFlat.new()
 	style.bg_color = Color("d8d3e4")
 	style.set_corner_radius_all(UiKit.CORNER_RADIUS)
-	style.content_margin_left = 22
-	style.content_margin_right = 22
-	style.content_margin_top = 10
-	style.content_margin_bottom = 10
+	style.content_margin_left = UiKit.SPACING
+	style.content_margin_right = UiKit.SPACING
+	style.content_margin_top = UiKit.SPACING_TIGHT
+	style.content_margin_bottom = UiKit.SPACING_TIGHT
 	button.add_theme_stylebox_override("disabled", style)
 
 
@@ -520,10 +546,10 @@ func _row_style(bg: Color) -> StyleBoxFlat:
 	var style := StyleBoxFlat.new()
 	style.bg_color = bg
 	style.set_corner_radius_all(UiKit.CORNER_RADIUS)
-	style.content_margin_left = 18
-	style.content_margin_right = 18
-	style.content_margin_top = 8
-	style.content_margin_bottom = 8
+	style.content_margin_left = UiKit.SPACING
+	style.content_margin_right = UiKit.SPACING
+	style.content_margin_top = UiKit.SPACING_TIGHT
+	style.content_margin_bottom = UiKit.SPACING_TIGHT
 	style.anti_aliasing = true
 	return style
 

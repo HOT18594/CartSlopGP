@@ -9,8 +9,10 @@ const UiPalette := preload("res://scripts/ui/ui_palette.gd")
 ## the server. Settings still work because this layer is PROCESS_MODE_ALWAYS.
 
 const MAIN_MENU_SCENE: String = "res://scenes/ui/main_menu.tscn"
+const SINGLE_HINT: String = "SINGLE PLAYER  -  THE RACE IS PAUSED"
 const MULTIPLAYER_HINT: String = "MULTIPLAYER  -  THE GAME KEEPS RUNNING"
 const QUIT_WARNING: String = "HOST: QUITTING CLOSES THE ROOM FOR EVERYONE"
+const CLOSE_HINT: String = "ESC OR START CLOSES THIS MENU"
 
 @onready var _title: Label = $Center/Panel/Body/Title
 @onready var _resume_button: Button = %ResumeButton
@@ -34,15 +36,30 @@ func _ready() -> void:
 	_mode_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_mode_hint.add_theme_font_size_override("font_size", 15)
 	_mode_hint.add_theme_color_override("font_color", UiPalette.MUTED)
-	_mode_hint.text = MULTIPLAYER_HINT
+	_mode_hint.text = SINGLE_HINT
 	_mode_hint.visible = false
+	_mode_hint.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_title.get_parent().add_child(_mode_hint)
 	_title.get_parent().move_child(_mode_hint, _title.get_index() + 1)
+	_add_close_hint()
 	hide()
 	_resume_button.pressed.connect(close)
 	_settings_button.pressed.connect(_on_settings_pressed)
 	_quit_button.pressed.connect(_on_quit_pressed)
 	_settings_menu.closed.connect(_on_settings_closed)
+
+
+func _add_close_hint() -> void:
+	## One quiet footer line, matching Settings' help line: the menu explains
+	## the key that dismisses it instead of leaving the player to guess.
+	var hint := Label.new()
+	hint.name = "CloseHint"
+	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	hint.add_theme_font_size_override("font_size", 15)
+	hint.add_theme_color_override("font_color", UiPalette.MUTED)
+	hint.text = CLOSE_HINT
+	hint.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_title.get_parent().add_child(hint)
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -54,7 +71,11 @@ func _unhandled_input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 			return
 		if _settings_menu.visible:
-			# Escape closes the topmost overlay only: Settings, not Pause.
+			# Escape closes the topmost overlay only: Settings, then this menu
+			# on the next press. Close it here instead of relying on the child
+			# handler's tree order, so one Escape can never close both layers.
+			_settings_menu.close()
+			get_viewport().set_input_as_handled()
 			return
 		if _is_open:
 			close()
@@ -73,6 +94,9 @@ func open() -> void:
 	visible = true
 	_title.text = "MENU" if _multiplayer else "PAUSED"
 	_resume_button.text = "BACK TO GAME" if _multiplayer else "RESUME"
+	# The label changes with the mode, so the candy shrink-to-fit has to run
+	# again; a stale fit left the longer multiplayer label uncapped.
+	_fit(_resume_button)
 	_quit_ticket += 1
 	_reset_quit_button()
 	# Multiplayer is a live world: do not pause the tree or the server.
@@ -115,11 +139,16 @@ func _another_menu_visible() -> bool:
 
 
 func _on_settings_pressed() -> void:
+	if _settings_menu.visible:
+		return
 	_settings_menu.open()
 
 
 func _on_settings_closed() -> void:
-	pass
+	## Escape/Back from Settings returns the ring to the button that opened it
+	## instead of leaving the pause menu without a visible selection.
+	MenuNav.refresh()
+	MenuNav.focus(_settings_button)
 
 
 func _on_quit_pressed() -> void:
@@ -130,6 +159,7 @@ func _on_quit_pressed() -> void:
 		_quit_ticket += 1
 		var ticket: int = _quit_ticket
 		_quit_button.text = "CONFIRM QUIT"
+		_fit(_quit_button)
 		_mode_hint.text = QUIT_WARNING
 		_mode_hint.visible = true
 		await get_tree().create_timer(3.0).timeout
@@ -151,9 +181,19 @@ func _reset_quit_button() -> void:
 	_quit_armed = false
 	if _quit_button != null:
 		_quit_button.text = "QUIT TO MENU"
+		_fit(_quit_button)
 	if _mode_hint != null:
-		_mode_hint.text = MULTIPLAYER_HINT
-		_mode_hint.visible = _multiplayer
+		# The mode line is part of the menu, not a multiplayer-only warning:
+		# single player says plainly that the race is paused.
+		_mode_hint.text = MULTIPLAYER_HINT if _multiplayer else SINGLE_HINT
+		_mode_hint.visible = true
+
+
+func _fit(button: Button) -> void:
+	## Candy buttons shrink their label to the authored width. Labels rewritten
+	## at runtime have to ask for that fit again.
+	if button != null and button.has_method("fit_text"):
+		button.call("fit_text")
 
 
 func _exit_tree() -> void:

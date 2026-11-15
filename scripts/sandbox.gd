@@ -12,6 +12,8 @@ const VehicleCatalog := preload("res://scripts/vehicles/vehicle_catalog.gd")
 const VehicleVisual := preload("res://scripts/vehicles/vehicle_visual.gd")
 const VisualGrade := preload("res://scripts/systems/visual_grade.gd")
 const SandboxBot := preload("res://scripts/ai/sandbox_bot.gd")
+const CollisionLayers := preload("res://scripts/systems/collision_layers.gd")
+const UiPalette := preload("res://scripts/ui/ui_palette.gd")
 const TITLE_FONT: String = "res://assets/ui/fonts/LuckiestGuy-Regular.ttf"
 const CART_SYNC_INTERVAL: float = 0.05
 const PROP_SYNC_INTERVAL: float = 0.10
@@ -22,22 +24,59 @@ const GRID_SLOTS: Array[Vector3] = [
 	Vector3(-9.0, 0.0, 13.0), Vector3(0.0, 0.0, 13.0), Vector3(9.0, 0.0, 13.0),
 ]
 const GRID_MARKER_SLOT: int = 4
-## Beyond six peers the grid continues behind the last row, still on the apron.
-const GRID_OVERFLOW_Z: float = 17.0
-const GRID_OVERFLOW_STEP: float = 3.5
+## Overflow seats past the six painted boxes: two rows on the pit-gate lane in
+## front of the grid, then the paved east apron columns. Every centre is on the
+## apron and clear of the garages, the yard cone line, the tyre stacks, the
+## crates, the banners and the terrace, which the old row at z = 17 was not (it
+## sat on the dirt among the slalom cones). Eighteen seats total, more than the
+## five-bot plus room capacity.
+const GRID_OVERFLOW: Array[Vector3] = [
+	Vector3(-9.0, 0.0, -3.0), Vector3(0.0, 0.0, -3.0), Vector3(9.0, 0.0, -3.0),
+	Vector3(-9.0, 0.0, -11.0), Vector3(0.0, 0.0, -11.0),
+	Vector3(9.0, 0.0, -11.0),
+	Vector3(18.0, 0.0, -3.0), Vector3(27.0, 0.0, -3.0),
+	Vector3(18.0, 0.0, -11.0), Vector3(27.0, 0.0, -11.0),
+	Vector3(18.0, 0.0, 13.0), Vector3(27.0, 0.0, 13.0),
+]
+## Prop watchdog. Everything pushable sits on the y = 0 slab inside the fence;
+## a prop below the slab or past the fence has tunnelled or been thrown out and
+## goes back to the pose it was authored with.
+const PROP_FLOOR: float = -0.6
+const PROP_BOUNDS: float = 64.0
+const PROP_RECOVER_INTERVAL: float = 0.5
+const PROP_KICK_MS: int = 400
+const PROP_KICK_RETRY_MS: int = 150
+const PROP_SLEEP_SPEED: float = 0.30
+const PROP_SLEEP_SPIN: float = 0.60
+## A respawn slot this tall is not ground: the bot is on the pit-garage or
+## grandstand roof, where the single downward probe put it.
+const RESPAWN_ROOF_HEIGHT: float = 4.0
+const RESPAWN_PROBE_RADIUS: float = 0.95
+## Zone hint toast: the shared UI scale, nothing tighter. Margin 24 from the
+## screen edge, 16 around the block, 8 between title and body, radius 16.
+const HINT_MARGIN: int = 24
+const HINT_GAP: int = 16
+const HINT_SMALL_GAP: int = 8
+const HINT_RADIUS: int = 16
+const HINT_WIDTH: float = 460.0
+const HINT_SECONDS: float = 5.5
+const ZONE_PROBE_INTERVAL: float = 0.25
 
 var _local_cart: CartPlayer
 var _remote_carts: Dictionary = {} ## peer_id -> CartPlayer
 var _peer_vehicles: Dictionary = {} ## peer_id -> vehicle id
 var _props: Array[RigidBody3D] = []
-var _prop_targets: Dictionary = {} ## index -> [Vector3, float]
+var _prop_homes: Array[Transform3D] = [] ## authored pose per _props index
+var _prop_targets: Dictionary = {} ## index -> [Vector3, Vector4 quaternion]
 var _host_mode: bool = false
 var _name_labels: Dictionary = {} ## peer id -> Label3D
 var _cart_sync_timer: float = 0.0
 var _prop_sync_timer: float = 0.0
+var _prop_recover_timer: float = 0.0
 var _bots: Array[SandboxBot] = []
 var _traffic: Array[CartPlayer] = [] ## local player first, then every bot cart
 var _bot_time: float = 0.0
+var _bot_homes: Array[Transform3D] = [] ## fallback seat per bot, index-parallel
 ## Authored spawn anchor from the scene marker; grid slots reuse its height and
 ## facing so single- and multiplayer start on the same transforms.
 var _spawn_anchor: Transform3D = Transform3D(Basis.IDENTITY,
@@ -45,6 +84,21 @@ var _spawn_anchor: Transform3D = Transform3D(Basis.IDENTITY,
 var _cart_relay_ms: Dictionary = {} ## peer id -> last host relay (anti-amplification)
 ## Client-side prediction for a pushed frozen prop.
 var _prop_kick_until: Dictionary = {}
+## Paddock seat allocation: peer id -> grid index, and every claimed index. A
+## late joiner must never reuse a seat a bot already drives out of.
+var _peer_slots: Dictionary = {}
+var _slot_owner: Dictionary = {}
+## Respawn overlap probe, allocated once.
+var _respawn_shape: SphereShape3D
+var _respawn_query: PhysicsShapeQueryParameters3D
+## Zone hint toast state.
+var _hint_layer: CanvasLayer
+var _hint_panel: PanelContainer
+var _hint_title: Label
+var _hint_body: Label
+var _hint_timer: Timer
+var _zone_probe: float = 0.0
+var _zones_seen: Dictionary = {}
 
 
 
@@ -61,6 +115,7 @@ func _ready() -> void:
 	var marker: Node3D = get_tree().get_first_node_in_group("spawn_point") as Node3D
 	if marker != null:
 		_spawn_anchor = marker.global_transform
+	_collect_props()
 	if Network.is_session_active():
 		_setup_multiplayer()
 	elif _local_cart != null:
@@ -70,19 +125,15 @@ func _ready() -> void:
 		if marker != null:
 			_local_cart.global_position = marker.global_position
 			_local_cart.set_spawn_transform(marker.global_transform)
+	_build_zone_hint()
 	_setup_bots()
 
 
 func _setup_multiplayer() -> void:
 	_host_mode = Network.is_host
-	for node in get_tree().get_nodes_in_group("pushable"):
-		if node is RigidBody3D:
-			_props.append(node as RigidBody3D)
-	_props.sort_custom(func(a: RigidBody3D, b: RigidBody3D) -> bool: return str(a.name) < str(b.name))
-
 	if _local_cart != null:
 		var local_slot: Transform3D = _grid_slot_transform(
-			_peer_grid_index(multiplayer.get_unique_id()))
+			_claim_peer_slot(multiplayer.get_unique_id()))
 		_local_cart.global_transform = local_slot
 		_local_cart.set_spawn_transform(local_slot)
 		if not _local_cart.net_push_requested.is_connected(_on_local_push_requested):
@@ -117,6 +168,8 @@ func _setup_multiplayer() -> void:
 
 func _physics_process(delta: float) -> void:
 	_update_bots(delta)
+	_recover_props(delta)
+	_probe_zone(delta)
 	if not Network.is_session_active():
 		return
 	if _host_mode and _local_cart != null:
@@ -163,18 +216,16 @@ func _setup_bots() -> void:
 		else GameSettings.selected_vehicle
 	if VehicleCatalog.find(vehicle_id).is_empty():
 		vehicle_id = VehicleCatalog.DEFAULT_ID
-	# Bots take the grid slots after every peer. Solo, the authored marker slot
-	# stays free for the local cart. Position BEFORE add_child: a physics body
-	# that enters the world at the origin spends its first tick overlapping
-	# every other new cart, which launched them across the map.
+	# Bots take the first free seats after every peer. Solo, the authored marker
+	# slot stays reserved for the local cart. Position BEFORE add_child: a
+	# physics body that enters the world at the origin spends its first tick
+	# overlapping every other new cart, which launched them across the map.
 	var first_slot: int = Network.participants().size() \
 		if Network.is_session_active() else 0
 	for i in count:
 		var node: CartPlayer = CART_SCENE.instantiate() as CartPlayer
 		node.name = "SandboxBot_%d" % (i + 1)
-		var slot_index: int = first_slot + i
-		if not Network.is_session_active() and slot_index >= GRID_MARKER_SLOT:
-			slot_index += 1
+		var slot_index: int = _claim_slot(first_slot + i)
 		var slot: Transform3D = _grid_slot_transform(slot_index)
 		node.position = slot.origin
 		node.rotation.y = slot.basis.get_euler().y
@@ -182,6 +233,7 @@ func _setup_bots() -> void:
 		add_child(node)
 		node.setup_ai(vehicle_id)
 		node.set_spawn_transform(node.global_transform)
+		_bot_homes.append(node.global_transform)
 		var label := Label3D.new()
 		label.text = "BOT %d" % (i + 1)
 		label.font = load(TITLE_FONT)
@@ -220,7 +272,52 @@ func _update_bots(delta: float) -> void:
 		# The hard reset is the last resort: a bot that is still stuck after its
 		# reverse attempt (or has left the park) gets put back on its lane.
 		if bot.stuck > 4.0 or bot.stranded > 1.5:
-			bot.respawn()
+			_respawn_bot(bot, i)
+
+
+func _respawn_bot(bot: SandboxBot, index: int) -> void:
+	## Hard reset, then prove the landing spot is free. The driver's own probe
+	## takes the TOPMOST surface under the slot, so a respawn aimed at the pit
+	## block landed the bot on the pit-garage roof (11 m up) and a slot inside
+	## the grandstand box embedded it in solid geometry.
+	bot.respawn()
+	var cart: CartPlayer = bot.cart
+	if not is_instance_valid(cart):
+		return
+	if not _cart_slot_blocked(cart):
+		return
+	var home: Transform3D = _bot_homes[index] \
+		if index < _bot_homes.size() else _grid_slot_transform(0)
+	var ground: float = _ground_height(home.origin)
+	cart.global_transform = Transform3D(home.basis,
+		Vector3(home.origin.x, ground + 0.12, home.origin.z))
+	cart.set_spawn_transform(cart.global_transform)
+	cart.reset_for_respawn()
+	cart.velocity = Vector3.ZERO
+
+
+func _cart_slot_blocked(cart: CartPlayer) -> bool:
+	## True when the cart is standing on a roof or overlapping solid geometry or
+	## another kart. One sphere overlap plus the height ceiling, no ray chains.
+	if not cart.global_position.is_finite():
+		return true
+	if cart.global_position.y > RESPAWN_ROOF_HEIGHT:
+		return true
+	if _respawn_shape == null:
+		_respawn_shape = SphereShape3D.new()
+		_respawn_shape.radius = RESPAWN_PROBE_RADIUS
+		_respawn_query = PhysicsShapeQueryParameters3D.new()
+		_respawn_query.shape = _respawn_shape
+		_respawn_query.collide_with_areas = false
+	var space: PhysicsDirectSpaceState3D = get_world_3d().direct_space_state
+	_respawn_query.transform = Transform3D(Basis.IDENTITY,
+		cart.global_position + Vector3.UP * 1.0)
+	_respawn_query.collision_mask = CollisionLayers.WORLD \
+		| CollisionLayers.SOLID_PROP | CollisionLayers.PLAYER \
+		| CollisionLayers.GHOST
+	var excluded: Array[RID] = [cart.get_rid()]
+	_respawn_query.exclude = excluded
+	return not space.intersect_shape(_respawn_query, 1).is_empty()
 
 
 # --------------------------------------------------------------------------
@@ -238,12 +335,13 @@ func _on_peer_disconnected(peer_id: int) -> void:
 		_remote_carts.erase(peer_id)
 	_name_labels.erase(peer_id)
 	_peer_vehicles.erase(peer_id)
+	_release_peer_slot(peer_id)
 
 
 func _spawn_remote(peer_id: int) -> void:
 	if _remote_carts.has(peer_id) or peer_id == multiplayer.get_unique_id():
 		return
-	var slot: Transform3D = _grid_slot_transform(_peer_grid_index(peer_id))
+	var slot: Transform3D = _grid_slot_transform(_claim_peer_slot(peer_id))
 	var spawn: Vector3 = slot.origin
 	# Ghosts never run physics, so they would hover at the spawn height (a
 	# quarter metre up) until the first sync packet. Sit them on the floor.
@@ -271,20 +369,56 @@ func _spawn_remote(peer_id: int) -> void:
 
 func _peer_grid_index(peer_id: int) -> int:
 	## Stable grid order: the same sorted participant list on every machine.
+	## A peer that has not been listed yet (`find` returns -1) falls back to
+	## seat 0, which the claim walk then moves to the first genuinely free seat.
 	return maxi(Network.participants().find(peer_id), 0)
+
+
+func _claim_peer_slot(peer_id: int) -> int:
+	## One unique paddock seat per peer. Bots claim through the same table, so a
+	## peer that connects after the field was built cannot take a bot's seat.
+	if _peer_slots.has(peer_id):
+		return int(_peer_slots[peer_id])
+	var index: int = _claim_slot(_peer_grid_index(peer_id))
+	_peer_slots[peer_id] = index
+	return index
+
+
+func _release_peer_slot(peer_id: int) -> void:
+	if not _peer_slots.has(peer_id):
+		return
+	_slot_owner.erase(int(_peer_slots[peer_id]))
+	_peer_slots.erase(peer_id)
+
+
+func _claim_slot(preferred: int) -> int:
+	## First free seat at or after the preferred index. `_slot_owner` is a set.
+	var index: int = maxi(preferred, 0)
+	while _slot_taken(index):
+		index += 1
+	_slot_owner[index] = true
+	return index
+
+
+func _slot_taken(index: int) -> bool:
+	## Solo keeps the authored marker (slot 5, index 4) free for the player.
+	if index == GRID_MARKER_SLOT and not Network.is_session_active():
+		return true
+	return _slot_owner.has(index)
 
 
 func _grid_slot_transform(index: int) -> Transform3D:
 	## One paddock grid transform. The six painted boxes come first, in order;
-	## overflow waits behind the last row. Height and facing come from the
-	## authored single-player marker, so both modes share the same spawn pose.
+	## overflow keeps to the paved apron and the 16 m gate corridor. Height and
+	## facing come from the authored single-player marker, so both modes share
+	## the same spawn pose.
 	var centre: Vector3
 	if index < GRID_SLOTS.size():
 		centre = GRID_SLOTS[index]
 	else:
-		var extra: int = index - GRID_SLOTS.size()
-		centre = Vector3(-9.0 + float(extra % 3) * 9.0, 0.0,
-			GRID_OVERFLOW_Z + float(extra / 3) * GRID_OVERFLOW_STEP)
+		var extra: int = clampi(index - GRID_SLOTS.size(), 0,
+			GRID_OVERFLOW.size() - 1)
+		centre = GRID_OVERFLOW[extra]
 	return Transform3D(_spawn_anchor.basis,
 		Vector3(centre.x, _spawn_anchor.origin.y, centre.z))
 
@@ -386,7 +520,8 @@ func _store_peer_vehicle(peer_id: int, vehicle_id: String) -> void:
 
 
 @rpc("authority", "unreliable")
-func _net_props(positions: PackedVector3Array, rotations: PackedVector3Array) -> void:
+func _net_props(positions: PackedVector3Array,
+		rotations: PackedVector4Array) -> void:
 	if _host_mode:
 		return
 	if positions.size() > _props.size() or rotations.size() < positions.size():
@@ -439,6 +574,10 @@ func _net_horn(peer_id: int) -> void:
 func _net_request_push(index: int, direction: Vector3, kick: float) -> void:
 	if not _host_mode or index < 0 or index >= _props.size():
 		return
+	# The pause menu freezes the world while the MultiplayerAPI keeps polling,
+	# so a queued push would land on a frozen body and fire on resume.
+	if get_tree().paused:
+		return
 	if not direction.is_finite() or not is_finite(kick):
 		return
 	if direction.length_squared() < 0.0001:
@@ -452,13 +591,88 @@ func _net_request_push(index: int, direction: Vector3, kick: float) -> void:
 	prop.sleeping = false
 	kick = clampf(kick, 0.1, 4.0)
 	direction = direction.normalized()
-	prop.apply_central_impulse(direction * prop.mass * kick + Vector3.UP * prop.mass * kick * 0.85)
+	# Above the body origin, so the hit topples the cone instead of sliding it
+	# along the ground and leaving it standing.
+	prop.apply_impulse(direction * prop.mass * kick
+		+ Vector3.UP * prop.mass * kick * 0.85, Vector3(0.0, 0.3, 0.0))
 	var spin := Vector3(randf_range(-1.0, 1.0), randf_range(-0.5, 0.5), randf_range(-1.0, 1.0))
 	prop.apply_torque_impulse(spin * prop.mass * 1.6)
 
 
 # --------------------------------------------------------------------------
 # props
+
+
+func _collect_props() -> void:
+	## The pushables this scene syncs, ordered by name so host and clients agree
+	## on the index protocol. The authored pose per index is the recovery pad.
+	_props.clear()
+	_prop_homes.clear()
+	for node: Node in get_tree().get_nodes_in_group("pushable"):
+		if node is RigidBody3D:
+			_props.append(node as RigidBody3D)
+	_props.sort_custom(func(a: RigidBody3D, b: RigidBody3D) -> bool:
+		return str(a.name) < str(b.name))
+	for prop: RigidBody3D in _props:
+		_prop_homes.append(prop.global_transform)
+
+
+func _recover_props(delta: float) -> void:
+	## Watchdog for pushables that tunnelled through the y = 0 slab or were
+	## thrown past the fence. It ran only in a session before, because _props
+	## was filled by the multiplayer setup, so solo lost props for good.
+	if _props.is_empty():
+		_prop_recover_timer = 0.0
+		return
+	_prop_recover_timer += delta
+	if _prop_recover_timer < PROP_RECOVER_INTERVAL:
+		return
+	_prop_recover_timer = 0.0
+	# The host owns prop motion; a client's props are frozen at the host pose.
+	if Network.is_session_active() and not _host_mode:
+		return
+	for index in _props.size():
+		var prop: RigidBody3D = _props[index]
+		if not is_instance_valid(prop):
+			continue
+		var at: Vector3 = prop.global_position
+		if at.is_finite() and at.y > PROP_FLOOR \
+				and absf(at.x) <= PROP_BOUNDS and absf(at.z) <= PROP_BOUNDS:
+			continue
+		_reset_prop(index)
+
+
+func _reset_prop(index: int) -> void:
+	## Puts one prop back on its authored pad with no residual motion.
+	if index < 0 or index >= _props.size() or index >= _prop_homes.size():
+		return
+	var prop: RigidBody3D = _props[index]
+	if not is_instance_valid(prop):
+		return
+	prop.freeze = false
+	prop.sleeping = false
+	prop.global_transform = _prop_homes[index]
+	prop.linear_velocity = Vector3.ZERO
+	prop.angular_velocity = Vector3.ZERO
+	prop.reset_physics_interpolation()
+
+
+func _prune_props() -> void:
+	## Drop bodies freed by a scene rebuild, keeping pose homes index-aligned so
+	## the recovery table cannot point a neighbour at the wrong pad.
+	var kept: Array[RigidBody3D] = []
+	var homes: Array[Transform3D] = []
+	for index in _props.size():
+		var prop: RigidBody3D = _props[index]
+		if not is_instance_valid(prop):
+			continue
+		kept.append(prop)
+		homes.append(_prop_homes[index] if index < _prop_homes.size()
+			else prop.global_transform)
+	_props = kept
+	_prop_homes = homes
+	_prop_targets.clear()
+	_prop_kick_until.clear()
 
 
 func _broadcast_cart_state(peer_id: int, position: Vector3, yaw: float,
@@ -482,20 +696,22 @@ func _broadcast_props() -> void:
 	# A prop can be freed by a scene rebuild or a cleanup while the sandbox is
 	# still streaming. Drop dead references before indexing so the host and
 	# clients keep the same prop order.
-	var valid: Array[RigidBody3D] = []
 	for prop: RigidBody3D in _props:
-		if is_instance_valid(prop):
-			valid.append(prop)
-	if valid.size() != _props.size():
-		_props = valid
-		_prop_targets.clear()
+		if not is_instance_valid(prop):
+			_prune_props()
+			break
 	if _props.is_empty():
 		return
 	var positions := PackedVector3Array()
-	var rotations := PackedVector3Array()
+	var rotations := PackedVector4Array()
 	for prop: RigidBody3D in _props:
 		positions.append(prop.global_position)
-		rotations.append(prop.global_rotation)
+		# Quaternions, not Euler angles: a cone that tips past 90 degrees sends
+		# its Euler X through a branch cut, and the client used to lerp the
+		# short way back towards upright while the host showed it lying down.
+		var basis: Basis = prop.global_transform.basis.orthonormalized()
+		var turn: Quaternion = basis.get_rotation_quaternion().normalized()
+		rotations.append(Vector4(turn.x, turn.y, turn.z, turn.w))
 	for target: int in multiplayer.get_peers():
 		if Network.is_scene_ready(target):
 			rpc_id(target, "_net_props", positions, rotations)
@@ -514,12 +730,18 @@ func _apply_prop_targets(delta: float) -> void:
 		if _prop_kick_until.has(prop.get_instance_id()):
 			continue
 		var data: Array = _prop_targets[index]
-		prop.global_position = prop.global_position.lerp(data[0] as Vector3, blend)
-		var target_rotation: Vector3 = data[1] as Vector3
-		prop.global_rotation = Vector3(
-			lerp_angle(prop.global_rotation.x, target_rotation.x, blend),
-			lerp_angle(prop.global_rotation.y, target_rotation.y, blend),
-			lerp_angle(prop.global_rotation.z, target_rotation.z, blend))
+		var target_position: Vector3 = data[0] as Vector3
+		prop.global_position = prop.global_position.lerp(target_position, blend)
+		var packed: Vector4 = data[1] as Vector4
+		var target_turn := Quaternion(packed.x, packed.y, packed.z, packed.w)
+		if target_turn.length_squared() < 0.5:
+			continue
+		var current: Quaternion = prop.global_transform.basis \
+			.get_rotation_quaternion()
+		var turn: Quaternion = current.slerp(target_turn.normalized(), blend)
+		var xform: Transform3D = prop.global_transform
+		xform.basis = Basis(turn)
+		prop.global_transform = xform
 
 
 func _on_local_push_requested(prop: Node, direction: Vector3, kick: float) -> void:
@@ -543,10 +765,11 @@ func _kick_prop(prop: RigidBody3D, direction: Vector3, kick: float) -> void:
 	prop.sleeping = false
 	direction = direction.normalized()
 	kick = clampf(kick, 0.1, 4.0)
-	prop.apply_central_impulse(direction * prop.mass * kick + Vector3.UP * prop.mass * kick * 0.85)
+	prop.apply_impulse(direction * prop.mass * kick
+		+ Vector3.UP * prop.mass * kick * 0.85, Vector3(0.0, 0.3, 0.0))
 	var spin := Vector3(randf_range(-1.0, 1.0), randf_range(-0.5, 0.5), randf_range(-1.0, 1.0))
 	prop.apply_torque_impulse(spin * prop.mass * 1.6)
-	_prop_kick_until[prop.get_instance_id()] = Time.get_ticks_msec() + 400
+	_prop_kick_until[prop.get_instance_id()] = Time.get_ticks_msec() + PROP_KICK_MS
 
 
 func _expire_prop_kicks() -> void:
@@ -556,10 +779,18 @@ func _expire_prop_kicks() -> void:
 	for id: int in _prop_kick_until.keys():
 		if now < int(_prop_kick_until[id]):
 			continue
-		_prop_kick_until.erase(id)
 		var prop: RigidBody3D = instance_from_id(id) as RigidBody3D
-		if is_instance_valid(prop):
-			prop.freeze = true
+		if not is_instance_valid(prop):
+			_prop_kick_until.erase(id)
+			continue
+		# A prop that is still tumbling stays live. Freezing it on the fixed
+		# deadline is what snapped a knocked cone back upright mid-tip.
+		if prop.linear_velocity.length() > PROP_SLEEP_SPEED \
+				or prop.angular_velocity.length() > PROP_SLEEP_SPIN:
+			_prop_kick_until[id] = now + PROP_KICK_RETRY_MS
+			continue
+		prop.freeze = true
+		_prop_kick_until.erase(id)
 
 
 func _ground_height(at: Vector3) -> float:
@@ -573,3 +804,141 @@ func _ground_height(at: Vector3) -> float:
 	if hit.is_empty():
 		return 0.0
 	return (hit["position"] as Vector3).y + 0.001
+
+
+# --------------------------------------------------------------------------
+# zone hints
+
+
+func _build_zone_hint() -> void:
+	## One quiet toast in the bottom centre, on the shared spacing scale: 24 px
+	## from the screen edge and around the block, 8 px between title and body,
+	## 16 px corners, no rules. 460 px of text column keeps it inside the HUD's
+	## left and right clusters at 1280 x 720.
+	if _hint_panel != null:
+		return
+	_hint_layer = CanvasLayer.new()
+	_hint_layer.name = "ZoneHints"
+	_hint_layer.layer = 2
+	add_child(_hint_layer)
+	var anchor := Control.new()
+	anchor.name = "Anchor"
+	anchor.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	anchor.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_hint_layer.add_child(anchor)
+	var margin := MarginContainer.new()
+	margin.name = "Margin"
+	margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	margin.add_theme_constant_override("margin_left", HINT_MARGIN)
+	margin.add_theme_constant_override("margin_top", HINT_MARGIN)
+	margin.add_theme_constant_override("margin_right", HINT_MARGIN)
+	margin.add_theme_constant_override("margin_bottom", HINT_MARGIN)
+	anchor.add_child(margin)
+	var column := VBoxContainer.new()
+	column.name = "Column"
+	column.alignment = BoxContainer.ALIGNMENT_END
+	column.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	column.add_theme_constant_override("separation", HINT_GAP)
+	margin.add_child(column)
+	_hint_panel = PanelContainer.new()
+	_hint_panel.name = "ZoneToast"
+	_hint_panel.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	_hint_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_hint_panel.add_theme_stylebox_override("panel", _hint_style())
+	_hint_panel.visible = false
+	column.add_child(_hint_panel)
+	var body := VBoxContainer.new()
+	body.name = "Body"
+	body.add_theme_constant_override("separation", HINT_SMALL_GAP)
+	_hint_panel.add_child(body)
+	_hint_title = Label.new()
+	_hint_title.name = "ZoneName"
+	_hint_title.add_theme_font_size_override("font_size", 20)
+	_hint_title.add_theme_color_override("font_color", UiPalette.YELLOW)
+	_hint_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	body.add_child(_hint_title)
+	_hint_body = Label.new()
+	_hint_body.name = "ZoneHint"
+	_hint_body.add_theme_font_size_override("font_size", 15)
+	_hint_body.add_theme_color_override("font_color", UiPalette.CREAM)
+	_hint_body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_hint_body.custom_minimum_size.x = HINT_WIDTH
+	body.add_child(_hint_body)
+	_hint_timer = Timer.new()
+	_hint_timer.name = "ZoneToastTimer"
+	_hint_timer.one_shot = true
+	_hint_timer.wait_time = HINT_SECONDS
+	# Real time, so the toast fades out even with the pause menu open.
+	_hint_timer.process_mode = Node.PROCESS_MODE_ALWAYS
+	_hint_timer.timeout.connect(_hide_zone_hint)
+	add_child(_hint_timer)
+	if OS.get_environment("CART_DEBUG_PARK") == "1":
+		_measure_zone_hint.call_deferred()
+
+
+## Debug-only layout proof: prints the toast rect against the design viewport,
+## so the 24 px edge margin and the 1280 x 720 fit are measured, not eyeballed.
+func _measure_zone_hint() -> void:
+	await get_tree().process_frame
+	if _hint_panel == null or not _hint_panel.visible:
+		return
+	var view: Vector2 = _hint_panel.get_viewport_rect().size
+	var rect: Rect2 = _hint_panel.get_global_rect()
+	var left: float = rect.position.x
+	var right: float = view.x - rect.end.x
+	var bottom: float = view.y - rect.end.y
+	var top: float = rect.position.y
+	print("ZONE TOAST viewport=%s rect=(%.0f, %.0f, %.0f x %.0f) edges L=%.0f R=%.0f T=%.0f B=%.0f -> %s" % [
+		view, rect.position.x, rect.position.y, rect.size.x, rect.size.y,
+		left, right, top, bottom,
+		"INSIDE" if left >= HINT_MARGIN - 0.5 and right >= HINT_MARGIN - 0.5
+			and bottom >= HINT_MARGIN - 0.5 and top >= 0.0 else "CLIPPED"])
+
+
+func _hint_style() -> StyleBoxFlat:
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(UiPalette.INK, 0.94)
+	style.set_corner_radius_all(HINT_RADIUS)
+	style.set_content_margin_all(float(HINT_MARGIN))
+	style.shadow_color = Color(0.02, 0.02, 0.06, 0.55)
+	style.shadow_size = 4
+	style.shadow_offset = Vector2(0.0, 2.0)
+	style.anti_aliasing = true
+	return style
+
+
+func _probe_zone(delta: float) -> void:
+	## Names the zone the local cart is in once, the first time it gets there.
+	if _hint_panel == null or _local_cart == null \
+			or not is_instance_valid(_local_cart):
+		return
+	_zone_probe -= delta
+	if _zone_probe > 0.0:
+		return
+	_zone_probe = ZONE_PROBE_INTERVAL
+	var park: Node = get_node_or_null("Park")
+	if park == null or not park.has_method("zone_at"):
+		return
+	var zone: String = str(park.call("zone_at", _local_cart.global_position))
+	if zone == "" or _zones_seen.has(zone):
+		return
+	_zones_seen[zone] = true
+	_show_zone_hint(zone, str(park.call("zone_hint", zone)))
+
+
+func _show_zone_hint(zone: String, hint: String) -> void:
+	if _hint_panel == null:
+		return
+	_hint_title.text = zone
+	_hint_body.text = hint
+	_hint_panel.visible = hint != ""
+	if _hint_timer != null:
+		_hint_timer.start(HINT_SECONDS)
+	if OS.get_environment("CART_DEBUG_PARK") == "1":
+		print("ZONE HINT %s | %s" % [zone, hint])
+
+
+func _hide_zone_hint() -> void:
+	if _hint_panel != null:
+		_hint_panel.visible = false

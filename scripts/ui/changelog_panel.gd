@@ -54,8 +54,8 @@ func _ready() -> void:
 	_all_versions_button.pressed.connect(_show_list)
 	## Footer and detail buttons share the candy look but must not push the
 	## card past the viewport, so they get tighter text boxes than big actions.
-	_compact_button(_back_button, 16.0, 6.0)
-	_compact_button(_all_versions_button, 16.0, 6.0)
+	_compact_button(_back_button, float(UiKit.SPACING), float(UiKit.SPACING_TIGHT))
+	_compact_button(_all_versions_button, float(UiKit.SPACING), float(UiKit.SPACING_TIGHT))
 	_current_label.text = "CURRENT  v" + UpdateChecker.read_version_file()
 	resized.connect(_fit_panel)
 	_fit_panel()
@@ -83,9 +83,11 @@ func _fit_panel() -> void:
 
 func open() -> void:
 	_releases = _parse_releases(_read_changelog())
+	_selected_release = -1
 	_fit_panel()
 	_build_version_list()
 	_show_list()
+	_scroll_list_top()
 	show()
 	UiAnim.pop(_panel)
 	MenuNav.refresh()
@@ -97,11 +99,20 @@ func request_close() -> void:
 	close()
 
 
+func _scroll_list_top() -> void:
+	## The version grid keeps its ScrollContainer between openings; without this
+	## a reopen could start halfway down the list.
+	var scroll := _version_list.get_parent() as ScrollContainer
+	if scroll != null:
+		scroll.scroll_vertical = 0
+
+
 func _focus_list() -> void:
 	if _releases.is_empty() or _release_buttons.is_empty():
 		MenuNav.focus(_back_button)
-	else:
-		MenuNav.focus(_release_buttons[0])
+		return
+	var index: int = clampi(_selected_release, 0, _release_buttons.size() - 1)
+	MenuNav.focus(_release_buttons[index])
 
 
 func close() -> void:
@@ -149,7 +160,7 @@ func _build_version_list() -> void:
 		button.text = "v%s  ·  %s" % [str(release.get("version", "")), date_text]
 		button.pressed.connect(_show_release.bind(i))
 		_version_list.add_child(button)
-		_compact_button(button, 12.0, 5.0)
+		_compact_button(button, float(UiKit.SPACING), float(UiKit.SPACING_TIGHT))
 		_release_buttons.append(button)
 	if _releases.is_empty():
 		var empty := Label.new()
@@ -187,10 +198,11 @@ func _compact_button(button: Button, padding_x: float, padding_y: float) -> void
 
 
 func _show_list() -> void:
-	_selected_release = -1
 	_list_view.visible = true
 	_detail_view.visible = false
 	MenuNav.refresh()
+	## Returning from an entry puts the ring back on that entry instead of
+	## jumping to the newest release and losing the player's place.
 	_focus_list()
 
 
@@ -199,9 +211,13 @@ func _show_release(index: int) -> void:
 		return
 	_selected_release = index
 	_text.text = _build_bbcode(_releases[index])
-	_text.scroll_to_line(0)
 	_list_view.visible = false
 	_detail_view.visible = true
+	# Reset the scroll only once the detail view is visible: doing it while the
+	# RichTextLabel was hidden left the previous entry's offset in place, so a
+	# short release opened scrolled past its own end.
+	_text.scroll_to_line(0)
+	_text.get_v_scroll_bar().value = 0.0
 	UiAnim.fade_in(_detail_view, 0.18)
 	MenuNav.refresh()
 	MenuNav.focus(_all_versions_button)

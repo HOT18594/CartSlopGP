@@ -22,6 +22,7 @@ const UiAnim := preload("res://scripts/ui/ui_anim.gd")
 const TrackDefs := preload("res://scripts/minigames/track_defs.gd")
 const Catalog := preload("res://scripts/vehicles/vehicle_catalog.gd")
 const UiPalette := preload("res://scripts/ui/ui_palette.gd")
+const VehicleSelect := preload("res://scripts/ui/vehicle_select.gd")
 
 const PLAY_MENU_SCENE: String = "res://scenes/ui/play_menu.tscn"
 const LOBBY_SCENE: String = "res://scenes/ui/lobby_menu.tscn"
@@ -36,18 +37,20 @@ const SANDBOX_PREVIEW: String = "res://assets/ui/art/scene_track_aerial.png"
 const PAGE_GAMES: String = "games"
 const GAME_RACING: String = "racing"
 const GAME_MINIGAME: String = "minigame"
-const GAME_SANDBOX: String = "sandbox"
 
 const MAP_CARD_WIDTH: float = 268.0
 const MAP_CARD_HEIGHT: float = 300.0
 const MAP_PREVIEW_HEIGHT: float = 150.0
 const GAME_CARD_HEIGHT: float = 150.0
+const GAME_CARD_PAD: float = 16.0 ## Card padding: one step on the 24/16/8 scale.
 const GRID_COLUMNS: int = 3
-const GRID_GAP: int = 14
-const GAMES_SCROLL_HEIGHT: float = 476.0
-const MAPS_SCROLL_HEIGHT: float = 316.0
-const DELIVER_SCROLL_HEIGHT: float = 250.0
+const GRID_GAP: int = 16 ## Row gap; the tight step is 8 (chips, captions).
 const CHIP_RADIUS: int = 8
+## Caps, not floors: _fit_page_heights() gives each page the height its content
+## needs, so a two-card list cannot leave a hole under itself.
+const GAMES_SCROLL_HEIGHT: float = 500.0
+const MAPS_SCROLL_HEIGHT: float = 340.0
+const DELIVER_SCROLL_HEIGHT: float = 340.0
 const GAME_LIST_WIDTH: float = 760.0 ## Card row width; the page centres it.
 const MAP_GRID_WIDTH: float = MAP_CARD_WIDTH * 3.0 + float(GRID_GAP) * 2.0
 
@@ -59,6 +62,7 @@ var _page: String = PAGE_GAMES
 var _games: Array[Dictionary] = []
 
 var _games_page: VBoxContainer
+var _games_scroll: ScrollContainer
 var _game_list: VBoxContainer
 var _game_cards: Array[Button] = []
 
@@ -66,6 +70,7 @@ var _selector_page: VBoxContainer
 var _selector_caption: Label
 var _selector_scroll: ScrollContainer
 var _selector_list: VBoxContainer
+var _arena_empty: Label
 var _map_grid: GridContainer
 var _map_cards: Array[Button] = []
 var _map_badges: Array[PanelContainer] = []
@@ -83,19 +88,26 @@ var _selected_theme: String = ""
 var _vehicle_button: Button
 var _play_button: Button
 
-## Page the player left through the vehicle picker. Returning lands back on the
-## game they were configuring instead of dropping them on the games list. This
-## is process-local on purpose: a fresh launch always opens on GAMES.
+## Page and picks carried through the vehicle picker, so returning lands on the
+## game that was being configured with the circuit and arena that were
+## highlighted, instead of the saved ones. Process-local on purpose: a fresh
+## launch always opens on GAMES with the saved selection.
 static var _return_page: String = ""
+static var _return_map: String = ""
+static var _return_theme: String = ""
+
+var _restored_map_id: String = ""
+var _restored_theme: String = ""
 
 
 func _ready() -> void:
 	CursorController.set_menu_mode(true)
 	_body = $Center/Panel/Body
+	# Read what the vehicle round trip carried before anything is built: the
+	# games list resolves the RACING preview from this map.
+	var resume: String = _consume_return_state()
 	_build_ui()
 	_initial_state()
-	var resume: String = _return_page
-	_return_page = ""
 	if resume != "" and not _game_entry_for(resume).is_empty():
 		_show_selector(resume)
 	else:
@@ -107,25 +119,115 @@ func _ready() -> void:
 		_run_selftest.call_deferred()
 
 
+func _consume_return_state() -> String:
+	## Read and clear what the garage trip carried, so it is restored exactly
+	## once. The statics are process-local: a fresh launch has nothing to read.
+	var resume: String = _return_page
+	_restored_map_id = _return_map
+	_restored_theme = _return_theme
+	_return_page = ""
+	_return_map = ""
+	_return_theme = ""
+	return resume
+
+
 func _report_layout() -> void:
 	## Verification hook (CART_UI_MEASURE=1): measures the game list, then the
 	## RACING and minigame selector pages, in one boot.
 	await UiKit.report_screen(self, "minigames:games")
+	_report_blocks("minigames:games")
 	if not _game_cards.is_empty():
 		_show_selector(GAME_RACING)
 		await UiKit.report_screen(self, "minigames:racing")
+		_report_blocks("minigames:racing")
 	if not _deliver_entry.is_empty():
 		_show_selector(str(_deliver_entry.get("id", "")))
 		await UiKit.report_screen(self, "minigames:minigame")
+		_report_blocks("minigames:minigame")
+
+
+func _report_blocks(tag: String) -> void:
+	## Verification hook: the page frame and its scroll, which the button sweep
+	## cannot describe. The panel height is what decides whether 720 clips.
+	var panel: Control = $Center/Panel
+	print("UI_BLOCKS %s panel=%.0fx%.0f body=%.0fx%.0f games_scroll=%.0f selector_scroll=%.0f fits720=%s"
+		% [tag, panel.size.x, panel.size.y, _body.size.x, _body.size.y,
+		_games_scroll.custom_minimum_size.y,
+		_selector_scroll.custom_minimum_size.y,
+		str(panel.size.y <= UiKit.SCREEN_HEIGHT - UiKit.SCREEN_MARGIN * 2.0)])
+
+
+func _fit_page_heights() -> void:
+	## Content-driven page heights within the caps. A fixed 476 px floor left a
+	## 120 px hole under a two-card list, which reads as an orphan margin.
+	if _games_scroll != null:
+		_games_scroll.custom_minimum_size.y = minf(
+			_scroll_content_height(_games_scroll), GAMES_SCROLL_HEIGHT)
+	if _selector_scroll != null and _selector_page.visible:
+		var cap: float = MAPS_SCROLL_HEIGHT if _page == GAME_RACING \
+			else DELIVER_SCROLL_HEIGHT
+		_selector_scroll.custom_minimum_size.y = minf(
+			_scroll_content_height(_selector_scroll), cap)
+
+
+func _scroll_content_height(scroll: ScrollContainer) -> float:
+	## The padded wrapper, not the list: the 8/16 px pad is what keeps a
+	## hover-scaled card and its drop shadow inside the scroll's clip rect.
+	if scroll.get_child_count() == 0:
+		return 0.0
+	return scroll.get_child(0).get_combined_minimum_size().y
+
+
+func _padded(scroll: ScrollContainer, pad_name: String) -> MarginContainer:
+	## Scrolling clips at its rect, so the content gets a small pad: 8 px for
+	## the 3 % hover scale and 16 px at the bottom for the candy drop shadow.
+	var pad := MarginContainer.new()
+	pad.name = pad_name
+	pad.add_theme_constant_override("margin_left", UiKit.SPACING_TIGHT)
+	pad.add_theme_constant_override("margin_right", UiKit.SPACING_TIGHT)
+	pad.add_theme_constant_override("margin_top", UiKit.SPACING_TIGHT)
+	pad.add_theme_constant_override("margin_bottom", UiKit.SPACING)
+	pad.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(pad)
+	return pad
 
 
 func _enter() -> void:
+	# Re-fit once the first layout is real: an autowrapped label reports a
+	# different height before it knows its width.
+	_fit_page_heights()
+	_refresh_vehicle()
 	UiAnim.pop($Center/Panel)
 	MenuNav.refresh()
-	if _page != PAGE_GAMES:
-		return
-	var first: Button = _game_cards[0] if not _game_cards.is_empty() else _back_button
-	MenuNav.focus(first)
+	_focus_page()
+
+
+func _focus_page() -> void:
+	## Focus the action this page is for. Resuming from the garage used to leave
+	## the ring on BACK, because only the games page grabbed focus.
+	if _page == PAGE_GAMES:
+		var first: Button = _game_cards[0] if not _game_cards.is_empty() \
+			else _back_button
+		MenuNav.focus(first)
+	elif _page == GAME_RACING and not _map_cards.is_empty():
+		MenuNav.focus(_map_cards[clampi(_selected, 0, _map_cards.size() - 1)])
+	elif _theme_pill != null and _theme_pill.visible \
+			and not _theme_ids.is_empty():
+		MenuNav.focus(_theme_pill)
+	else:
+		MenuNav.focus(_play_button)
+
+
+func _page_in(page: Control) -> void:
+	## Page transition: fade plus a small settle, so a page change never snaps.
+	## The VBox owns position, not scale, so this cannot be snapped back.
+	page.pivot_offset = page.size * 0.5
+	page.scale = Vector2.ONE * 0.98
+	UiAnim.fade_in(page, 0.18)
+	var tween: Tween = page.create_tween()
+	tween.set_pause_mode(Tween.TWEEN_PAUSE_PROCESS)
+	tween.tween_property(page, "scale", Vector2.ONE, 0.22) \
+		.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -147,7 +249,7 @@ func _build_ui() -> void:
 	_title.text = "GAMES"
 	_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var header := HBoxContainer.new()
-	header.add_theme_constant_override("separation", 16)
+	header.add_theme_constant_override("separation", UiKit.SPACING)
 	header.add_child(_title)
 	_back_button = _button("BACK", UiPalette.RED, 46, 17)
 	_back_button.name = "BackButton"
@@ -166,18 +268,21 @@ func _build_ui() -> void:
 func _build_games() -> void:
 	## The games list is data first, nodes second: one entry per game, in menu
 	## order. Racing collects every registry map, then each minigame becomes its
-	## own game (its optional `game` field names it), then SANDBOX closes the
-	## list because the park has no registry preset.
+	## own game (its optional `game` field names it). The free-roam park has its
+	## own door in PLAY -> SINGLE, so it is not a card here.
 	_games.clear()
 	_map_indexes.clear()
 	for index in TrackDefs.PRESETS.size():
 		if TrackDefs.is_map(TrackDefs.PRESETS[index]):
 			_map_indexes.append(index)
 	# Restore the remembered circuit before the RACING card picks its preview,
-	# so the game tile shows the track the page would open.
+	# so the game tile shows the track the page would open. A circuit carried
+	# through the garage wins over the saved one, so the pick survives the trip.
 	_selected = 0
 	if not _map_indexes.is_empty():
-		var registered: int = TrackDefs.index_of(GameSettings.selected_map)
+		var saved: String = _restored_map_id if _restored_map_id != "" \
+			else GameSettings.selected_map
+		var registered: int = TrackDefs.index_of(saved)
 		_selected = maxi(_map_indexes.find(registered), 0)
 	if not _map_indexes.is_empty():
 		_games.append(_racing_entry())
@@ -243,38 +348,41 @@ func _minigame_entry(preset: Dictionary) -> Dictionary:
 func _build_games_page() -> void:
 	_games_page = VBoxContainer.new()
 	_games_page.name = "GamesPage"
-	_games_page.add_theme_constant_override("separation", 12)
+	_games_page.add_theme_constant_override("separation", UiKit.SPACING)
 	_body.add_child(_games_page)
 	# A ScrollContainer's minimum height is zero, so the list needs an explicit
-	# floor or the whole page collapses and no game card is focusable.
-	var scroll := ScrollContainer.new()
-	scroll.name = "GamesScroll"
-	scroll.custom_minimum_size = Vector2(0, GAMES_SCROLL_HEIGHT)
-	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
-	scroll.follow_focus = true
-	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	# floor or the whole page collapses and no game card is focusable. The floor
+	# is fitted to the real list in _fit_page_heights(); these are the caps.
+	_games_scroll = ScrollContainer.new()
+	_games_scroll.name = "GamesScroll"
+	_games_scroll.custom_minimum_size = Vector2(0, GAMES_SCROLL_HEIGHT)
+	_games_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	_games_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	_games_scroll.follow_focus = true
+	_games_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	# Card rows are centred at a readable width instead of stretching the whole
 	# 960 px page: a 915 px game card is what made the screen look broken.
-	scroll.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	_games_page.add_child(scroll)
+	_games_scroll.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	_games_page.add_child(_games_scroll)
 	_game_list = VBoxContainer.new()
 	_game_list.name = "GameList"
 	_game_list.custom_minimum_size = Vector2(GAME_LIST_WIDTH, 0)
 	_game_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_game_list.add_theme_constant_override("separation", 12)
-	scroll.add_child(_game_list)
+	_game_list.add_theme_constant_override("separation", UiKit.SPACING)
+	_padded(_games_scroll, "GamesPad").add_child(_game_list)
 	_game_cards.clear()
 	for entry: Dictionary in _games:
 		var card: Button = _make_game_card(entry)
 		_game_list.add_child(card)
 		_game_cards.append(card)
+	if _game_cards.is_empty():
+		_empty_state(_game_list, "NO GAMES REGISTERED YET.")
 
 
 func _build_selector_page() -> void:
 	_selector_page = VBoxContainer.new()
 	_selector_page.name = "SelectorPage"
-	_selector_page.add_theme_constant_override("separation", 12)
+	_selector_page.add_theme_constant_override("separation", UiKit.SPACING)
 	_selector_page.visible = false
 	_body.add_child(_selector_page)
 
@@ -297,8 +405,8 @@ func _build_selector_page() -> void:
 	_selector_list.name = "SelectorList"
 	_selector_list.custom_minimum_size = Vector2(GAME_LIST_WIDTH, 0)
 	_selector_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_selector_list.add_theme_constant_override("separation", 12)
-	_selector_scroll.add_child(_selector_list)
+	_selector_list.add_theme_constant_override("separation", UiKit.SPACING)
+	_padded(_selector_scroll, "SelectorPad").add_child(_selector_list)
 
 	# The three circuits share one row of large cards so lap length, difficulty
 	# and the preview art can be compared at a glance. A fixed grid width keeps
@@ -323,8 +431,13 @@ func _build_selector_page() -> void:
 	_deliver_theme.visible = false
 	_selector_list.add_child(_deliver_theme)
 
+	# A game can register no arena variants: say so instead of leaving a blank
+	# page under the game header.
+	_arena_empty = _empty_state(_selector_list, "THIS GAME HAS NO ARENA VARIANTS.")
+	_arena_empty.visible = false
+
 	var action_row := HBoxContainer.new()
-	action_row.add_theme_constant_override("separation", 10)
+	action_row.add_theme_constant_override("separation", UiKit.SPACING)
 	action_row.alignment = BoxContainer.ALIGNMENT_CENTER
 	_selector_page.add_child(action_row)
 
@@ -354,13 +467,13 @@ func _build_theme_block() -> PanelContainer:
 	panel.add_theme_stylebox_override("panel",
 		UiKit.flat_card(Color(1.0, 1.0, 1.0, 0.42)))
 	var pad := MarginContainer.new()
-	pad.add_theme_constant_override("margin_left", 16)
-	pad.add_theme_constant_override("margin_right", 16)
-	pad.add_theme_constant_override("margin_top", 10)
-	pad.add_theme_constant_override("margin_bottom", 12)
+	pad.add_theme_constant_override("margin_left", int(UiKit.SPACING))
+	pad.add_theme_constant_override("margin_right", int(UiKit.SPACING))
+	pad.add_theme_constant_override("margin_top", int(UiKit.SPACING))
+	pad.add_theme_constant_override("margin_bottom", int(UiKit.SPACING))
 	panel.add_child(pad)
 	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 12)
+	row.add_theme_constant_override("separation", UiKit.SPACING)
 	pad.add_child(row)
 	var label := UiKit.label("ARENA THEME", 14, UiPalette.INK)
 	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
@@ -401,21 +514,21 @@ func _make_game_panel(entry: Dictionary) -> PanelContainer:
 func _fill_game_row(target: Control, entry: Dictionary) -> void:
 	var pad := MarginContainer.new()
 	pad.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	pad.add_theme_constant_override("margin_left", 12)
-	pad.add_theme_constant_override("margin_right", 12)
-	pad.add_theme_constant_override("margin_top", 12)
-	pad.add_theme_constant_override("margin_bottom", 12)
+	pad.add_theme_constant_override("margin_left", int(GAME_CARD_PAD))
+	pad.add_theme_constant_override("margin_right", int(GAME_CARD_PAD))
+	pad.add_theme_constant_override("margin_top", int(GAME_CARD_PAD))
+	pad.add_theme_constant_override("margin_bottom", int(GAME_CARD_PAD))
 	if target is Container:
 		target.add_child(pad)
 	else:
 		pad.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 		target.add_child(pad)
 	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 16)
+	row.add_theme_constant_override("separation", UiKit.SPACING)
 	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	pad.add_child(row)
 	row.add_child(_preview_frame(entry.get("preview", null) as Texture2D,
-		Vector2(250.0, GAME_CARD_HEIGHT - 24.0), UiPalette.OUTLINE))
+		Vector2(250.0, GAME_CARD_HEIGHT - GAME_CARD_PAD * 2.0), UiPalette.OUTLINE))
 	row.add_child(_game_text(entry, 28, str(entry.get("tag", ""))))
 
 
@@ -423,7 +536,7 @@ func _game_text(entry: Dictionary, name_size: int, tag: String) -> VBoxContainer
 	var text := VBoxContainer.new()
 	text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	text.alignment = BoxContainer.ALIGNMENT_CENTER
-	text.add_theme_constant_override("separation", 4)
+	text.add_theme_constant_override("separation", UiKit.SPACING_TIGHT)
 	text.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var name_label := Label.new()
 	name_label.text = str(entry.get("name", "GAME"))
@@ -476,14 +589,14 @@ func _make_map_card(position: int, preset: Dictionary) -> Button:
 	var pad := MarginContainer.new()
 	pad.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	pad.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	pad.add_theme_constant_override("margin_left", 12)
-	pad.add_theme_constant_override("margin_right", 12)
-	pad.add_theme_constant_override("margin_top", 10)
-	pad.add_theme_constant_override("margin_bottom", 10)
+	pad.add_theme_constant_override("margin_left", int(GAME_CARD_PAD))
+	pad.add_theme_constant_override("margin_right", int(GAME_CARD_PAD))
+	pad.add_theme_constant_override("margin_top", int(GAME_CARD_PAD))
+	pad.add_theme_constant_override("margin_bottom", int(GAME_CARD_PAD))
 	card.add_child(pad)
 
 	var column := VBoxContainer.new()
-	column.add_theme_constant_override("separation", 6)
+	column.add_theme_constant_override("separation", UiKit.SPACING_TIGHT)
 	column.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	pad.add_child(column)
 	column.add_child(_preview_frame(_preview_for_preset(preset),
@@ -585,6 +698,19 @@ func _preview_frame(texture: Texture2D, minimum: Vector2,
 	return frame
 
 
+func _empty_state(parent: Control, text: String) -> Label:
+	## A list can be empty (no game registered, no arena variant): say so in one
+	## line instead of presenting a blank page with a live BACK button.
+	var label := UiKit.label(text, int(UiKit.CAPTION_SIZE), UiPalette.MUTED)
+	label.name = "EmptyState"
+	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	label.custom_minimum_size = Vector2(GAME_LIST_WIDTH, 120.0)
+	parent.add_child(label)
+	return label
+
+
 func _chip(text: String, background: Color, foreground: Color) -> PanelContainer:
 	## Small inline tag. Eight is the chip radius, not a second tile radius: the
 	## shared 16 belongs to tiles, cards and rows.
@@ -619,9 +745,10 @@ func _button(text: String, color: Color, height: int, font_size: int) -> Button:
 
 func _initial_state() -> void:
 	## Restore the remembered arena so reopening the screen lands on the theme
-	## the player last confirmed. The circuit is restored in _build_games()
-	## because the RACING card's preview depends on it.
-	_selected_theme = ""
+	## the player last confirmed, unless the garage trip carried a live pick.
+	## The circuit is restored in _build_games() because the RACING card's
+	## preview depends on it.
+	_selected_theme = _restored_theme
 	var deliver: Dictionary = _deliver_game_preset()
 	if not deliver.is_empty():
 		_configure_theme_pill(deliver)
@@ -697,40 +824,43 @@ func _show_games(animate: bool = true) -> void:
 	_selector_page.visible = false
 	_title.text = "GAMES"
 	_back_button.tooltip_text = "Back to PLAY."
+	_fit_page_heights()
+	_refresh_vehicle()
 	if animate:
-		UiAnim.fade_in(_games_page, 0.16)
+		_page_in(_games_page)
 	MenuNav.refresh()
 	MenuNav.focus(_game_card_for(came_from))
 
 
 func _show_selector(game_id: String) -> void:
-	var racing: bool = game_id == GAME_RACING
 	var entry: Dictionary = _game_entry_for(game_id)
+	if entry.is_empty():
+		# No such game: never open a selector with nothing on it.
+		_show_games(true)
+		return
+	var racing: bool = game_id == GAME_RACING
 	_page = game_id
 	_games_page.visible = false
 	_selector_page.visible = true
 	_map_grid.visible = racing
-	_selector_scroll.custom_minimum_size = Vector2(0,
-		MAPS_SCROLL_HEIGHT if racing else DELIVER_SCROLL_HEIGHT)
-	_title.text = "RACING" if racing else str(entry.get("name", "GAME"))
-	_selector_caption.text = "PICK A CIRCUIT  ·  3 LAPS TO WIN" if racing \
-		else "PICK AN ARENA  ·  ONE CONFIRMED CHOICE"
-	_back_button.tooltip_text = "Back to the game list."
 	if racing:
 		if _deliver_panel != null:
 			_deliver_panel.visible = false
 		_deliver_theme.visible = false
+		_arena_empty.visible = false
 	else:
 		_show_minigame_page(entry)
+	_title.text = "RACING" if racing else str(entry.get("name", "GAME"))
+	_selector_caption.text = "PICK A CIRCUIT  ·  3 LAPS TO WIN" if racing \
+		else "PICK AN ARENA  ·  ONE CONFIRMED CHOICE"
+	_back_button.tooltip_text = "Back to the game list."
+	_selector_scroll.scroll_vertical = 0
+	_fit_page_heights()
+	_refresh_vehicle()
 	_refresh_play_label()
-	UiAnim.fade_in(_selector_page, 0.16)
+	_page_in(_selector_page)
 	MenuNav.refresh()
-	if racing and not _map_cards.is_empty():
-		MenuNav.focus(_map_cards[clampi(_selected, 0, _map_cards.size() - 1)])
-	elif not racing and _theme_pill != null and not _theme_ids.is_empty():
-		MenuNav.focus(_theme_pill)
-	else:
-		MenuNav.focus(_play_button)
+	_focus_page()
 
 
 func _show_minigame_page(entry: Dictionary) -> void:
@@ -746,6 +876,7 @@ func _show_minigame_page(entry: Dictionary) -> void:
 		_configure_theme_pill(_deliver_game_preset())
 	_deliver_panel.visible = true
 	_deliver_theme.visible = not _theme_ids.is_empty()
+	_arena_empty.visible = _theme_ids.is_empty()
 
 
 func _rebuild_deliver_panel(entry: Dictionary) -> void:
@@ -788,9 +919,6 @@ func _on_back() -> void:
 
 
 func _on_game_pressed(game_id: String) -> void:
-	if game_id == GAME_SANDBOX:
-		_on_sandbox()
-		return
 	_show_selector(game_id)
 
 
@@ -811,8 +939,21 @@ func _update_map_cards() -> void:
 		var fill: Color = UiPalette.YELLOW if selected \
 			else _accent_for(preset).lightened(0.35)
 		_map_cards[index].set("fill_color", fill)
+		_outline_selected(_map_cards[index], selected)
 		if index < _map_badges.size() and _map_badges[index] != null:
 			_map_badges[index].visible = selected
+
+
+func _outline_selected(card: Button, selected: bool) -> void:
+	## The accent fill already marks the pick; a heavier ink outline makes it
+	## readable in a row of three without introducing a second accent colour.
+	for state: String in ["normal", "hover", "pressed"]:
+		var base: StyleBox = card.get_theme_stylebox(state)
+		if not (base is StyleBoxFlat):
+			continue
+		var ring: StyleBoxFlat = (base as StyleBoxFlat).duplicate() as StyleBoxFlat
+		ring.set_border_width_all(9 if selected else 6)
+		card.add_theme_stylebox_override(state, ring)
 
 
 func _on_confirm() -> void:
@@ -874,25 +1015,6 @@ func _launch(data: Dictionary, minigame: bool) -> void:
 	GameSettings.set_play_mode(GameSettings.MODE_SINGLE)
 	SceneLoader.go_to(str(target["scene"]), str(target["title"]),
 		str(target["hint"]))
-
-
-func _on_sandbox() -> void:
-	## The park is the third game. In a room the host only switches the room's
-	## mode and returns to the lobby, exactly like picking MINIGAMES there; solo
-	## it goes through the vehicle picker the old SANDBOX door used.
-	if Network.is_session_active():
-		if not Network.is_host:
-			return
-		GameSettings.set_multiplayer_mode(GameSettings.GAME_SANDBOX)
-		Network.configure_session(GameSettings.GAME_SANDBOX,
-			GameSettings.bots_enabled, GameSettings.effective_bot_count())
-		SceneLoader.go_to(LOBBY_SCENE, "MULTIPLAYER", "Sandbox selected")
-		return
-	GameSettings.set_play_mode(GameSettings.MODE_SINGLE)
-	GameSettings.vehicle_edit_minigame = false
-	GameSettings.vehicle_return_scene = ""
-	GameSettings.vehicle_return_title = "PLAY"
-	SceneLoader.go_to(VEHICLE_SCENE, "SANDBOX", "PICK A VEHICLE")
 
 
 # --------------------------------------------------------------------------
@@ -970,7 +1092,12 @@ func _refresh_play_label() -> void:
 
 
 func _refresh_vehicle() -> void:
-	var entry: Dictionary = Catalog.find(GameSettings.minigame_vehicle)
+	## The garage roster follows the page: RACING saves the racing class, an
+	## arena page saves the minigame car. Reading one slot for both meant a
+	## saved chassis never appeared on the page that owned it.
+	var id: String = GameSettings.racing_vehicle_id() \
+		if _page == GAME_RACING else GameSettings.minigame_vehicle
+	var entry: Dictionary = Catalog.find(id)
 	if entry.is_empty():
 		entry = Catalog.find(Catalog.DEFAULT_ID)
 	_vehicle_button.text = "VEHICLE: " + str(entry.get("name", "SHOPPING CART"))
@@ -979,10 +1106,18 @@ func _refresh_vehicle() -> void:
 
 
 func _on_change_vehicle() -> void:
+	## Hand the page and the live picks to the garage, so coming back restores
+	## the configuration instead of the last confirmed one.
 	_return_page = _page
+	_return_map = str(_current_map().get("id", ""))
+	_return_theme = _selected_theme
 	GameSettings.vehicle_return_scene = MINIGAMES_SCENE
-	GameSettings.vehicle_return_title = "GAMES"
+	GameSettings.vehicle_return_title = "RACING" if _page == GAME_RACING \
+		else "GAMES"
 	GameSettings.vehicle_edit_minigame = true
+	# The garage cannot know which page sent it for it to infer the roster:
+	# GameSettings flips to the sandbox roster once a DELIVER arena is saved.
+	VehicleSelect.set_racing_intent(_page == GAME_RACING)
 	SceneLoader.go_to(VEHICLE_SCENE, "VEHICLE", "Choose your ride")
 
 
@@ -1026,11 +1161,23 @@ func _run_selftest() -> void:
 			and not TrackDefs.theme_ids(deliver).is_empty()
 	var map_ok: bool = str(map_target.get("scene", "")) == RACE_SCENE \
 		and str(map_target.get("id", "")) != ""
+	# Garage round trip: the page and the live picks must come back, not the
+	# last confirmed ones.
+	var return_map: String = str(_current_map().get("id", ""))
+	_return_page = GAME_RACING
+	_return_map = return_map
+	_return_theme = "farmyard"
+	var resume: String = _consume_return_state()
+	_build_games()
+	_initial_state()
+	var restore_ok: bool = resume == GAME_RACING \
+		and _restored_theme == "farmyard" \
+		and str(_current_map().get("id", "")) == return_map
 	print("MINIGAMES_SELFTEST page=%s scene=%s map=%s racing_page=%s back=%s "
 		% [_page, str(map_target.get("scene", "")),
 		str(map_target.get("id", "")), str(racing_page), str(back_ok)]
-		+ "deliver_scene=%s deliver_theme=%s focus=%s"
+		+ "deliver_scene=%s deliver_theme=%s focus=%s restore=%s"
 		% [str(deliver_target.get("scene", "")),
-		str(deliver_target.get("theme", "")), str(focus_ok)])
+		str(deliver_target.get("theme", "")), str(focus_ok), str(restore_ok)])
 	get_tree().quit(0 if map_ok and racing_page and back_ok and focus_ok \
-		and deliver_ok else 1)
+		and deliver_ok and restore_ok else 1)

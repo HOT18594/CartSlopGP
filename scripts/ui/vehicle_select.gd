@@ -18,6 +18,16 @@ const UiPalette := preload("res://scripts/ui/ui_palette.gd")
 const DRIVE_SCENE: String = "res://scenes/sandbox/sandbox.tscn"
 const BACK_SCENE: String = "res://scenes/ui/play_menu.tscn"
 
+## Which roster the launching page asked for. -1 = infer from GameSettings.
+## The guess flipped to the sandbox roster as soon as a DELIVER arena was saved,
+## which silently changed the RACING garage's list under its saved chassis.
+static var _racing_intent: int = -1
+
+
+static func set_racing_intent(enabled: bool) -> void:
+	## Called by the page that opens the garage, immediately before it loads.
+	_racing_intent = 1 if enabled else 0
+
 var STATS: Array[Dictionary] = [
 	{"key": "top_speed", "label": "TOP SPEED", "color": UiPalette.YELLOW},
 	{"key": "weight", "label": "WEIGHT", "color": UiPalette.BLUE},
@@ -65,7 +75,6 @@ var _current: int = 0
 var _holder: Node3D = null
 var _stats_grid: GridContainer
 var _stat_bars: Dictionary = {}
-var _tag_label: Label
 var _ranges: Dictionary = {}
 var _time: float = 0.0
 ## Racing branch. Empty on the sandbox path, where all of this stays unused.
@@ -84,10 +93,24 @@ func _ready() -> void:
 	# map picker it saves and returns; opened from the main flow it starts a run.
 	if GameSettings.vehicle_return_scene != "":
 		_drive_button.text = "SAVE & RETURN"
+		# BACK discards the pick, so it is a cancel, not a navigation back.
+		_back_button.text = "CANCEL"
+	_drive_button.fit_text()
+	_back_button.fit_text()
+	# A future catalog name must trim, never push the arrows or the panel edge.
+	_name_label.clip_text = true
+	_name_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	_back_button.pressed.connect(_on_back)
 	# The racing class is only offered when the chosen mode is racing; every
-	# other entry point (SANDBOX, cargo garage) keeps the original roster.
-	_racing = GameSettings.racing_mode_active()
+	# other entry point (SANDBOX, cargo garage) keeps the original roster. The
+	# launching page's explicit intent wins over the inferred one.
+	var intent: int = _racing_intent
+	_racing_intent = -1
+	# Measurement hook: force one roster so both sheets can be measured in a
+	# single headless boot (CART_UI_MEASURE=1).
+	if OS.get_environment("CART_VEHICLE_RACING") == "1":
+		intent = 1
+	_racing = GameSettings.racing_mode_active() if intent < 0 else intent == 1
 	if _racing:
 		_entries = Catalog.racing_all()
 		_ranges = Catalog.racing_stat_ranges()
@@ -96,13 +119,19 @@ func _ready() -> void:
 		_entries = Catalog.all()
 		_ranges = Catalog.stat_ranges()
 	if _entries.is_empty():
-		# Never leave the player on a dead screen.
+		# Never leave the player on a dead screen. BACK is the only live action.
 		_name_label.text = "NO VEHICLES AVAILABLE"
+		_name_label.add_theme_font_size_override("font_size", 22)
+		_name_label.tooltip_text = ""
 		_index_label.text = ""
 		_prev_button.disabled = true
 		_next_button.disabled = true
 		_drive_button.disabled = true
-		# BACK is the only live action; give the keyboard something to land on.
+		var hint := UiKit.label("THE VEHICLE CATALOG RETURNED NO ENTRIES.",
+			int(UiKit.CAPTION_SIZE), UiPalette.MUTED)
+		hint.name = "EmptyState"
+		hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		($Center/Panel/Body as VBoxContainer).add_child(hint)
 		MenuNav.refresh()
 		MenuNav.focus(_back_button)
 		return
@@ -122,7 +151,7 @@ func _ready() -> void:
 		# The allocation rows need more vertical room than eight comparison
 		# bars, so the preview loses a little height and the camera steps back.
 		var preview := $Center/Panel/Body/ViewportContainer as SubViewportContainer
-		preview.custom_minimum_size = Vector2(470, 150)
+		preview.custom_minimum_size = Vector2(470, 136)
 		_camera.look_at_from_position(Vector3(2.8, 1.8, -3.8),
 			Vector3(0.0, 0.45, 0.0), Vector3.UP)
 	else:
@@ -133,8 +162,21 @@ func _ready() -> void:
 	_next_button.pressed.connect(_step.bind(1))
 	_drive_button.pressed.connect(_on_drive)
 	_show_current()
-	pass
 	call_deferred("_enter")
+	if OS.get_environment("CART_UI_MEASURE") == "1":
+		_report_layout.call_deferred()
+
+
+func _report_layout() -> void:
+	## Verification hook (CART_UI_MEASURE=1): the racing sheet is the tallest
+	## state of this screen, so that is the one to measure.
+	await UiKit.report_screen(self, "vehicle_select:racing" if _racing \
+		else "vehicle_select:roster")
+	var panel: Control = $Center/Panel
+	var body: Control = $Center/Panel/Body
+	print("UI_BLOCKS %s panel=%.0fx%.0f body=%.0fx%.0f fits720=%s"
+		% ["vehicle_select", panel.size.x, panel.size.y, body.size.x, body.size.y,
+		str(panel.size.y <= UiKit.SCREEN_HEIGHT - UiKit.SCREEN_MARGIN * 2.0)])
 
 
 func _enter() -> void:
@@ -201,41 +243,25 @@ func _process(delta: float) -> void:
 
 func _build_stats() -> void:
 	var body: VBoxContainer = $Center/Panel/Body
-	_tag_label = Label.new()
-	_tag_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_tag_label.add_theme_font_size_override("font_size", 16)
-	_tag_label.add_theme_color_override("font_color", UiPalette.BLUE_DARK)
-	body.add_child(_tag_label)
-	body.move_child(_tag_label, _index_label.get_index() + 1)
-
-	var caption := Label.new()
-	caption.text = ""
-	caption.visible = false
-	caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	caption.add_theme_font_size_override("font_size", 14)
-	caption.add_theme_color_override("font_color", UiPalette.BLUE_DARK)
-	body.add_child(caption)
-	body.move_child(caption, _tag_label.get_index() + 1)
-
 	# Two aligned columns. Every cell has a fixed-width right-aligned label
 	# and an equally wide bar, so all eight rows line up under the preview.
 	_stats_grid = GridContainer.new()
 	_stats_grid.columns = 2
-	_stats_grid.add_theme_constant_override("h_separation", 22)
-	_stats_grid.add_theme_constant_override("v_separation", 5)
+	_stats_grid.add_theme_constant_override("h_separation", UiKit.SPACING)
+	_stats_grid.add_theme_constant_override("v_separation", UiKit.SPACING_TIGHT)
 	body.add_child(_stats_grid)
-	body.move_child(_stats_grid, caption.get_index() + 1)
+	body.move_child(_stats_grid, _index_label.get_index() + 1)
 	# The action row needs its own lane; without this the focus ring of the
 	# drive button touches the last stat row.
 	var spacer := Control.new()
 	spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	spacer.custom_minimum_size = Vector2(0, 14)
+	spacer.custom_minimum_size = Vector2(0, float(UiKit.SPACING_TIGHT))
 	body.add_child(spacer)
 	body.move_child(spacer, _stats_grid.get_index() + 1)
 
 	for stat: Dictionary in STATS:
 		var cell := HBoxContainer.new()
-		cell.add_theme_constant_override("separation", 10)
+		cell.add_theme_constant_override("separation", UiKit.SPACING_TIGHT)
 		cell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		var label := Label.new()
 		label.text = str(stat["label"])
@@ -258,23 +284,16 @@ func _build_racing_stats() -> void:
 	## composed value the physics will use. One accent (yellow), rounded 16,
 	## no rules, and every +/- is a normal focus stop for MenuNav.
 	var body: VBoxContainer = $Center/Panel/Body
-	_tag_label = Label.new()
-	_tag_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_tag_label.add_theme_font_size_override("font_size", 16)
-	_tag_label.add_theme_color_override("font_color", UiPalette.BLUE_DARK)
-	body.add_child(_tag_label)
-	body.move_child(_tag_label, _index_label.get_index() + 1)
-
 	var rows := VBoxContainer.new()
 	rows.name = "AllocationRows"
-	rows.add_theme_constant_override("separation", 4)
+	rows.add_theme_constant_override("separation", UiKit.SPACING_TIGHT)
 	body.add_child(rows)
-	body.move_child(rows, _tag_label.get_index() + 1)
+	body.move_child(rows, _index_label.get_index() + 1)
 
 	for stat: Dictionary in RACING_STATS:
 		var key: String = str(stat["key"])
 		var row := HBoxContainer.new()
-		row.add_theme_constant_override("separation", 8)
+		row.add_theme_constant_override("separation", UiKit.SPACING_TIGHT)
 		rows.add_child(row)
 
 		var label := Label.new()
@@ -327,7 +346,7 @@ func _build_racing_stats() -> void:
 	var color_row := HBoxContainer.new()
 	color_row.name = "ColorRow"
 	color_row.alignment = BoxContainer.ALIGNMENT_CENTER
-	color_row.add_theme_constant_override("separation", 8)
+	color_row.add_theme_constant_override("separation", UiKit.SPACING_TIGHT)
 	body.add_child(color_row)
 	body.move_child(color_row, rows.get_index() + 1)
 	var color_caption := Label.new()
@@ -347,7 +366,7 @@ func _build_racing_stats() -> void:
 	var action: Control = body.get_node("ActionRow") as Control
 	var spacer := Control.new()
 	spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	spacer.custom_minimum_size = Vector2(0, 8)
+	spacer.custom_minimum_size = Vector2(0, float(UiKit.SPACING_TIGHT))
 	body.add_child(spacer)
 	body.move_child(spacer, action.get_index())
 
@@ -358,7 +377,7 @@ func _stepper_button(glyph: String, tooltip: String) -> Button:
 	var button := Button.new()
 	button.text = glyph
 	button.tooltip_text = tooltip
-	button.custom_minimum_size = Vector2(40, 34)
+	button.custom_minimum_size = Vector2(40, 30)
 	button.add_theme_font_size_override("font_size", 20)
 	button.add_theme_color_override("font_color", UiPalette.INK)
 	button.add_theme_color_override("font_hover_color", UiPalette.INK)
@@ -394,7 +413,7 @@ func _color_swatch(hex: String, color_name: String) -> Button:
 	## stretching it into a 56 px action button while still giving it the ring.
 	var button := Button.new()
 	button.set_meta("skip_kit", true)
-	button.custom_minimum_size = Vector2(44, 44)
+	button.custom_minimum_size = Vector2(40, 40)
 	button.tooltip_text = "%s CAR COLOUR" % color_name
 	var normal := StyleBoxFlat.new()
 	normal.bg_color = Color(hex)
@@ -416,12 +435,16 @@ func _refresh_color_swatches() -> void:
 	var selected: String = GameSettings.player_tag_color
 	for hex: String in _color_buttons:
 		var button: Button = _color_buttons[hex]
-		var normal: StyleBoxFlat = button.get_theme_stylebox("normal") as StyleBoxFlat
-		if normal != null:
-			normal.set_border_width_all(6 if hex == selected else 3)
-			normal.border_color = UiPalette.YELLOW if hex == selected \
-				else UiPalette.INK
-		button.scale = Vector2.ONE * (1.10 if hex == selected else 1.0)
+		var chosen: bool = hex == selected
+		# normal and its hover/pressed copies all carry the selected outline;
+		# restyling only normal made a hovered pick lose its yellow ring.
+		for state: String in ["normal", "hover", "pressed"]:
+			var style: StyleBoxFlat = button.get_theme_stylebox(state) as StyleBoxFlat
+			if style == null:
+				continue
+			style.set_border_width_all(6 if chosen else 3)
+			style.border_color = UiPalette.YELLOW if chosen else UiPalette.INK
+		button.scale = Vector2.ONE * (1.10 if chosen else 1.0)
 
 
 func _on_color_picked(hex: String) -> void:
@@ -432,7 +455,11 @@ func _on_color_picked(hex: String) -> void:
 	else:
 		GameSettings.set_player_tag_color(hex)
 	_refresh_color_swatches()
-	_show_current(false)
+	# The tint is part of the composed entry, so only the racing cart needs a
+	# rebuild. The name and the stat sheet did not change and must not flash
+	# just because the paint did.
+	if _racing:
+		_swap_model(false)
 
 
 func _adjust_stat(key: String, direction: int) -> void:
@@ -447,6 +474,25 @@ func _adjust_stat(key: String, direction: int) -> void:
 		return
 	_allocation[key] = points + direction
 	_fill_racing_stats(_composed_current())
+	_keep_focus(key)
+
+
+func _keep_focus(key: String) -> void:
+	## The stepper just pressed can become disabled (0 points, or the budget is
+	## spent). A disabled focused control made MenuNav hand the ring to the first
+	## button on the screen, so move it to the sibling stepper instead.
+	var focused: Control = get_viewport().gui_get_focus_owner()
+	if focused == null or not (focused is Button):
+		return
+	if not (focused as Button).disabled:
+		return
+	var used_minus: bool = focused == _alloc_minus.get(key)
+	var sibling_map: Dictionary = _alloc_plus if used_minus else _alloc_minus
+	var sibling: Button = sibling_map.get(key) as Button
+	if sibling != null and not sibling.disabled:
+		sibling.grab_focus()
+	elif _drive_button != null and not _drive_button.disabled:
+		_drive_button.grab_focus()
 
 
 func _entry_index(id: String) -> int:
@@ -482,8 +528,8 @@ func _racing_value(key: String, value: float) -> String:
 func _fill_racing_stats(entry: Dictionary) -> void:
 	var total: int = Catalog.allocation_total(_allocation)
 	var left: int = maxi(Catalog.RACING_STAT_POINTS - total, 0)
-	_tag_label.text = "RACE CLASS  ·  %d OF %d POINTS LEFT" % [left,
-		Catalog.RACING_STAT_POINTS]
+	_set_status("RACE CLASS  ·  %d OF %d POINTS LEFT" % [left,
+		Catalog.RACING_STAT_POINTS])
 	var values: Dictionary = Catalog.stats_for(entry)
 	for stat: Dictionary in RACING_STATS:
 		var key: String = str(stat["key"])
@@ -502,14 +548,25 @@ func _fill_racing_stats(entry: Dictionary) -> void:
 
 
 func _show_current(animate: bool = true) -> void:
+	var entry: Dictionary = _composed_current()
+	_swap_model(animate)
+	_name_label.text = str(entry.get("name", ""))
+	_name_label.tooltip_text = _name_label.text
+	UiAnim.fade_in(_name_label, 0.20)
+	if _racing:
+		_fill_racing_stats(entry)
+	else:
+		_fill_stats(entry)
+
+
+func _swap_model(animate: bool) -> void:
+	## Rebuild the 3D holder. Detach before queue_free so the incoming model can
+	## take the VehicleVisual name this frame; a one-frame overlap also z-fights.
 	if _holder != null:
-		# Detach before queue_free so the incoming model can take the
-		# VehicleVisual name this frame; a one-frame overlap also z-fights.
 		_model_root.remove_child(_holder)
 		_holder.queue_free()
 		_holder = null
-	var entry: Dictionary = _composed_current()
-	_holder = VehicleVisual.build(entry)
+	_holder = VehicleVisual.build(_composed_current())
 	_model_root.add_child(_holder)
 	if animate:
 		_holder.scale = Vector3.ONE * 0.86
@@ -518,22 +575,21 @@ func _show_current(animate: bool = true) -> void:
 			.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 	else:
 		_holder.scale = Vector3.ONE
-	_name_label.text = str(entry.get("name", ""))
-	_index_label.text = "%d / %d" % [_current + 1, _entries.size()]
-	UiAnim.fade_in(_name_label, 0.20)
-	if _racing:
-		_fill_racing_stats(entry)
-	else:
-		_fill_stats(entry)
 
 
 func _fill_stats(entry: Dictionary) -> void:
 	var has_engine: bool = bool(entry.get("has_engine", true))
-	_tag_label.text = "ENGINE  ·  IDLE + REV" if has_engine \
-		else "NO ENGINE  ·  LEG POWER / WHEEL RATTLE"
+	_set_status("ENGINE  ·  IDLE + REV" if has_engine \
+		else "NO ENGINE  ·  LEG POWER / WHEEL RATTLE")
 	for key: String in _stat_bars:
 		var bar: StatBar = _stat_bars[key]
 		bar.set_ratio(Catalog.stat_ratio(entry, key, _ranges) * 0.94 + 0.06)
+
+
+func _set_status(detail: String) -> void:
+	## Index and mode detail share one line. They use the same type and colour,
+	## and the second stacked line cost 37 px of the 720 box for nothing.
+	_index_label.text = "%d / %d  ·  %s" % [_current + 1, _entries.size(), detail]
 
 
 func _step(direction: int) -> void:
@@ -563,16 +619,21 @@ func _on_drive() -> void:
 		var scene: String = GameSettings.vehicle_return_scene
 		var title: String = GameSettings.vehicle_return_title
 		GameSettings.vehicle_return_scene = ""
+		GameSettings.vehicle_return_title = ""
 		SceneLoader.go_to(scene, title, "Vehicle saved")
 		return
 	SceneLoader.go_to(DRIVE_SCENE, "LET'S DRIVE", "Warming up the engine...")
 
 
 func _on_back() -> void:
+	## BACK cancels the pick. Clearing the edit flag keeps the next garage visit
+	## from writing into the minigame slot because of a cancelled page.
+	GameSettings.vehicle_edit_minigame = false
 	if GameSettings.vehicle_return_scene != "":
 		var scene: String = GameSettings.vehicle_return_scene
 		var title: String = GameSettings.vehicle_return_title
 		GameSettings.vehicle_return_scene = ""
+		GameSettings.vehicle_return_title = ""
 		SceneLoader.go_to(scene, title)
 		return
 	SceneLoader.go_to(BACK_SCENE, "PLAY")

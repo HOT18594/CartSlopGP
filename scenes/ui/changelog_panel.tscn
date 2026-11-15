@@ -42,7 +42,7 @@ theme_override_constants/separation = 16
 
 [node name="Header" type="HBoxContainer" parent="Panel/Body"]
 layout_mode = 2
-theme_override_constants/separation = 12
+theme_override_constants/separation = 16
 
 [node name="Title" type="Label" parent="Panel/Body/Header"]
 layout_mode = 2
@@ -65,7 +65,7 @@ horizontal_alignment = 2
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_vertical = 3
-theme_override_constants/separation = 12
+theme_override_constants/separation = 16
 
 [node name="Prompt" type="Label" parent="Panel/Body/ListView"]
 layout_mode = 2
@@ -85,7 +85,7 @@ unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 theme_override_constants/h_separation = 16
-theme_override_constants/v_separation = 12
+theme_override_constants/v_separation = 16
 columns = 2
 
 [node name="DetailView" type="VBoxContainer" parent="Panel/Body"]
@@ -97,14 +97,14 @@ theme_override_constants/separation = 16
 
 [node name="AllVersionsButton" type="Button" parent="Panel/Body/DetailView"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(156, 36)
+custom_minimum_size = Vector2(156, 40)
 layout_mode = 2
 size_flags_horizontal = 0
 theme_override_font_sizes/font_size = 15
 text = "ALL VERSIONS"
 script = ExtResource("3")
 fill_color = Color(0.270588, 0.713726, 0.941176, 1)
-corner_radius = 14
+corner_radius = 16
 shadow_offset = 4
 
 [node name="ChangelogText" type="RichTextLabel" parent="Panel/Body/DetailView"]
@@ -124,6 +124,7 @@ context_menu_enabled = true
 
 [node name="Footer" type="HBoxContainer" parent="Panel/Body"]
 layout_mode = 2
+theme_override_constants/separation = 16
 
 [node name="Spacer" type="Control" parent="Panel/Body/Footer"]
 layout_mode = 2
@@ -131,11 +132,11 @@ size_flags_horizontal = 3
 
 [node name="BackButton" type="Button" parent="Panel/Body/Footer"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(112, 36)
+custom_minimum_size = Vector2(112, 40)
 layout_mode = 2
 theme_override_font_sizes/font_size = 15
 text = "BACK"
 script = ExtResource("3")
 fill_color = Color(0.94902, 0.329412, 0.356863, 1)
-corner_radius = 14
+corner_radius = 16
 shadow_offset = 4

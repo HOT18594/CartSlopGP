@@ -44,6 +44,10 @@ const TREE_SCALE: float = 7.2
 const BUSH_SCALE: float = 4.8
 const ROCK_SCALE: float = 5.2
 
+## Ambient wind for the arena dressing: a skin sets how hard the flags and
+## banner towers sway. It is presentation only and never touches a rule.
+const WIND_DEFAULT: float = 1.0
+
 ## Same layout for every skin: a 16 m lattice ring outside the barrier.
 const TREE_RING: Array[Vector2] = [
 	Vector2(-80.0, -80.0), Vector2(80.0, -80.0),
@@ -88,6 +92,7 @@ const THEMES: Dictionary = {
 		"present_kind": "crate",
 		"present_label": "SHRINK-WRAPPED CRATES",
 		"present_accent": Color("f4c542"),
+		"wind": 1.15,
 		"hazard_label": "WET PATCHES  ·  LIGHT SLIDE",
 		"tree_model": "tree_default",
 		"tree_scale": 1.0,
@@ -113,6 +118,7 @@ const THEMES: Dictionary = {
 		"present_kind": "crate",
 		"present_label": "PRODUCE CRATES",
 		"present_accent": Color("e4572e"),
+		"wind": 0.72,
 		"hazard_label": "MUD PATCHES  ·  SOFT SLIDE",
 		"tree_model": "tree_oak",
 		"tree_scale": 0.95,
@@ -138,6 +144,7 @@ const THEMES: Dictionary = {
 		"present_kind": "gift",
 		"present_label": "WRAPPED GIFTS",
 		"present_accent": Color("e23b4e"),
+		"wind": 1.5,
 		"hazard_label": "ICE PATCHES  ·  SPIN OUT",
 		"tree_model": "tree_pineTallA",
 		"tree_scale": 1.0,
@@ -265,6 +272,24 @@ static func present_material(_theme: Dictionary) -> Material:
 ## Warm gold used by the pickup ring and the pad spotlights.
 static func accent() -> Color:
 	return Color(1.0, 0.82, 0.28)
+
+
+## The pickup ring colour: the present accent, brightened so it reads on grass,
+## wet concrete and snow alike.
+static func pickup_colour(theme: Dictionary) -> Color:
+	var base: Color = theme.get("present_accent", accent()) as Color
+	return base.lightened(0.22)
+
+
+## The carrier glow/trail colour. Team colour is layered on by the arena; this
+## is the neutral fallback for a carrier with no resolvable team.
+static func carry_colour(theme: Dictionary) -> Color:
+	return theme.get("present_accent", accent()) as Color
+
+
+## How hard this skin's dressing sways. Presentation only.
+static func wind(theme: Dictionary) -> float:
+	return clampf(float(theme.get("wind", WIND_DEFAULT)), 0.0, 4.0)
 
 
 # --------------------------------------------------------------------------

@@ -18,6 +18,11 @@ const CANDY_BUTTON: String = "res://scripts/ui/candy_button.gd"
 const FOCUS_SLIDER: String = "res://scripts/ui/focus_slider.gd"
 
 const SECTIONS: Array[String] = ["AUDIO", "VIDEO", "GAMEPLAY", "ACCESSIBILITY", "UPDATES"]
+## One label column and one value column for every row, so a slider starts at
+## the same x on every page and every live value ends on the same right edge.
+const LABEL_COLUMN: float = 256.0
+const VALUE_COLUMN: float = 56.0
+const IDLE_HINT: String = "Hover or focus a row to see what it changes."
 
 var _body: VBoxContainer
 var _content: VBoxContainer
@@ -31,12 +36,6 @@ var _sfx_slider: HSlider
 var _camera_slider: HSlider
 var _hud_slider: HSlider
 var _deadzone_slider: HSlider
-var _master_value: Label
-var _music_value: Label
-var _sfx_value: Label
-var _camera_value: Label
-var _hud_value: Label
-var _deadzone_value: Label
 
 var _fullscreen_toggle: ToggleSwitch
 var _cursor_toggle: ToggleSwitch
@@ -52,6 +51,8 @@ var _update_status: Label
 var _offline_note: Label
 var _desc_label: Label
 var _refreshing: bool = false
+## Setting id -> the right-hand label that shows its live value.
+var _value_labels: Dictionary = {}
 
 
 func _ready() -> void:
@@ -68,15 +69,19 @@ func open() -> void:
 	show()
 	visible = true
 	_show_page(_current_page)
-	if _desc_label != null:
-		_desc_label.text = "Hover or focus a row to see what it changes."
 	UiAnim.pop($Center/Panel)
 	MenuNav.refresh()
 	_check_button.disabled = false
+	# The offline line used to be built and then never shown. It now reports the
+	# saved result of the last check, so a player who opens the page late still
+	# knows why there is no version number.
+	_offline_note.visible = UpdateChecker.status == "offline"
 	if UpdateChecker.status == "available":
 		_update_status.text = "v%s available" % UpdateChecker.latest_version
 	elif UpdateChecker.status == "up_to_date":
 		_update_status.text = "Up to date (v%s)" % UpdateChecker.local_version()
+	elif UpdateChecker.status == "offline":
+		_update_status.text = "Offline - check the connection, then try again."
 	else:
 		_update_status.text = ""
 
@@ -161,9 +166,11 @@ func _build_ui() -> void:
 
 	# One quiet help line for the whole card. Every row writes its explanation
 	# here on hover or keyboard focus, so the panel stays fast to scan instead
-	# of repeating a paragraph under all fourteen controls.
+	# of repeating a paragraph under all fourteen controls. The height is
+	# reserved so a two-line hint never shifts the footer.
 	_desc_label = UiKit.caption("")
-	_desc_label.custom_minimum_size = Vector2(0, 34)
+	_desc_label.custom_minimum_size = Vector2(0, 40)
+	_desc_label.text = IDLE_HINT
 	_content.add_child(_desc_label)
 
 	var footer := HBoxContainer.new()
@@ -185,37 +192,32 @@ func _build_ui() -> void:
 func _build_audio(page: VBoxContainer) -> void:
 	var rows := _page_header(page, "AUDIO",
 		"Balance the game against your own music and voice chat.")
-	_master_slider = _slider_row(rows, "Master volume",
+	_master_slider = _slider_row(rows, "master", "Master volume",
 		"Overall loudness of the game. This scales music and effects together.",
 		0, 100, 1, _on_master_changed)
-	_master_value = _last_value
-	_music_slider = _slider_row(rows, "Music",
+	_music_slider = _slider_row(rows, "music", "Music",
 		"Volume of the soundtrack only. Sound effects and voice chat stay as they are.",
 		0, 100, 1, _on_music_changed)
-	_music_value = _last_value
-	_sfx_slider = _slider_row(rows, "Sound effects",
+	_sfx_slider = _slider_row(rows, "sfx", "Sound effects",
 		"Engine, crashes, boosts and menu clicks. Lower it to hear chat or your own music.",
 		0, 100, 1, _on_sfx_changed)
-	_sfx_value = _last_value
 
 
 func _build_video(page: VBoxContainer) -> void:
 	var rows := _page_header(page, "VIDEO",
 		"Resolution and comfort. The game keeps the UI at native size.")
-	_fullscreen_toggle = _toggle_row(rows, "Fullscreen",
+	_fullscreen_toggle = _toggle_row(rows, "fullscreen", "Fullscreen",
 		"Fill the whole monitor instead of a window. The web build follows the browser tab.",
 		_on_fullscreen_toggled)
-	_cursor_toggle = _toggle_row(rows, "Custom cursor",
+	_cursor_toggle = _toggle_row(rows, "cursor", "Custom cursor",
 		"Draw the cartoon cursor on menus. Turn it off to use the system pointer.",
 		_on_cursor_toggled)
-	_camera_slider = _slider_row(rows, "Camera shake",
+	_camera_slider = _slider_row(rows, "camera", "Camera shake",
 		"How much the camera kicks on landings, crashes and boosts. 0% is the calmest.",
 		0, 150, 1, _on_camera_changed)
-	_camera_value = _last_value
-	_hud_slider = _slider_row(rows, "HUD scale",
+	_hud_slider = _slider_row(rows, "hud", "HUD scale",
 		"Size of the in-race speed, boost and standings panels.",
 		75, 150, 5, _on_hud_changed)
-	_hud_value = _last_value
 	_quality_button = _choice_row(rows, "Quality preset",
 		"Automatic resolution and effect quality. Lower it for the web build or an older GPU.",
 		GameSettings.QUALITY_NAMES, [0, 1, 2], GameSettings.quality_preset,
@@ -225,16 +227,15 @@ func _build_video(page: VBoxContainer) -> void:
 func _build_gameplay(page: VBoxContainer) -> void:
 	var rows := _page_header(page, "GAMEPLAY",
 		"Driving assists that do not change the physics.")
-	_boost_toggle = _toggle_row(rows, "Hold boost instead of toggle",
-		"Hold the boost button to boost. Off: press once to start and once to stop.",
+	_boost_toggle = _toggle_row(rows, "boost", "Hold boost instead of toggle",
+		"Hold the boost button to boost. Off: tap once to latch boost on and tap again to stop.",
 		_on_boost_toggled)
-	_drift_toggle = _toggle_row(rows, "Hold drift instead of toggle",
+	_drift_toggle = _toggle_row(rows, "drift", "Hold drift instead of toggle",
 		"Hold to drift. Off: tap once to latch the handbrake on and again to release.",
 		_on_drift_toggled)
-	_deadzone_slider = _slider_row(rows, "Stick deadzone",
+	_deadzone_slider = _slider_row(rows, "deadzone", "Stick deadzone",
 		"How far the stick must move before the cart reacts. Raise it for a worn or drifty pad.",
 		0, 40, 1, _on_deadzone_changed)
-	_deadzone_value = _last_value
 	_difficulty_button = _choice_row(rows, "Bot difficulty",
 		"How hard the AI carts race in single-player events. Hosts set it in the room.",
 		PackedStringArray(["EASY", "NORMAL", "HARD"]), [0, 1, 2],
@@ -243,10 +244,10 @@ func _build_gameplay(page: VBoxContainer) -> void:
 
 func _build_accessibility(page: VBoxContainer) -> void:
 	var rows := _page_header(page, "ACCESSIBILITY", "Less motion, clearer information.")
-	_reduce_motion_toggle = _toggle_row(rows, "Reduce motion",
+	_reduce_motion_toggle = _toggle_row(rows, "reduce_motion", "Reduce motion",
 		"Damps camera roll, shake and FOV kicks without slowing the cart.",
 		_on_reduce_motion_toggled)
-	_show_fps_toggle = _toggle_row(rows, "Show FPS",
+	_show_fps_toggle = _toggle_row(rows, "show_fps", "Show FPS",
 		"Draw a small frame-rate counter in the corner of the HUD.",
 		_on_show_fps_toggled)
 
@@ -272,7 +273,7 @@ func _page_header(page: VBoxContainer, title_text: String,
 	## gap separates the heading from the rows, and 8 px keeps the rows together.
 	## No rule is drawn: spacing carries the grouping.
 	var block := VBoxContainer.new()
-	block.add_theme_constant_override("separation", 2)
+	block.add_theme_constant_override("separation", UiKit.SPACING_TIGHT)
 	page.add_child(block)
 	block.add_child(_label(title_text, 24, UiPalette.INK))
 	var subtitle := _label(subtitle_text, UiKit.CAPTION_SIZE, UiPalette.MUTED)
@@ -284,19 +285,13 @@ func _page_header(page: VBoxContainer, title_text: String,
 	return rows
 
 
-func _slider_row(page: VBoxContainer, label_text: String, description: String,
-		min_value: float, max_value: float, step: float,
+func _slider_row(page: VBoxContainer, key: String, label_text: String,
+		description: String, min_value: float, max_value: float, step: float,
 		callback: Callable) -> HSlider:
-	## A real slider, one line: name on the left, track in the middle and the
-	## current value on the right. Continuous values never become pills.
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", UiKit.SPACING)
-	row.custom_minimum_size = Vector2(0, 40)
-	page.add_child(row)
-	var label := _label(label_text, 18, UiPalette.INK)
-	label.custom_minimum_size = Vector2(190, 0)
-	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	row.add_child(label)
+	## A real slider, one line: name in the shared label column, one track that
+	## is the same length on every page, and the live value in the value column.
+	var row := _row(page)
+	row.add_child(_row_label(label_text))
 	var slider := HSlider.new()
 	slider.set_script(load(FOCUS_SLIDER))
 	slider.min_value = min_value
@@ -308,36 +303,26 @@ func _slider_row(page: VBoxContainer, label_text: String, description: String,
 	slider.tooltip_text = description
 	slider.value_changed.connect(callback)
 	row.add_child(slider)
-	_describe(slider, description)
-	var value := _label("", 18, UiPalette.BODY_BLUE)
-	value.custom_minimum_size = Vector2(56, 0)
-	value.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	value.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	row.add_child(value)
-	_last_value = value
+	_value_labels[key] = _value_label(row)
+	_describe(row, slider, description)
 	return slider
 
 
-var _last_value: Label
-
-
-func _toggle_row(page: VBoxContainer, label_text: String, description: String,
-		callback: Callable) -> ToggleSwitch:
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", UiKit.SPACING)
-	row.custom_minimum_size = Vector2(0, 40)
-	page.add_child(row)
-	var label := _label(label_text, 18, UiPalette.INK)
-	label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	row.add_child(label)
+func _toggle_row(page: VBoxContainer, key: String, label_text: String,
+		description: String, callback: Callable) -> ToggleSwitch:
+	var row := _row(page)
+	row.add_child(_row_label(label_text))
+	var spacer := Control.new()
+	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(spacer)
 	var toggle := ToggleSwitch.new()
 	toggle.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	toggle.size_flags_horizontal = Control.SIZE_SHRINK_END
 	toggle.tooltip_text = description
 	toggle.toggled.connect(callback)
 	row.add_child(toggle)
-	_describe(toggle, description)
+	_value_labels[key] = _value_label(row)
+	_describe(row, toggle, description)
 	return toggle
 
 
@@ -345,34 +330,70 @@ func _choice_row(page: VBoxContainer, label_text: String, description: String,
 		labels: PackedStringArray, values: Array, current: int,
 		callback: Callable) -> Button:
 	## Two to four discrete values become equal tiles in one strip, not a
-	## "&lt; VALUE &gt;" pill stretched across the row.
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", UiKit.SPACING)
-	row.custom_minimum_size = Vector2(0, 40)
-	page.add_child(row)
-	var label := _label(label_text, 18, UiPalette.INK)
-	label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	row.add_child(label)
+	## "&lt; VALUE &gt;" pill stretched across the row. The highlighted tile is
+	## this row's live value, so no second text label is repeated beside it.
+	var row := _row(page)
+	row.add_child(_row_label(label_text))
+	var spacer := Control.new()
+	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(spacer)
 	var strip := UiKit.segmented(labels, values, current, 108.0, 42.0)
 	strip.size_flags_horizontal = Control.SIZE_SHRINK_END
 	strip.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	strip.tooltip_text = description
 	strip.connect("option_changed", callback)
 	row.add_child(strip)
-	_describe(strip, description)
+	_describe(row, strip, description)
 	return strip
 
 
-func _describe(control: Control, description: String) -> void:
-	## Hover and keyboard focus both explain the row in the shared help line.
-	control.mouse_entered.connect(_show_description.bind(description))
+func _row(page: VBoxContainer) -> HBoxContainer:
+	## One row shape for every setting: same 40 px height, same 16 px gaps and
+	## the same label column, whatever control sits on the right.
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", UiKit.SPACING)
+	row.custom_minimum_size = Vector2(0, 40)
+	row.mouse_filter = Control.MOUSE_FILTER_PASS
+	page.add_child(row)
+	return row
+
+
+func _row_label(text: String) -> Label:
+	## The single label column. clip_text holds the column at exactly
+	## LABEL_COLUMN even if a future label is longer, so rows cannot drift.
+	var label := _label(text, 18, UiPalette.INK)
+	label.custom_minimum_size = Vector2(LABEL_COLUMN, 0)
+	label.clip_text = true
+	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	return label
+
+
+func _value_label(row: HBoxContainer) -> Label:
+	## The single right-hand live value column shared by sliders and switches.
+	var value := _label("", 18, UiPalette.BODY_BLUE)
+	value.custom_minimum_size = Vector2(VALUE_COLUMN, 0)
+	value.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	value.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	row.add_child(value)
+	return value
+
+
+func _describe(row: Control, control: Control, description: String) -> void:
+	## Hover anywhere on the row (its label included) and keyboard focus on its
+	## control both write the explanation into the shared help line.
+	row.mouse_entered.connect(_show_description.bind(description))
+	row.mouse_exited.connect(_clear_description)
 	control.focus_entered.connect(_show_description.bind(description))
 
 
 func _show_description(description: String) -> void:
 	if _desc_label != null and is_instance_valid(_desc_label):
 		_desc_label.text = description
+
+
+func _clear_description() -> void:
+	if _desc_label != null and is_instance_valid(_desc_label):
+		_desc_label.text = IDLE_HINT
 
 
 func _label(text: String, font_size: int, color: Color) -> Label:
@@ -424,10 +445,10 @@ func _row_style(bg: Color) -> StyleBoxFlat:
 	var style := StyleBoxFlat.new()
 	style.bg_color = bg
 	style.set_corner_radius_all(UiKit.CORNER_RADIUS)
-	style.content_margin_left = 14
-	style.content_margin_right = 14
-	style.content_margin_top = 10
-	style.content_margin_bottom = 10
+	style.content_margin_left = UiKit.SPACING
+	style.content_margin_right = UiKit.SPACING
+	style.content_margin_top = UiKit.SPACING_TIGHT
+	style.content_margin_bottom = UiKit.SPACING_TIGHT
 	style.anti_aliasing = true
 	return style
 
@@ -444,7 +465,7 @@ func _show_page(index: int) -> void:
 		button.add_theme_stylebox_override("hover",
 			_row_style(UiPalette.YELLOW if selected else Color(1, 1, 1, 0.55)))
 	if _desc_label != null:
-		_desc_label.text = "Hover or focus a row to see what it changes."
+		_desc_label.text = IDLE_HINT
 	# The visible page changed, so the focus map has to as well.
 	MenuNav.refresh()
 
@@ -459,8 +480,11 @@ func _refresh() -> void:
 	_deadzone_slider.value = GameSettings.stick_deadzone * 100.0
 	_fullscreen_toggle.on = GameSettings.fullscreen
 	_cursor_toggle.on = GameSettings.custom_cursor
-	_boost_toggle.on = GameSettings.boost_toggle
-	_drift_toggle.on = GameSettings.drift_toggle
+	# GameSettings stores "tap once to latch"; the row asks the opposite, so the
+	# switch and the stored flag must be mirrored or the row does the reverse
+	# of its label.
+	_boost_toggle.on = not GameSettings.boost_toggle
+	_drift_toggle.on = not GameSettings.drift_toggle
 	_reduce_motion_toggle.on = GameSettings.reduce_motion
 	_show_fps_toggle.on = GameSettings.show_fps
 	_quality_button.call("set_index", clampi(GameSettings.quality_preset, 0, 2))
@@ -470,12 +494,42 @@ func _refresh() -> void:
 
 
 func _update_values() -> void:
-	_master_value.text = "%d%%" % int(round(_master_slider.value))
-	_music_value.text = "%d%%" % int(round(_music_slider.value))
-	_sfx_value.text = "%d%%" % int(round(_sfx_slider.value))
-	_camera_value.text = "%d%%" % int(round(_camera_slider.value))
-	_hud_value.text = "%d%%" % int(round(_hud_slider.value))
-	_deadzone_value.text = "%d%%" % int(round(_deadzone_slider.value))
+	## Every live value is written from the setting it belongs to, so the text
+	## can never drift from what was saved.
+	for key: String in _value_labels:
+		var label := _value_labels[key] as Label
+		if label == null:
+			continue
+		match key:
+			"master", "music", "sfx", "camera", "hud", "deadzone":
+				label.text = "%d%%" % int(round(_slider_for(key).value))
+			"fullscreen":
+				label.text = "ON" if _fullscreen_toggle.on else "OFF"
+			"cursor":
+				label.text = "ON" if _cursor_toggle.on else "OFF"
+			"boost":
+				label.text = "ON" if _boost_toggle.on else "OFF"
+			"drift":
+				label.text = "ON" if _drift_toggle.on else "OFF"
+			"reduce_motion":
+				label.text = "ON" if _reduce_motion_toggle.on else "OFF"
+			"show_fps":
+				label.text = "ON" if _show_fps_toggle.on else "OFF"
+
+
+func _slider_for(key: String) -> HSlider:
+	match key:
+		"master":
+			return _master_slider
+		"music":
+			return _music_slider
+		"sfx":
+			return _sfx_slider
+		"camera":
+			return _camera_slider
+		"hud":
+			return _hud_slider
+	return _deadzone_slider
 
 
 func _on_master_changed(value: float) -> void:
@@ -517,32 +571,40 @@ func _on_deadzone_changed(value: float) -> void:
 func _on_fullscreen_toggled(pressed: bool) -> void:
 	if not _refreshing:
 		GameSettings.set_fullscreen(pressed)
+		_update_values()
 
 
 func _on_cursor_toggled(pressed: bool) -> void:
 	if not _refreshing:
 		GameSettings.set_custom_cursor(pressed)
 		CursorController.set_menu_mode(CursorController.is_menu_mode())
+		_update_values()
 
 
 func _on_boost_toggled(pressed: bool) -> void:
 	if not _refreshing:
-		GameSettings.set_boost_toggle(pressed)
+		# The row means "hold to boost"; GameSettings.boost_toggle means
+		# "tap once to latch", so the value is written inverted.
+		GameSettings.set_boost_toggle(not pressed)
+		_update_values()
 
 
 func _on_drift_toggled(pressed: bool) -> void:
 	if not _refreshing:
-		GameSettings.set_drift_toggle(pressed)
+		GameSettings.set_drift_toggle(not pressed)
+		_update_values()
 
 
 func _on_reduce_motion_toggled(pressed: bool) -> void:
 	if not _refreshing:
 		GameSettings.set_reduce_motion(pressed)
+		_update_values()
 
 
 func _on_show_fps_toggled(pressed: bool) -> void:
 	if not _refreshing:
 		GameSettings.set_show_fps(pressed)
+		_update_values()
 
 
 func _on_quality_changed(value: Variant) -> void:
@@ -564,6 +626,7 @@ func _on_check_updates() -> void:
 		_update_status.text = "Update downloading..."
 		return
 	_check_button.disabled = true
+	_offline_note.visible = false
 	_update_status.text = "Checking for updates..."
 	UpdateChecker.check_for_updates(true)
 	get_tree().create_timer(8.0).timeout.connect(_re_enable_check)
@@ -578,6 +641,7 @@ func _on_check_finished(available: bool) -> void:
 	if not visible:
 		return
 	_check_button.disabled = false
+	_offline_note.visible = UpdateChecker.status == "offline"
 	if available:
 		_update_status.text = "v%s available - open it from the main menu" % UpdateChecker.latest_version
 	elif UpdateChecker.status == "up_to_date":

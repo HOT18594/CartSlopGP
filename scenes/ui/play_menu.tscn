@@ -31,4 +31,4 @@ layout_mode = 2
 
 [node name="Body" type="VBoxContainer" parent="Center/Panel"]
 layout_mode = 2
-theme_override_constants/separation = 16
+theme_override_constants/separation = 24

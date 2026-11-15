@@ -19,6 +19,12 @@ extends Node3D
 ## (seek / hold / carry / deposit) on top, with a claim table so two bots never
 ## fight over the same present.
 ##
+## Carrying always reads at a glance: the loaded kart tows a team-coloured light
+## ribbon on the floor plus a pulsing ground glow, every available present wears
+## a pickup ring, and both teams stay on the HUD scoreboard for the whole match.
+## A deposit plays a short three-note fanfare and the last ten tied seconds
+## flash before overtime.
+##
 ## Online play is host-authoritative for present state and scores, exactly like
 ## the sandbox: the host simulates holds, carriers and respawns, streams
 ## present snapshots at 10 Hz, peers freeze their copy and ask the host to
@@ -65,6 +71,15 @@ const COUNTDOWN_SECONDS: float = 3.0
 const BASE_TARGET: int = 5
 const TEAM_COUNT: int = 2
 const CORNER_RADIUS: int = 16 ## One radius for every HUD tile, per the UI kit.
+
+## One spacing scale for the whole HUD, per the UI kit: screen margins 24, gaps
+## between blocks 16, small gaps inside a row 8, corner radius 16, no dividers.
+const SPACE_MARGIN: float = 24.0
+const SPACE_GAP: float = 16.0
+const SPACE_GAP_SMALL: float = 8.0
+const TOAST_HEIGHT: float = 46.0
+const PROMPT_HEIGHT: float = 52.0
+
 const TEAM_COLORS: Array[Color] = [UiPalette.BLUE, UiPalette.RED]
 
 ## Arena footprint. The barrier inner face sits exactly on ARENA_HALF.
@@ -95,6 +110,19 @@ const CARRY_SLOW_ACCEL: float = 0.90
 const PRESENT_FLOAT: float = 0.78
 const CARRY_OFFSET := Transform3D(Basis.IDENTITY, Vector3(0.0, 1.02, -1.48))
 const POINT_CLEARANCE: float = 1.0
+
+## Carry read: a light ribbon on the floor behind the loaded kart.
+const CARRY_TRAIL_STEP: float = 0.72
+const CARRY_TRAIL_POINTS: int = 14
+const CARRY_TRAIL_HEIGHT: float = 0.13
+## A carrier that fell below this height left the world: drop the present.
+const CARRY_VOID_Y: float = -12.0
+
+## Overtime drama: the clock flashes over the last tied seconds, then the
+## countdown label slams "OVERTIME" when sudden death starts.
+const OT_WARNING_SECONDS: int = 10
+const DEPOSIT_FANFARE: Array[float] = [1.0, 1.26, 1.5]
+const DEPOSIT_FANFARE_GAP: float = 0.085
 
 ## The present lattice. Every point is a cell centre, well clear of the base
 ## pads and the barrier ring, so a kart can reach it from any direction.
@@ -168,6 +196,9 @@ var _pad_visuals: Array[MeshInstance3D] = []
 var _pad_labels: Array[Label3D] = []
 var _pillar_labels: Array[Label3D] = []
 var _pillars: Array[Node3D] = []
+var _base_beams: Array[MeshInstance3D] = []
+var _beam_materials: Array[StandardMaterial3D] = []
+var _ambient: Array[Dictionary] = [] ## {node, base, amp, speed, phase}
 var _floor: MeshInstance3D
 var _checker: MultiMeshInstance3D
 var _paint_lines: MeshInstance3D
@@ -177,12 +208,15 @@ var _present_points: Array[Dictionary] = []
 var _presents: Array[Dictionary] = []
 var _present_nodes: Array[Dictionary] = []
 var _ring_material: StandardMaterial3D
+var _trail_material: StandardMaterial3D
+var _trail_points: Array[PackedVector3Array] = []
 var _ring_colour: Color = Color(1.0, 0.86, 0.35, 0.95)
 var _point_cursor: int = 0
 var _local_hold_index: int = -1
 var _local_holding: bool = false
 var _local_hold_time: float = 0.0
 var _hold_state: Dictionary = {} ## holder key -> {index, time}
+var _hold_owner: Dictionary = {} ## present index -> the one holder allowed to load it
 var _claims: Dictionary = {} ## present index -> holder key
 var _client_holds: Dictionary = {} ## peer id -> {index, holding, ms}
 var _hold_send_timer: float = 0.0
@@ -208,6 +242,7 @@ var _overtime_length: float = OVERTIME_SECONDS
 var _target: int = BASE_TARGET
 var _time: float = 0.0
 var _visual_time: float = 0.0
+var _ot_warn_second: int = 0
 
 var _multiplayer: bool = false
 var _is_host: bool = true
@@ -232,9 +267,14 @@ var _selftest_present: int = -1
 
 var _canvas: CanvasLayer
 var _hud_root: Control
+var _timer_panel: PanelContainer
+var _score_panel: PanelContainer
+var _theme_panel: PanelContainer
 var _timer_label: Label
 var _overtime_label: Label
+var _score_header_label: Label
 var _score_labels: Array[Label] = []
+var _target_labels: Array[Label] = []
 var _team_name_labels: Array[Label] = []
 var _theme_name_label: Label
 var _theme_detail_label: Label
@@ -243,6 +283,7 @@ var _toast_label: Label
 var _prompt_label: Label
 var _toast_timer: float = 0.0
 var _hud_timer: float = 0.0
+var _hud_dump_frames: int = -1 ## CART_CARGO_HUD=1 prints the measured HUD rects
 var _last_timer_text: String = ""
 var _last_score_text: PackedStringArray = PackedStringArray()
 
@@ -270,6 +311,8 @@ func _exit_tree() -> void:
 func _ready() -> void:
 	_selftest = OS.get_environment("CART_CARGO_SELFTEST") == "1"
 	_debug = OS.get_environment("CART_CARGO_DEBUG") == "1"
+	if OS.get_environment("CART_CARGO_HUD") == "1":
+		_hud_dump_frames = 12
 	if OS.get_environment("CART_CARGO_LOCK_FPS") == "1":
 		Engine.max_fps = 60
 	_ensure_interact_action()
@@ -373,6 +416,15 @@ func _on_teams_changed() -> void:
 	if team == _local_team:
 		return
 	_local_team = team
+	if not _team_valid(team):
+		# Dropped to a spectator slot: park the kart rather than letting a
+		# teamless kart drive, and keep the prompt off the pad lookup.
+		_set_cart_active(false)
+		_local_hold_index = -1
+		_local_holding = false
+		_refresh_team_texts()
+		_refresh_prompt()
+		return
 	_refresh_team_texts()
 	_refresh_prompt()
 
@@ -581,9 +633,12 @@ func _build_banners() -> void:
 		var spot: Vector3 = BANNER_SPOTS[index]
 		var model: String = BANNER_MODEL_GREEN if index == 0 else BANNER_MODEL_RED
 		var yaw: float = 0.0 if spot.z > 0.0 else PI
-		if CargoTheme.place_model(self, model, spot, yaw,
-				Vector3.ONE * TILE_SIZE, "Banner_%d" % index) == null:
+		var banner: Node3D = CargoTheme.place_model(self, model, spot, yaw,
+			Vector3.ONE * TILE_SIZE, "Banner_%d" % index)
+		if banner == null:
 			continue
+		# A slow lean on the tall banner towers, well under the collider's slack.
+		_add_ambient(banner, 0.014, 0.65, float(index) * 1.9)
 		var size: Vector3 = CargoTheme.scaled_size(model,
 			Vector3.ONE * TILE_SIZE)
 		CargoTheme.add_box_collider(body, Transform3D(Basis(Vector3.UP, yaw),
@@ -591,6 +646,63 @@ func _build_banners() -> void:
 		SceneryKit.bump(_stats, "objects")
 		SceneryKit.bump(_stats, "draw_calls")
 	SceneryKit.bump(_stats, "solid_bodies")
+
+
+# --------------------------------------------------------------------------
+# ambient life: a little permanent motion so the yard never looks like a still
+
+
+func _add_ambient(node: Node3D, amp: float, speed: float, phase: float) -> void:
+	## Register a dressing node for a tiny yaw sway around its own base. The
+	## colliders live on the static bodies, so moving the visual never changes
+	## the playfield: this is presentation only, at a couple of degrees.
+	if node == null:
+		return
+	var wind: float = CargoTheme.wind(_theme)
+	if wind <= 0.0:
+		return
+	_ambient.append({
+		"node": node,
+		"base": node.transform,
+		"amp": amp * wind,
+		"speed": speed,
+		"phase": phase,
+	})
+
+
+func _tick_ambient() -> void:
+	## Cheap permanent motion: dressing sway, base-beam breathing and a slow
+	## centre-ring pulse. It runs on every peer; none of it is gameplay.
+	if _ambient.is_empty() and _base_beams.is_empty() and _centre_ring == null:
+		return
+	var t: float = _visual_time
+	for entry: Dictionary in _ambient:
+		var node: Node3D = entry.get("node") as Node3D
+		if node == null or not is_instance_valid(node):
+			continue
+		var base: Transform3D = entry.get("base", Transform3D.IDENTITY) as Transform3D
+		var amp: float = float(entry.get("amp", 0.0))
+		var speed: float = float(entry.get("speed", 1.0))
+		var phase: float = float(entry.get("phase", 0.0))
+		var sway: float = sin(t * speed + phase) * amp
+		node.transform = base * Transform3D(Basis(Vector3.UP, sway), Vector3.ZERO)
+	for index in _base_beams.size():
+		var beam: MeshInstance3D = _base_beams[index]
+		if beam == null or not is_instance_valid(beam):
+			continue
+		var beat: float = 0.5 + 0.5 * sin(t * 0.9 + float(index) * 1.6)
+		beam.scale = Vector3(1.0 + beat * 0.06, 1.0 + beat * 0.05,
+			1.0 + beat * 0.06)
+		if index < _beam_materials.size():
+			var mat: StandardMaterial3D = _beam_materials[index]
+			if mat != null:
+				var colour: Color = mat.albedo_color
+				mat.albedo_color = Color(colour.r, colour.g, colour.b,
+					0.10 + beat * 0.09)
+	if _centre_ring != null and is_instance_valid(_centre_ring):
+		var pulse: float = 0.5 + 0.5 * sin(t * 0.7)
+		_centre_ring.scale = Vector3(1.0 + pulse * 0.018, 0.03,
+			1.0 + pulse * 0.018)
 
 
 # --------------------------------------------------------------------------
@@ -666,8 +778,12 @@ func _build_base_structures(team: int, centre: Vector3) -> void:
 		var flag_pos := Vector3(side * BASE_FLAG_OFFSET.x, 0.0,
 			centre.z + outward * BASE_FLAG_OFFSET.y)
 		var flag_yaw: float = -PI * 0.5 * outward
-		if CargoTheme.place_model(self, flag_model, flag_pos, flag_yaw,
-				flag_scale, "BaseFlag_%d_%d" % [team, int(side)]) != null:
+		var flag_node: Node3D = CargoTheme.place_model(self, flag_model, flag_pos,
+			flag_yaw, flag_scale, "BaseFlag_%d_%d" % [team, int(side)])
+		if flag_node != null:
+			# Wind flutter: a few degrees of yaw, so the yard never looks frozen.
+			_add_ambient(flag_node, 0.05, 1.35 + float(team) * 0.12,
+				float(team) * 1.7 + side * 0.9)
 			var flag_size: Vector3 = CargoTheme.scaled_size(flag_model,
 				flag_scale)
 			CargoTheme.add_cylinder_collider(body, flag_pos, 0.35,
@@ -741,6 +857,8 @@ func _build_base_structures(team: int, centre: Vector3) -> void:
 	beam.material_override = beam_mat
 	beam.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(beam)
+	_base_beams.append(beam)
+	_beam_materials.append(beam_mat)
 	SceneryKit.bump(_stats, "draw_calls", 4)
 	SceneryKit.bump(_stats, "objects", 8)
 	SceneryKit.bump(_stats, "solid_bodies")
@@ -811,7 +929,14 @@ func _build_present_pool() -> void:
 	_ring_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	_ring_material.vertex_color_use_as_albedo = true
 	_ring_material.cull_mode = BaseMaterial3D.CULL_DISABLED
+	_trail_material = StandardMaterial3D.new()
+	_trail_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	_trail_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	_trail_material.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+	_trail_material.vertex_color_use_as_albedo = true
+	_trail_material.cull_mode = BaseMaterial3D.CULL_DISABLED
 	for i in PRESENT_COUNT:
+		_trail_points.append(PackedVector3Array())
 		_presents.append({
 			"point": -1,
 			"position": Vector3.ZERO,
@@ -855,6 +980,45 @@ func _build_present_node(index: int) -> Dictionary:
 	halo.position = Vector3(0.0, -0.70, 0.0)
 	halo.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	root.add_child(halo)
+	var pickup := MeshInstance3D.new()
+	pickup.name = "PickupRing"
+	var pickup_mesh := TorusMesh.new()
+	pickup_mesh.inner_radius = 1.12
+	pickup_mesh.outer_radius = 1.46
+	pickup_mesh.rings = 32
+	pickup_mesh.ring_segments = 6
+	pickup.mesh = pickup_mesh
+	pickup.scale = Vector3(1.0, 0.05, 1.0)
+	pickup.position = Vector3(0.0, -0.78, 0.0)
+	var pickup_mat := StandardMaterial3D.new()
+	pickup_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	pickup_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	pickup_mat.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+	pickup_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	pickup_mat.albedo_color = Color(accent.r, accent.g, accent.b, 0.52)
+	pickup.material_override = pickup_mat
+	pickup.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	root.add_child(pickup)
+	var glow := MeshInstance3D.new()
+	glow.name = "CarryGlow"
+	var glow_mesh := TorusMesh.new()
+	glow_mesh.inner_radius = 1.05
+	glow_mesh.outer_radius = 1.62
+	glow_mesh.rings = 32
+	glow_mesh.ring_segments = 6
+	glow.mesh = glow_mesh
+	glow.scale = Vector3(1.0, 0.05, 1.0)
+	glow.position = Vector3(0.0, -1.0, 0.0)
+	var glow_mat := StandardMaterial3D.new()
+	glow_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	glow_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	glow_mat.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+	glow_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	glow_mat.albedo_color = Color(accent.r, accent.g, accent.b, 0.55)
+	glow.material_override = glow_mat
+	glow.visible = false
+	glow.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	root.add_child(glow)
 	var ring_mesh := ImmediateMesh.new()
 	var ring := MeshInstance3D.new()
 	ring.name = "ProgressRing"
@@ -863,9 +1027,24 @@ func _build_present_node(index: int) -> Dictionary:
 	ring.position = Vector3(0.0, 0.95, 0.0)
 	ring.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	root.add_child(ring)
+	# The trail is world-space, so it is a sibling of the present root, not a
+	# child: a child would inherit the carrier's transform every frame.
+	var trail_mesh := ImmediateMesh.new()
+	var trail := MeshInstance3D.new()
+	trail.name = "CarryTrail_%02d" % index
+	trail.mesh = trail_mesh
+	trail.visible = false
+	trail.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(trail)
 	return {
 		"root": root,
 		"halo": halo,
+		"pickup": pickup,
+		"pickup_mat": pickup_mat,
+		"glow": glow,
+		"glow_mat": glow_mat,
+		"trail": trail,
+		"trail_mesh": trail_mesh,
 		"ring": ring,
 		"ring_mesh": ring_mesh,
 		"phase": float(index) * 0.9,
@@ -891,6 +1070,18 @@ func _refresh_present_visuals() -> void:
 				as StandardMaterial3D
 			if mat != null:
 				mat.albedo_color = Color(accent.r, accent.g, accent.b, 0.30)
+		var pickup_mat: StandardMaterial3D = node.get("pickup_mat") \
+			as StandardMaterial3D
+		if pickup_mat != null:
+			var ring_tint: Color = CargoTheme.pickup_colour(_theme)
+			pickup_mat.albedo_color = Color(ring_tint.r, ring_tint.g,
+				ring_tint.b, 0.52)
+		var glow_mat: StandardMaterial3D = node.get("glow_mat") \
+			as StandardMaterial3D
+		if glow_mat != null:
+			var glow_tint: Color = CargoTheme.carry_colour(_theme)
+			glow_mat.albedo_color = Color(glow_tint.r, glow_tint.g,
+				glow_tint.b, 0.55)
 
 
 func _start_presents() -> void:
@@ -905,10 +1096,13 @@ func _start_presents() -> void:
 func _spawn_present(index: int) -> void:
 	if index < 0 or index >= _presents.size():
 		return
+	var present: Dictionary = _presents[index]
 	var point: int = _free_point()
 	if point < 0:
+		# No clear lattice cell right now. Restart the timer instead of leaving
+		# the slot stuck in RESPAWNING with a zero countdown forever.
+		present["respawn"] = PRESENT_RESPAWN
 		return
-	var present: Dictionary = _presents[index]
 	present["point"] = point
 	present["position"] = (_present_points[point]["position"] as Vector3)
 	present["state"] = PRESENT_AVAILABLE
@@ -988,20 +1182,36 @@ func _tick_presents(delta: float) -> void:
 
 
 func _tick_holds(delta: float) -> void:
+	## A present belongs to exactly one holder at a time. Every kart that asks
+	## is checked against the same claim table, so two players can never fill the
+	## same ring and lose the crate to each other, and a kart that drives out of
+	## range cancels instantly instead of finishing its hold from a distance.
 	var wants: Dictionary = _collect_hold_wants()
+	var active: Dictionary = {}
 	for key: int in wants.keys():
 		var index: int = int(wants[key])
 		if index < 0 or index >= _presents.size():
-			_hold_state.erase(key)
 			continue
-		var present: Dictionary = _presents[index]
-		if int(present["state"]) != PRESENT_AVAILABLE:
-			_hold_state.erase(key)
+		if int(_presents[index]["state"]) != PRESENT_AVAILABLE:
 			continue
 		var cart: CartPlayer = _cart_for_key(key)
-		if cart == null or not _present_in_range(cart, index):
+		if cart == null or not is_instance_valid(cart):
+			continue
+		if not _present_in_range(cart, index):
+			continue
+		active[key] = index
+	for index: int in _hold_owner.keys():
+		var owner: int = int(_hold_owner[index])
+		if int(active.get(owner, -1)) == index:
+			continue
+		_hold_owner.erase(index)
+	for key: int in active.keys():
+		var index: int = int(active[key])
+		if _hold_owner.has(index) and int(_hold_owner[index]) != key:
+			# Another kart reached this present first: this ring stays empty.
 			_hold_state.erase(key)
 			continue
+		_hold_owner[index] = key
 		var data: Dictionary = _hold_state.get(key, {"index": index, "time": 0.0})
 		if int(data.get("index", -1)) != index:
 			data = {"index": index, "time": 0.0}
@@ -1010,7 +1220,7 @@ func _tick_holds(delta: float) -> void:
 		if float(data["time"]) >= HOLD_SECONDS:
 			_take_present(index, key)
 	for key: int in _hold_state.keys():
-		if wants.has(key):
+		if active.has(key):
 			continue
 		_hold_state.erase(key)
 	for index in _presents.size():
@@ -1060,7 +1270,9 @@ func _take_present(index: int, key: int) -> void:
 		var data: Dictionary = _hold_state[other]
 		if int(data.get("index", -1)) == index:
 			_hold_state.erase(other)
+	_hold_owner.erase(index)
 	_claims.erase(index)
+	_reset_carry_fx(index)
 	var cart: CartPlayer = _cart_for_key(key)
 	if cart != null:
 		_apply_carry_slow(cart)
@@ -1087,22 +1299,49 @@ func _tick_carriers() -> void:
 			continue
 		var key: int = int(present["carrier"])
 		var cart: CartPlayer = _cart_for_key(key)
-		if cart == null:
+		if not _carrier_alive(cart):
+			# Disconnect, freed kart or a fall out of the world: the crate is
+			# dropped back into the pool instead of riding a corpse forever.
+			_release_present(index)
+			continue
+		var team: int = _team_for_key(key)
+		if team < 0 or team >= TEAM_COUNT:
 			_release_present(index)
 			continue
 		present["position"] = cart.global_position
-		if _inside_pad(cart.global_position, _team_for_key(key)):
+		if _inside_pad(cart.global_position, team):
 			_deliver_present(index, key)
 
 
+func _carrier_alive(cart: CartPlayer) -> bool:
+	## A carrier must still be a live kart in the tree, above the void. The
+	## physics body keeps running while a node is being freed, so check both.
+	if cart == null or not is_instance_valid(cart) or not cart.is_inside_tree():
+		return false
+	return cart.global_position.y > CARRY_VOID_Y
+
+
 func _deliver_present(index: int, key: int) -> void:
-	var present: Dictionary = _presents[index]
+	## One deposit, one point. The guard makes a second delivery in the same
+	## frame (two carriers touching down, or a clock tick racing the pad) a
+	## no-op, and a finished match can never be scored into again.
+	if index < 0 or index >= _presents.size():
+		return
+	if _phase == Phase.FINISHED:
+		return
+	if int(_presents[index]["state"]) != PRESENT_CARRIED:
+		return
 	var team: int = _team_for_key(key)
+	if team < 0 or team >= TEAM_COUNT:
+		_release_present(index)
+		return
+	var present: Dictionary = _presents[index]
 	_score[team] = _score[team] + 1
 	present["state"] = PRESENT_RESPAWNING
 	present["carrier"] = 0
 	present["respawn"] = PRESENT_RESPAWN
 	present["hold"] = 0.0
+	_reset_carry_fx(index)
 	var cart: CartPlayer = _cart_for_key(key)
 	if cart != null:
 		_restore_carry_slow(cart)
@@ -1115,7 +1354,7 @@ func _deliver_present(index: int, key: int) -> void:
 			_selftest_cycle = true
 	_flash_pad(team)
 	_refresh_score_now()
-	_play_one_shot(DELIVERY_SFX, -4.0, 1.06)
+	_play_deposit_fanfare()
 	_show_toast("%s SCORES!" % _team_names[team], 1.5)
 	if _debug:
 		print("CARGO_DEBUG delivery team=%d score=%d-%d key=%d"
@@ -1135,12 +1374,15 @@ func _release_present(index: int) -> void:
 	var present: Dictionary = _presents[index]
 	var key: int = int(present["carrier"])
 	var cart: CartPlayer = _cart_for_key(key)
-	if cart != null:
+	if is_instance_valid(cart):
 		_restore_carry_slow(cart)
+	_reset_carry_fx(index)
 	present["state"] = PRESENT_RESPAWNING
 	present["carrier"] = 0
 	present["respawn"] = PRESENT_RESPAWN
 	present["hold"] = 0.0
+	_hold_owner.erase(index)
+	_hold_state.erase(key)
 	if _multiplayer and _is_host:
 		_broadcast_presents()
 
@@ -1227,29 +1469,163 @@ func _nearest_present(cart: CartPlayer) -> int:
 
 
 func _update_present_visuals(delta: float) -> void:
+	## Presentation only: the host owns every rule, this just draws the state.
 	for index in _presents.size():
 		var present: Dictionary = _presents[index]
 		var node: Dictionary = _present_nodes[index]
 		var root: Node3D = node["root"] as Node3D
 		if root == null:
 			continue
+		var pickup: MeshInstance3D = node.get("pickup") as MeshInstance3D
+		var glow: MeshInstance3D = node.get("glow") as MeshInstance3D
+		var phase: float = float(node.get("phase", 0.0))
 		match int(present["state"]):
 			PRESENT_AVAILABLE:
 				root.visible = true
 				var base: Vector3 = present["position"] as Vector3
 				root.position = base + Vector3.UP * (PRESENT_FLOAT
-					+ sin(_visual_time * 2.1 + float(node.get("phase", 0.0))) * 0.09)
+					+ sin(_visual_time * 2.1 + phase) * 0.09)
 				root.rotate_y(delta * 1.35)
+				if glow != null:
+					glow.visible = false
+				_update_pickup_ring(index, node, pickup, root, phase)
 			PRESENT_CARRIED:
 				root.visible = true
+				if pickup != null:
+					pickup.visible = false
 				var carrier: CartPlayer = _cart_for_key(int(present["carrier"]))
-				if carrier != null:
+				if carrier != null and is_instance_valid(carrier):
 					root.global_transform = carrier.global_transform * CARRY_OFFSET
 				else:
 					root.position = present["position"] as Vector3
+				_update_carry_fx(index, node, glow, carrier, phase)
 			_:
 				root.visible = false
+				if pickup != null:
+					pickup.visible = false
+				_reset_carry_fx(index)
 		_update_present_ring(index, float(present["hold"]))
+
+
+func _update_pickup_ring(index: int, node: Dictionary,
+		pickup: MeshInstance3D, root: Node3D, phase: float) -> void:
+	## A floor decal that always says "load here", brighter the moment the local
+	## kart is close enough to act on it. Its height cancels the crate's float,
+	## so the ring stays glued to the floor instead of bobbing through it.
+	if pickup == null or root == null:
+		return
+	pickup.visible = true
+	var beat: float = 0.5 + 0.5 * sin(_visual_time * 2.4 + phase)
+	var close: bool = _cart != null and is_instance_valid(_cart) \
+		and _present_in_range(_cart, index)
+	pickup.position.y = 0.10 - root.position.y
+	pickup.scale = Vector3(1.0 + beat * 0.06, 0.05, 1.0 + beat * 0.06)
+	var mat: StandardMaterial3D = node.get("pickup_mat") as StandardMaterial3D
+	if mat == null:
+		return
+	var tint: Color = _ring_colour
+	if close:
+		var team: int = _local_team if _local_team >= 0 and _local_team < TEAM_COUNT \
+			else -1
+		tint = TEAM_COLORS[team].lightened(0.25) if team >= 0 else _ring_colour
+	mat.albedo_color = Color(tint.r, tint.g, tint.b,
+		0.86 if close else 0.32 + beat * 0.26)
+
+
+func _update_carry_fx(index: int, node: Dictionary, glow: MeshInstance3D,
+		carrier: CartPlayer, phase: float) -> void:
+	## Carrier read: a ground glow under the loaded kart and a light ribbon on
+	## the floor behind it. Both are additive and cast no shadow.
+	var key: int = int(_presents[index]["carrier"])
+	var colour: Color = _carry_colour(key)
+	var beat: float = 0.5 + 0.5 * sin(_visual_time * 5.2 + phase)
+	if glow != null:
+		glow.visible = _phase != Phase.FINISHED
+		glow.scale = Vector3(1.0 + beat * 0.14, 0.06, 1.0 + beat * 0.14)
+		var mat: StandardMaterial3D = node.get("glow_mat") as StandardMaterial3D
+		if mat != null:
+			mat.albedo_color = Color(colour.r, colour.g, colour.b,
+				0.26 + beat * 0.30)
+	_update_carry_trail(index, node, carrier, colour)
+
+
+func _update_carry_trail(index: int, node: Dictionary, carrier: CartPlayer,
+		colour: Color) -> void:
+	## A fading additive ribbon along the carrier's recent path, rebuilt as a
+	## two-vertex-wide strip so one draw call covers the whole trail.
+	var trail: MeshInstance3D = node.get("trail") as MeshInstance3D
+	var mesh: ImmediateMesh = node.get("trail_mesh") as ImmediateMesh
+	if trail == null or mesh == null or index >= _trail_points.size():
+		return
+	var points: PackedVector3Array = _trail_points[index]
+	if carrier == null or not is_instance_valid(carrier) \
+			or _phase == Phase.FINISHED:
+		trail.visible = false
+		points.clear()
+		_trail_points[index] = points
+		return
+	var here := Vector3(carrier.global_position.x, CARRY_TRAIL_HEIGHT,
+		carrier.global_position.z)
+	if points.is_empty() \
+			or points[points.size() - 1].distance_to(here) >= CARRY_TRAIL_STEP:
+		points.append(here)
+		while points.size() > CARRY_TRAIL_POINTS:
+			points.remove_at(0)
+		_trail_points[index] = points
+	if points.size() < 2:
+		trail.visible = false
+		return
+	trail.visible = true
+	trail.transform = Transform3D.IDENTITY
+	mesh.clear_surfaces()
+	mesh.surface_begin(Mesh.PRIMITIVE_TRIANGLE_STRIP, _trail_material)
+	var count: int = points.size()
+	for i in count:
+		var point: Vector3 = to_local(points[i])
+		var forward: Vector3
+		if i == 0:
+			forward = points[1] - points[0]
+		elif i == count - 1:
+			forward = points[i] - points[i - 1]
+		else:
+			forward = points[i + 1] - points[i - 1]
+		forward.y = 0.0
+		if forward.length_squared() < 0.0001:
+			forward = Vector3.FORWARD
+		var side: Vector3 = forward.normalized().cross(Vector3.UP)
+		var age: float = float(i) / float(count - 1)
+		var half_width: float = 0.22 + 0.34 * age
+		mesh.surface_set_color(Color(colour.r, colour.g, colour.b,
+			age * age * 0.10))
+		mesh.surface_add_vertex(point - side * half_width)
+		mesh.surface_set_color(Color(colour.r, colour.g, colour.b,
+			0.10 + age * age * 0.52))
+		mesh.surface_add_vertex(point + side * half_width)
+	mesh.surface_end()
+
+
+func _reset_carry_fx(index: int) -> void:
+	## Drop the carrier glow and clear the trail for one present slot.
+	if index < 0 or index >= _present_nodes.size():
+		return
+	var node: Dictionary = _present_nodes[index]
+	var glow: MeshInstance3D = node.get("glow") as MeshInstance3D
+	if glow != null:
+		glow.visible = false
+	var trail: MeshInstance3D = node.get("trail") as MeshInstance3D
+	if trail != null:
+		trail.visible = false
+	if index < _trail_points.size():
+		_trail_points[index] = PackedVector3Array()
+
+
+func _carry_colour(key: int) -> Color:
+	## Team colour for a carrier's glow and trail; themed accent when the holder
+	## has no resolvable team.
+	var team: int = _team_for_key(key)
+	if team < 0 or team >= TEAM_COUNT:
+		return CargoTheme.carry_colour(_theme)
+	return TEAM_COLORS[team].lightened(0.18)
 
 
 func _update_present_ring(index: int, progress: float) -> void:
@@ -1398,6 +1774,7 @@ func _spawn_bot(index: int, ghost: bool) -> void:
 		"present": -1,
 		"seek_time": 0.0,
 		"hold_time": 0.0,
+		"blocked_time": 0.0,
 		"carry_time": 0.0,
 		"selftest": _selftest and index == 0,
 	})
@@ -1506,6 +1883,19 @@ func _tick_bot(index: int, entry: Dictionary, cart: CartPlayer,
 					return
 			else:
 				entry["hold_time"] = 0.0
+			if _hold_owner.has(hold_index) \
+					and int(_hold_owner[hold_index]) != key:
+				# Another kart owns this crate. Waiting forever would park the
+				# bot on a present it can never load, so give up and re-pick.
+				entry["blocked_time"] = float(entry.get("blocked_time", 0.0)) \
+					+ delta
+				if float(entry["blocked_time"]) > 2.5:
+					_bot_release(entry, key)
+					entry["state"] = BOT_SEEK
+					entry["blocked_time"] = 0.0
+				_bot_stop(cart)
+				return
+			entry["blocked_time"] = 0.0
 			_bot_stop(cart)
 		BOT_CARRY, BOT_DEPOSIT:
 			var carry_index: int = int(entry.get("present", -1))
@@ -1523,10 +1913,15 @@ func _tick_bot(index: int, entry: Dictionary, cart: CartPlayer,
 				return
 			entry["state"] = BOT_CARRY
 			entry["carry_time"] = float(entry.get("carry_time", 0.0)) + delta
-			if float(entry["carry_time"]) > 40.0:
+			# A carrier that is wedged or flung out of the world drops the crate
+			# and respawns, so one bad tumble cannot hold a present all match.
+			if float(entry["carry_time"]) > 40.0 or ai.stuck > 6.0 \
+					or ai.stranded > 2.0 or not _carrier_alive(cart):
+				_release_present(carry_index)
 				_bot_release(entry, key)
 				entry["state"] = BOT_SEEK
 				entry["carry_time"] = 0.0
+				ai.respawn()
 				return
 			_bot_drive(cart, ai, base, delta, 0.92)
 		_:
@@ -1575,6 +1970,11 @@ func _bot_choose(index: int, entry: Dictionary, cart: CartPlayer) -> void:
 		if int(_presents[present_index]["state"]) != PRESENT_AVAILABLE:
 			continue
 		if _claims.has(present_index) and int(_claims[present_index]) != key:
+			continue
+		if _hold_owner.has(present_index) \
+				and int(_hold_owner[present_index]) != key:
+			# Somebody is already loading it: pick another cell rather than
+			# circling a crate that cannot be claimed.
 			continue
 		var position: Vector3 = _presents[present_index]["position"] as Vector3
 		var to_present: float = _planar_distance(cart.global_position, position)
@@ -1698,6 +2098,8 @@ func _start_race() -> void:
 	_phase = Phase.RACING
 	_remaining = _match_length
 	_overtime = false
+	_overtime_remaining = 0.0
+	_ot_warn_second = 0
 	_hold_sent_index = -1
 	_hold_sent_holding = false
 	_hold_send_timer = 0.0
@@ -1713,10 +2115,21 @@ func _start_race() -> void:
 
 
 func _set_cart_active(active: bool) -> void:
-	if _cart != null and is_instance_valid(_cart):
-		_cart.set_physics_process(active)
-		if not active:
-			_cart.velocity = Vector3.ZERO
+	## An unseated local player (spectator slot, team -1) never gets a drivable
+	## kart, even when the race starts: start_race used to switch physics back
+	## on for a kart that was parked because it had no team.
+	if _cart == null or not is_instance_valid(_cart):
+		return
+	var drivable: bool = active and _team_valid(_local_team)
+	_cart.set_physics_process(drivable)
+	if not drivable:
+		_cart.velocity = Vector3.ZERO
+
+
+func _team_valid(team: int) -> bool:
+	## Every HUD/pad/score lookup goes through this: team -1 is a real state
+	## (unassigned peer or spectator) and must never index a two-team table.
+	return team >= 0 and team < TEAM_COUNT
 
 
 func _physics_process(delta: float) -> void:
@@ -1750,23 +2163,81 @@ func _tick_clock(delta: float) -> void:
 	_remaining = maxf(_remaining - delta, 0.0)
 	if _remaining > 0.0:
 		return
-	if _score[0] == _score[1]:
-		_phase = Phase.OVERTIME
-		_overtime = true
-		_overtime_remaining = _overtime_length
-		_show_toast("OVERTIME  ·  NEXT DELIVERY WINS", 2.6)
-		if _debug:
-			print("CARGO_DEBUG overtime start")
-		if _multiplayer and _is_host:
-			_broadcast_state()
+	if _score[0] == _score[1] and _score[0] < _target:
+		_begin_overtime()
 	else:
 		_finish_match()
+
+
+func _tick_overtime_warning() -> void:
+	## The last ten tied seconds flash the clock and pop once per second, so
+	## sudden death never arrives as a surprise.
+	if _phase != Phase.RACING or _timer_label == null:
+		return
+	if _score[0] != _score[1]:
+		_ot_warn_second = 0
+		return
+	var seconds: int = int(ceil(_remaining))
+	if seconds <= 0 or seconds > OT_WARNING_SECONDS:
+		return
+	if seconds == _ot_warn_second:
+		return
+	_ot_warn_second = seconds
+	_flash_timer()
+	_pop_label(_timer_label)
+	if seconds == OT_WARNING_SECONDS:
+		_show_toast("TIED  ·  OVERTIME IN %d" % seconds, 1.5)
+	elif seconds <= 3:
+		_play_one_shot(COUNTDOWN_BEEP, -10.0, 1.0 + float(3 - seconds) * 0.10)
+
+
+func _begin_overtime() -> void:
+	## Sudden death. The countdown label is reused for the slam, because the
+	## regular countdown has long finished by the time this can fire.
+	_phase = Phase.OVERTIME
+	_overtime = true
+	_overtime_remaining = _overtime_length
+	_ot_warn_second = 0
+	_show_toast("OVERTIME  ·  NEXT DELIVERY WINS", 2.6)
+	if _countdown_label != null:
+		_countdown_label.text = "OVERTIME"
+		_countdown_label.visible = true
+		_pop_label(_countdown_label)
+		var tween := create_tween()
+		tween.tween_interval(1.1)
+		tween.tween_callback(_hide_countdown_label)
+	_play_one_shot(COUNTDOWN_GO, -6.0, 0.86)
+	if _debug:
+		print("CARGO_DEBUG overtime start")
+	if _multiplayer and _is_host:
+		_broadcast_state()
+
+
+func _hide_countdown_label() -> void:
+	## Clear the overtime slam label without touching a live countdown.
+	if _countdown_label != null and _phase != Phase.COUNTDOWN:
+		_countdown_label.visible = false
+		_countdown_label.text = "3"
+
+
+func _flash_timer() -> void:
+	## Red-to-white flash on the clock for the overtime warning beats.
+	if _timer_label == null:
+		return
+	_timer_label.modulate = Color(1.0, 0.52, 0.38)
+	var tween := create_tween()
+	tween.tween_property(_timer_label, "modulate", Color.WHITE, 0.42) \
+		.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
 
 
 func _finish_match() -> void:
 	if _phase == Phase.FINISHED:
 		return
 	_phase = Phase.FINISHED
+	_hold_state.clear()
+	_hold_owner.clear()
+	_hold_sent_index = -1
+	_hold_sent_holding = false
 	if _countdown_label != null:
 		_countdown_label.visible = false
 	_set_cart_active(false)
@@ -1798,6 +2269,13 @@ func _tick_local_input(delta: float) -> void:
 	## InputMap. A client therefore presses E on its own machine and sends the
 	## hold request to the host; the key is never host-only.
 	if _cart == null or not is_instance_valid(_cart):
+		return
+	if not _team_valid(_local_team):
+		# A peer with no team has no pad to deliver to: it cannot load a crate.
+		_local_hold_index = -1
+		_local_holding = false
+		_local_hold_time = 0.0
+		_send_hold_request(-1, false, delta)
 		return
 	var carrying: int = _carried_by(_local_key())
 	if carrying >= 0:
@@ -1835,19 +2313,19 @@ func _local_hold_progress(index: int) -> float:
 
 func _send_hold_request(index: int, holding: bool, delta: float) -> void:
 	## Client-only side of the hold. The request is unreliable and repeated at
-	## 10 Hz while E is down; the host times it out after 500 ms, so a dropped
-	## packet cannot leave a phantom hold running.
+	## 10 Hz while E is down; the cancel is reliable, because a dropped release
+	## used to keep the host accumulating a hold for another 500 ms after the
+	## kart had already driven away.
 	if not _multiplayer or _is_host:
 		return
 	if not holding:
-		# Send the release exactly once; the host times out a dropped release.
 		if not _hold_sent_holding:
 			return
 		_hold_sent_holding = false
 		_hold_sent_index = -1
 		_hold_send_timer = 0.0
 		if Network.is_scene_ready(1):
-			rpc_id(1, "_net_hold_request", -1, false)
+			rpc_id(1, "_net_hold_cancel")
 		return
 	if index != _hold_sent_index:
 		_hold_sent_index = index
@@ -1916,22 +2394,22 @@ func _build_hud() -> void:
 	_hud_root.theme = load(UI_THEME)
 	_canvas.add_child(_hud_root)
 
-	var timer_panel := PanelContainer.new()
-	timer_panel.name = "TimerPlaque"
-	timer_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	timer_panel.anchor_left = 0.5
-	timer_panel.anchor_right = 0.5
-	timer_panel.offset_left = -132.0
-	timer_panel.offset_right = 132.0
-	timer_panel.offset_top = 16.0
-	timer_panel.offset_bottom = 112.0
-	timer_panel.add_theme_stylebox_override("panel",
+	_timer_panel = PanelContainer.new()
+	_timer_panel.name = "TimerPlaque"
+	_timer_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_timer_panel.anchor_left = 0.5
+	_timer_panel.anchor_right = 0.5
+	_timer_panel.offset_left = -150.0
+	_timer_panel.offset_right = 150.0
+	_timer_panel.offset_top = SPACE_MARGIN
+	_timer_panel.offset_bottom = SPACE_MARGIN
+	_timer_panel.add_theme_stylebox_override("panel",
 		_panel_style(Color(0.118, 0.106, 0.227, 0.82)))
-	_hud_root.add_child(timer_panel)
+	_hud_root.add_child(_timer_panel)
 	var timer_column := VBoxContainer.new()
 	timer_column.alignment = BoxContainer.ALIGNMENT_CENTER
-	timer_column.add_theme_constant_override("separation", 0)
-	timer_panel.add_child(timer_column)
+	timer_column.add_theme_constant_override("separation", SPACE_GAP)
+	_timer_panel.add_child(timer_column)
 	var timer_caption := _label("TIME", 13, Color(1, 1, 1, 0.62))
 	timer_caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	timer_column.add_child(timer_caption)
@@ -1943,24 +2421,25 @@ func _build_hud() -> void:
 	_overtime_label.visible = false
 	timer_column.add_child(_overtime_label)
 
-	var score_panel := PanelContainer.new()
-	score_panel.name = "ScorePlaque"
-	score_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	score_panel.offset_left = 24.0
-	score_panel.offset_top = 16.0
-	score_panel.offset_right = 338.0
-	score_panel.offset_bottom = 150.0
-	score_panel.add_theme_stylebox_override("panel",
+	_score_panel = PanelContainer.new()
+	_score_panel.name = "ScorePlaque"
+	_score_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_score_panel.offset_left = SPACE_MARGIN
+	_score_panel.offset_top = SPACE_MARGIN
+	_score_panel.offset_right = SPACE_MARGIN + 320.0
+	_score_panel.offset_bottom = SPACE_MARGIN
+	_score_panel.add_theme_stylebox_override("panel",
 		_panel_style(Color(0.118, 0.106, 0.227, 0.80)))
-	_hud_root.add_child(score_panel)
+	_hud_root.add_child(_score_panel)
 	var score_column := VBoxContainer.new()
-	score_column.add_theme_constant_override("separation", 4)
-	score_panel.add_child(score_column)
-	score_column.add_child(_label("DELIVERED  ·  FIRST TO %d" % _target, 12,
-		Color(1, 1, 1, 0.55)))
+	score_column.add_theme_constant_override("separation", SPACE_GAP)
+	_score_panel.add_child(score_column)
+	_score_header_label = _label("DELIVERED  ·  FIRST TO %d" % _target, 12,
+		Color(1, 1, 1, 0.55))
+	score_column.add_child(_score_header_label)
 	for team in TEAM_COUNT:
 		var row := HBoxContainer.new()
-		row.add_theme_constant_override("separation", 8)
+		row.add_theme_constant_override("separation", SPACE_GAP_SMALL)
 		score_column.add_child(row)
 		var dot := ColorRect.new()
 		dot.color = TEAM_COLORS[team]
@@ -1976,24 +2455,29 @@ func _build_hud() -> void:
 		var value := _label("0", 26, UiPalette.YELLOW, 5)
 		value.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 		row.add_child(value)
+		var target := _label("/ %d" % _target, 12,
+			Color(1, 1, 1, 0.55))
+		target.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		row.add_child(target)
 		_team_name_labels.append(name_label)
 		_score_labels.append(value)
+		_target_labels.append(target)
 
-	var theme_panel := PanelContainer.new()
-	theme_panel.name = "ThemePlaque"
-	theme_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	theme_panel.anchor_left = 1.0
-	theme_panel.anchor_right = 1.0
-	theme_panel.offset_left = -338.0
-	theme_panel.offset_right = -24.0
-	theme_panel.offset_top = 16.0
-	theme_panel.offset_bottom = 162.0
-	theme_panel.add_theme_stylebox_override("panel",
+	_theme_panel = PanelContainer.new()
+	_theme_panel.name = "ThemePlaque"
+	_theme_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_theme_panel.anchor_left = 1.0
+	_theme_panel.anchor_right = 1.0
+	_theme_panel.offset_left = -SPACE_MARGIN - 320.0
+	_theme_panel.offset_right = -SPACE_MARGIN
+	_theme_panel.offset_top = SPACE_MARGIN
+	_theme_panel.offset_bottom = SPACE_MARGIN
+	_theme_panel.add_theme_stylebox_override("panel",
 		_panel_style(Color(0.118, 0.106, 0.227, 0.76)))
-	_hud_root.add_child(theme_panel)
+	_hud_root.add_child(_theme_panel)
 	var theme_column := VBoxContainer.new()
-	theme_column.add_theme_constant_override("separation", 2)
-	theme_panel.add_child(theme_column)
+	theme_column.add_theme_constant_override("separation", SPACE_GAP)
+	_theme_panel.add_child(theme_column)
 	theme_column.add_child(_label("ARENA", 12, Color(1, 1, 1, 0.55)))
 	_theme_name_label = _label(str(_theme.get("name", "DOCKYARD")), 24,
 		UiPalette.CREAM, 5)
@@ -2012,8 +2496,8 @@ func _build_hud() -> void:
 	_countdown_label.anchor_bottom = 0.5
 	_countdown_label.offset_left = -320.0
 	_countdown_label.offset_right = 320.0
-	_countdown_label.offset_top = -170.0
-	_countdown_label.offset_bottom = -20.0
+	_countdown_label.offset_top = -70.0
+	_countdown_label.offset_bottom = 70.0
 	_countdown_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_countdown_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	_hud_root.add_child(_countdown_label)
@@ -2023,8 +2507,8 @@ func _build_hud() -> void:
 	_toast_label.anchor_right = 0.5
 	_toast_label.offset_left = -470.0
 	_toast_label.offset_right = 470.0
-	_toast_label.offset_top = 132.0
-	_toast_label.offset_bottom = 178.0
+	_toast_label.offset_top = SPACE_MARGIN
+	_toast_label.offset_bottom = SPACE_MARGIN + TOAST_HEIGHT
 	_toast_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_toast_label.visible = false
 	_hud_root.add_child(_toast_label)
@@ -2036,24 +2520,88 @@ func _build_hud() -> void:
 	_prompt_label.anchor_bottom = 1.0
 	_prompt_label.offset_left = -430.0
 	_prompt_label.offset_right = 430.0
-	_prompt_label.offset_top = -118.0
-	_prompt_label.offset_bottom = -66.0
+	_prompt_label.offset_top = -SPACE_MARGIN - PROMPT_HEIGHT
+	_prompt_label.offset_bottom = -SPACE_MARGIN
 	_prompt_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_prompt_label.visible = false
 	_hud_root.add_child(_prompt_label)
+	_layout_hud()
 	_refresh_theme_text()
 	_refresh_team_texts()
 	_refresh_score_now()
+
+
+func _layout_hud() -> void:
+	## Measure the plaques after layout and hang the toast under the lowest one,
+	## so the 24/16/8 scale holds and no plaque clips at 1280x720. Sizes come
+	## from the containers themselves: nothing here is an eyeballed height.
+	if _toast_label == null or _timer_panel == null:
+		return
+	var lowest: float = SPACE_MARGIN
+	for panel: PanelContainer in [_timer_panel, _score_panel, _theme_panel]:
+		if panel == null or not is_instance_valid(panel):
+			continue
+		var wanted: float = maxf(panel.get_combined_minimum_size().y, 1.0)
+		if absf(panel.size.y - wanted) > 0.5:
+			panel.size = Vector2(panel.size.x, wanted)
+		lowest = maxf(lowest, panel.position.y + panel.size.y)
+	var top: float = lowest + SPACE_GAP
+	if absf(_toast_label.offset_top - top) > 0.5:
+		_toast_label.offset_top = top
+		_toast_label.offset_bottom = top + TOAST_HEIGHT
+
+
+func _print_hud_rects() -> void:
+	## Measurement, not eyeballing: CART_CARGO_HUD=1 dumps every HUD rect and
+	## the content minimum it has to hold, so the 24/16/8 scale can be proven at
+	## 1280x720 instead of assumed.
+	var view: Vector2 = get_viewport().get_visible_rect().size
+	print("CARGO_HUD viewport=%dx%d margin=%.0f gap=%.0f small=%.0f radius=%d"
+		% [int(view.x), int(view.y), SPACE_MARGIN, SPACE_GAP, SPACE_GAP_SMALL,
+		CORNER_RADIUS])
+	var rows: Array = [
+		["timer", _timer_panel], ["score", _score_panel],
+		["theme", _theme_panel], ["toast", _toast_label],
+		["prompt", _prompt_label], ["countdown", _countdown_label],
+	]
+	for row: Array in rows:
+		var control: Control = row[1] as Control
+		if control == null or not is_instance_valid(control):
+			continue
+		var rect: Rect2 = control.get_global_rect()
+		var minimum: Vector2 = control.get_combined_minimum_size()
+		print("CARGO_HUD %s rect=(%.0f,%.0f %.0fx%.0f) min=(%.0fx%.0f)"
+			% [str(row[0]), rect.position.x, rect.position.y, rect.size.x,
+			rect.size.y, minimum.x, minimum.y])
+	print("CARGO_HUD clips=%s" % str(_hud_clips()))
+
+
+func _hud_clips() -> bool:
+	## True if any HUD control leaves the viewport or is smaller than its own
+	## content minimum. The self-test and the dump both report this.
+	var view: Vector2 = get_viewport().get_visible_rect().size
+	for control: Control in [_timer_panel, _score_panel, _theme_panel,
+			_toast_label, _prompt_label, _countdown_label]:
+		if control == null or not is_instance_valid(control):
+			continue
+		var rect: Rect2 = control.get_global_rect()
+		if rect.position.x < -0.5 or rect.position.y < -0.5 \
+				or rect.end.x > view.x + 0.5 or rect.end.y > view.y + 0.5:
+			return true
+		var minimum: Vector2 = control.get_combined_minimum_size()
+		if minimum.x > rect.size.x + 0.5 or minimum.y > rect.size.y + 0.5:
+			return true
+	return false
 
 
 func _panel_style(bg: Color) -> StyleBoxFlat:
 	var style := StyleBoxFlat.new()
 	style.bg_color = bg
 	style.set_corner_radius_all(CORNER_RADIUS)
-	style.content_margin_left = 16.0
-	style.content_margin_right = 16.0
-	style.content_margin_top = 10.0
-	style.content_margin_bottom = 12.0
+	style.content_margin_left = SPACE_MARGIN
+	style.content_margin_right = SPACE_MARGIN
+	style.content_margin_top = SPACE_MARGIN
+	style.content_margin_bottom = SPACE_MARGIN
 	style.anti_aliasing = true
 	return style
 
@@ -2095,10 +2643,19 @@ func _refresh_team_texts() -> void:
 
 
 func _refresh_score_now() -> void:
+	## Both teams are always on the board, each with its progress to the target
+	## so a glance answers "who is winning and how close is it".
+	if _score_header_label != null:
+		_score_header_label.text = "DELIVERED  ·  FIRST TO %d" % _target
+	var leader: int = _leader()
 	for team in TEAM_COUNT:
 		var value: int = _score[team]
 		if team < _score_labels.size():
 			_score_labels[team].text = str(value)
+			_score_labels[team].add_theme_color_override("font_color",
+				UiPalette.YELLOW if team == leader else UiPalette.CREAM)
+		if team < _target_labels.size():
+			_target_labels[team].text = "/ %d" % _target
 		var text: String = "%d / %d" % [value, _target]
 		for offset in 2:
 			var index: int = team * 2 + offset
@@ -2109,9 +2666,21 @@ func _refresh_score_now() -> void:
 				face.text = text
 
 
+func _leader() -> int:
+	## The team currently ahead, or -1 when the relay is level.
+	if _score[0] == _score[1]:
+		return -1
+	return 0 if _score[0] > _score[1] else 1
+
+
 func _process(delta: float) -> void:
+	if _hud_dump_frames > 0:
+		_hud_dump_frames -= 1
+		if _hud_dump_frames == 0:
+			_print_hud_rects()
 	_visual_time += delta
 	_update_present_visuals(delta)
+	_tick_ambient()
 	if _toast_timer > 0.0:
 		_toast_timer = maxf(_toast_timer - delta, 0.0)
 		if _toast_timer <= 0.0 and _toast_label != null:
@@ -2136,6 +2705,8 @@ func _refresh_hud() -> void:
 		_last_score_text = scores
 		_refresh_score_now()
 	_refresh_prompt()
+	_layout_hud()
+	_tick_overtime_warning()
 
 
 func _refresh_prompt() -> void:
@@ -2144,7 +2715,10 @@ func _refresh_prompt() -> void:
 	var text: String = ""
 	if _phase == Phase.RACING or _phase == Phase.OVERTIME:
 		var carrying: int = _carried_by(_local_key())
-		if carrying >= 0 and _cart != null and is_instance_valid(_cart):
+		if not _team_valid(_local_team):
+			# No team means no pad to drive to: never index _pads[-1].
+			text = ""
+		elif carrying >= 0 and _cart != null and is_instance_valid(_cart):
 			var team: int = _local_team
 			var gap: float = _planar_distance(_cart.global_position, _pads[team])
 			text = "DRIVE IT HOME  ·  %s  %d m" % [_team_names[team], int(gap)]
@@ -2190,6 +2764,8 @@ func _pop_label(label: Label) -> void:
 
 
 func _flash_pad(team: int) -> void:
+	if not _team_valid(team):
+		return
 	if team < _pad_visuals.size() and is_instance_valid(_pad_visuals[team]):
 		var pad: MeshInstance3D = _pad_visuals[team]
 		pad.scale = Vector3(1.0, 1.0, 1.06)
@@ -2267,23 +2843,23 @@ func _build_result_card() -> void:
 	center.add_child(panel)
 
 	var pad := MarginContainer.new()
-	pad.add_theme_constant_override("margin_left", 26)
-	pad.add_theme_constant_override("margin_right", 26)
-	pad.add_theme_constant_override("margin_top", 22)
-	pad.add_theme_constant_override("margin_bottom", 22)
+	pad.add_theme_constant_override("margin_left", int(SPACE_MARGIN))
+	pad.add_theme_constant_override("margin_right", int(SPACE_MARGIN))
+	pad.add_theme_constant_override("margin_top", int(SPACE_MARGIN))
+	pad.add_theme_constant_override("margin_bottom", int(SPACE_MARGIN))
 	panel.add_child(pad)
 	var body := VBoxContainer.new()
-	body.add_theme_constant_override("separation", 14)
+	body.add_theme_constant_override("separation", int(SPACE_GAP))
 	pad.add_child(body)
 
 	var banner := PanelContainer.new()
 	var banner_style := StyleBoxFlat.new()
 	banner_style.bg_color = UiPalette.YELLOW
 	banner_style.set_corner_radius_all(CORNER_RADIUS)
-	banner_style.content_margin_left = 18.0
-	banner_style.content_margin_right = 18.0
-	banner_style.content_margin_top = 2.0
-	banner_style.content_margin_bottom = 4.0
+	banner_style.content_margin_left = SPACE_MARGIN
+	banner_style.content_margin_right = SPACE_MARGIN
+	banner_style.content_margin_top = SPACE_GAP_SMALL
+	banner_style.content_margin_bottom = SPACE_GAP_SMALL
 	banner.add_theme_stylebox_override("panel", banner_style)
 	body.add_child(banner)
 	_result_title = _label("VICTORY!", 34, UiPalette.INK)
@@ -2298,7 +2874,7 @@ func _build_result_card() -> void:
 
 	var scores := HBoxContainer.new()
 	scores.alignment = BoxContainer.ALIGNMENT_CENTER
-	scores.add_theme_constant_override("separation", 56)
+	scores.add_theme_constant_override("separation", int(SPACE_GAP * 2.0))
 	body.add_child(scores)
 	for team in TEAM_COUNT:
 		var column := VBoxContainer.new()
@@ -2376,14 +2952,50 @@ func _show_result() -> void:
 func _play_one_shot(stream: AudioStream, volume_db: float, pitch: float) -> void:
 	if stream == null:
 		return
+	var player: AudioStreamPlayer = _spawn_audio(stream, volume_db, pitch)
+	if player == null:
+		return
+	player.play()
+	player.finished.connect(player.queue_free)
+
+
+func _spawn_audio(stream: AudioStream, volume_db: float,
+		pitch: float) -> AudioStreamPlayer:
+	## One throwaway player for a one-shot; the caller owns its lifetime.
+	if stream == null:
+		return null
 	var player := AudioStreamPlayer.new()
 	player.stream = stream
 	player.bus = "SFX"
 	player.volume_db = volume_db
 	player.pitch_scale = pitch
 	add_child(player)
-	player.play()
-	player.finished.connect(player.queue_free)
+	return player
+
+
+func _play_deposit_fanfare() -> void:
+	## A short rising three-note flourish on a deposit. Notes after the first
+	## are scheduled on a tween, so the whole fanfare is three one-shots and no
+	## extra node has to stay alive per deposit.
+	var notes: Array[AudioStreamPlayer] = []
+	for index in DEPOSIT_FANFARE.size():
+		var note: AudioStreamPlayer = _spawn_audio(DELIVERY_SFX, -6.0,
+			float(DEPOSIT_FANFARE[index]))
+		if note == null:
+			continue
+		notes.append(note)
+	if notes.is_empty():
+		return
+	notes[0].play()
+	notes[0].finished.connect(notes[0].queue_free)
+	for index in range(1, notes.size()):
+		var note: AudioStreamPlayer = notes[index]
+		var delay: float = DEPOSIT_FANFARE_GAP * float(index)
+		var tween := create_tween()
+		tween.tween_interval(delay)
+		tween.tween_callback(note.play)
+		tween.tween_interval(1.4)
+		tween.tween_callback(note.queue_free)
 
 
 # --------------------------------------------------------------------------
@@ -2425,6 +3037,8 @@ func _on_peer_disconnected(peer_id: int) -> void:
 	_name_labels.erase(peer_id)
 	_client_holds.erase(peer_id)
 	_hold_state.erase(peer_id)
+	_release_hold_owner(peer_id)
+	_cart_relay_ms.erase(peer_id)
 	for index in _presents.size():
 		if int(_presents[index]["carrier"]) == peer_id:
 			_release_present(index)
@@ -2589,6 +3203,11 @@ func _net_hold_request(present_index: int, holding: bool) -> void:
 	var sender: int = _rpc_sender()
 	if sender <= 1 or sender == multiplayer.get_unique_id():
 		return
+	if not holding:
+		_client_holds.erase(sender)
+		_hold_state.erase(sender)
+		_release_hold_owner(sender)
+		return
 	_client_holds[sender] = {
 		"index": present_index,
 		"holding": holding,
@@ -2597,6 +3216,27 @@ func _net_hold_request(present_index: int, holding: bool) -> void:
 	if _debug:
 		print("CARGO_DEBUG client_hold peer=%d present=%d holding=%s"
 			% [sender, present_index, str(holding)])
+
+
+@rpc("any_peer", "reliable")
+func _net_hold_cancel() -> void:
+	## Reliable counterpart to the 10 Hz unreliable hold request: cancelling
+	## must never be lost, or a client that drove away would keep charging.
+	if not _is_host:
+		return
+	var sender: int = _rpc_sender()
+	if sender <= 1 or sender == multiplayer.get_unique_id():
+		return
+	_client_holds.erase(sender)
+	_hold_state.erase(sender)
+	_release_hold_owner(sender)
+
+
+func _release_hold_owner(key: int) -> void:
+	## Drop every claimed present held by one kart (cancel, disconnect, respawn).
+	for index: int in _hold_owner.keys():
+		if int(_hold_owner[index]) == key:
+			_hold_owner.erase(index)
 
 
 @rpc("any_peer", "reliable")
@@ -2665,13 +3305,17 @@ func _net_cargo_state(remaining: float, score_a: int, score_b: int,
 		return
 	if not is_finite(remaining) or remaining < 0.0 or remaining > 1000.0:
 		return
+	var incoming: int = clampi(phase, 0, 3)
+	# A late unreliable packet must never drag this peer backwards: regressing
+	# OVERTIME to RACING would flash the wrong clock and lose sudden death.
+	if incoming < int(_phase) and incoming != int(Phase.COUNTDOWN):
+		return
 	_score[0] = clampi(score_a, 0, 99)
 	_score[1] = clampi(score_b, 0, 99)
 	_remaining = remaining
 	_overtime = overtime
 	if _overtime:
 		_overtime_remaining = remaining
-	var incoming: int = clampi(phase, 0, 3)
 	if incoming != int(Phase.COUNTDOWN) and _phase == Phase.COUNTDOWN:
 		_start_race()
 	match incoming:
@@ -2701,7 +3345,7 @@ func _net_cargo_delivery(team: int, score_a: int, score_b: int,
 	_score[0] = clampi(score_a, 0, 99)
 	_score[1] = clampi(score_b, 0, 99)
 	_show_toast("%s SCORES!" % _team_names[team], 1.5)
-	_play_one_shot(DELIVERY_SFX, -5.0, 1.06)
+	_play_deposit_fanfare()
 	_flash_pad(team)
 	_refresh_score_now()
 	if key == _local_key():
@@ -2928,6 +3572,7 @@ func _run_self_test() -> void:
 	print("CARGO_SELFTEST step=stats theme=%s objects=%d draw_calls=%d hazards=%d"
 		% [_theme_id, int(_stats.get("objects", 0)),
 		int(_stats.get("draw_calls", 0)), _hazards.size()])
+	print("CARGO_SELFTEST step=hud clips=%s" % str(_hud_clips()))
 	print("CARGO_SELFTEST step=pass collected=%d deliveries=%d sim=%.1fs"
 		% [_selftest_collected, _selftest_deliveries, seconds])
 	get_tree().quit()

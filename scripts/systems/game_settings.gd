@@ -6,6 +6,14 @@ signal changed
 signal session_changed
 
 const SETTINGS_PATH: String = "user://settings.cfg"
+## A damaged save is copied here before the defaults are written back. The player
+## keeps a recoverable copy of the old file instead of losing it to the next
+## save, and support can inspect what was actually on disk.
+const CORRUPT_BACKUP_PATH: String = "user://settings.corrupt.cfg"
+## A save is a synchronous file write and a slider drag fires value_changed
+## dozens of times per second, so continuous changes are coalesced into one
+## write. Discrete choices still save immediately.
+const SAVE_DEBOUNCE_SECONDS: float = 0.4
 const SFX_BUS: String = "SFX"
 const MUSIC_BUS: String = "Music"
 ## Saved-schema marker. A save without it was written before versioning and
@@ -135,6 +143,9 @@ var _quality_warmup: float = 5.0
 ## Last legacy minigame id seen at load/save. A direct write from the old map
 ## picker is detected by comparing against it.
 var _legacy_minigame_seen: String = ""
+## Coalesced-save state. _save_pending means "the file on disk is stale".
+var _save_pending: bool = false
+var _save_countdown: float = 0.0
 
 
 func _ready() -> void:
@@ -154,7 +165,22 @@ func _ready() -> void:
 	call_deferred("apply_quality")
 
 
+func _notification(what: int) -> void:
+	## A slider dragged and then followed by ALT+F4, a browser tab pause or an
+	## editor stop must still reach disk, so flush the coalesced save here too.
+	match what:
+		NOTIFICATION_WM_CLOSE_REQUEST, NOTIFICATION_APPLICATION_PAUSED, NOTIFICATION_PREDELETE:
+			flush_settings()
+
+
+func _exit_tree() -> void:
+	flush_settings()
+
+
 func _process(delta: float) -> void:
+	## A pending coalesced save is flushed even when the dynamic-resolution
+	## governor is switched off, so the early return must come after it.
+	_tick_save(delta)
 	## A small dynamic-resolution governor. It only lowers the 3D render scale
 	## (UI stays native) and never exceeds the selected preset. It backs off
 	## slowly so the image does not breathe between frames.
@@ -279,25 +305,25 @@ func set_quality_preset(value: int) -> void:
 func set_master_volume(value: float) -> void:
 	master_volume = clampf(value, 0.0, 1.0)
 	_apply_bus("Master", master_volume)
-	save_settings()
+	_queue_save()
 
 
 func set_sfx_volume(value: float) -> void:
 	sfx_volume = clampf(value, 0.0, 1.0)
 	_apply_bus(SFX_BUS, sfx_volume)
-	save_settings()
+	_queue_save()
 
 
 func set_music_volume(value: float) -> void:
 	music_volume = clampf(value, 0.0, 1.0)
 	_apply_bus(MUSIC_BUS, music_volume)
-	save_settings()
+	_queue_save()
 	changed.emit()
 
 
 func set_camera_shake(value: float) -> void:
 	camera_shake = clampf(value, 0.0, 1.5)
-	save_settings()
+	_queue_save()
 	changed.emit()
 
 
@@ -309,13 +335,13 @@ func set_reduce_motion(value: bool) -> void:
 
 func set_hud_scale(value: float) -> void:
 	hud_scale = clampf(value, 0.75, 1.5)
-	save_settings()
+	_queue_save()
 	changed.emit()
 
 
 func set_stick_deadzone(value: float) -> void:
 	stick_deadzone = clampf(value, 0.0, 0.4)
-	save_settings()
+	_queue_save()
 	apply_input_settings()
 
 
@@ -362,6 +388,7 @@ func set_fullscreen(value: bool) -> void:
 	fullscreen = value
 	apply_fullscreen()
 	save_settings()
+	changed.emit()
 
 
 func set_custom_cursor(value: bool) -> void:
@@ -658,11 +685,16 @@ static func _cfg_num(config: ConfigFile, section: String, key: String,
 
 static func _cfg_int(config: ConfigFile, section: String, key: String,
 		fallback: int, low: int, high: int) -> int:
+	## Same contract as _cfg_num(), for integer ranges. A NaN/Inf float is
+	## rejected before int() rather than relying on an undefined cast.
 	var value: Variant = config.get_value(section, key, fallback)
 	var kind: int = typeof(value)
 	if kind != TYPE_FLOAT and kind != TYPE_INT:
 		return clampi(fallback, low, high)
-	return clampi(int(value), low, high)
+	var number: float = float(value)
+	if not is_finite(number):
+		return clampi(fallback, low, high)
+	return clampi(int(number), low, high)
 
 
 static func _cfg_bool(config: ConfigFile, section: String, key: String,
@@ -701,7 +733,17 @@ func load_settings() -> void:
 	## Defensive by design: a truncated, hand-edited or older settings.cfg must
 	## never crash boot or put an out-of-range value into the live settings.
 	var config := ConfigFile.new()
-	if config.load(SETTINGS_PATH) != OK:
+	var error: Error = config.load(SETTINGS_PATH)
+	if error == ERR_FILE_NOT_FOUND or error == ERR_FILE_CANT_OPEN:
+		# First run (or an unreadable user:// that no retry can fix) starts on
+		# the exported defaults; there is nothing to recover or migrate.
+		return
+	if error != OK:
+		# A truncated/hand-edited file used to fall through as "all defaults"
+		# and then be overwritten by the next save, silently destroying whatever
+		# the player had. Keep a copy, then write a clean default save so the
+		# next boot is valid.
+		_recover_corrupt_settings(error)
 		return
 	master_volume = _cfg_num(config, "audio", "master", master_volume, 0.0, 1.0)
 	music_volume = _cfg_num(config, "audio", "music", music_volume, 0.0, 1.0)
@@ -709,6 +751,10 @@ func load_settings() -> void:
 	fullscreen = _cfg_bool(config, "video", "fullscreen", fullscreen)
 	quality_preset = _cfg_int(config, "video", "quality", quality_preset, 0, 2)
 	dynamic_resolution = _cfg_bool(config, "video", "dynamic_resolution", dynamic_resolution)
+	if quality_preset == QUALITY_QUALITY:
+		# The governor and the top preset are one switch (see
+		# set_quality_preset); a hand-edited save must not leave them at odds.
+		dynamic_resolution = false
 	camera_shake = _cfg_num(config, "video", "camera_shake", camera_shake, 0.0, 1.5)
 	hud_scale = _cfg_num(config, "video", "hud_scale", hud_scale, 0.75, 1.5)
 	reduce_motion = _cfg_bool(config, "video", "reduce_motion", reduce_motion)
@@ -741,8 +787,9 @@ func load_settings() -> void:
 	if _valid_hex6(tag):
 		player_tag_color = tag
 	play_mode = _cfg_int(config, "session", "play_mode", play_mode, MODE_SINGLE, MODE_MULTIPLAYER)
-	if play_mode != MODE_SINGLE and play_mode != MODE_MULTIPLAYER:
-		play_mode = MODE_SINGLE
+	# _cfg_int() already clamps to MODE_SINGLE..MODE_MULTIPLAYER, so the old
+	# follow-up "if play_mode is neither" guard could never run. Removed as
+	# dead logic rather than kept as false reassurance.
 	multiplayer_mode = _cfg_str(config, "session", "multiplayer_mode", multiplayer_mode)
 	if multiplayer_mode != GAME_MINIGAMES and multiplayer_mode != GAME_SANDBOX:
 		multiplayer_mode = GAME_SANDBOX
@@ -751,8 +798,19 @@ func load_settings() -> void:
 		connection_preference = CONN_PI
 	if connection_preference != CONN_LAN and connection_preference != CONN_PI:
 		connection_preference = CONN_PI
+	# A relay address is a host name plus an optional path, never free text:
+	# strip it and cap it so a hand-edited save cannot smuggle a huge string
+	# into every save and every room advertisement.
 	relay_server = _cfg_str(config, "session", "relay_server", relay_server).strip_edges()
-	selected_minigame = _cfg_str(config, "session", "selected_minigame", selected_minigame)
+	if relay_server.length() > 255:
+		relay_server = relay_server.substr(0, 255)
+	# The legacy id is a registry key, not free text. An empty or oversized
+	# value falls back to the shipped default instead of becoming the cargo
+	# theme id that every later save would then persist.
+	var saved_minigame: String = _cfg_str(config, "session", "selected_minigame",
+		selected_minigame).strip_edges()
+	selected_minigame = saved_minigame if (saved_minigame != "" and saved_minigame.length() <= 64) \
+		else "meadow_loop"
 	_legacy_minigame_seen = selected_minigame
 	# Map ids come from the registry. Older saves only have the legacy key;
 	# accept it only when it names a race map, never a cargo arena theme.
@@ -811,6 +869,9 @@ func _absorb_legacy_map_choice() -> void:
 
 
 func save_settings() -> void:
+	# A full save supersedes any coalesced one that was waiting.
+	_save_pending = false
+	_save_countdown = 0.0
 	_absorb_legacy_map_choice()
 	var config := ConfigFile.new()
 	config.set_value("audio", "master", master_volume)
@@ -854,3 +915,98 @@ func save_settings() -> void:
 	if error != OK:
 		# A read-only user:// (or a full disk) must not look like success.
 		push_warning("GameSettings: could not write settings.cfg (%d)" % error)
+
+
+func _recover_corrupt_settings(error: Error) -> void:
+	## A damaged save must not be overwritten silently. Keep the unreadable file
+	## for recovery, then write a valid default save so the next boot is clean.
+	push_warning("GameSettings: settings.cfg is unreadable (%d); keeping a copy and writing defaults" % error)
+	var backup_error: Error = DirAccess.copy_absolute(SETTINGS_PATH, CORRUPT_BACKUP_PATH)
+	if backup_error != OK:
+		push_warning("GameSettings: could not keep %s (%d)" % [CORRUPT_BACKUP_PATH, backup_error])
+	save_settings()
+
+
+# --------------------------------------------------------------------------
+# coalesced saving
+
+
+func _queue_save() -> void:
+	## Slider-driven settings fire value_changed dozens of times per second and
+	## every save is a synchronous ConfigFile write. Mark the file dirty and let
+	## _tick_save() write it once, instead of one write per input event.
+	_save_pending = true
+	_save_countdown = SAVE_DEBOUNCE_SECONDS
+
+
+func _tick_save(delta: float) -> void:
+	if not _save_pending:
+		return
+	_save_countdown = maxf(_save_countdown - delta, 0.0)
+	if _save_countdown <= 0.0:
+		flush_settings()
+
+
+func flush_settings() -> void:
+	## Writes a pending coalesced save right now. Called from _process(), the
+	## close/pause notifications and _exit_tree(), so a slider change is never
+	## lost when the game closes inside the debounce window.
+	if not _save_pending:
+		return
+	save_settings()
+
+
+func has_pending_save() -> bool:
+	## True while a coalesced write is still waiting. Lets a test or a settings
+	## screen prove the debounce never drops the last change.
+	return _save_pending
+
+
+# --------------------------------------------------------------------------
+# readable summary
+
+
+func settings_summary_lines() -> PackedStringArray:
+	## Readable snapshot for a settings/about card. Every value is the already
+	## clamped value the game applies, so the summary can never disagree with
+	## the audio, input or HUD layer.
+	var lines: PackedStringArray = PackedStringArray()
+	lines.append("AUDIO    master %d%%  music %d%%  sfx %d%%"
+		% [_percent(master_volume), _percent(music_volume), _percent(sfx_volume)])
+	lines.append("VIDEO    %s  %s  HUD %d%%  shake x%.2f"
+		% [quality_name(), "dynamic" if dynamic_resolution else "fixed",
+			_percent(hud_scale), clampf(camera_shake, 0.0, 1.5)])
+	lines.append("COMFORT  reduce motion %s  FPS %s"
+		% [_on_off(reduce_motion), _on_off(show_fps)])
+	lines.append("CONTROLS deadzone %d%%  boost %s  drift %s"
+		% [_percent(stick_deadzone), _hold_or_toggle(boost_toggle),
+			_hold_or_toggle(drift_toggle)])
+	lines.append("PLAY     %s  bots %d  %s  %s"
+		% ["multiplayer" if play_mode == MODE_MULTIPLAYER else "single",
+			effective_bot_count(), ai_difficulty_name(), _vehicle_label()])
+	return lines
+
+
+func settings_summary() -> String:
+	## One string the UI can drop straight into an autowrapped label.
+	return "\n".join(settings_summary_lines())
+
+
+func _vehicle_label() -> String:
+	## Catalog display name, or the bare id when the catalog has no entry, so an
+	## old save can never render an empty field.
+	var entry: Dictionary = VehicleCatalog.find(_sandbox_vehicle)
+	var label: String = str(entry.get("name", "")).strip_edges()
+	return label if label != "" else _sandbox_vehicle
+
+
+static func _percent(ratio: float) -> int:
+	return roundi(clampf(ratio, 0.0, 1.0) * 100.0)
+
+
+static func _on_off(value: bool) -> String:
+	return "ON" if value else "OFF"
+
+
+static func _hold_or_toggle(value: bool) -> String:
+	return "hold" if value else "toggle"

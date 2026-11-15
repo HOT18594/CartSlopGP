@@ -39,12 +39,12 @@ grow_horizontal = 2
 grow_vertical = 2
 
 [node name="Panel" type="PanelContainer" parent="Root/Center"]
-custom_minimum_size = Vector2(560, 0)
+custom_minimum_size = Vector2(460, 0)
 layout_mode = 2
 
 [node name="Body" type="VBoxContainer" parent="Root/Center/Panel"]
 layout_mode = 2
-theme_override_constants/separation = 20
+theme_override_constants/separation = 16
 
 [node name="Title" type="Label" parent="Root/Center/Panel/Body"]
 layout_mode = 2
@@ -54,15 +54,13 @@ theme_override_font_sizes/font_size = 40
 text = "PAUSED"
 horizontal_alignment = 1
 
-[node name="ActionGrid" type="GridContainer" parent="Root/Center/Panel/Body"]
+[node name="ActionList" type="VBoxContainer" parent="Root/Center/Panel/Body"]
 layout_mode = 2
-theme_override_constants/h_separation = 12
-theme_override_constants/v_separation = 12
-columns = 3
+theme_override_constants/separation = 16
 
-[node name="ResumeButton" type="Button" parent="Root/Center/Panel/Body/ActionGrid"]
+[node name="ResumeButton" type="Button" parent="Root/Center/Panel/Body/ActionList"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(0, 96)
+custom_minimum_size = Vector2(0, 56)
 layout_mode = 2
 size_flags_horizontal = 3
 theme_override_font_sizes/font_size = 18
@@ -70,9 +68,9 @@ text = "RESUME"
 script = ExtResource("4")
 fill_color = Color(1, 0.823529, 0.180392, 1)
 
-[node name="PauseSettingsButton" type="Button" parent="Root/Center/Panel/Body/ActionGrid"]
+[node name="PauseSettingsButton" type="Button" parent="Root/Center/Panel/Body/ActionList"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(0, 96)
+custom_minimum_size = Vector2(0, 56)
 layout_mode = 2
 size_flags_horizontal = 3
 theme_override_font_sizes/font_size = 18
@@ -80,9 +78,9 @@ text = "SETTINGS"
 script = ExtResource("4")
 fill_color = Color(0.270588, 0.713726, 0.941176, 1)
 
-[node name="QuitToMenuButton" type="Button" parent="Root/Center/Panel/Body/ActionGrid"]
+[node name="QuitToMenuButton" type="Button" parent="Root/Center/Panel/Body/ActionList"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(0, 96)
+custom_minimum_size = Vector2(0, 56)
 layout_mode = 2
 size_flags_horizontal = 3
 theme_override_font_sizes/font_size = 18

@@ -252,10 +252,17 @@ class SurfaceBuf:
 	## Adds a flat annulus at height `y`.
 	func ring(centre: Vector2, r_in: float, r_out: float, segments: int,
 			y: float, color: Color) -> void:
-		var count: int = maxi(segments, 8)
+		arc(centre, r_in, r_out, 0.0, TAU, segments, y, color)
+
+	## Adds a flat annular arc from `from_angle` to `to_angle`, in radians.
+	func arc(centre: Vector2, r_in: float, r_out: float, from_angle: float,
+			to_angle: float, segments: int, y: float, color: Color) -> void:
+		var count: int = maxi(segments, 2)
 		for i in count:
-			var a0: float = TAU * float(i) / float(count)
-			var a1: float = TAU * float(i + 1) / float(count)
+			var a0: float = lerpf(from_angle, to_angle,
+				float(i) / float(count))
+			var a1: float = lerpf(from_angle, to_angle,
+				float(i + 1) / float(count))
 			var c0: float = cos(a0)
 			var s0: float = sin(a0)
 			var c1: float = cos(a1)
@@ -425,6 +432,8 @@ var _loop_barriers: Node3D
 var _vertex_mat: StandardMaterial3D
 var _prop_material: PhysicsMaterial
 var _grip_before: Dictionary = {}
+var _dirt_rects: Array[Rect2] = []
+var _flat_materials: Dictionary = {}
 
 
 func _ready() -> void:
@@ -439,6 +448,7 @@ func _ready() -> void:
 	_handling_loop()
 	_jump_lane()
 	_dressing()
+	_zone_signs()
 	_pushable_props()
 	_grip_zone()
 	_commit_layers()
@@ -576,6 +586,25 @@ func _zone_paint() -> void:
 		0.2, ROAD_TOP + 0.008, PAINT_ORANGE)
 	_paint.line(Vector2(JUMP_X - 5.7, 45.6), Vector2(JUMP_X + 5.7, 45.6),
 		0.2, ROAD_TOP + 0.008, PAINT_ORANGE)
+	_skid_marks()
+
+
+## Rubber laid down on the skidpad: three long diagonal scrubs plus two rings
+## of scrubbed arcs, all painted above the white circle so the pad reads as used.
+func _skid_marks() -> void:
+	var y: float = PAINT_Y + 0.004
+	var rubber: Color = Color("2a2f45")
+	for i in 3:
+		var angle: float = PI * 0.25 + TAU * float(i) / 3.0
+		var direction := Vector2(cos(angle), sin(angle))
+		_paint.line(SKID_CENTRE + direction * 2.6,
+			SKID_CENTRE + direction * (SKID_RADIUS - 1.2), 0.34, y, rubber)
+	for i in 6:
+		var start: float = TAU * float(i) / 6.0 + 0.22
+		var span: float = 0.55 + 0.18 * float(i % 3)
+		var radius: float = 4.5 + float(i % 2) * 1.6
+		_paint.arc(SKID_CENTRE, radius, radius + 0.55, start, start + span,
+			10, y, rubber)
 
 
 ## Painted border of one start-grid slot.
@@ -857,8 +886,46 @@ func _handling_loop() -> void:
 	for model: String in batches:
 		_batch_road("LoopRoad", model, batches[model] as Array)
 	_loop_start_band()
+	_loop_markings()
 	_loop_barrier()
 	_loop_dressing()
+
+
+## Painted circuit markings: a dashed centreline all the way round, skipped
+## across the start band, and a pink apex dot in each of the four corner cells.
+func _loop_markings() -> void:
+	if _loop_spline == null:
+		return
+	var y: float = ROAD_TOP + 0.010
+	var total: float = _loop_spline.total_length
+	var start: float = _nearest_distance(_loop_spline, _gate_point())
+	var step: float = 6.0
+	var dash: float = 2.4
+	var travelled: float = dash * 0.5
+	while travelled + dash < total:
+		var from: float = fposmod(travelled, total)
+		var to: float = fposmod(travelled + dash, total)
+		# Leave the chequered start band clear instead of painting under it.
+		var offset: float = fposmod(from - start + total * 0.5, total) \
+			- total * 0.5
+		if absf(offset) > 2.0:
+			var a: Vector3 = _loop_spline.sample(from)["position"] as Vector3
+			var b: Vector3 = _loop_spline.sample(to)["position"] as Vector3
+			_paint.line(Vector2(a.x, a.z), Vector2(b.x, b.z), 0.22, y,
+				PAINT_CREAM)
+		travelled += step
+	for i in LOOP_RING.size():
+		var cell: Vector2i = LOOP_RING[i]
+		var prev: Vector2i = LOOP_RING[(i - 1 + LOOP_RING.size())
+			% LOOP_RING.size()]
+		var next: Vector2i = LOOP_RING[(i + 1) % LOOP_RING.size()]
+		var din := Vector2i(cell.x - prev.x, cell.y - prev.y)
+		var dout := Vector2i(next.x - cell.x, next.y - cell.y)
+		if din == dout:
+			continue
+		var centre: Vector3 = _loop_cell_centre(cell)
+		_paint.disc(Vector2(centre.x, centre.z), 1.2, 16, y + 0.002,
+			PAINT_PINK)
 
 
 ## World centre of one local loop cell.
@@ -1260,6 +1327,126 @@ func _wall_label(text: String, at: Vector3, yaw: float, font_size: int,
 
 
 # --------------------------------------------------------------------------
+# zone signage and hints
+
+
+## The five zones: entrance sign pose plus the line the HUD toast shows the
+## first time a kart reaches that zone. `at` is plan (x, z); `yaw` turns the
+## sign face toward the approach, since a Label3D lies in XY and faces +Z.
+const ZONES: Array[Dictionary] = [
+	{"id": "PADDOCK", "at": Vector2(12.5, -13.0), "yaw": PI,
+		"hint": "Six grid slots and four open bay garages. The pit gate is south."},
+	{"id": "HANDLING LOOP", "at": Vector2(12.5, -30.0), "yaw": 0.0,
+		"hint": "178 m oval. The pit gate is the only way in or out."},
+	{"id": "SKIDPAD", "at": Vector2(36.0, 28.0), "yaw": -PI * 0.5,
+		"hint": "Low-grip circle. Hold a drift to paint the pad."},
+	{"id": "JUMP LANE", "at": Vector2(-46.0, 52.0), "yaw": 0.0,
+		"hint": "Two kickers on one line. Line up square and hold it."},
+	{"id": "OFF-ROAD", "at": Vector2(13.5, 33.0), "yaw": PI,
+		"hint": "Dirt slalom. Grip drops here, so brake before the cones."},
+]
+## Sign furniture. Detail only: the post and panel carry no collider, so a
+## marker can stand at the tight jump-lane edge (10 m from that centreline)
+## without ever reaching tarmac or tripping the clearance audit.
+const SIGN_PANEL: Vector3 = Vector3(3.2, 1.15, 0.18)
+const SIGN_PLATE: Vector3 = Vector3(2.98, 0.92, 0.08)
+const SIGN_POST_HEIGHT: float = 3.2
+const SIGN_POST_COLOR: Color = Color("8a8578")
+
+
+## One sign per zone entrance, all five sharing the same build.
+func _zone_signs() -> void:
+	for zone: Dictionary in ZONES:
+		_zone_sign(str(zone["id"]), zone["at"] as Vector2,
+			float(zone["yaw"]))
+
+
+## Post, dark backer, cream plate and the zone name, all facing `yaw`.
+func _zone_sign(zone: String, at: Vector2, yaw: float) -> void:
+	var root := Node3D.new()
+	root.name = "ZoneSign_" + zone.replace(" ", "")
+	root.position = Vector3(at.x, 0.0, at.y)
+	root.rotation.y = yaw
+	add_child(root)
+	_sign_box(root, "Post", Vector3(0.0, SIGN_POST_HEIGHT * 0.5, 0.0),
+		Vector3(0.32, SIGN_POST_HEIGHT, 0.32), SIGN_POST_COLOR)
+	_sign_box(root, "Backer", Vector3(0.0, SIGN_POST_HEIGHT, 0.0),
+		SIGN_PANEL, PAINT_DARK)
+	_sign_box(root, "Plate", Vector3(0.0, SIGN_POST_HEIGHT, 0.10),
+		SIGN_PLATE, PAINT_CREAM)
+	var label := Label3D.new()
+	label.name = "ZoneName"
+	label.text = zone
+	label.font = _font
+	label.font_size = 48
+	label.pixel_size = 0.0068
+	label.outline_size = 6
+	label.outline_modulate = PAINT_CREAM
+	label.modulate = PAINT_DARK
+	label.position = Vector3(0.0, SIGN_POST_HEIGHT, 0.15)
+	root.add_child(label)
+
+
+## One flat-shaded box part of a sign.
+func _sign_box(parent: Node3D, part: String, at: Vector3, size: Vector3,
+		color: Color) -> void:
+	var mesh := BoxMesh.new()
+	mesh.size = size
+	var instance := MeshInstance3D.new()
+	instance.name = part
+	instance.mesh = mesh
+	instance.material_override = _flat_material(color)
+	instance.position = at
+	instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+	parent.add_child(instance)
+
+
+## One cached cartoon material: flat colour, no specular, no metallic.
+func _flat_material(color: Color) -> StandardMaterial3D:
+	var key: String = color.to_html()
+	if _flat_materials.has(key):
+		return _flat_materials[key] as StandardMaterial3D
+	var material := StandardMaterial3D.new()
+	material.albedo_color = color
+	material.roughness = 1.0
+	material.metallic = 0.0
+	material.specular_mode = BaseMaterial3D.SPECULAR_DISABLED
+	_flat_materials[key] = material
+	return material
+
+
+## Zone id at a world point, or "" on the grass. The HUD reads this once per
+## probe, so it is plain rectangle and circle tests plus one spline distance.
+func zone_at(at: Vector3) -> String:
+	var plan := Vector2(at.x, at.z)
+	# The terrace is part of the paddock's furniture, not the dirt.
+	if RAISED_PAD.has_point(plan):
+		return ""
+	if plan.x >= JUMP_X - HALF_TILE and plan.x <= JUMP_X + HALF_TILE \
+			and plan.y >= JUMP_LANE_Z1 - HALF_TILE \
+			and plan.y <= JUMP_LANE_Z0 + HALF_TILE:
+		return "JUMP LANE"
+	if SKID_BLOCK.has_point(plan):
+		return "SKIDPAD"
+	if PADDOCK.has_point(plan):
+		return "PADDOCK"
+	if DIRT.has_point(plan):
+		return "OFF-ROAD"
+	if _loop_spline != null \
+			and TileKit.spline_distance(_loop_spline, at) <= HALF_TILE:
+		return "HANDLING LOOP"
+	return ""
+
+
+## The one-line hint for a zone id, or "" when the id is unknown.
+func zone_hint(zone: String) -> String:
+	for entry: Dictionary in ZONES:
+		if str(entry["id"]) == zone:
+			return str(entry["hint"])
+	return ""
+
+
+# --------------------------------------------------------------------------
 # pushable props
 
 
@@ -1284,7 +1471,9 @@ func _pylon(prop_name: String, at: Vector3) -> void:
 	body.collision_layer = CollisionLayers.PROP
 	body.collision_mask = CollisionLayers.WORLD | CollisionLayers.PROP
 	body.mass = 0.35
-	body.continuous_cd = false
+	# Fast karts cross a 0.12 m cone in one tick; continuous detection keeps the
+	# hit, which is what leaves the slalom knocked over instead of untouched.
+	body.continuous_cd = true
 	body.physics_material_override = _prop_physics()
 	body.position = at + Vector3.UP * 0.02
 	_prop_visual(body, PYLON_MODEL, CONE_SCALE)
@@ -1361,14 +1550,14 @@ func _grip_zone() -> void:
 	area.name = "DirtGripZone"
 	area.collision_layer = 0
 	area.collision_mask = CollisionLayers.PLAYER | CollisionLayers.GHOST
-	var rects: Array[Rect2] = [
+	_dirt_rects = [
 		Rect2(DIRT.position.x, DIRT.position.y,
 			RAISED_PAD.position.x - DIRT.position.x, DIRT.size.y),
 		Rect2(RAISED_PAD.position.x, RAISED_PAD.end.y,
 			DIRT.end.x - RAISED_PAD.position.x,
 			DIRT.end.y - RAISED_PAD.end.y),
 	]
-	for rect: Rect2 in rects:
+	for rect: Rect2 in _dirt_rects:
 		var box := BoxShape3D.new()
 		box.size = Vector3(rect.size.x, 4.0, rect.size.y)
 		var collision := CollisionShape3D.new()
@@ -1385,22 +1574,50 @@ func _grip_zone() -> void:
 func _on_dirt_entered(body: Node3D) -> void:
 	if not (body.is_in_group("player") or body.is_in_group("ai_player")):
 		return
-	var grip: float = _surface_grip_of(body)
-	if grip < 0.0:
-		return
-	_grip_before[body.get_instance_id()] = grip
+	var id: int = body.get_instance_id()
+	_prune_grip()
+	# The area is two carved rectangles, so a kart straddling their seam raises
+	# the signal twice. Saving the grip again there stored 0.72 as the "dry"
+	# value, and the kart kept the dirt grip for the rest of the session.
+	if not _grip_before.has(id):
+		var grip: float = _surface_grip_of(body)
+		if grip < 0.0:
+			return
+		_grip_before[id] = grip
 	body.set("surface_grip", DIRT_GRIP)
 
 
 ## Restores the grip a kart had before it entered the dirt.
 func _on_dirt_exited(body: Node3D) -> void:
+	_prune_grip()
 	if not is_instance_valid(body):
 		return
 	var id: int = body.get_instance_id()
 	if not _grip_before.has(id):
 		return
+	# Leaving one rectangle is not leaving the dirt: a kart on the seam keeps
+	# the low grip until it is clear of every rectangle.
+	if _on_dirt(body.global_position):
+		return
 	body.set("surface_grip", float(_grip_before[id]))
 	_grip_before.erase(id)
+
+
+## True when a plan point is inside any dirt rectangle. The small grow keeps a
+## kart sitting exactly on an edge from flickering the grip between frames.
+func _on_dirt(at: Vector3) -> bool:
+	var plan := Vector2(at.x, at.z)
+	for rect: Rect2 in _dirt_rects:
+		if rect.grow(0.05).has_point(plan):
+			return true
+	return false
+
+
+## Drops saved grips for bodies that left the world while on the strip.
+func _prune_grip() -> void:
+	for id: int in _grip_before.keys():
+		if not is_instance_id_valid(id):
+			_grip_before.erase(id)
 
 
 ## Reads the kart's grip property through the property list, so this script
@@ -1864,6 +2081,14 @@ func _report_stats() -> void:
 	var gpu: int = int(RenderingServer.get_rendering_info(
 		RenderingServer.RENDERING_INFO_TOTAL_DRAW_CALLS_IN_FRAME))
 	print("SANDBOX PARK GPU draw_calls=%d (0 under the headless dummy renderer)" % gpu)
+	var signs: Array[String] = []
+	for zone: Dictionary in ZONES:
+		var sign_node: Node = get_node_or_null(
+			"ZoneSign_" + str(zone["id"]).replace(" ", ""))
+		signs.append("%s:%s" % [str(zone["id"]),
+			"ok" if sign_node != null else "MISSING"])
+	print("SANDBOX ZONES signs=%s spawn=%s" % [", ".join(signs),
+		zone_at(_spawn_transform().origin)])
 	TileKit.assert_barrier_clearance(_perimeter_barriers, _perimeter_spline,
 		"PERIMETER")
 	TileKit.assert_barrier_clearance(_loop_barriers, _loop_spline, "LOOP")

@@ -34,7 +34,9 @@ const DOWNLOAD_STALL_SECONDS: float = 20.0
 @export_group("Downloads")
 @export var download_timeout: float = 600.0 ## Seconds allowed for the zip download.
 
-## "idle" | "checking" | "up_to_date" | "available" | "offline" | "error"
+## "idle" | "checking" | "up_to_date" | "available" | "offline" | "error".
+## A web build is the served page itself, so it settles on "up_to_date": there
+## is never a downloadable file and never a state the menus do not know.
 var status: String = "idle"
 var latest_version: String = ""
 var latest_release_url: String = ""
@@ -66,6 +68,8 @@ var _expected_size: int = 0
 var _progress_accum: float = 0.0
 var _stall_timer: float = 0.0
 var _last_progress_bytes: int = -1
+## Cached version.txt contents; see local_version().
+var _version_cache: String = ""
 
 
 func _ready() -> void:
@@ -153,7 +157,18 @@ func has_update() -> bool:
 
 
 func local_version() -> String:
-	return read_version_file()
+	## version.txt is read once: it ships inside the .pck and cannot change while
+	## this process runs, so re-reading it for every menu footer is wasted I/O.
+	if _version_cache == "":
+		_version_cache = read_version_file()
+	return _version_cache
+
+
+func version_string() -> String:
+	## Ready-to-print build version for a menu footer, e.g. "v0.7.1". A missing
+	## or malformed version.txt still prints a valid, sortable string.
+	var normalized: String = normalize_version(local_version())
+	return "v" + normalized if normalized != "" else "v0.0.0"
 
 
 func read_version_file() -> String:
@@ -167,8 +182,18 @@ func read_version_file() -> String:
 	return text if text != "" else "0.0.0"
 
 
-const CHECK_COOLDOWN_MS: int = 6 * 60 * 60 * 1000 ## Six hours per launch.
+const CHECK_COOLDOWN_MS: int = 6 * 60 * 60 * 1000 ## Six hours after a good check.
+## A failed or offline automatic check only rests for a minute. It used to arm
+## the six-hour cooldown too, so a single offline boot hid every later update
+## for the rest of the launch even after the network came back.
+const RETRY_COOLDOWN_MS: int = 60 * 1000
+## Tick time of the last COMPLETED good check (0 = none this launch).
 var _last_check_ms: int = 0
+## Tick time of the last attempt, successful or not.
+var _last_attempt_ms: int = 0
+## Whether the last attempt produced a real answer. Only then is the long
+## cooldown correct; a failed attempt gets the short retry cooldown instead.
+var _last_attempt_ok: bool = false
 
 
 func check_for_updates(force: bool = false) -> void:
@@ -176,16 +201,27 @@ func check_for_updates(force: bool = false) -> void:
 	## is rate-limited; SETTINGS > CHECK FOR UPDATES passes force=true.
 	if OS.has_feature("web"):
 		## The browser build is the install: reloading the served page is the
-		## update, so never offer a download the page cannot apply.
-		status = "current"
+		## update, so never offer a download the page cannot apply. Report the
+		## documented "up_to_date" state and the usual finished signal, so the
+		## settings screen stops waiting on "Checking..." forever.
+		_last_attempt_ms = Time.get_ticks_msec()
+		_last_check_ms = _last_attempt_ms
+		_last_attempt_ok = true
+		status = "up_to_date"
+		check_finished.emit(false)
 		return
 	if not enable_update_checks or _checking or _downloading:
 		return
 	if github_owner == "" or github_repo == "":
 		return
-	if not force and _last_check_ms != 0 and Time.get_ticks_msec() - _last_check_ms < CHECK_COOLDOWN_MS:
-		return
-	_last_check_ms = Time.get_ticks_msec()
+	var now: int = Time.get_ticks_msec()
+	if not force:
+		if _last_attempt_ok:
+			if _last_check_ms != 0 and now - _last_check_ms < CHECK_COOLDOWN_MS:
+				return
+		elif _last_attempt_ms != 0 and now - _last_attempt_ms < RETRY_COOLDOWN_MS:
+			return
+	_last_attempt_ms = now
 	_checking = true
 	status = "checking"
 	last_error = ""
@@ -416,15 +452,15 @@ func _pick_asset(assets: Variant) -> void:
 		if not name.contains(keyword):
 			continue
 		# "macos" must not also match an unrelated "mac" file; keyword is exact.
-		latest_asset_name = str(asset.get("name", ""))
-		latest_asset_url = str(asset.get("browser_download_url", ""))
 		# GitHub publishes "digest": "sha256:<hex>" for every uploaded asset.
 		var digest_value: Variant = asset.get("digest", "")
 		var digest_text: String = str(digest_value) if typeof(digest_value) == TYPE_STRING else ""
 		var digest: String = digest_text.trim_prefix("sha256:").strip_edges().to_lower()
 		var size: int = _safe_int(asset.get("size", 0))
 		# Do not select an asset we cannot verify. A missing/null digest used
-		# to skip checksum verification entirely; fail closed instead.
+		# to skip checksum verification entirely; fail closed instead. The
+		# name/URL are only published AFTER this check, so a rejected asset can
+		# never leave a download offer pointing at an unverified file.
 		if not _valid_sha256(digest) or size <= 0:
 			continue
 		latest_asset_name = str(asset.get("name", ""))
@@ -521,6 +557,11 @@ func _finish_check(new_status: String, error_text: String) -> void:
 	_checking = false
 	status = new_status
 	last_error = error_text
+	# Only a real answer earns the long cooldown. Offline/error checks fall back
+	# to RETRY_COOLDOWN_MS so a reconnect is noticed on the next menu visit.
+	_last_attempt_ok = new_status == "available" or new_status == "up_to_date"
+	if _last_attempt_ok:
+		_last_check_ms = Time.get_ticks_msec()
 	if is_instance_valid(_check_request):
 		_check_request.queue_free()
 		_check_request = null
@@ -553,6 +594,17 @@ func download_update() -> void:
 		return
 	if latest_asset_url == "":
 		download_failed.emit("no_asset")
+		return
+	# Fail closed: an unverified zip must never be downloaded and then offered
+	# for install, and bytes may only come from HTTPS or a trusted private
+	# mirror. _pick_asset() already refuses unverifiable GitHub assets; this
+	# also covers a hand-filled field or a mirror manifest without integrity.
+	if not _valid_sha256(latest_asset_sha256) or latest_asset_size <= 0:
+		download_failed.emit("unverified_asset")
+		return
+	if not (latest_asset_url.begins_with("https://")
+			or _trusted_mirror_base(latest_asset_url)):
+		download_failed.emit("untrusted_asset")
 		return
 	_downloading = true
 	_downloaded_file = ""
@@ -655,6 +707,10 @@ func _on_download_completed(result: int, response_code: int, _headers: PackedStr
 
 func _verify_download(path: String) -> String:
 	## Returns "" when the file is safe to install, or a failure reason.
+	# An empty checksum used to mean "skip verification", which installed
+	# whatever arrived if the source published no digest. Fail closed instead.
+	if not _valid_sha256(_expected_sha256) or _expected_size <= 0:
+		return "unverified"
 	if _expected_size > 0:
 		var actual_size: int = _file_size(path)
 		if actual_size != _expected_size:
@@ -747,15 +803,18 @@ func _load_download_state() -> void:
 	if config.load(DOWNLOAD_STATE_PATH) != OK:
 		return
 	_downloaded_file = str(config.get_value("download", "path", ""))
-	_downloaded_version = str(config.get_value("download", "version", ""))
+	_downloaded_version = normalize_version(str(config.get_value("download", "version", "")))
 	_downloaded_sha256 = str(config.get_value("download", "sha256", "")).strip_edges().to_lower()
 	_downloaded_size = _safe_int(config.get_value("download", "size", 0))
+	# A state file that cannot be verified must be discarded, not published:
+	# has_downloaded_update() would otherwise promise a RESTART & UPDATE button
+	# that install_downloaded_update() always rejects as "unverified_download".
 	if not _path_inside_updates(_downloaded_file) \
-			or not FileAccess.file_exists(_downloaded_file):
-		_downloaded_file = ""
-		_downloaded_version = ""
-		_downloaded_sha256 = ""
-		_downloaded_size = 0
+			or not FileAccess.file_exists(_downloaded_file) \
+			or _downloaded_version == "" \
+			or not _valid_sha256(_downloaded_sha256) \
+			or _downloaded_size <= 0:
+		_discard_download_state()
 
 
 func _save_download_state() -> void:
@@ -764,7 +823,11 @@ func _save_download_state() -> void:
 	config.set_value("download", "version", _downloaded_version)
 	config.set_value("download", "sha256", _downloaded_sha256)
 	config.set_value("download", "size", _downloaded_size)
-	config.save(DOWNLOAD_STATE_PATH)
+	var error: Error = config.save(DOWNLOAD_STATE_PATH)
+	if error != OK:
+		# The zip is downloaded but not recorded: say so instead of letting the
+		# next boot silently forget a verified update.
+		push_warning("UpdateChecker: could not write download.cfg (%d)" % error)
 
 
 func install_downloaded_update(zip_path: String = "") -> bool:

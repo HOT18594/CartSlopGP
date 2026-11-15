@@ -25,6 +25,22 @@ const OVERLAY_SCENES: PackedStringArray = [
 	"res://scenes/minigames/meadow_lobby.tscn",
 	"res://scenes/sandbox/sandbox.tscn",
 ]
+## Every scene the loader may swap in. The loader is the only route between
+## screens, so this is the one place that can refuse an arbitrary resource path:
+## a typo or a smuggled path must fail loudly instead of blanking the game.
+## A new screen has to be listed here before go_to() will accept it.
+const ALLOWED_SCENES: PackedStringArray = [
+	"res://scenes/ui/main_menu.tscn",
+	"res://scenes/ui/play_menu.tscn",
+	"res://scenes/ui/lobby_menu.tscn",
+	"res://scenes/ui/minigames_menu.tscn",
+	"res://scenes/ui/vehicle_select.tscn",
+	"res://scenes/ui/room_browser.tscn",
+	"res://scenes/sandbox/sandbox.tscn",
+	"res://scenes/minigames/grass_race.tscn",
+	"res://scenes/minigames/cargo_rush.tscn",
+	"res://scenes/minigames/meadow_lobby.tscn",
+]
 
 @onready var _ui: Control = $UI
 @onready var _title: Label = $UI/Title
@@ -56,6 +72,15 @@ func _process(_delta: float) -> void:
 
 func is_busy() -> bool:
 	return _busy
+
+
+func current_scene_path() -> String:
+	## The path of the live scene, or "" while the tree has no scene. Used to
+	## recognise a navigation request that is already satisfied.
+	var tree: SceneTree = get_tree()
+	if tree == null or tree.current_scene == null:
+		return ""
+	return tree.current_scene.scene_file_path
 
 
 func begin_task(title: String, message: String = "") -> void:
@@ -114,6 +139,11 @@ func go_to(path: String, title: String = "LOADING", message: String = "") -> voi
 	if path == "":
 		push_warning("SceneLoader: ignored a request with an empty scene path")
 		return
+	if not ALLOWED_SCENES.has(path):
+		# Refuse before touching the tree: a rejected path previously reached
+		# ResourceLoader/change_scene and could tear down the caller's UI first.
+		push_error("SceneLoader: refused scene outside the allowlist: " + path)
+		return
 	if _busy:
 		# Never drop a navigation request. Network start messages are not
 		# repeated, so queue the newest target instead of desyncing peers.
@@ -139,16 +169,25 @@ func go_to(path: String, title: String = "LOADING", message: String = "") -> voi
 
 	var started: float = Time.get_ticks_msec() / 1000.0
 	if not ResourceLoader.exists(path):
-		get_tree().change_scene_to_file(path)
+		_change_scene_to_file(path)
 		_finish(started)
 		return
 
 	var error: Error = ResourceLoader.load_threaded_request(path, "", true)
 	if error != OK:
-		get_tree().change_scene_to_file(path)
+		_change_scene_to_file(path)
 		_finish(started)
 		return
 	_poll(started)
+
+
+func _change_scene_to_file(path: String) -> void:
+	## change_scene_to_* is deferred, so a failure only shows up in its return
+	## value. Surface it instead of fading the overlay over the old scene and
+	## looking like a successful (but empty) navigation.
+	var error: Error = get_tree().change_scene_to_file(path)
+	if error != OK:
+		push_error("SceneLoader: could not change to %s (%d)" % [path, error])
 
 
 func _needs_overlay(path: String) -> bool:
@@ -185,14 +224,14 @@ func _poll(started: float) -> void:
 		if status == ResourceLoader.THREAD_LOAD_LOADED:
 			break
 		if status == ResourceLoader.THREAD_LOAD_FAILED or status == ResourceLoader.THREAD_LOAD_INVALID_RESOURCE:
-			get_tree().change_scene_to_file(_path)
+			_change_scene_to_file(_path)
 			_finish(started)
 			return
 		if Time.get_ticks_msec() > deadline:
 			# A threaded load can stall on some drivers/filesystems. Never
 			# leave multiplayer peers stuck on "Syncing players..."
 			push_warning("Threaded scene load timed out; falling back: " + _path)
-			get_tree().change_scene_to_file(_path)
+			_change_scene_to_file(_path)
 			_finish(started)
 			return
 
@@ -203,9 +242,11 @@ func _poll(started: float) -> void:
 	await get_tree().create_timer(POST_LOAD_PAUSE).timeout
 	var packed: PackedScene = ResourceLoader.load_threaded_get(_path)
 	if packed != null:
-		get_tree().change_scene_to_packed(packed)
+		var packed_error: Error = get_tree().change_scene_to_packed(packed)
+		if packed_error != OK:
+			push_error("SceneLoader: could not change to %s (%d)" % [_path, packed_error])
 	else:
-		get_tree().change_scene_to_file(_path)
+		_change_scene_to_file(_path)
 	await get_tree().process_frame
 	_finish(started)
 
@@ -236,4 +277,12 @@ func _run_pending() -> void:
 	_pending_path = ""
 	_pending_title = ""
 	_pending_message = ""
+	# A rapid double press (or a retried network start) queues the same target
+	# while the first load is still finishing. Replaying it would reload the
+	# scene that just appeared - a race would replay its intro, a lobby would
+	# rebuild itself - so drop a request the tree already satisfies. A
+	# deliberate same-scene replay (CARGO RUSH's PLAY AGAIN) calls go_to()
+	# directly, after the load has finished, and is not affected.
+	if next_path == current_scene_path():
+		return
 	go_to(next_path, next_title, next_message)
