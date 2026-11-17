@@ -2,6 +2,22 @@
 
 Player-facing notes, newest first.
 
+## [0.7.3] - 2026-11-17
+
+### Windows players can actually start the game
+
+- The Windows download was two files: `CartSlopGP.exe` plus a large
+  `CartSlopGP.pck`. If a player extracted only the executable, moved it to the
+  Desktop, or double-clicked the exe straight out of the zip (Windows extracts
+  just the exe in that case), the game died with
+  **"Couldn't load project data — is the .pck file missing?"** and never opened.
+- The data pack is now built into the executable, so the download is one file
+  and cannot be broken apart. Linux gets the same treatment, so `chmod +x` and
+  run is all it takes there too.
+- The build now refuses to publish a Windows or Linux binary whose data pack is
+  not embedded, so this cannot ship again.
+- Everything in 0.7.2 is included (see below).
+
 ## [0.7.2] - 2026-11-17
 
 ### Linux players can start the game again
