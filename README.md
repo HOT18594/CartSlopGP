@@ -94,9 +94,12 @@ remembers your last pick.
 Mass matters: heavier vehicles accelerate slower, lose less speed on impact and
 push props further.
 
-**SINGLE > MINIGAMES > MEADOW LOOP** is the race. Pick a vehicle, choose how
-many bots (0-5), and press **RACE**. The start gantry has five lamps: they light
-1, 3 and 5 on the countdown, then all five go green on GO.
+**SINGLE > RACING** picks a circuit and drops you into a three-lap race. Pick a
+vehicle, choose how many bots (0-5), and press **RACE**. The start gantry has
+five lamps: they light 1, 3 and 5 on the countdown, then all five go green on
+GO. The four circuits are Stadium Circuit (banked straights and a crossing),
+Dockyard (a raised wharf and a wet container lane), Glacier Pass (ice and a big
+crest jump) and Meadow Loop (the original forest lap).
 
 ## Multiplayer
 
@@ -170,7 +173,7 @@ godot --headless --path . --quit
 Project layout:
 
 ```
-scenes/    menus, sandbox, Meadow Loop, player and HUD
+scenes/    menus, sandbox, the four circuits, player and HUD
 scripts/   gameplay, vehicles, UI, networking and systems
 assets/    models, textures, audio, fonts and UI art
 ```
