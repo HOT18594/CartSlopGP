@@ -389,7 +389,17 @@ func _on_check_completed(result: int, response_code: int, _headers: PackedString
 	var parsed: Variant = JSON.parse_string(body.get_string_from_utf8())
 	var release: Dictionary = parsed as Dictionary
 	var tag: String = str(release.get("tag_name", "")).strip_edges()
-	latest_version = normalize_version(tag)
+	var github_version: String = normalize_version(tag)
+	## The mirror is a candidate, not merely a fallback. The documented release
+	## flow publishes a build to the Pi first and cuts the GitHub release after,
+	## so a newer mirror must still win now that GitHub answered. Overwriting the
+	## candidate here is what made "pick whichever version is actually newest"
+	## true only when GitHub was unreachable.
+	if github_version != "" and _server_candidate.has("version") \
+			and version_greater(str(_server_candidate["version"]), github_version) \
+			and _apply_server_candidate():
+		return
+	latest_version = github_version
 	latest_release_url = str(release.get("html_url", ""))
 	latest_asset_url = ""
 	latest_asset_name = ""

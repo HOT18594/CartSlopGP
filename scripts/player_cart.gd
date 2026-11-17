@@ -6,6 +6,14 @@ const VehicleVisual := preload("res://scripts/vehicles/vehicle_visual.gd")
 const CollisionLayers := preload("res://scripts/systems/collision_layers.gd")
 const CartCollisionSystem := preload("res://scripts/systems/cart_collision.gd")
 const REFERENCE_MASS: float = 1200.0 ## Mass at which `engine_power` is quoted.
+## Collider reference box that the catalog length/width/height are divided by.
+## These are NOT the scene shape dimensions: the body capsule is 2.0 m long and
+## 1.36 m wide, so keeping the reference deliberately larger leaves ~13% of
+## anti-snag margin around the art. The tuning was done against this margin, so
+## do not "correct" it to the shape size without retuning the bump feel.
+const COLLIDER_REFERENCE_LENGTH: float = 2.26
+const COLLIDER_REFERENCE_WIDTH: float = 1.506
+const COLLIDER_REFERENCE_HEIGHT: float = 1.70
 ## AI and remote bot carts have no tag colour, so they cycle a fixed palette by
 ## their field index. The peer id offset matches grass_race.gd's bot ghosts.
 const BOT_PEER_BASE: int = 1000
@@ -927,10 +935,11 @@ func _resize_collision(entry: Dictionary) -> void:
 	var length: float = float(entry.get("length", 2.26))
 	var width: float = float(entry.get("width", 1.50))
 	var height: float = float(entry.get("height", 1.70))
-	# Base compound collider: 2.26 m bumper-to-bumper, 1.506 m wide, 1.70 m tall.
-	var z_scale: float = clampf(length / 2.26, 0.68, 1.55)
-	var x_scale: float = clampf(width / 1.506, 0.55, 1.35)
-	var y_scale: float = clampf(height / 1.70, 0.55, 1.35)
+	# Base compound collider: see COLLIDER_REFERENCE_* above for why the
+	# divisors are larger than the scene capsule.
+	var z_scale: float = clampf(length / COLLIDER_REFERENCE_LENGTH, 0.68, 1.55)
+	var x_scale: float = clampf(width / COLLIDER_REFERENCE_WIDTH, 0.55, 1.35)
+	var y_scale: float = clampf(height / COLLIDER_REFERENCE_HEIGHT, 0.55, 1.35)
 	for index in _collision_shapes.size():
 		var node: CollisionShape3D = _collision_shapes[index]
 		if node == null:
@@ -1245,8 +1254,12 @@ func _process_collisions() -> void:
 	## Solid hits keep tangent speed, add a small bounce and kick the
 	## suspension in the direction of the actual contact normal.
 	_cart_roof_contact = false
-	if _impact_timer > 0.0:
-		return
+	# The cooldown absorbs repeated hits from the SAME shove; it must not
+	# suppress physics. Returning here used to drop every contact for 0.12 s
+	# after one hit, so a cart that had just tapped a rival lost its wall
+	# response too, and a pair only exchanged momentum on the side whose timer
+	# had already expired (the timers are per cart, not per pair).
+	var feedback_ready: bool = _impact_timer <= 0.0
 	var handled: Dictionary = {}
 	for i in get_slide_collision_count():
 		var collision: KinematicCollision3D = get_slide_collision(i)
@@ -1338,9 +1351,13 @@ func _process_collisions() -> void:
 			var pair_normal: Vector3 = -normal
 			# The physics engine already separated this pair during
 			# move_and_slide. The shared solver must only exchange momentum
-			# here, or the pair double-separates and visibly jitters.
+			# here, or the pair double-separates and visibly jitters. It is
+			# also given the pre-move closing speed: the live velocities have
+			# already been flattened by that separation, so a head-on hit
+			# would otherwise exchange almost nothing.
 			CartCollisionSystem.resolve_pair(self, hit as CartPlayer,
-				collision.get_position(), pair_normal, collision.get_depth(), false)
+				collision.get_position(), pair_normal, collision.get_depth(), false,
+				impact_speed)
 		else:
 			# Legacy meta-bodied vehicle (minigame bots): keep the old momentum
 			# exchange so their protocol does not change.
@@ -1358,25 +1375,34 @@ func _process_collisions() -> void:
 				Vector3.ZERO, loss)
 			velocity.x = planar.x
 			velocity.z = planar.z
-		var local_normal: Vector3 = (global_transform.basis.inverse() * normal).normalized()
-		_base_pitch_vel += local_normal.z * impact_factor * impact_tilt_strength * 12.0
-		_base_roll_vel -= local_normal.x * impact_factor * impact_tilt_strength * 12.0
-		_susp_vel -= impact_factor * 0.12
-		_impact_timer = impact_cooldown
-		_squash_impulse = maxf(_squash_impulse, clampf(impact_factor * 1.2, 0.3, 1.0))
-		if _camera_rig != null:
-			_camera_rig.add_shake((0.10 + 0.45 * impact_factor) * shake_scale \
-				* (1.15 if other_vehicle else 1.0))
-		if impact_factor >= heavy_impact_threshold:
-			var heavy: float = clampf((impact_factor - heavy_impact_threshold) \
-				/ maxf(1.0 - heavy_impact_threshold, 0.001), 0.0, 1.0)
-			_trigger_hit_stop(lerpf(heavy_impact_hit_stop_min,
-				heavy_impact_hit_stop_max, heavy))
-		if _feedback != null:
-			_feedback.on_collision(impact_factor)
+		if feedback_ready:
+			_give_impact_feedback(normal, impact_factor, other_vehicle, shake_scale)
 		# Keep scanning: a car bump must not hide a wall contact in the same
 		# frame. Duplicate compound-shape contacts are deduped above.
 		continue
+
+
+func _give_impact_feedback(normal: Vector3, impact_factor: float,
+		other_vehicle: bool, shake_scale: float) -> void:
+	## Visual and audio reaction to one contact: body tilt, suspension, camera
+	## shake, hit-stop and the feedback layer. Split out of _process_collisions
+	## so the impact cooldown can gate the reaction without gating the physics.
+	var local_normal: Vector3 = (global_transform.basis.inverse() * normal).normalized()
+	_base_pitch_vel += local_normal.z * impact_factor * impact_tilt_strength * 12.0
+	_base_roll_vel -= local_normal.x * impact_factor * impact_tilt_strength * 12.0
+	_susp_vel -= impact_factor * 0.12
+	_impact_timer = impact_cooldown
+	_squash_impulse = maxf(_squash_impulse, clampf(impact_factor * 1.2, 0.3, 1.0))
+	if _camera_rig != null:
+		_camera_rig.add_shake((0.10 + 0.45 * impact_factor) * shake_scale \
+			* (1.15 if other_vehicle else 1.0))
+	if impact_factor >= heavy_impact_threshold:
+		var heavy: float = clampf((impact_factor - heavy_impact_threshold) \
+			/ maxf(1.0 - heavy_impact_threshold, 0.001), 0.0, 1.0)
+		_trigger_hit_stop(lerpf(heavy_impact_hit_stop_min,
+			heavy_impact_hit_stop_max, heavy))
+	if _feedback != null:
+		_feedback.on_collision(impact_factor)
 
 
 func _is_solid_prop(node: Node) -> bool:

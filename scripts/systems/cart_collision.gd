@@ -37,7 +37,8 @@ const MAX_SEPARATION_DEPTH: float = 2.5
 
 
 static func resolve_pair(a: Node3D, b: Node3D, contact_point: Vector3,
-		normal: Vector3, penetration: float, separate: bool = true) -> float:
+		normal: Vector3, penetration: float, separate: bool = true,
+		closing_override: float = -1.0) -> float:
 	## Resolve one car-to-car contact for the pair.
 	##
 	## `normal` points from `a` toward `b` and `penetration` is the overlap
@@ -52,6 +53,13 @@ static func resolve_pair(a: Node3D, b: Node3D, contact_point: Vector3,
 	## Returns the scalar impulse magnitude that was applied to each body (0
 	## when the contact was ignored), so a network caller can send exactly the
 	## same delta-v it applied locally instead of inferring it from velocities.
+	##
+	## `closing_override` lets a caller that owns the contact feed in the
+	## approach speed it measured BEFORE its own move_and_slide ran. A
+	## CharacterBody pair has already been separated by the engine by the time
+	## the slide collisions are read, so the live velocities say "not
+	## approaching" and the exchange would silently vanish on a head-on hit.
+	## Pass a value <= 0 to measure from the live velocities instead.
 	if a == null or b == null or a == b:
 		return 0.0
 	var normal_length_sq: float = normal.length_squared()
@@ -75,6 +83,10 @@ static func resolve_pair(a: Node3D, b: Node3D, contact_point: Vector3,
 	var velocity_a: Vector3 = _body_velocity(a)
 	var velocity_b: Vector3 = _body_velocity(b)
 	var closing: float = (velocity_a - velocity_b).dot(n)
+	if is_finite(closing_override) and closing_override > MIN_CLOSING_SPEED:
+		# Trust the caller's pre-move measurement over the engine-separated
+		# velocities, but never past the corruption ceiling.
+		closing = minf(closing_override, MAX_BODY_SPEED)
 	if not is_finite(closing) or closing <= MIN_CLOSING_SPEED:
 		return 0.0
 	# Standard restitution impulse along the contact normal. The pair leaves

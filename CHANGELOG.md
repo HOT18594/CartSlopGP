@@ -2,6 +2,28 @@
 
 Player-facing notes, newest first.
 
+## [Unreleased]
+
+Fixes from the 2026-11-16 audit. No new content.
+
+- Car-to-car contact exchanges momentum again on a head-on hit. The shared
+  solver read velocities after the physics engine had already separated the
+  pair, so the approach speed measured about zero and the shove disappeared.
+- The 0.12 s impact cooldown now only gates the shake, hit-stop and sound. It
+  used to skip the whole collision pass, so a cart that had just been bumped
+  lost its wall response for that window as well.
+- The first boost puff after a respawn is no longer swallowed, and landing on
+  the grid no longer fires a phantom landing burst.
+- Left and right arrows now flip through the garage, as the screen always said
+  they would.
+- A competitive-lap grip sector now comes from the same map module as the grid
+  and the terrain, so a preview and a race can no longer disagree about where
+  the track is wet.
+- A newer build published to the Pi mirror is offered even when GitHub is
+  reachable and has an older release.
+- NaN/Inf guards on the race clock, best lap and speed readout, and a standings
+  list that can hold a full 13-cart field.
+
 ## [0.7.1] - 2026-11-14
 
 ### The whole game is now built from the Kenney cartoon kits

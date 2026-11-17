@@ -89,6 +89,16 @@ static func grid_rows() -> PackedStringArray:
 	return rows
 
 
+## The grip sectors as the registry reads them (TrackDefs.get_preset routes
+## through this module), so the race can never score grip from a stale inline
+## copy of the layout's wet section.
+static func surfaces() -> Array[Dictionary]:
+	var copy: Array[Dictionary] = []
+	for band: Dictionary in SURFACES:
+		copy.append(band.duplicate())
+	return copy
+
+
 ## Per-cell elevation, one digit row per grid row.
 static func heights() -> PackedStringArray:
 	var rows := PackedStringArray()

@@ -30,7 +30,7 @@ const NET_TOP: float = 18.0 ## Own corner block, above the standings plate.
 const NET_HEIGHT: float = 26.0
 const STANDINGS_TOP: float = 52.0
 const STANDINGS_ROW_HEIGHT: float = 26.0
-const STANDINGS_MAX_ROWS: int = 12 ## Room for every cart plus a few spectators.
+const STANDINGS_MAX_ROWS: int = 16 ## A full room is 8 players plus 5 bots (13).
 
 @export_group("Minigame HUD")
 @export var show_position_badge: bool = false ## Race placement readout (1st/2nd/...).
@@ -556,7 +556,8 @@ func set_lap(current: int, total: int) -> void:
 
 func set_race_time(total_seconds: float, best_seconds: float = -1.0) -> void:
 	## Fed by the race at ~20 Hz. The best lap is "—" until a lap is banked.
-	if _plaque_time == null:
+	if _plaque_time == null or not is_finite(total_seconds):
+		# One NaN would stick in _race_clock and poison every later readout.
 		return
 	if total_seconds + 1.0 < _race_clock:
 		# The clock jumped backwards: a new race started on the same HUD.
@@ -574,7 +575,7 @@ func set_race_time(total_seconds: float, best_seconds: float = -1.0) -> void:
 	var best_text: String = _format_race_time(best_seconds) if best_seconds >= 0.0 else "—"
 	if _plaque_best.text != best_text:
 		_plaque_best.text = best_text
-	if best_seconds > 0.0:
+	if best_seconds > 0.0 and is_finite(best_seconds):
 		_hud_best_lap = best_seconds
 	_refresh_lap_readout()
 
@@ -629,6 +630,10 @@ func set_lap_time(lap_seconds: float, best_lap_seconds: float = -1.0) -> void:
 
 
 func _format_race_time(seconds: float) -> String:
+	# A corrupt clock or best-lap value must not reach roundi(): a non-finite
+	# float turns into an engine error every frame it is drawn.
+	if not is_finite(seconds):
+		return "—"
 	var milliseconds: int = roundi(maxf(seconds, 0.0) * 1000.0)
 	return "%d:%02d.%03d" % [milliseconds / 60000, (milliseconds / 1000) % 60, milliseconds % 1000]
 
@@ -657,6 +662,9 @@ func _process(delta: float) -> void:
 		return
 	var horizontal := Vector3(cart.velocity.x, 0.0, cart.velocity.z)
 	var speed_kmh: float = horizontal.length() * 3.6
+	# A transient non-finite velocity would make int(round()) raise every frame.
+	if not is_finite(speed_kmh):
+		speed_kmh = 0.0
 	var speed_text: String = str(int(round(speed_kmh)))
 	if speed_text != _last_speed_text:
 		_last_speed_text = speed_text

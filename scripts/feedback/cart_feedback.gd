@@ -330,7 +330,8 @@ func _physics_process(delta: float) -> void:
 	if _cart.remote_mode:
 		_update_remote_skid(delta)
 		return
-	if _camera == null:
+	# A freed camera still compares unequal to null, so test validity too.
+	if _camera == null or not is_instance_valid(_camera):
 		_camera = get_viewport().get_camera_3d()
 	var speed: float = _cart.velocity.length()
 	var grounded: bool = _cart.is_on_floor()

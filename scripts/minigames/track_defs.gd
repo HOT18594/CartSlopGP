@@ -24,7 +24,8 @@ extends RefCounted
 ## overlays that routed course on the preset it returns, so a race, a probe, a
 ## preview or a theme that reads the preset all build the same elevated map. The
 ## inline `grid`/`elevation` a preset still carries is only a fallback for older
-## saves and unknown ids.
+## saves and unknown ids, and the routed course's `surfaces` replace the inline
+## grip spans the same way.
 ##
 ## `kind` is `map` for a grid circuit and `minigame` for a hand-built scene. A
 ## minigame also carries the `scene` the menu loads and its selectable theme
@@ -233,10 +234,12 @@ const DockyardGrid := preload("res://scripts/minigames/maps/dockyard/dockyard_gr
 const GlacierCourse := preload("res://scripts/minigames/maps/glacier/glacier_course.gd")
 
 
-## A routed course as {"grid": PackedStringArray, "heights": PackedStringArray},
-## or an empty dictionary for an id no module owns. One lookup feeds the grid
-## accessor, the heights accessor and get_preset(), so the layout and its
-## terrain can never be read from two different modules.
+## A routed course as {"grid": PackedStringArray, "heights": PackedStringArray,
+## "surfaces": Array}, or an empty dictionary for an id no module owns. One
+## lookup feeds the grid accessor, the heights accessor, the grip spans and
+## get_preset(), so the layout, its terrain and its surface sectors can never be
+## read from two different modules. A module that authors no grip sectors omits
+## the key and the preset's own `surfaces` stays in force.
 static func _course_of(id: String) -> Dictionary:
 	match id:
 		"stadium":
@@ -244,10 +247,12 @@ static func _course_of(id: String) -> Dictionary:
 				"heights": StadiumGrid.height_rows()}
 		"dockyard":
 			return {"grid": DockyardGrid.grid_rows(),
-				"heights": DockyardGrid.heights()}
+				"heights": DockyardGrid.heights(),
+				"surfaces": DockyardGrid.surfaces()}
 		"glacier":
 			return {"grid": GlacierCourse.grid(),
-				"heights": GlacierCourse.heights()}
+				"heights": GlacierCourse.heights(),
+				"surfaces": GlacierCourse.surfaces()}
 	return {}
 
 
@@ -365,17 +370,18 @@ static func _resolve(id: String) -> String:
 
 
 ## The registry view of a map preset, with the routed course laid over it: the
-## module's `grid` and `heights` replace the stale inline fallback, so every
-## caller of get_preset() (the race, a theme that checks for a height table, a
-## probe or a preview) builds the same elevated course. A minigame, or an id no
-## module owns, is returned unchanged.
+## module's `grid`, `heights` and (when it authors them) `surfaces` replace the
+## stale inline fallback, so every caller of get_preset() (the race, a theme that
+## checks for a height table, a probe or a preview) builds the same elevated
+## course with the same grip sectors. A minigame, or an id no module owns, is
+## returned unchanged.
 static func _with_course(preset: Dictionary) -> Dictionary:
 	var course: Dictionary = _course_of(str(preset.get("id", "")))
 	if course.is_empty():
 		return preset
 	var merged: Dictionary = preset.duplicate(true)
-	merged["grid"] = course["grid"]
-	merged["heights"] = course["heights"]
+	for key: String in course:
+		merged[key] = course[key]
 	return merged
 
 

@@ -125,8 +125,12 @@ func _process(delta: float) -> void:
 		var text: String = line_bytes.get_string_from_utf8().strip_edges()
 		_awaiting_ok = false
 		if text != "OK":
+			# A rejected (rotated/expired) token used to fall straight back to
+			# "not _hello_sent", which re-sent TOKEN every frame at 60 Hz. Drop
+			# the link so the normal _retry backoff owns the next attempt.
 			_hello_sent = false
 			_retry = RECONNECT_DELAY
+			_tcp.disconnect_from_host()
 			return
 		_ready = true
 		tunnel_ready.emit()

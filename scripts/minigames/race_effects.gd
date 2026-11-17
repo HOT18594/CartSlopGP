@@ -18,6 +18,11 @@ var _was_boosting: bool = false
 var _was_grounded: bool = true
 var _air_time: float = 0.0
 var _time: float = 0.0
+## Last frame's cart position, used to spot a respawn teleport. The reset is
+## owned by the cart, so the effects layer has no event to listen to; a large
+## one-frame jump is the only reliable signal it gets.
+var _last_position: Vector3 = Vector3.ZERO
+var _has_last_position: bool = false
 
 
 func setup(player_cart: CartPlayer) -> void:
@@ -163,6 +168,18 @@ func _process(delta: float) -> void:
 	if cart == null:
 		return
 	_time += delta
+	var position_now: Vector3 = cart.global_position
+	if _has_last_position and position_now.distance_squared_to(_last_position) > 400.0:
+		# A respawn teleports the cart back to the line. Both effects below are
+		# edge detectors on stale state: _was_boosting stayed true through the
+		# reset (the first boost puff after it was swallowed) and a non-zero
+		# _air_time fired a phantom landing burst when the cart dropped onto
+		# the grid. Re-seed from the cart instead of letting the edges lie.
+		_was_boosting = cart.boost_active
+		_was_grounded = true
+		_air_time = 0.0
+	_last_position = position_now
+	_has_last_position = true
 	var speed: float = Vector2(cart.velocity.x, cart.velocity.z).length()
 	var grounded: bool = cart.is_on_floor()
 	var ratio: float = clampf(speed / maxf(cart.max_speed, 1.0), 0.0, 1.0)

@@ -191,12 +191,17 @@ func _disable_shadows(light: Light3D) -> void:
 	## No shadow map is rendered on web. The sun keeps its colour and energy, so
 	## the scene reads as flat, bright cartoon shading rather than going dark,
 	## and the track, curbs, gates and karts stay told apart by their albedo.
-	if light == null or not _active or not light.shadow_enabled:
+	## These run deferred from node_added, so the node may already be freed by a
+	## scene swap in the same frame: a freed instance compares false against
+	## null, so only is_instance_valid() may gate the property write.
+	if not is_instance_valid(light) or not _active or not light.shadow_enabled:
 		return
 	light.shadow_enabled = false
 
 
 func _clip_camera(camera: Camera3D) -> void:
-	if camera == null or not _active or camera.far <= WEB_FAR_PLANE:
+	## Deferred from node_added; same freed-instance contract as above.
+	if not is_instance_valid(camera) or not _active \
+			or camera.far <= WEB_FAR_PLANE:
 		return
 	camera.far = WEB_FAR_PLANE

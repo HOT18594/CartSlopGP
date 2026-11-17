@@ -1106,11 +1106,16 @@ func host_game(mode: String = "pi") -> void:
 			registered = true
 			break
 		if ticket != _host_ticket:
+			# Cancelled mid-registration. Release the overlay here: leaving it
+			# up blocks every later go_to() until SceneLoader's task timeout.
+			SceneLoader.end_task()
 			return
 		await get_tree().create_timer(0.6).timeout
 		if ticket != _host_ticket:
+			SceneLoader.end_task()
 			return
 	if ticket != _host_ticket:
+		SceneLoader.end_task()
 		return
 	if not registered:
 		_abort_host("The server could not create a room. Try again in a moment.")
@@ -1360,6 +1365,11 @@ func scan_lan_rooms(timeout: float = 1.4) -> Array:
 
 
 func join_lan_room(room: Dictionary) -> void:
+	if join_pending or is_session_active():
+		# _connect_to() starts by calling leave(). A second click on a LAN row
+		# (or a click while this machine is hosting) must not tear that live
+		# session down; every other join path already refuses the same way.
+		return
 	var host: String = str(room.get("host", "")).strip_edges()
 	var open_port: int = int(room.get("port", 0))
 	if not _is_private_ipv4(host) or open_port <= 0:
@@ -1736,6 +1746,12 @@ func fetch_lobbies() -> Array:
 
 
 func _register_relay(local_port: int) -> bool:
+	## The POST can still be in flight when this machine cancels hosting and
+	## starts a new room. A late reply for the dead request must not overwrite
+	## the live room's token and code (heartbeats would then keep the wrong
+	## room alive and let the real one expire), so the host ticket is captured
+	## before the await and re-checked after it.
+	var ticket: int = _host_ticket
 	var response: Dictionary = await _relay_post("/api/register", {
 		"name": GameSettings.player_name,
 		"local_port": local_port,
@@ -1744,6 +1760,8 @@ func _register_relay(local_port: int) -> bool:
 		"public": room_public,
 		"map": session_map_id,
 	})
+	if ticket != _host_ticket:
+		return false
 	if response.is_empty():
 		return false
 	relay_token = str(response.get("token", ""))
@@ -2270,6 +2288,12 @@ func leave() -> void:
 	_relay_probe_timer = 0.0
 	_relay_probe_pending = false
 	_relay_http_status = 0
+	# The clock offset belongs to the relay this session measured. Reusing it
+	# after a relay restart would put the countdown and the race timer on the
+	# old server's clock, so force the next race to measure again.
+	server_clock_ready = false
+	server_clock_offset_ms = 0
+	_relay_busy = false
 	_tunnel_retry_timer = -1.0
 	_tunnel_retry_attempt = 0
 	reset_race_state_stream()
@@ -2799,7 +2823,9 @@ func _net_ping(stamp: int) -> void:
 
 @rpc("authority", "unreliable")
 func _net_pong(stamp: int) -> void:
-	latency_ms = Time.get_ticks_msec() - stamp
+	# Clamp: a stale or corrupt echoed stamp must not put a negative (or
+	# multi-minute) ping into the HUD or the table the host rebroadcasts.
+	latency_ms = clampi(Time.get_ticks_msec() - stamp, 0, 5000)
 	latency_changed.emit(latency_ms)
 	# Publish our own RTT so the host can build the Minecraft-style ping table
 	# every player sees when holding Tab.

@@ -193,6 +193,19 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("ui_cancel") and not SceneLoader.is_busy():
 		_on_back()
 		get_viewport().set_input_as_handled()
+		return
+	## Left/right flip through the garage, matching the stepper arrows. This
+	## lives here and not on MenuNav: only this screen has a horizontal gallery.
+	## nav_horizontal() existed but had no caller, so the arrows did nothing.
+	if SceneLoader.is_busy():
+		return
+	var direction: int = 0
+	if event.is_action_pressed("ui_left"):
+		direction = -1
+	elif event.is_action_pressed("ui_right"):
+		direction = 1
+	if direction != 0 and nav_horizontal(direction):
+		get_viewport().set_input_as_handled()
 
 
 func nav_horizontal(direction: int) -> bool:
