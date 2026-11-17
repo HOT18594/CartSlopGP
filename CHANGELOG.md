@@ -2,27 +2,53 @@
 
 Player-facing notes, newest first.
 
-## [Unreleased]
+## [0.7.2] - 2026-11-17
 
-Fixes from the 2026-11-16 audit. No new content.
+### Linux players can start the game again
 
-- Car-to-car contact exchanges momentum again on a head-on hit. The shared
-  solver read velocities after the physics engine had already separated the
-  pair, so the approach speed measured about zero and the shove disappeared.
-- The 0.12 s impact cooldown now only gates the shake, hit-stop and sound. It
-  used to skip the whole collision pass, so a cart that had just been bumped
-  lost its wall response for that window as well.
-- The first boost puff after a respawn is no longer swallowed, and landing on
-  the grid no longer fires a phantom landing burst.
-- Left and right arrows now flip through the garage, as the screen always said
-  they would.
-- A competitive-lap grip sector now comes from the same map module as the grid
-  and the terrain, so a preview and a race can no longer disagree about where
-  the track is wet.
-- A newer build published to the Pi mirror is offered even when GitHub is
-  reachable and has an older release.
-- NaN/Inf guards on the race clock, best lap and speed readout, and a standings
-  list that can hold a full 13-cart field.
+- The Linux download shipped `CartSlopGP.x86_64` without its executable bit, so
+  the file extracted unlaunchable and the game never started. The release zip now
+  carries proper Unix permissions, and the build checks them before it publishes.
+
+### Driving
+
+- Car-to-car contact exchanges momentum again on a head-on hit. The impulse was
+  measured after the physics engine had already separated the pair, so the
+  approach speed read as zero and the shove disappeared.
+- The impact cooldown after a hit now only gates the shake, hit-stop and sound.
+  It used to skip the whole collision pass, so a cart that had just been bumped
+  also lost its wall response for a moment.
+- The first boost puff after a respawn is no longer swallowed, and landing on the
+  grid no longer fires a phantom landing burst.
+
+### Tracks
+
+- A track's grip sectors (the dockyard wet lane, the glacier ice) now come from
+  the same map module as the layout and the terrain, so the menu preview and the
+  race can no longer disagree about where the surface changes.
+
+### Multiplayer
+
+- Joining a LAN room twice, or joining while already hosting, no longer tears
+  down the live session.
+- Cancelling a host request no longer leaves the loading overlay stuck over
+  every later screen.
+- Pings can no longer display a negative or multi-minute value from a stale
+  reply, and a new session measures the server clock again instead of reusing
+  the previous relay's offset.
+- A rejected relay token drops the link and backs off instead of re-sending the
+  handshake 60 times a second.
+
+### Updates
+
+- A build published to the Pi mirror is offered even when GitHub is reachable and
+  its own latest release is older, which is the documented Pi-first flow.
+
+### Interface
+
+- Left and right arrows flip through the garage, as the screen always claimed.
+- The race clock, best lap and speed readout reject corrupt values instead of
+  printing garbage, and the standings list holds a full 13-cart field.
 
 ## [0.7.1] - 2026-11-14
 

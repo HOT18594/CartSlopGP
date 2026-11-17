@@ -1,41 +1,45 @@
 # Cart Slop GP
 
 An arcade racing game about shopping carts. Pick a cart (or a sedan, a van, a
-box truck...), drift around a playground, then race the Meadow Loop against
-friends and AI rivals. Made with **Godot 4**.
+box truck, a police cruiser...), drift around a playground, then race one of four
+circuits against friends and AI rivals. Made with **Godot 4**.
 
-![Meadow Loop](assets/ui/art/meadow_loop_overview.png)
+![Stadium Circuit](assets/ui/art/preview_stadium.png)
 
 ## What's in the game
 
 - **7 vehicles**, each with its own mass, top speed, engine sound, smoke and
   tyre marks: shopping cart, sedan, sports car, taxi, van, box truck and
   police cruiser.
+- **Four race circuits** built from modular kit pieces on one closed lap each:
+  Stadium Circuit, Dockyard, Glacier Pass and the Meadow Loop. Terrain rises and
+  falls, and each track has its own surface (wet lane, ice) and jump.
+- **Cargo Rush**: a team mode where you carry presents home while the other team
+  tries to do the same.
 - **Sandbox**: a 140 x 140 m arena with ramps, a drift bowl, a mesa, boost
   pads, cones, crates and speed bumps. Drift for skid marks, boost, honk and
   reset when you get stuck.
-- **Meadow Loop**: three laps of a winding dirt track through a forest, with
-  four boost pads, a five-lamp start gantry and up to five AI rivals.
+- **Race AI** that follows a racing line, brakes before corners, overtakes,
+  defends, and rides the ramps instead of driving through them.
 - **Multiplayer for up to 8 players** (plus bots): host a room on your own
-  network, or use a 5-letter room code through an online relay when one is
-  available. The host chooses the mode, map, vehicle and bot count.
+  network, or use a 5-letter room code through the online relay. The host
+  chooses the game, map, vehicle and bot count.
 - **Settings** for audio, fullscreen, quality, HUD size, camera shake, stick
   deadzone, boost/drift toggles, reduced motion and frame rate. Gamepad and
   keyboard both work.
 - **One-click updates** on Windows, macOS and Linux.
-- Windows, macOS, Linux and a browser build (single player only).
 
 ## Download and play
 
 Get the latest build from the
 [**Releases page**](https://github.com/HOT18594/CartSlopGP/releases/latest).
 
-| Platform | Download | Run |
+| Platform | File | Run |
 | --- | --- | --- |
-| Windows | `CartSlopGP_v0.7.0_windows.zip` | Unzip, then run `CartSlopGP.exe`. SmartScreen may warn because the build is unsigned: **More info > Run anyway**. |
-| macOS | `CartSlopGP_v0.7.0_macos.zip` | Unzip, then open `Cart Slop GP.app`. If Gatekeeper blocks it, right-click the app and choose **Open**. |
-| Linux | `CartSlopGP_v0.7.0_linux.zip` | Unzip, `chmod +x CartSlopGP.x86_64`, then run it. |
-| Browser | `CartSlopGP_v0.7.0_web.zip` | Serve `index.html` over HTTP (a `file://` URL cannot load the data pack). Single player only. |
+| Windows | `CartSlopGP_v<version>_windows.zip` | Unzip, then run `CartSlopGP.exe`. Keep the `.pck` beside it. SmartScreen may warn because the build is unsigned: **More info > Run anyway**. |
+| macOS | `CartSlopGP_v<version>_macos.zip` | Unzip, then open `Cart Slop GP.app`. If Gatekeeper blocks it, right-click the app and choose **Open**. |
+| Linux | `CartSlopGP_v<version>_linux.zip` | Unzip and run `./CartSlopGP.x86_64`. It ships executable; if you re-zipped or copied it and lost the bit, `chmod +x` once. |
+| Browser | `CartSlopGP_v<version>_web.zip` | Serve the folder over HTTP — a `file://` URL cannot load the data pack. Single player only: Godot's web export has no UDP, so there is no online play in the browser. |
 
 There is no installer and no account. Settings and downloaded updates live in
 Godot's user data folder:
@@ -116,7 +120,8 @@ tag colour, then choose how to play.
 3. The host connects out to the relay, so no port forwarding is needed on the
    host machine.
 
-Online rooms use the Cart Slop relay. LAN rooms always work without a relay.
+Online rooms use the Cart Slop relay. LAN rooms always work without a relay, so
+a room of friends on the same Wi-Fi never depends on the internet.
 
 When the relay runs server 1.6.0 or newer, it owns the race clock, the official
 lap and finish times and the bot field for online races. With an older relay
@@ -124,12 +129,14 @@ the game falls back to a host-run race, so both versions still work.
 
 ### In the room
 
-- The host picks **SANDBOX** or **MINIGAMES**, the map, the vehicle and the
-  number of bots, then presses **START**.
-- In a Meadow Loop race everyone drives the host's car; name tags tell players
-  apart. Sandbox keeps each player's own vehicle.
+- The host picks **SANDBOX**, **RACING** or **DELIVER**, the map, the vehicle
+  and the number of bots, then presses **START**.
+- In a race everyone drives the host's car; name tags tell players apart.
+  Sandbox keeps each player's own vehicle.
 - **COPY CODE** copies the room code. **LEAVE ROOM** returns to the lobby.
 - Joining a race that has already started is refused.
+- If the room does not load for everyone, the versions differ. The update check
+  runs when the menu opens; everyone in a room must be on the same release.
 
 ## Settings and updates
 

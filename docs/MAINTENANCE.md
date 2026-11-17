@@ -26,11 +26,11 @@ run or ships a mislabelled build.
 | 1 | `godot_project/version.txt` | the number alone, e.g. `0.7.2` |
 | 2 | `godot_project/project.godot` | `config/version="0.7.2"` under `[application]` |
 | 3 | `godot_project/export_presets.cfg` | four `export_path="../builds/v0.7.2/..."` lines |
-| 4 | `pi_setup/build_0_7_1.ps1` | `[string]$Version = "0.7.2"` (rename the file too, by convention) |
+| 4 | `pi_setup/build_0_7_2.ps1` | `[string]$Version = "0.7.2"` (rename the file too, by convention) |
 | 5 | `pi_setup/Deploy-Server.cmd` | the `builds\v0.7.2\web` checks |
 | 6 | `godot_project/CHANGELOG.md` | a new `## [0.7.2] - YYYY-MM-DD` section at the top |
 
-`build_0_7_1.ps1` compares `version.txt` against its own `-Version` and aborts
+`build_0_7_2.ps1` compares `version.txt` against its own `-Version` and aborts
 on a mismatch, which is the safety net for item 1 vs item 4.
 
 `scripts/systems/update_checker.gd` reads `version.txt` at runtime, so the
@@ -39,7 +39,7 @@ in-game "update available" check needs no edit — just the file.
 ## 2. Building a release
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File pi_setup\build_0_7_1.ps1
+powershell -ExecutionPolicy Bypass -File pi_setup\build_0_7_2.ps1
 ```
 
 Writes `builds/v<version>/`:
@@ -55,6 +55,13 @@ logs\<platform>.log
 The script is safe to re-run: each platform folder and zip is recreated from
 scratch, and a failed export stops the run instead of leaving a stale zip next
 to a fresh one. Nothing is uploaded.
+
+**Never zip with `Compress-Archive` or `ZipFile::CreateFromDirectory`.** On
+Windows both record FAT attributes, so `CartSlopGP.x86_64` extracts as `0644`
+and every Linux player gets "Permission denied" — that shipped in 0.7.1. The
+build routes everything through `pi_setup/zip_unix.py`, which writes Unix modes
+and `create_system = 3`, and then asserts the execute bits are present in the
+Linux zip. Keep it that way.
 
 **Check before publishing:** open `release\SHA256SUMS` and spot-check that every
 platform zip is dated this run, and that `logs\` has no failed platform.
