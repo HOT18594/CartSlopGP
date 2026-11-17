@@ -401,6 +401,9 @@ static func build(parent: Node3D, rows: PackedStringArray,
 	_fill_tile_distances(spline)
 	var theme_id: String = _theme_id(theme)
 	spline.set_meta("theme", theme_id)
+	## A diagnostic build (a synthetic elevation profile, a probe) is not a
+	## shipped track, so the seam report must not hand it a racing verdict.
+	spline.set_meta("seam_diagnostic", bool(theme.get("diagnostic", false)))
 	var road_audit: Dictionary = _build_road(parent, tiles, heights, spline)
 	_build_road_collision(parent, tiles, heights,
 		road_audit.get("faces", PackedVector3Array()) as PackedVector3Array)
@@ -1898,9 +1901,12 @@ static func _report_seams(spline: GridSpline, tiles: Array[Dictionary],
 		theme, max_gap * 1000.0, max_step * 1000.0, max_normal,
 		max_offset * 1000.0, closure * 1000.0, samples - misses, samples,
 		"WATERTIGHT" if watertight else "LEAKY"])
-	print("KENNEY DRIVE %s: %s%s" % [
-		theme, "YES" if watertight else "NO",
-		"" if watertight else " (fix the seam metrics before racing)"])
+	var diagnostic: bool = bool(spline.get_meta("seam_diagnostic", false))
+	print("KENNEY DRIVE %s: %s" % [
+		theme,
+		"(diagnostic profile, not a shipped track)"
+		if diagnostic else
+		"YES" if watertight else "NO (fix the seam metrics before racing)"])
 	# Publish the numbers for probes and the race HUD/debug tools.
 	spline.set_meta("seam_gap", max_gap)
 	spline.set_meta("seam_step", max_step)

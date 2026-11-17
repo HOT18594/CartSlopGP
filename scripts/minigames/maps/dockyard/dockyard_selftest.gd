@@ -12,7 +12,7 @@ extends SceneTree
 ##   * a crossing cell and a jump ramp on the lap;
 ##   * every barrier clears the road edge by TileKit.BARRIER_CLEARANCE;
 ##   * every solid collider stays at least 6.02 m from the centreline;
-##   * the dressing lands in the 600-900 object / under-120-draw budget.
+##   * the dressing lands in the 900-1600 object / under-120-draw budget.
 ##
 ## The exit code is 0 on PASS and 1 on any failure, so a build can gate on it.
 
@@ -29,8 +29,11 @@ const EXPECTED_HEIGHT: float = 3.0
 const SOLID_MARGIN: float = 6.02
 ## Colliders whose lowest point is above this are overhead (gantry beams).
 const DRIVE_UNDER: float = 3.2
-const MIN_OBJECTS: int = 600
-const MAX_OBJECTS: int = 900
+## Object count is a runaway guard, not a target: the 0.7.1 kit rebuild puts
+## ~1234 objects here (stadium runs ~1351), and the real cost control is the
+## draw-call ceiling below, since the kit batches.
+const MIN_OBJECTS: int = 900
+const MAX_OBJECTS: int = 1600
 const MAX_DRAWS: int = 120
 
 

@@ -167,8 +167,8 @@ func _audit_terrain() -> int:
 	var host := Node3D.new()
 	host.name = "AuditTerrain"
 	var spline: RefCounted = KenneyTiles.build(host,
-		TrackDefs.grid_of(preset), {"id": TERRAIN_MAP,
-		"elevation": TEST_ELEVATION})
+		TrackDefs.grid_of(preset), {"id": TERRAIN_MAP + "_rolling_test",
+		"elevation": TEST_ELEVATION, "diagnostic": true})
 	if spline == null:
 		print("TERRAIN %s: FAIL (the elevated grid did not build)" % TERRAIN_MAP)
 		host.free()
@@ -197,7 +197,9 @@ func _audit_terrain() -> int:
 	var slopes_ok: bool = not barrier_heights.is_empty() \
 		and highest > barrier_heights[0]
 	var collider_ok: bool = _road_collider_heights(host) > 1.0
-	var banks_ok: bool = banks > 0 \
+	## is_finite: a bank clearance that was never measured must fail loudly
+	## instead of passing because INF beats the limit.
+	var banks_ok: bool = banks > 0 and is_finite(bank_closest) \
 		and bank_closest >= TileKit.BARRIER_CLEARANCE - 0.02
 	print("TERRAIN %s: road height %.2f..%.2f m, %d barrier piece(s) %.2f..%.2f m, road collider top %.2f m, %d bank(s) closest %.2f m, barriers closest %.2f m -> %s" % [
 		TERRAIN_MAP, lowest, highest, placed,
@@ -224,17 +226,41 @@ func _solid_clearance(root: Node, spline: RefCounted,
 			continue
 		for child: Node in body.get_children():
 			var collision := child as CollisionShape3D
-			if collision == null:
-				continue
-			var box := collision.shape as BoxShape3D
-			if box == null:
+			if collision == null or collision.shape == null:
 				continue
 			var xform: Transform3D = _world_transform(collision)
-			var half: Vector3 = box.size * 0.5
-			for point: Vector3 in TileKit.box_samples(half):
+			for point: Vector3 in _shape_samples(collision.shape):
 				closest = minf(closest,
 					TileKit.spline_distance(spline, xform * point))
 	return closest
+
+
+## Sample points covering a collision shape, in that shape's own local space.
+## Terrain banks are convex hulls (rock models), so reading BoxShape3D only
+## skipped every one of them and left the distance at INF — which then passed
+## the clearance check without measuring anything at all.
+func _shape_samples(shape: Shape3D) -> Array[Vector3]:
+	var points: Array[Vector3] = []
+	if shape is BoxShape3D:
+		return TileKit.box_samples((shape as BoxShape3D).size * 0.5)
+	if shape is ConvexPolygonShape3D:
+		var hull: PackedVector3Array = (shape as ConvexPolygonShape3D).points
+		var stride: int = maxi(1, int(ceil(float(hull.size()) / 32.0)))
+		for index in range(0, hull.size(), stride):
+			points.append(hull[index])
+		return points
+	if shape is SphereShape3D:
+		var radius: float = (shape as SphereShape3D).radius
+		points.append(Vector3.ZERO)
+		for axis: Vector3 in [Vector3.RIGHT, Vector3.LEFT, Vector3.UP,
+				Vector3.DOWN, Vector3.FORWARD, Vector3.BACK]:
+			points.append(axis * radius)
+		return points
+	var aabb: AABB = shape.get_debug_mesh().get_aabb()
+	var center: Vector3 = aabb.get_center()
+	for point: Vector3 in TileKit.box_samples(aabb.size * 0.5):
+		points.append(center + point)
+	return points
 
 
 ## Lowest and highest barrier piece origin under `root`, in metres.
