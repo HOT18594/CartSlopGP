@@ -179,8 +179,10 @@ func _process(delta: float) -> void:
 	if cart.boost_active and not _was_boosting:
 		_puff(_boost_burst)
 		if _boost_burst != null:
+			## Basis +Z is behind the cart (it drives along -Z), so the puff
+			## belongs behind the bumper, same side as the sparks.
 			_boost_burst.global_position = cart.global_position + Vector3.UP * 0.55 \
-				- cart.global_transform.basis.z * 1.0
+				+ cart.global_transform.basis.z * 1.0
 	_was_boosting = cart.boost_active
 
 	if not grounded:

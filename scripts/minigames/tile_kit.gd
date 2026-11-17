@@ -835,7 +835,9 @@ static func tyre_stack(parent: Node3D, spline: RefCounted, dist: float,
 	var instance := _multimesh(_tyre_geometry(), _tyre_paint(), transforms,
 		"TyreStack", false, colours)
 	body.add_child(instance)
-	var height: float = TYRE_TUBE * 2.0 + float(TYRE_LEVELS) * TYRE_LEVEL_STEP
+	## LEVELS - 1: the stack's top ring already carries its own tube radius, so
+	## multiplying by LEVELS left a 38 cm invisible wall above every tyre stack.
+	var height: float = TYRE_TUBE * 2.0 + float(TYRE_LEVELS - 1) * TYRE_LEVEL_STEP
 	_add_cylinder_shape(body, point, TYRE_COLLIDER_RADIUS, height)
 	return 1
 

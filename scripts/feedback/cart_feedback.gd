@@ -492,6 +492,8 @@ func on_landing(fall_speed: float) -> void:
 
 func on_crash(intensity: float) -> void:
 	## Called by the player when it lands badly: heavy burst + crash sound.
+	if not enable_collision_feedback:
+		return
 	if _dust_burst != null and enable_dust:
 		_dust_burst.amount_ratio = 1.0
 		_dust_burst.restart()

@@ -37,10 +37,14 @@ func _process(delta: float) -> void:
 	if _poll < POLL_INTERVAL:
 		return
 	_poll = 0.0
+	# change_scene_to_file() leaves current_scene null for a moment. That is a
+	# transition, not a scene that wants silence: treating it as one faded the
+	# track out and restarted it on every screen change.
+	if get_tree().current_scene == null:
+		return
 	var wanted: String = _track_for_current_scene()
 	if wanted != current_track:
 		play_track(wanted)
-
 
 func _track_for_current_scene() -> String:
 	var scene: Node = get_tree().current_scene

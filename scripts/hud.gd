@@ -1099,8 +1099,13 @@ func _update_scoreboard() -> void:
 		if ms <= 0 and Network.is_host and peer_id == 1:
 			ms = maxi(Network.host_ping_ms, 0)
 		var ping_label: Label = entry["ping"]
-		ping_label.text = "%d ms" % ms
-		ping_label.add_theme_color_override("font_color", _ping_color(ms))
+		## A peer with no sample yet is unknown, not a perfect 0 ms connection.
+		if ms <= 0:
+			ping_label.text = "—"
+			ping_label.add_theme_color_override("font_color", Color(0.62, 0.66, 0.78))
+		else:
+			ping_label.text = "%d ms" % ms
+			ping_label.add_theme_color_override("font_color", _ping_color(ms))
 
 
 func _set_scoreboard_visible(visible_now: bool) -> void:
