@@ -24,14 +24,39 @@ const BOT_TINTS: Array[Color] = [
 ## A bump only ever adds a shove; these bounds keep it from turning into a
 ## launch and from taking steering away for longer than it reads on screen.
 const BUMP_MAX_IMPULSE: float = 9.0
-const BUMP_MIN_DURATION: float = 0.35
-const BUMP_MAX_DURATION: float = 0.6
-const BUMP_DEFAULT_DURATION: float = 0.45
-const BUMP_STEER_AUTHORITY: float = 0.45
+const BUMP_MIN_DURATION: float = 0.12
+const BUMP_MAX_DURATION: float = 0.22
+const BUMP_DEFAULT_DURATION: float = 0.18
+const BUMP_STEER_AUTHORITY: float = 0.78
 ## A steady stream of contact bumps must not re-arm the steering penalty
 ## forever. One chain may last BUMP_MAX_DURATION, then it needs a
-## BUMP_MIN_DURATION quiet gap before another bump can open a new one.
-const BUMP_CHAIN_QUIET: float = BUMP_MIN_DURATION
+## BUMP_CHAIN_QUIET quiet gap before another bump can open a new one.
+const BUMP_CHAIN_QUIET: float = 0.25
+## Suspension hop, committed drift and 3-tier mini-turbo tuning constants.
+const HOP_COYOTE_TIME: float = 0.10 ## Floor coyote grace (s) for initiating a drift hop over crests.
+const HOP_MIN_SPEED: float = 3.5 ## Minimum forward speed (m/s) to trigger a drift hop.
+const HOP_INITIAL_VEL: float = 4.45 ## Initial upward mesh velocity (m/s) peaking ~0.20 m over ~0.18 s.
+const HOP_GRAVITY: float = 49.5 ## Return gravity (m/s^2) pulling the visual hop offset back to 0.
+const DRIFT_LOCK_STEER: float = 0.18 ## Stick deflection required to lock committed drift direction.
+const DRIFT_LOCK_SPEED: float = 4.5 ## Forward speed (m/s) required to lock committed drift direction.
+const DRIFT_COMMITTED_SLIP_DRAG: float = 0.14 ## Low forward scrub while holding a committed drift.
+const DRIFT_CARVE_RATE: float = 11.5 ## Rate (1/s) at which horizontal velocity aligns to the drift slip angle.
+const DRIFT_SLIP_ANGLE_MIN_DEG: float = 16.0 ## Outward slip angle (deg) when counter-steering wide.
+const DRIFT_SLIP_ANGLE_MAX_DEG: float = 26.0 ## Outward slip angle (deg) when steering deep into the apex.
+const DRIFT_COYOTE_GRACE: float = 0.18 ## Grace window (s) preserving drift charge over bumps or brief low slip.
+const DRIFT_TIER_1_TIME: float = 0.48 ## Weighted charge time (s) for Tier 1 (Cyan) mini-turbo.
+const DRIFT_TIER_2_TIME: float = 1.15 ## Weighted charge time (s) for Tier 2 (Orange) super mini-turbo.
+const DRIFT_TIER_3_TIME: float = 1.95 ## Weighted charge time (s) for Tier 3 (Magenta) ultra mini-turbo.
+const DRIFT_TIER_DURATIONS: Array[float] = [0.0, 0.70, 1.10, 1.55]
+const DRIFT_TIER_KICKS: Array[float] = [0.0, 2.8, 4.4, 6.0]
+const DRIFT_TIER_SPEED_MULTS: Array[float] = [1.0, 1.18, 1.26, 1.34]
+const DRIFT_TIER_ACCEL_MULTS: Array[float] = [1.0, 1.18, 1.22, 1.28]
+const AI_CHICANE_STEER_THRESHOLD: float = -0.35 ## Counter-steer level where AI prepares to switch drift side.
+const AI_CHICANE_HOLD_TIME: float = 0.22 ## Hold time (s) before AI releases and re-locks drift in chicanes.
+const BOOST_COYOTE_AIR_TIME: float = 0.16 ## Air-time grace (s) keeping manual boost alive over micro-bumps.
+const BOOST_IGNITE_KICK: float = 2.0 ## Instant forward kick (m/s) when manual boost ignites.
+const BOOST_IGNITE_COOLDOWN: float = 0.45 ## Cooldown (s) preventing tap-spamming manual boost kicks.
+const MAX_AIR_BANK_RAD: float = 0.314159 ## Max upright air roll bank (~18 deg) on jumps.
 ## A sender clock is its own process uptime, so a single absurd stamp must not
 ## permanently reject every later packet. A backwards jump larger than this is
 ## treated as a clock reset and re-baselined; normal reordering stays rejected.
@@ -63,6 +88,8 @@ const WORLD_BOUND_SQ: float = 5000.0 * 5000.0
 
 signal net_push_requested(prop: Node, direction: Vector3, kick: float)
 signal horn_requested()
+signal drift_tier_reached(tier: int)
+signal drift_boost_fired(tier: int)
 
 enum CartState { DRIVING, AIRBORNE_TUMBLE, CRASHED, RECOVERY }
 const STATE_NAMES: PackedStringArray = ["DRIVING", "AIRBORNE", "CRASHED", "RECOVERY"]
@@ -100,11 +127,11 @@ const FALL_RESET_HEIGHT: float = -4.0
 @export var steering_speed: float = 2.6 ## Max yaw rate (radians/second).
 @export var high_speed_steering_scale: float = 0.65 ## Steering multiplier at top speed (0-1).
 @export_group("Steering Feel")
-@export var steer_attack: float = 7.0 ## How fast digital/keyboard steering reaches lock.
-@export var steer_release: float = 12.0 ## How fast it returns to centre.
-@export var steer_curve: float = 1.35 ## >1 gives finer control near centre, full lock at the edge.
-@export var weight_transfer_steering: float = 0.12 ## Turn-in gain under braking, loss under throttle (0-1).
-@export var air_control_strength: float = 0.25 ## Steering authority while airborne (0-1).
+@export var steer_attack: float = 14.5 ## How fast digital/keyboard steering reaches lock.
+@export var steer_release: float = 18.0 ## How fast it returns to centre.
+@export var steer_curve: float = 1.15 ## >1 gives finer control near centre, full lock at the edge.
+@export var weight_transfer_steering: float = 0.14 ## Turn-in gain under braking (no throttle understeer penalty).
+@export var air_control_strength: float = 0.55 ## Responsive yaw steering authority while airborne (0-1).
 @export var gravity: float = 22.0 ## Downward acceleration (m/s^2).
 @export var extra_fall_gravity: float = 1.6 ## Gravity multiplier while falling, for snappy landings.
 
@@ -137,13 +164,13 @@ const FALL_RESET_HEIGHT: float = -4.0
 @export var boost_fov_bonus: float = 6.0 ## Extra camera FOV while boosting.
 
 @export_group("Drift Mini-Turbo")
-@export var drift_boost_min_charge: float = 0.55 ## Seconds of committed drift before a mini-turbo.
-@export var drift_boost_duration: float = 0.85 ## Seconds the mini-turbo lasts.
-@export var drift_boost_kick: float = 2.5 ## Instant forward speed (m/s) when the mini-turbo fires.
-@export var drift_boost_speed_multiplier: float = 1.22 ## Top speed multiplier during a mini-turbo.
-@export var drift_boost_accel_multiplier: float = 1.15 ## Acceleration multiplier during a mini-turbo.
+@export var drift_boost_min_charge: float = 0.48 ## Seconds of committed drift before a Tier 1 mini-turbo.
+@export var drift_boost_duration: float = 0.70 ## Seconds a Tier 1 mini-turbo lasts.
+@export var drift_boost_kick: float = 2.8 ## Instant forward speed (m/s) when a Tier 1 mini-turbo fires.
+@export var drift_boost_speed_multiplier: float = 1.18 ## Top speed multiplier during a Tier 1 mini-turbo.
+@export var drift_boost_accel_multiplier: float = 1.18 ## Acceleration multiplier during a Tier 1 mini-turbo.
 @export var drift_boost_slip_threshold: float = 2.0 ## Sideways speed (m/s) that counts as charging.
-@export var drift_boost_fov_punch: float = 2.5 ## Camera FOV kick when the mini-turbo fires.
+@export var drift_boost_fov_punch: float = 4.0 ## Camera FOV kick when a Tier 1 mini-turbo fires.
 
 @export_group("Impact Feel")
 @export var crash_hit_stop: float = 0.09 ## Crash hit-stop in seconds (single player only).
@@ -153,12 +180,12 @@ const FALL_RESET_HEIGHT: float = -4.0
 @export var hit_stop_time_scale: float = 0.05 ## World speed during hit-stop (1.0 = disabled).
 
 @export_group("Airborne & Crash")
-@export var enable_air_tumble: bool = true ## Simulated tumble on big airs.
-@export var air_tumble_strength: float = 1.0 ## How violently the cart tumbles (0-2).
-@export var airborne_time_threshold: float = 0.25 ## Air time (s) before a jump counts as a tumble.
-@export var upside_down_dot_threshold: float = 0.35 ## Landing up-dot below this = crash.
-@export var crash_cooldown: float = 1.2 ## Seconds of stunned sliding after a crash.
-@export var auto_flip_duration: float = 0.6 ## Seconds to flip upright during recovery.
+@export var enable_air_tumble: bool = true ## Airborne flight attitude stabilization and inverted crash check.
+@export var air_tumble_strength: float = 1.0 ## Flight attitude scale (0-2).
+@export var airborne_time_threshold: float = 0.25 ## Air time (s) before entering the airborne flight state.
+@export var upside_down_dot_threshold: float = 0.05 ## Landing up-alignment below this (genuinely inverted) = crash.
+@export var crash_cooldown: float = 0.65 ## Seconds of stunned sliding after an inverted crash.
+@export var auto_flip_duration: float = 0.25 ## Seconds to flip upright during recovery.
 
 @export_group("Suspension & Terrain")
 @export var slope_follow_strength: float = 1.0 ## 0-1: how strongly the chassis follows the support plane.
@@ -285,9 +312,22 @@ var _was_on_floor: bool = true
 var _push_cooldowns: Dictionary[int, float] = {}
 var _pushable_spawn_transforms: Dictionary[int, Transform3D] = {}
 
-# Drift mini-turbo state.
+# Hop, committed drift and 3-tier mini-turbo state.
 var _drift_charge: float = 0.0
 var _drift_charging: bool = false
+var _drift_grace_timer: float = 0.0
+var _drift_dir: int = 0 ## +1 = committed left drift, -1 = committed right drift, 0 = none.
+var _last_emitted_drift_tier: int = 0
+var _active_mini_boost_tier: int = 0
+var _mini_boost_speed_mult: float = 1.18
+var _mini_boost_accel_mult: float = 1.18
+var _ai_chicane_timer: float = 0.0
+var _hop_offset: float = 0.0
+var _hop_vel: float = 0.0
+var _hop_active: bool = false
+var _was_handbraking: bool = false
+var _was_manual_boosting: bool = false
+var _boost_kick_cooldown: float = 0.0
 var _mini_boost_timer: float = 0.0
 var _manual_boost_active: bool = false
 var _boost_toggle_on: bool = false
@@ -685,6 +725,64 @@ func get_collision_velocity() -> Vector3:
 	return net_velocity if remote_mode else velocity
 
 
+func get_drift_tier() -> int:
+	## Current mini-turbo tier (0..3) reached by `_drift_charge`.
+	if _drift_charge >= DRIFT_TIER_3_TIME:
+		return 3
+	if _drift_charge >= DRIFT_TIER_2_TIME:
+		return 2
+	if _drift_charge >= DRIFT_TIER_1_TIME:
+		return 1
+	return 0
+
+
+func get_drift_charge_ratio() -> float:
+	## Overall 0.0..1.0 drift charge ratio toward Tier 3 (`DRIFT_TIER_3_TIME = 1.95s`).
+	## Tier 1 unlocks at ~0.246 (`0.48 / 1.95`), Tier 2 at ~0.590 (`1.15 / 1.95`),
+	## and Tier 3 at `1.0`.
+	return clampf(_drift_charge / DRIFT_TIER_3_TIME, 0.0, 1.0)
+
+
+func get_drift_direction() -> int:
+	## Committed drift direction: `+1` left, `-1` right, `0` none.
+	return _drift_dir
+
+
+func get_active_drift_boost_tier() -> int:
+	## Tier (1..3) of the currently burning drift mini-turbo, or `0` if inactive.
+	return _active_mini_boost_tier if _mini_boost_timer > 0.0 else 0
+
+
+func is_handbraking() -> bool:
+	## Effective handbrake state respecting AI, remote ghosts, input lock, pause
+	## and `GameSettings.drift_toggle`.
+	if remote_mode or current_state == CartState.CRASHED or current_state == CartState.RECOVERY:
+		return false
+	if ai_mode:
+		return ai_handbrake
+	if _input_locked_now or Network.input_locked:
+		return false
+	if is_inside_tree() and get_tree().paused:
+		return false
+	if GameSettings.drift_toggle:
+		return _handbrake_toggle_on
+	return Input.is_action_pressed("handbrake")
+
+
+func get_throttle_input() -> float:
+	## Effective 0.0..1.0 forward throttle respecting AI, remote ghosts, input
+	## lock and pause.
+	if remote_mode or current_state == CartState.CRASHED or current_state == CartState.RECOVERY:
+		return 0.0
+	if ai_mode:
+		return clampf(ai_throttle, 0.0, 1.0)
+	if _input_locked_now or Network.input_locked:
+		return 0.0
+	if is_inside_tree() and get_tree().paused:
+		return 0.0
+	return clampf(Input.get_action_strength("accelerate"), 0.0, 1.0)
+
+
 func honk() -> void:
 	## Play this cart's horn locally. Remote peers call this through their
 	## scene's horn RPC, so everyone hears the same short honk.
@@ -839,22 +937,24 @@ func _apply_vehicle_visual() -> Dictionary:
 
 func _visual_entry(base: Dictionary) -> Dictionary:
 	## Turn a catalog chassis into the entry this cart actually renders. Racing
-	## cars are composed with the live stat build; a remote ghost must use the
-	## same numbers the owner simulates or the host's collisions use the wrong
-	## mass. Every other vehicle passes through untouched, so sandbox, cargo
-	## and minigame behaviour is byte-for-byte the old path.
+	## choices (including the Shopping Cart inside a racing scene) are composed
+	## with the active stat build and custom paint tint; sandbox, cargo and
+	## minigame carts keep their untouched catalog entry.
 	var vehicle_id: String = str(base.get("id", ""))
-	if not VehicleCatalog.is_racing_id(vehicle_id):
+	var compose_in_race: bool = VehicleCatalog.is_racing_id(vehicle_id) \
+		or (GameSettings.racing_scene_active() and VehicleCatalog.is_racing_choice(vehicle_id))
+	if not compose_in_race:
 		return base
 	return VehicleCatalog.compose_racing_entry(vehicle_id,
 		_racing_allocation(), _tint_for_cart())
 
 
 func _racing_allocation() -> Dictionary:
-	## The host's build travels with the session config, exactly like the map
-	## id, so every peer simulates the same mass in a session. Solo uses the
-	## local saved build. An empty session field (a peer that did not send the
-	## field) falls back to the local save.
+	## The local human player always runs their own saved Racing Garage build
+	## instead of being overwritten by the host's session build. AI bots and
+	## remote ghosts fall back to the session build when present.
+	if not ai_mode and not remote_mode:
+		return GameSettings.racing_allocation()
 	if Network.is_session_active() \
 			and not Network.session_racing_allocation.is_empty():
 		return Network.session_racing_allocation
@@ -876,11 +976,13 @@ func _tint_for_cart() -> Color:
 
 
 func _on_tag_colors_changed() -> void:
-	## A peer picked a new colour. Only a racing body can change paint, and only
-	## when the effective tint actually moved; every other cart is untouched.
+	## A peer picked a new colour. Only a racing choice can change paint, and
+	## only when the effective tint actually moved; every other cart is untouched.
 	if ai_mode or _current_vehicle_id == "":
 		return
-	if not VehicleCatalog.is_racing_id(_current_vehicle_id):
+	var can_tint: bool = VehicleCatalog.is_racing_id(_current_vehicle_id) \
+		or (GameSettings.racing_scene_active() and VehicleCatalog.is_racing_choice(_current_vehicle_id))
+	if not can_tint:
 		return
 	var tint: Color = _tint_for_cart()
 	if tint == _applied_tint:
@@ -972,6 +1074,8 @@ func _resize_collision(entry: Dictionary) -> void:
 		rest.origin.z *= z_scale
 		_collision_rest_transforms[index] = rest
 		node.transform = rest
+	_has_collision_basis = false
+	_update_collision_shapes()
 	if _push_sensor != null and _push_shape_base != Vector3.ZERO:
 		var push_collision := _push_sensor.get_node_or_null("CollisionShape3D") as CollisionShape3D
 		if push_collision != null:
@@ -1035,15 +1139,21 @@ func _physics_process(delta: float) -> void:
 	steer_smoothed = move_toward(steer_smoothed, shaped_steer, steer_rate * delta)
 	var steer_input: float = steer_smoothed
 	if current_state == CartState.CRASHED:
+		_drift_dir = 0
+		_was_handbraking = false
 		velocity.x = move_toward(velocity.x, 0.0, friction * delta)
 		velocity.z = move_toward(velocity.z, 0.0, friction * delta)
 		velocity.y -= gravity * delta
 	elif current_state == CartState.RECOVERY:
+		_drift_dir = 0
+		_was_handbraking = false
 		velocity.y -= gravity * delta
 	else:
-		_update_drive(delta, handbrake_held)
-		_apply_steering(steer_input, delta)
+		_update_hop_and_drift_lock(delta, handbrake_held, raw_steer)
+		_apply_steering(steer_input, raw_steer, handbrake_held, delta)
+		_update_drive(delta, handbrake_held, raw_steer)
 		velocity.y -= gravity * (extra_fall_gravity if velocity.y < 0.0 else 1.0) * delta
+		_was_handbraking = handbrake_held
 	_prev_velocity = velocity
 	# move_and_slide() sweeps the compound body along this tick's motion, so a
 	# 20 Hz step longer than the thinnest collider still cannot tunnel. The two
@@ -1051,6 +1161,7 @@ func _physics_process(delta: float) -> void:
 	# single-tick distance before the sweep runs.
 	_clamp_horizontal_speed()
 	_limit_single_tick_travel(delta)
+	floor_snap_length = 0.0 if velocity.y > 1.5 else 0.75
 	move_and_slide()
 	_clamp_horizontal_speed()
 	_process_collisions()
@@ -1075,110 +1186,192 @@ func _physics_process(delta: float) -> void:
 	current_state_name = STATE_NAMES[current_state]
 
 
-func _update_drive(delta: float, handbrake_held: bool) -> void:
-	## Drive along the actual support plane so uphill speed becomes launch speed.
+func _update_hop_and_drift_lock(delta: float, handbrake_held: bool,
+		raw_steer: float) -> void:
+	## Initiate a crisp visual suspension hop on handbrake rising edge and lock
+	## `_drift_dir` (+1 left, -1 right) once steering commits at speed.
+	var grounded_or_coyote: bool = (is_on_floor() and not _cart_roof_contact) \
+		or _air_time <= HOP_COYOTE_TIME
+	var forward_dir: Vector3 = -global_transform.basis.z
+	forward_dir.y = 0.0
+	if forward_dir.length_squared() > 0.0001:
+		forward_dir = forward_dir.normalized()
+	else:
+		forward_dir = Vector3.FORWARD
+	var fwd_speed: float = velocity.dot(forward_dir)
+	if handbrake_held and not _was_handbraking and grounded_or_coyote \
+			and fwd_speed > HOP_MIN_SPEED and _hop_offset <= 0.02:
+		_hop_vel = HOP_INITIAL_VEL
+		_hop_active = true
+		_stretch_impulse = maxf(_stretch_impulse, 0.35)
+	if not handbrake_held:
+		return
+	if _drift_dir == 0:
+		if grounded_or_coyote and absf(raw_steer) > DRIFT_LOCK_STEER \
+				and fwd_speed > DRIFT_LOCK_SPEED:
+			_drift_dir = 1 if raw_steer > 0.0 else -1
+			_ai_chicane_timer = 0.0
+	elif ai_mode:
+		if raw_steer * float(_drift_dir) < AI_CHICANE_STEER_THRESHOLD:
+			_ai_chicane_timer += delta
+			if _ai_chicane_timer > AI_CHICANE_HOLD_TIME:
+				var chicane_kick: float = _release_drift_charge(fwd_speed)
+				if chicane_kick > 0.0:
+					velocity += forward_dir * chicane_kick
+				_drift_dir = 1 if raw_steer > 0.0 else -1
+				_ai_chicane_timer = 0.0
+		else:
+			_ai_chicane_timer = 0.0
+
+
+func _update_drive(delta: float, handbrake_held: bool, raw_steer: float) -> void:
+	## Drive along the actual support plane so uphill speed becomes launch speed,
+	## and carve fast committed drift arcs without foot-braking on handbrake.
 	# A cart roof is a flat CharacterBody floor, but it is not terrain: let the
-	# cart slide off instead of accelerating along another vehicle.
-	var grounded: bool = is_on_floor() and not _cart_roof_contact
-	# Surface grip scales lateral bite and longitudinal traction. At 1.0 every
-	# multiplication below is by exactly one, so dry-road handling is unchanged.
+	# cart slide off instead of accelerating along another vehicle. An external
+	# vertical launch (blast shockwave, Smash knockback, Juke hop) also detaches
+	# immediately so planar ground projection never wipes out velocity.y.
+	var grounded: bool = is_on_floor() and not _cart_roof_contact and velocity.y <= 1.5
 	var grip_scale: float = clampf(surface_grip, 0.0, 2.0)
-	# The four-point probe set sees crests and cambers that the single engine
-	# floor normal smooths over. Fall back before the first probe pass.
+	# Decouple longitudinal drive traction from lateral surface_grip so slick
+	# surfaces like ice (0.40-0.45) stay fast and lively instead of feeling muddy.
+	var drive_traction: float = lerpf(0.78, 1.0, clampf(surface_grip, 0.0, 1.0))
+	if surface_grip > 1.0:
+		drive_traction = lerpf(1.0, minf(surface_grip, 1.25), 0.5)
 	var normal: Vector3 = get_floor_normal() if grounded else Vector3.UP
 	if grounded and _support_count > 0 and _ground_normal.length_squared() > 0.01:
 		normal = _ground_normal
 	var forward_dir: Vector3 = -global_transform.basis.z
 	var right_dir: Vector3 = global_transform.basis.x
 	if grounded:
-		# Keep the drive direction horizontal. Projecting it onto a steep dome
-		# normal bent the kart around the slope, which read as being shoved
-		# sideways. move_and_slide still follows the support plane.
 		forward_dir = Vector3(forward_dir.x, 0.0, forward_dir.z).normalized()
 		right_dir = Vector3(right_dir.x, 0.0, right_dir.z).normalized()
 	var fwd_speed: float = velocity.dot(forward_dir)
 	var lat_speed: float = velocity.dot(right_dir)
-	# A mini-turbo is a smaller, free boost; a held boost keeps the full values.
 	var speed_mult: float = 1.0
 	var accel_mult: float = 1.0
 	if boost_active:
 		if _mini_boost_timer > 0.0 and not _manual_boost_active:
-			speed_mult = drift_boost_speed_multiplier
-			accel_mult = drift_boost_accel_multiplier
+			speed_mult = _mini_boost_speed_mult
+			accel_mult = _mini_boost_accel_mult
+		elif _mini_boost_timer > 0.0 and _manual_boost_active:
+			speed_mult = maxf(boost_speed_multiplier, _mini_boost_speed_mult)
+			accel_mult = maxf(boost_acceleration_multiplier, _mini_boost_accel_mult)
 		else:
 			speed_mult = boost_speed_multiplier
 			accel_mult = boost_acceleration_multiplier
 	var eff_max_speed: float = max_speed * speed_mult
-	var eff_accel: float = acceleration * accel_mult
-	# Analog triggers: get_action_strength is 0..1 for both keys and pads, so a
-	# half-pulled trigger gives half throttle instead of binary on/off.
+	var eff_accel: float = acceleration * accel_mult * drive_traction
 	var throttle: float = ai_throttle if ai_mode else 0.0 if _input_locked_now else Input.get_action_strength("accelerate")
 	var braking: float = ai_brake if ai_mode else 0.0 if _input_locked_now else Input.get_action_strength("brake")
 	if braking > 0.05 and fwd_speed <= 0.5:
 		_reverse_hold += delta
 	else:
 		_reverse_hold = 0.0
-	if braking > 0.05 and fwd_speed > 0.5:
-		# Brake wins over throttle. Holding both should slow the kart, not
-		# cancel out and keep it accelerating.
-		fwd_speed = move_toward(fwd_speed, 0.0,
-			brake_power * braking * delta * grip_scale)
-		# A stop must kill the slide too. Braking only the forward component let a
-		# drifting kart keep most of its speed while pointing sideways.
-		lat_speed = move_toward(lat_speed, 0.0,
-			brake_lateral_grip * braking * delta * grip_scale)
-	elif throttle > 0.05:
-		var accel_scale: float = clampf(1.0 - fwd_speed / maxf(eff_max_speed, 0.001), 0.25, 1.0)
-		fwd_speed = move_toward(fwd_speed, eff_max_speed,
-			eff_accel * accel_scale * throttle * delta * grip_scale)
-	elif braking > 0.05 and _reverse_hold >= 0.12:
-		fwd_speed = move_toward(fwd_speed, -reverse_speed,
-			acceleration * 0.6 * braking * delta * grip_scale)
-	else:
-		fwd_speed = move_toward(fwd_speed, 0.0, friction * delta * grip_scale)
-	if grounded and throttle > 0.05:
-		# Arcade slope assist: a steep dome should be climbable, not turn the
-		# kart sideways or stall it against the face. Only add uphill force
-		# while the driver is actually on the throttle.
-		var grade: float = clampf(-normal.dot(forward_dir), 0.0, 1.0)
-		fwd_speed += grade * gravity * 0.85 * delta
-	if grounded:
-		# Four-point slope support: let gravity pull along the support plane.
-		# The throttle assist above still wins on climbs; this makes downhill
-		# runs carry speed and keeps a parked cart from feeling glued down.
-		fwd_speed += gravity * normal.dot(forward_dir) * slope_gravity_scale * delta
-		lat_speed += gravity * normal.dot(right_dir) * slope_lateral_gravity_scale * delta
-	# Charge the mini-turbo from the actual pre-grip slip, then release it.
-	# The returned kick is folded into fwd_speed so the velocity rebuild below
-	# cannot discard it.
-	fwd_speed += _update_drift_boost(delta, grounded, lat_speed, handbrake_held)
-	var grip: float = lateral_grip * grip_scale
-	if grounded and handbrake_held:
-		grip = drift_grip * grip_scale
-		fwd_speed = move_toward(fwd_speed, 0.0,
-			brake_power * 0.55 * delta * grip_scale)
-	if not grounded:
-		grip *= 0.25
-	else:
-		# Grip saturates past the slip angle: small slides stay planted, big
-		# ones keep sliding so a handbrake drift or a heavy landing can rotate.
-		# Sliding sideways costs speed. Without this a kart carried almost full
-		# speed through a corner while sideways, which is the 'too much speed held'
-		# feel. Scrub scales with how sideways the kart actually is.
-		if absf(lat_speed) > drift_detection_threshold:
-			fwd_speed = move_toward(fwd_speed, 0.0,
-				slip_drag * absf(lat_speed) * delta)
-		var slip_speed: float = absf(lat_speed)
-		var slip_t: float = clampf((slip_speed - slip_grip_falloff_start)
-			/ maxf(slip_grip_falloff_end - slip_grip_falloff_start, 0.001), 0.0, 1.0)
-		grip *= lerpf(1.0, clampf(slip_grip_falloff_min, 0.0, 1.0), slip_t * slip_t)
-	lat_speed = move_toward(lat_speed, 0.0, grip * delta)
-	if grounded:
+
+	var in_committed_drift: bool = grounded and handbrake_held \
+		and _drift_dir != 0 and fwd_speed > 2.0
+	if in_committed_drift:
+		var planar_vel: Vector3 = Vector3(velocity.x, 0.0, velocity.z)
+		var planar_speed: float = planar_vel.length()
+		if braking > 0.05:
+			planar_speed = move_toward(planar_speed, 0.0,
+				brake_power * braking * delta * grip_scale)
+		elif throttle > 0.05:
+			var drift_ratio: float = clampf(planar_speed / maxf(eff_max_speed, 0.1), 0.0, 1.0)
+			var drift_accel_scale: float = clampf(1.0 - pow(drift_ratio, 2.2), 0.35, 1.0)
+			planar_speed = move_toward(planar_speed, eff_max_speed,
+				eff_accel * drift_accel_scale * throttle * delta)
+		else:
+			planar_speed = move_toward(planar_speed, 0.0,
+				friction * 0.65 * delta * grip_scale)
+		var travel_dir: Vector3 = planar_vel / planar_speed if planar_speed > 0.05 else forward_dir
+		if throttle > 0.05:
+			var drift_grade: float = clampf(-normal.dot(travel_dir), 0.0, 1.0)
+			planar_speed += drift_grade * gravity * 0.85 * delta
+		planar_speed += gravity * normal.dot(travel_dir) * slope_gravity_scale * delta
+		planar_speed = maxf(planar_speed, 0.0)
+
+		var into_turn: float = clampf(raw_steer * float(_drift_dir), -1.0, 1.0)
+		var base_slip_deg: float = lerpf(DRIFT_SLIP_ANGLE_MIN_DEG,
+			DRIFT_SLIP_ANGLE_MAX_DEG, (into_turn + 1.0) * 0.5)
+		var slick_scale: float = clampf(1.0 / maxf(surface_grip, 0.45), 0.85, 1.55)
+		var target_slip_rad: float = deg_to_rad(clampf(base_slip_deg * slick_scale, 12.0, 38.0))
+		var target_vel_dir: Vector3 = (
+			forward_dir * cos(target_slip_rad)
+			+ right_dir * (float(_drift_dir) * sin(target_slip_rad))
+		).normalized()
+		var cur_yaw: float = atan2(travel_dir.x, travel_dir.z)
+		var tgt_yaw: float = atan2(target_vel_dir.x, target_vel_dir.z)
+		var carve_blend: float = 1.0 - exp(-DRIFT_CARVE_RATE * clampf(grip_scale, 0.45, 1.25) * delta)
+		var new_yaw: float = lerp_angle(cur_yaw, tgt_yaw, carve_blend)
+		var carved_dir: Vector3 = Vector3(sin(new_yaw), 0.0, cos(new_yaw))
+		var raw_lat: float = (carved_dir * planar_speed).dot(right_dir)
+		if absf(raw_lat) > drift_detection_threshold:
+			planar_speed = move_toward(planar_speed, 0.0,
+				DRIFT_COMMITTED_SLIP_DRAG * absf(raw_lat) * delta)
+		var carved_vel: Vector3 = carved_dir * planar_speed
+		fwd_speed = carved_vel.dot(forward_dir)
+		lat_speed = carved_vel.dot(right_dir) \
+			+ gravity * normal.dot(right_dir) * slope_lateral_gravity_scale * delta
+		fwd_speed += _update_drift_boost(delta, grounded, fwd_speed, lat_speed,
+			handbrake_held, raw_steer)
+		if planar_speed <= 2.0:
+			_drift_dir = 0
 		velocity = forward_dir * fwd_speed + right_dir * lat_speed
 	else:
-		var flat_forward: Vector3 = -global_transform.basis.z
-		var flat_right: Vector3 = global_transform.basis.x
-		velocity = flat_forward * fwd_speed + flat_right * lat_speed + Vector3.UP * velocity.y
+		if braking > 0.05 and fwd_speed > 0.5:
+			# Brake wins over throttle. Holding both should slow the kart, not
+			# cancel out and keep it accelerating.
+			fwd_speed = move_toward(fwd_speed, 0.0,
+				brake_power * braking * delta * grip_scale)
+			lat_speed = move_toward(lat_speed, 0.0,
+				brake_lateral_grip * braking * delta * grip_scale)
+		elif throttle > 0.05:
+			var speed_ratio: float = clampf(fwd_speed / maxf(eff_max_speed, 0.1), 0.0, 1.0)
+			var accel_scale: float = clampf(1.0 - pow(speed_ratio, 2.2), 0.35, 1.0)
+			fwd_speed = move_toward(fwd_speed, eff_max_speed,
+				eff_accel * accel_scale * throttle * delta)
+		elif braking > 0.05 and _reverse_hold >= 0.12:
+			fwd_speed = move_toward(fwd_speed, -reverse_speed,
+				acceleration * 0.6 * drive_traction * braking * delta)
+		else:
+			fwd_speed = move_toward(fwd_speed, 0.0, friction * delta * grip_scale)
+		if grounded and throttle > 0.05:
+			var grade: float = clampf(-normal.dot(forward_dir), 0.0, 1.0)
+			fwd_speed += grade * gravity * 0.85 * delta
+		if grounded:
+			fwd_speed += gravity * normal.dot(forward_dir) * slope_gravity_scale * delta
+			lat_speed += gravity * normal.dot(right_dir) * slope_lateral_gravity_scale * delta
+		var release_kick: float = _update_drift_boost(delta, grounded, fwd_speed,
+			lat_speed, handbrake_held, raw_steer)
+		fwd_speed += release_kick
+		var grip: float = lateral_grip * grip_scale
+		if grounded and handbrake_held:
+			# Handbrake lowers lateral grip for drift initiation without applying
+			# any foot-brake deceleration.
+			grip = drift_grip * grip_scale
+		elif grounded and _mini_boost_timer > 0.0:
+			# Crisp hook-up when rocketing out of an apex on a mini-turbo.
+			grip *= 1.45
+		if not grounded:
+			grip *= 0.25
+		else:
+			var active_slip_drag: float = DRIFT_COMMITTED_SLIP_DRAG if handbrake_held else slip_drag
+			if absf(lat_speed) > drift_detection_threshold:
+				fwd_speed = move_toward(fwd_speed, 0.0,
+					active_slip_drag * absf(lat_speed) * delta)
+			var slip_speed: float = absf(lat_speed)
+			var slip_t: float = clampf((slip_speed - slip_grip_falloff_start)
+				/ maxf(slip_grip_falloff_end - slip_grip_falloff_start, 0.001), 0.0, 1.0)
+			grip *= lerpf(1.0, clampf(slip_grip_falloff_min, 0.0, 1.0), slip_t * slip_t)
+		lat_speed = move_toward(lat_speed, 0.0, grip * delta)
+		if grounded:
+			velocity = forward_dir * fwd_speed + right_dir * lat_speed
+		else:
+			var flat_forward: Vector3 = -global_transform.basis.z
+			var flat_right: Vector3 = global_transform.basis.x
+			velocity = flat_forward * fwd_speed + flat_right * lat_speed + Vector3.UP * velocity.y
 	is_drifting = grounded and absf(lat_speed) > drift_detection_threshold
 	slide_amount = clampf(absf(lat_speed) / maxf(max_speed * 0.5, 0.1), 0.0, 1.0)
 
@@ -1200,54 +1393,110 @@ func _read_handbrake_held() -> bool:
 	return _handbrake_toggle_on
 
 
-func _update_drift_boost(delta: float, grounded: bool, lat_speed: float,
-		handbrake_held: bool) -> float:
-	## Charge while grounded, sliding sideways with the handbrake held. Releasing
-	## after drift_boost_min_charge seconds fires a short, free mini-turbo and
-	## returns the instant forward kick for the caller to apply to fwd_speed.
-	var charging: bool = grounded and handbrake_held \
-		and absf(lat_speed) >= drift_boost_slip_threshold \
-		and current_state == CartState.DRIVING
-	if charging:
-		_drift_charge += delta
-		_drift_charging = true
+func _update_drift_boost(delta: float, grounded: bool, fwd_speed: float,
+		lat_speed: float, handbrake_held: bool, raw_steer: float) -> float:
+	## 3-tier drift mini-turbo with 0.18s coyote grace over bumps or momentary
+	## low slip, counter-steer weighted charge rate, and mid-air release support.
+	if handbrake_held:
+		var can_charge: bool = grounded \
+			and current_state == CartState.DRIVING \
+			and fwd_speed > 3.5 \
+			and (_drift_dir != 0 or absf(lat_speed) >= drift_boost_slip_threshold)
+		if can_charge:
+			var charge_rate: float = 1.0
+			if _drift_dir != 0:
+				var into_turn: float = clampf(raw_steer * float(_drift_dir), -1.0, 1.0)
+				charge_rate = lerpf(0.85, 1.35, (into_turn + 1.0) * 0.5)
+			_drift_charge += delta * charge_rate
+			_drift_charging = true
+			_drift_grace_timer = DRIFT_COYOTE_GRACE
+			var reached_tier: int = get_drift_tier()
+			while _last_emitted_drift_tier < reached_tier:
+				_last_emitted_drift_tier += 1
+				drift_tier_reached.emit(_last_emitted_drift_tier)
+			return 0.0
+		if _drift_charging:
+			_drift_grace_timer -= delta
+			if _drift_grace_timer <= 0.0:
+				_drift_charge = 0.0
+				_drift_charging = false
+				_drift_grace_timer = 0.0
+				_last_emitted_drift_tier = 0
+				if grounded:
+					_drift_dir = 0
 		return 0.0
-	if not _drift_charging:
-		return 0.0
-	_drift_charging = false
-	var kick: float = 0.0
-	if _drift_charge >= drift_boost_min_charge and current_state == CartState.DRIVING:
-		_mini_boost_timer = maxf(_mini_boost_timer, drift_boost_duration)
-		var forward_dir: Vector3 = -global_transform.basis.z
-		var fwd_speed: float = velocity.dot(forward_dir)
-		var cap: float = max_speed * drift_boost_speed_multiplier
-		if fwd_speed < cap:
-			kick = minf(drift_boost_kick, cap - fwd_speed)
-		if _camera_rig != null:
-			_camera_rig.punch_fov(drift_boost_fov_punch)
-		if _feedback != null:
-			_feedback.on_drift_reward(_drift_charge / maxf(drift_boost_min_charge, 0.001))
-	_drift_charge = 0.0
+
+	# Handbrake released: fire any earned tier (including mid-air releases!).
+	var kick: float = _release_drift_charge(fwd_speed)
+	_drift_dir = 0
+	_ai_chicane_timer = 0.0
 	return kick
 
 
-func _apply_steering(steer_input: float, delta: float) -> void:
+func _release_drift_charge(fwd_speed: float) -> float:
+	var kick: float = 0.0
+	var tier: int = get_drift_tier()
+	var can_award: bool = _drift_charging \
+		and tier >= 1 \
+		and current_state != CartState.CRASHED \
+		and current_state != CartState.RECOVERY
+	if can_award:
+		var duration: float = DRIFT_TIER_DURATIONS[tier]
+		var tier_kick: float = DRIFT_TIER_KICKS[tier]
+		var tier_speed_mult: float = DRIFT_TIER_SPEED_MULTS[tier]
+		var tier_accel_mult: float = DRIFT_TIER_ACCEL_MULTS[tier]
+		_active_mini_boost_tier = tier
+		_mini_boost_speed_mult = tier_speed_mult
+		_mini_boost_accel_mult = tier_accel_mult
+		_mini_boost_timer = maxf(_mini_boost_timer, duration)
+		boost_active = true
+		_was_boosting = true
+		var cap: float = max_speed * tier_speed_mult
+		if fwd_speed < cap:
+			kick = minf(tier_kick, cap - fwd_speed)
+		drift_boost_fired.emit(tier)
+		# If CartFeedback is absent (e.g. isolated unit test), still punch camera FOV directly.
+		if _feedback == null and _camera_rig != null:
+			_camera_rig.punch_fov(drift_boost_fov_punch + float(tier - 1) * 2.0)
+	_drift_charge = 0.0
+	_drift_charging = false
+	_drift_grace_timer = 0.0
+	_last_emitted_drift_tier = 0
+	return kick
+
+
+func _apply_steering(steer_input: float, raw_steer: float,
+		handbrake_held: bool, delta: float) -> void:
 	var forward_dir: Vector3 = -global_transform.basis.z
 	var fwd_speed: float = velocity.dot(forward_dir)
-	var speed_frac: float = clampf(absf(fwd_speed) / maxf(max_speed, 0.001), 0.0, 1.0)
-	var start_factor: float = clampf(absf(fwd_speed) / min_turn_speed, 0.0, 1.0)
+	var planar_speed: float = Vector2(velocity.x, velocity.z).length()
+	var speed_ref: float = maxf(absf(fwd_speed), planar_speed if not is_on_floor() else 0.0)
+	var speed_frac: float = clampf(speed_ref / maxf(max_speed, 0.001), 0.0, 1.0)
+	var start_factor: float = clampf(speed_ref / min_turn_speed, 0.0, 1.0)
 	var high_speed_factor: float = lerpf(1.0, high_speed_steering_scale, speed_frac)
 	var authority: float = start_factor * high_speed_factor
-	# Weight transfer: braking loads the front axle and sharpens turn-in; throttle
-	# unloads it and widens the line. One frame of lag is fine for arcade feel.
+	# Weight transfer sharpens turn-in under braking without penalising throttle.
 	var weight_transfer: float = clampf(_longitudinal_accel / maxf(gravity, 0.001),
 		-1.0, 1.0)
-	authority *= 1.0 - weight_transfer * weight_transfer_steering
+	authority *= clampf(1.0 - weight_transfer * weight_transfer_steering, 0.96, 1.25)
 	if _bump_timer > 0.0:
 		authority *= BUMP_STEER_AUTHORITY
 	if not is_on_floor():
 		authority *= air_control_strength
-	rotate_y(steer_input * steering_speed * authority * signf(fwd_speed) * delta)
+	if _drift_dir != 0 and handbrake_held and fwd_speed > 1.5:
+		var into_turn: float = clampf(raw_steer * float(_drift_dir), -1.0, 1.0)
+		var drift_yaw_scale: float = lerpf(0.45, 1.38, (into_turn + 1.0) * 0.5)
+		rotate_y(float(_drift_dir) * steering_speed * authority * drift_yaw_scale * delta)
+		return
+	var dir_sign: float = signf(fwd_speed)
+	if not is_on_floor() and absf(dir_sign) < 0.01 and planar_speed > 0.5:
+		dir_sign = 1.0
+	var yaw_step: float = steer_input * steering_speed * authority * dir_sign * delta
+	rotate_y(yaw_step)
+	if not is_on_floor() and absf(yaw_step) > 0.0001:
+		var horiz_vel: Vector3 = Vector3(velocity.x, 0.0, velocity.z).rotated(Vector3.UP, yaw_step * 0.28)
+		velocity.x = horiz_vel.x
+		velocity.z = horiz_vel.z
 
 
 func _process_collisions() -> void:
@@ -1456,7 +1705,8 @@ func _push_prop(prop: RigidBody3D) -> void:
 
 func _clamp_horizontal_speed() -> void:
 	## Safety net: never let an impact or physics recovery fling the kart.
-	var cap: float = max_speed * boost_speed_multiplier + 2.0
+	var top_mult: float = maxf(boost_speed_multiplier, _mini_boost_speed_mult)
+	var cap: float = max_speed * top_mult + 2.0
 	var horizontal := Vector2(velocity.x, velocity.z)
 	if horizontal.length() > cap:
 		horizontal = horizontal.normalized() * cap
@@ -1505,17 +1755,40 @@ func _limit_single_tick_travel(delta: float) -> void:
 func _update_boost(delta: float, held: bool) -> void:
 	_pad_burst_timer = maxf(_pad_burst_timer - delta, 0.0)
 	_mini_boost_timer = maxf(_mini_boost_timer - delta, 0.0)
+	_boost_kick_cooldown = maxf(_boost_kick_cooldown - delta, 0.0)
+	if _mini_boost_timer <= 0.0:
+		_active_mini_boost_tier = 0
+		_mini_boost_speed_mult = drift_boost_speed_multiplier
+		_mini_boost_accel_mult = drift_boost_accel_multiplier
 	if not held:
 		_boost_exhausted = false
+	var grounded_for_boost: bool = is_on_floor() or _air_time < BOOST_COYOTE_AIR_TIME
+	var state_allows_boost: bool = current_state == CartState.DRIVING \
+		or (current_state == CartState.AIRBORNE_TUMBLE and _air_time < BOOST_COYOTE_AIR_TIME)
 	var want_boost: bool = held \
-		and current_state == CartState.DRIVING \
-		and is_on_floor() \
+		and state_allows_boost \
+		and grounded_for_boost \
 		and boost_amount > 0.0 \
 		and not _boost_exhausted
 	if boost_amount <= 0.0:
 		_boost_exhausted = true
 		_boost_toggle_on = false
 	if want_boost:
+		if not _was_manual_boosting:
+			if _boost_kick_cooldown <= 0.0:
+				_boost_kick_cooldown = BOOST_IGNITE_COOLDOWN
+				var forward_dir: Vector3 = -global_transform.basis.z
+				forward_dir.y = 0.0
+				if forward_dir.length_squared() > 0.0001:
+					forward_dir = forward_dir.normalized()
+					var fwd_speed: float = velocity.dot(forward_dir)
+					var cap: float = max_speed * boost_speed_multiplier
+					if fwd_speed < cap:
+						velocity += forward_dir * minf(BOOST_IGNITE_KICK, cap - fwd_speed)
+			if _feedback != null and _pad_burst_timer <= 0.0:
+				_feedback.on_boost_started()
+			elif _feedback == null and _camera_rig != null and _pad_burst_timer <= 0.0:
+				_camera_rig.punch_fov(4.5)
 		_boost_regen_timer = boost_regen_delay
 		boost_amount = maxf(boost_amount - boost_drain_per_second * delta, 0.0)
 		boost_active = true
@@ -1531,10 +1804,8 @@ func _update_boost(delta: float, held: bool) -> void:
 			_boost_regen_timer = maxf(_boost_regen_timer - delta, 0.0)
 		else:
 			boost_amount = minf(boost_amount + boost_regen_per_second * delta, max_boost)
+	_was_manual_boosting = want_boost
 	boost_visual = lerpf(boost_visual, 1.0 if boost_active else 0.0, 1.0 - exp(-6.0 * delta))
-	# The pad has its own whoosh; don't stack the manual-boost sound on top.
-	if boost_active and not _was_boosting and _feedback != null and _pad_burst_timer <= 0.0:
-		_feedback.on_boost_started()
 	_was_boosting = boost_active
 
 
@@ -1619,21 +1890,42 @@ func _update_tumble(steer_input: float, delta: float) -> void:
 	if current_state == CartState.DRIVING and _air_time > airborne_time_threshold and enable_air_tumble:
 		_enter_tumble(steer_input, velocity.length())
 	if current_state == CartState.AIRBORNE_TUMBLE:
-		_tumble_pitch = wrapf(_tumble_pitch + _tumble_pitch_rate * delta, -PI, PI)
-		_tumble_roll = wrapf(_tumble_roll + _tumble_roll_rate * delta, -PI, PI)
+		# Gently auto-stabilize toward upright on jumps (<= 18 deg bank, slight
+		# flight nose-arc) instead of barrel-rolling into a ramp crash. If an
+		# external force genuinely inverted the chassis, let it stay inverted long
+		# enough for _land_from_tumble() to register an inverted crash.
+		var up_align_now: float = cos(_tumble_pitch) * cos(_tumble_roll)
+		if up_align_now >= upside_down_dot_threshold:
+			var horiz_speed: float = Vector2(velocity.x, velocity.z).length()
+			var flight_arc_pitch: float = clampf(
+				atan2(velocity.y, maxf(horiz_speed, 4.0)) * 0.38, -0.24, 0.22)
+			var target_air_roll: float = clampf(
+				-steer_input * MAX_AIR_BANK_RAD * 0.85,
+				-MAX_AIR_BANK_RAD, MAX_AIR_BANK_RAD)
+			var stab_blend: float = 1.0 - exp(-6.0 * delta)
+			_tumble_pitch = lerp_angle(_tumble_pitch, flight_arc_pitch, stab_blend)
+			_tumble_roll = lerp_angle(_tumble_roll, target_air_roll, stab_blend)
+		else:
+			_tumble_pitch = wrapf(_tumble_pitch + _tumble_pitch_rate * delta, -PI, PI)
+			_tumble_roll = wrapf(_tumble_roll + _tumble_roll_rate * delta, -PI, PI)
 
 
 func _enter_tumble(steer_input: float, speed: float) -> void:
 	current_state = CartState.AIRBORNE_TUMBLE
-	_tumble_pitch_rate = -air_tumble_strength * (0.5 + speed * 0.06)
-	_tumble_roll_rate = steer_input * air_tumble_strength * 3.0
+	_tumble_pitch_rate = 0.0
+	_tumble_roll_rate = 0.0
+	var horiz_speed: float = maxf(speed, 4.0)
+	_tumble_pitch = clampf(atan2(velocity.y, horiz_speed) * 0.22, -0.20, 0.18)
+	_tumble_roll = clampf(-steer_input * MAX_AIR_BANK_RAD * 0.5,
+		-MAX_AIR_BANK_RAD, MAX_AIR_BANK_RAD)
 
 
 func _land_from_tumble() -> void:
-	var tilt: Vector2 = Vector2(_tumble_pitch, _tumble_roll)
-	var up_dot: float = cos(tilt.length())
-	if up_dot <= upside_down_dot_threshold:
-		_enter_crashed(up_dot)
+	var chassis_up: Vector3 = (global_transform.basis
+		* Basis.from_euler(Vector3(_tumble_pitch, 0.0, _tumble_roll))).y.normalized()
+	var up_alignment: float = chassis_up.dot(Vector3.UP)
+	if up_alignment < upside_down_dot_threshold:
+		_enter_crashed(up_alignment)
 	else:
 		current_state = CartState.DRIVING
 
@@ -1645,10 +1937,20 @@ func _enter_crashed(up_dot: float) -> void:
 	_crash_timer = crash_cooldown
 	boost_active = false
 	_manual_boost_active = false
+	_was_manual_boosting = false
 	_boost_toggle_on = false
 	_handbrake_toggle_on = false
+	_was_handbraking = false
 	_drift_charge = 0.0
 	_drift_charging = false
+	_drift_grace_timer = 0.0
+	_drift_dir = 0
+	_last_emitted_drift_tier = 0
+	_active_mini_boost_tier = 0
+	_ai_chicane_timer = 0.0
+	_hop_offset = 0.0
+	_hop_vel = 0.0
+	_hop_active = false
 	_mini_boost_timer = 0.0
 	_pad_burst_timer = 0.0
 	_bump_timer = 0.0
@@ -1715,12 +2017,29 @@ func _update_visuals(steer_input: float, delta: float) -> void:
 	_stretch_impulse = move_toward(_stretch_impulse, 0.0, 2.5 * delta)
 	var accel_stretch: float = 0.0
 	var brake_squash: float = 0.0
-	var accelerating: bool = ai_throttle > 0.05 if ai_mode else Input.is_action_pressed("accelerate")
-	var braking_now: bool = ai_brake > 0.05 if ai_mode else Input.is_action_pressed("brake")
+	var accelerating: bool = false
+	var braking_now: bool = false
+	if not remote_mode:
+		if ai_mode:
+			accelerating = ai_throttle > 0.05
+			braking_now = ai_brake > 0.05
+		elif not _input_locked_now and not Network.input_locked:
+			accelerating = Input.is_action_pressed("accelerate")
+			braking_now = Input.is_action_pressed("brake")
 	if accelerating:
 		accel_stretch = 1.0 - speed_frac
 	elif braking_now:
 		brake_squash = speed_frac
+	if _hop_active or _hop_offset > 0.0 or _hop_vel > 0.0:
+		_hop_offset += _hop_vel * delta
+		_hop_vel -= HOP_GRAVITY * delta
+		if _hop_offset <= 0.0 and _hop_vel <= 0.0:
+			_hop_offset = 0.0
+			_hop_vel = 0.0
+			if _hop_active:
+				_hop_active = false
+				_squash_impulse = maxf(_squash_impulse, 0.24)
+				_susp_vel -= 0.14
 	var stretch: float = (accel_stretch * 0.6 + _stretch_impulse) * squash_amount
 	var squash: float = (brake_squash * 0.6 + _squash_impulse) * squash_amount
 	var target_scale: Vector3 = Vector3(
@@ -1746,7 +2065,7 @@ func _update_visuals(steer_input: float, delta: float) -> void:
 	_base_roll = clampf(_base_roll + _base_roll_vel * delta, -0.36, 0.36)
 	_susp_vel += (-_susp_pos * suspension_stiffness - _susp_vel * suspension_damping) * delta
 	_susp_pos = clampf(_susp_pos + _susp_vel * delta, -0.12, 0.07)
-	_mesh_root.position.y = SUSPENSION_PIVOT_HEIGHT + _susp_pos
+	_mesh_root.position.y = SUSPENSION_PIVOT_HEIGHT + _susp_pos + _hop_offset
 	_mesh_root.rotation.z = _base_roll + _slope_roll + _tumble_roll
 	_mesh_root.rotation.x = _base_pitch + _slope_pitch + _tumble_pitch
 	_update_collision_shapes()
@@ -1898,11 +2217,20 @@ func _restore_pushables() -> void:
 		prop.sleeping = false
 
 
+func reset_at(spawn_transform: Transform3D, restore_props: bool = false) -> void:
+	## Full race-start reset at a given grid transform, granting full boost.
+	_spawn_transform = spawn_transform
+	_reset_cart(restore_props)
+
+
 func reset_for_respawn() -> void:
 	## Clear tumble/boost/crash state without teleporting to the grid spawn.
-	## A remote/AI respawn must not teleport the whole park's props back.
+	## Preserves existing boost (minimum 25%) instead of refilling to 100%, so
+	## driving off-track cannot be exploited for a free full boost bar.
 	var keep: Transform3D = global_transform
+	var preserved_boost: float = clampf(maxf(boost_amount, max_boost * 0.25), 0.0, max_boost)
 	_reset_cart(false)
+	boost_amount = preserved_boost
 	global_transform = keep
 	_last_safe_position = keep.origin
 	_last_safe_yaw = keep.basis.get_euler().y
@@ -1930,6 +2258,7 @@ func _reset_cart(restore_props: bool = true) -> void:
 	_bump_expire_ms = 0
 	_bump_chain_end_ms = 0
 	is_drifting = false
+	slide_amount = 0.0
 	_frame_start_velocity = Vector3.ZERO
 	_prev_velocity = Vector3.ZERO
 	_was_on_floor = true
@@ -1940,17 +2269,32 @@ func _reset_cart(restore_props: bool = true) -> void:
 	_boost_regen_timer = 0.0
 	_pad_burst_timer = 0.0
 	_was_boosting = false
+	_was_manual_boosting = false
+	_boost_kick_cooldown = 0.0
 	_boost_exhausted = false
 	_boost_toggle_on = false
 	_handbrake_toggle_on = false
+	_was_handbraking = false
 	_drift_charge = 0.0
 	_drift_charging = false
+	_drift_grace_timer = 0.0
+	_drift_dir = 0
+	_last_emitted_drift_tier = 0
+	_active_mini_boost_tier = 0
+	_mini_boost_speed_mult = drift_boost_speed_multiplier
+	_mini_boost_accel_mult = drift_boost_accel_multiplier
+	_ai_chicane_timer = 0.0
+	_hop_offset = 0.0
+	_hop_vel = 0.0
+	_hop_active = false
 	_mini_boost_timer = 0.0
 	_manual_boost_active = false
 	_cancel_hit_stop()
 	_air_time = 0.0
 	_tumble_pitch = 0.0
 	_tumble_roll = 0.0
+	_tumble_pitch_rate = 0.0
+	_tumble_roll_rate = 0.0
 	_crash_timer = 0.0
 	_recover_timer = 0.0
 	_base_pitch = 0.0
@@ -1968,6 +2312,7 @@ func _reset_cart(restore_props: bool = true) -> void:
 	for i in 4:
 		_ground_support[i] = true
 		_ground_heights[i] = 0.0
+	_has_collision_basis = false
 	_update_collision_shapes()
 	if _camera_rig != null:
 		_camera_rig.reset_camera()

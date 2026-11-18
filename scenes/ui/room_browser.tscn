@@ -36,12 +36,12 @@ grow_vertical = 2
 
 [node name="Panel" type="PanelContainer" parent="Center"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(780, 540)
+custom_minimum_size = Vector2(780, 480)
 layout_mode = 2
 
 [node name="Body" type="VBoxContainer" parent="Center/Panel"]
 layout_mode = 2
-theme_override_constants/separation = 16
+theme_override_constants/separation = 14
 
 [node name="Header" type="HBoxContainer" parent="Center/Panel/Body"]
 layout_mode = 2
@@ -53,7 +53,7 @@ layout_mode = 2
 size_flags_horizontal = 3
 theme_type_variation = &"TitleLabel"
 theme_override_colors/font_color = Color(0.117647, 0.105882, 0.227451, 1)
-theme_override_font_sizes/font_size = 40
+theme_override_font_sizes/font_size = 38
 text = "LAN + ONLINE ROOMS"
 vertical_alignment = 1
 
@@ -69,7 +69,7 @@ horizontal_alignment = 2
 [node name="CloseButton" type="Button" parent="Center/Panel/Body/Header"]
 unique_name_in_owner = true
 layout_mode = 2
-custom_minimum_size = Vector2(120, 48)
+custom_minimum_size = Vector2(120, 46)
 theme_override_font_sizes/font_size = 17
 text = "CLOSE"
 script = ExtResource("3")
@@ -93,7 +93,7 @@ alignment = 1
 [node name="RefreshButton" type="Button" parent="Center/Panel/Body/SearchRow"]
 unique_name_in_owner = true
 layout_mode = 2
-custom_minimum_size = Vector2(150, 48)
+custom_minimum_size = Vector2(156, 48)
 theme_override_font_sizes/font_size = 17
 text = "REFRESH"
 script = ExtResource("3")
@@ -109,7 +109,15 @@ horizontal_scroll_mode = 0
 vertical_scroll_mode = 1
 follow_focus = true
 
-[node name="List" type="VBoxContainer" parent="Center/Panel/Body/ListScroll"]
+[node name="ListPad" type="MarginContainer" parent="Center/Panel/Body/ListScroll"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/margin_left = 10
+theme_override_constants/margin_top = 8
+theme_override_constants/margin_right = 10
+theme_override_constants/margin_bottom = 10
+
+[node name="List" type="VBoxContainer" parent="Center/Panel/Body/ListScroll/ListPad"]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3

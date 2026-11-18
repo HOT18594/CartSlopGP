@@ -1,18 +1,14 @@
 extends Node3D
-## CARGO RUSH: a two-team present relay in a compact cartoon arena.
+## DELIVER (Cargo Rush): a two-team 2 minute cargo-crate scramble across three
+## genuinely distinct 3D cartoon arenas (`harbour` Harbour Overpass, `farmyard`
+## Windmill Hills, and `snowfield` Glacier Bowl).
 ##
-## Presents sit on the 16 m lattice all over the yard. A kart stops on one and
-## HOLDS the interact action for two seconds to load it, then drives it home
-## and the present drops the moment the kart touches its own base pad. First
-## team to BASE_TARGET deliveries wins; a five minute cap with a tied score
-## goes to sudden-death overtime.
-##
-## The arena is one shared layout for every theme: a flat checkerboard floor,
-## a Kenney barrierWall ring, two painted base pads with kit flags, Kenney
-## grandstands, floodlights, banner towers and a nature tree line outside the
-## fence. cargo_rush_theme.gd owns the flat palette, the present art, the tree
-## ring and the grip rule, so a skin can never change the layout or the rules.
-## No photographic texture is referenced anywhere.
+## Crates spawn on custom 3D points per map — including atop the +2.2 m steel
+## overpass bridge, the +2.0 m windmill hilltop plateau, and the slick 0.45-grip
+## glacier ice bowl. A kart drives onto a crate (< 6.5 m/s) and HOLDS the
+## interact action for 0.45 seconds to load it, then drives it home to its team
+## pad. First team to BASE_TARGET deliveries wins; a tied 2:00 clock enters
+## sudden-death overtime.
 ##
 ## Solo play is the local kart against the sandbox AI carts. Each rival reuses
 ## scripts/ai/sandbox_bot.gd as its driver and runs a four-state relay machine
@@ -49,9 +45,9 @@ const UiPalette := preload("res://scripts/ui/ui_palette.gd")
 const SCENE_PATH: String = "res://scenes/minigames/cargo_rush.tscn"
 const MAIN_MENU: String = "res://scenes/ui/main_menu.tscn"
 const MINIGAMES_MENU: String = "res://scenes/ui/minigames_menu.tscn"
-const UI_THEME: String = "res://assets/ui/theme.tres"
-const CANDY_BUTTON: String = "res://scripts/ui/candy_button.gd"
-const TITLE_FONT: String = "res://assets/ui/fonts/LuckiestGuy-Regular.ttf"
+const UI_THEME: Theme = preload("res://assets/ui/theme.tres")
+const CANDY_BUTTON := preload("res://scripts/ui/candy_button.gd")
+const TITLE_FONT: Font = preload("res://assets/ui/fonts/LuckiestGuy-Regular.ttf")
 
 const COUNTDOWN_BEEP: AudioStream = preload("res://assets/audio/sfx/race/countdown_beep.wav")
 const COUNTDOWN_GO: AudioStream = preload("res://assets/audio/sfx/race/countdown_go.wav")
@@ -65,7 +61,7 @@ const FINISH_FANFARE: AudioStream = preload("res://assets/audio/sfx/race/finish_
 const INTERACT_ACTION: String = "interact"
 const INTERACT_KEY: Key = KEY_E
 
-const MATCH_SECONDS: float = 300.0
+const MATCH_SECONDS: float = 120.0
 const OVERTIME_SECONDS: float = 60.0
 const COUNTDOWN_SECONDS: float = 3.0
 const BASE_TARGET: int = 5
@@ -77,8 +73,11 @@ const CORNER_RADIUS: int = 16 ## One radius for every HUD tile, per the UI kit.
 const SPACE_MARGIN: float = 24.0
 const SPACE_GAP: float = 16.0
 const SPACE_GAP_SMALL: float = 8.0
-const TOAST_HEIGHT: float = 46.0
-const PROMPT_HEIGHT: float = 52.0
+const SCOREBOARD_TOP: float = 12.0
+const SCOREBOARD_WIDTH: float = 520.0
+const SCOREBOARD_MAX_HEIGHT: float = 64.0
+const TOAST_HEIGHT: float = 42.0
+const PROMPT_HEIGHT: float = 44.0
 
 const TEAM_COLORS: Array[Color] = [UiPalette.BLUE, UiPalette.RED]
 
@@ -104,9 +103,10 @@ const FLAG_MODEL_GREEN: String = "flagGreen"
 const PRESENT_COUNT: int = 7
 const PRESENT_RESPAWN: float = 1.1
 const PICK_RADIUS: float = 4.2
-const HOLD_SECONDS: float = 2.0
-const CARRY_SLOW_SPEED: float = 0.86
-const CARRY_SLOW_ACCEL: float = 0.90
+const HOLD_SECONDS: float = 0.45
+const HOLD_MAX_SPEED: float = 6.5
+const CARRY_SLOW_SPEED: float = 0.92
+const CARRY_SLOW_ACCEL: float = 0.92
 const PRESENT_FLOAT: float = 0.78
 const CARRY_OFFSET := Transform3D(Basis.IDENTITY, Vector3(0.0, 1.02, -1.48))
 const POINT_CLEARANCE: float = 1.0
@@ -225,6 +225,7 @@ var _hold_sent_holding: bool = false
 var _carry_saved: Dictionary = {} ## cart instance id -> {max_speed, acceleration}
 
 var _cart: CartPlayer
+var _hud: Node
 var _bots: Array[Dictionary] = []
 var _traffic: Array[CartPlayer] = []
 var _saved_vehicle: String = ""
@@ -267,17 +268,12 @@ var _selftest_present: int = -1
 
 var _canvas: CanvasLayer
 var _hud_root: Control
+var _scoreboard_panel: PanelContainer
 var _timer_panel: PanelContainer
-var _score_panel: PanelContainer
-var _theme_panel: PanelContainer
 var _timer_label: Label
-var _overtime_label: Label
-var _score_header_label: Label
+var _arena_tag_label: Label
 var _score_labels: Array[Label] = []
-var _target_labels: Array[Label] = []
 var _team_name_labels: Array[Label] = []
-var _theme_name_label: Label
-var _theme_detail_label: Label
 var _countdown_label: Label
 var _toast_label: Label
 var _prompt_label: Label
@@ -327,6 +323,7 @@ func _ready() -> void:
 	_upgrade_graphics()
 
 	_cart = get_tree().get_first_node_in_group("player") as CartPlayer
+	_bind_hud()
 	_build_arena()
 	_build_bases()
 	_apply_theme()
@@ -436,6 +433,39 @@ func _upgrade_graphics() -> void:
 		viewport.screen_space_aa = Viewport.SCREEN_SPACE_AA_FXAA
 	VisualGrade.apply(get_node_or_null("WorldEnvironment") as WorldEnvironment, "race")
 	VisualGrade.apply_sun(get_node_or_null("Sun") as DirectionalLight3D)
+
+
+func _bind_hud() -> void:
+	## Bind the shared driving HUD (Speedometer, Boost Meter, Drift-Charge Halo,
+	## FPS, Tab Ping list) while hiding race-only lap/position/standings plaques.
+	_hud = get_node_or_null("HUD")
+	if _hud == null:
+		return
+	if _cart != null:
+		if _hud.has_method("set_cart"):
+			_hud.call("set_cart", _cart)
+		elif _hud.has_method("bind_cart"):
+			_hud.call("bind_cart", _cart)
+		else:
+			for prop: Dictionary in _hud.get_property_list():
+				var prop_name: String = str(prop.get("name", ""))
+				if prop_name == "cart" or prop_name == "target_cart":
+					_hud.set(prop_name, _cart)
+	if _hud.has_method("set_race_mode"):
+		_hud.call("set_race_mode", false)
+	elif _hud.has_method("set_race_hud_visible"):
+		_hud.call("set_race_hud_visible", false)
+	elif _hud.has_method("hide_race_hud"):
+		_hud.call("hide_race_hud")
+	for race_node_name: String in [
+		"RacePlaque", "RaceBox", "RacePanel", "RaceBar",
+		"LapPlaque", "LapBox", "PositionBox",
+		"Standings", "StandingsBox", "StandingsPanel", "StandingsPlaque",
+		"WrongWay", "WrongWayLabel", "WrongWayBanner",
+	]:
+		var node: CanvasItem = _hud.find_child(race_node_name, true, false) as CanvasItem
+		if node != null:
+			node.visible = false
 
 
 # --------------------------------------------------------------------------
@@ -558,7 +588,7 @@ func _build_markings() -> void:
 	torus.ring_segments = 6
 	_centre_ring.mesh = torus
 	_centre_ring.scale = Vector3(1.0, 0.03, 1.0)
-	_centre_ring.position = Vector3(0.0, 0.026, 0.0)
+	_centre_ring.position = Vector3(0.0, 0.056, 0.0)
 	_centre_ring.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(_centre_ring)
 	_refresh_markings()
@@ -573,6 +603,7 @@ func _refresh_markings() -> void:
 		return
 	var paint: Color = _theme.get("paint", UiPalette.CREAM) as Color
 	var accent: Color = _theme.get("paint_alt", UiPalette.YELLOW) as Color
+	var canonical: String = CargoTheme.resolve(str(_theme.get("id", "")))
 	var batch := PropBatch.new()
 	for side: float in [-1.0, 1.0]:
 		batch.add_box(Transform3D(Basis.IDENTITY,
@@ -581,11 +612,13 @@ func _refresh_markings() -> void:
 		batch.add_box(Transform3D(Basis.IDENTITY,
 			Vector3(side * (ARENA_HALF - 2.0), 0.022, 0.0)),
 			Vector3(0.7, 0.04, ARENA_HALF * 2.0 - 4.0), paint)
-	batch.add_box(Transform3D(Basis.IDENTITY, Vector3(0.0, 0.024, 0.0)),
-		Vector3(2.2, 0.04, 18.0), accent)
-	batch.add_box(Transform3D(Basis.IDENTITY, Vector3(0.0, 0.026, 0.0)),
-		Vector3(18.0, 0.04, 2.2), accent)
+	if canonical == "snowfield":
+		batch.add_box(Transform3D(Basis.IDENTITY, Vector3(0.0, 0.052, 0.0)),
+			Vector3(2.0, 0.02, 16.0), accent)
+		batch.add_box(Transform3D(Basis.IDENTITY, Vector3(0.0, 0.054, 0.0)),
+			Vector3(16.0, 0.02, 2.0), accent)
 	_paint_lines.mesh = batch.build()
+	_centre_ring.visible = canonical == "snowfield"
 	_centre_ring.material_override = CargoTheme.flat_material(accent)
 
 
@@ -745,7 +778,7 @@ func _build_bases() -> void:
 		var label := Label3D.new()
 		label.name = "BaseLabel_%d" % team
 		label.text = _team_names[team]
-		label.font = load(TITLE_FONT)
+		label.font = TITLE_FONT
 		label.font_size = 96
 		label.pixel_size = 0.011
 		label.outline_size = 14
@@ -826,7 +859,7 @@ func _build_base_structures(team: int, centre: Vector3) -> void:
 		var face := Label3D.new()
 		face.name = "PillarScore_%s" % ("A" if side < 0.0 else "B")
 		face.text = "0 / %d" % _target
-		face.font = load(TITLE_FONT)
+		face.font = TITLE_FONT
 		face.font_size = 128
 		face.pixel_size = 0.0075
 		face.outline_size = 16
@@ -893,6 +926,7 @@ func _apply_theme() -> void:
 	_refresh_checker()
 	_refresh_markings()
 	_apply_sky()
+	_rebuild_present_points()
 	_refresh_present_visuals()
 
 
@@ -918,13 +952,20 @@ func _apply_sky() -> void:
 # presents: points of interest, pool, visuals
 
 
-func _build_present_pool() -> void:
-	## Build one reusable present node per slot on the 16 m lattice. Nothing is
-	## placed in the world until the race starts, so a client never shows a
-	## present the host has not spawned.
+func _rebuild_present_points() -> void:
 	_present_points.clear()
-	for spot: Vector3 in PRESENT_SPOTS:
-		_add_present_point(spot, "lattice")
+	var spots: Array[Vector3] = CargoTheme.present_spots(_theme)
+	if spots.is_empty():
+		spots = PRESENT_SPOTS
+	for spot: Vector3 in spots:
+		_add_present_point(spot, "elevated" if spot.y > 0.5 else "lane")
+
+
+func _build_present_pool() -> void:
+	## Build one reusable present node per slot on the map's 3D spawn points.
+	## Nothing is placed in the world until the race starts, so a client never
+	## shows a present the host has not spawned.
+	_rebuild_present_points()
 	_ring_material = StandardMaterial3D.new()
 	_ring_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	_ring_material.vertex_color_use_as_albedo = true
@@ -950,7 +991,7 @@ func _build_present_pool() -> void:
 
 func _add_present_point(position: Vector3, poi: String) -> void:
 	_present_points.append({
-		"position": Vector3(position.x, 0.0, position.z),
+		"position": Vector3(position.x, position.y, position.z),
 		"poi": poi,
 	})
 
@@ -1198,6 +1239,9 @@ func _tick_holds(delta: float) -> void:
 		if cart == null or not is_instance_valid(cart):
 			continue
 		if not _present_in_range(cart, index):
+			continue
+		var planar_speed: float = Vector2(cart.velocity.x, cart.velocity.z).length()
+		if planar_speed >= HOLD_MAX_SPEED:
 			continue
 		active[key] = index
 	for index: int in _hold_owner.keys():
@@ -1447,7 +1491,7 @@ func _present_in_range(cart: CartPlayer, index: int) -> bool:
 	var target: Vector3 = _presents[index]["position"] as Vector3
 	if _planar_distance(cart.global_position, target) > PICK_RADIUS:
 		return false
-	return absf(cart.global_position.y - target.y) < 3.0
+	return absf(cart.global_position.y - (target.y + 0.35)) < 1.45
 
 
 func _present_word() -> String:
@@ -1461,6 +1505,8 @@ func _nearest_present(cart: CartPlayer) -> int:
 		if int(_presents[index]["state"]) != PRESENT_AVAILABLE:
 			continue
 		var target: Vector3 = _presents[index]["position"] as Vector3
+		if absf(cart.global_position.y - (target.y + 0.35)) >= 1.45:
+			continue
 		var gap: float = _planar_distance(cart.global_position, target)
 		if gap < best_gap:
 			best_gap = gap
@@ -1518,7 +1564,8 @@ func _update_pickup_ring(index: int, node: Dictionary,
 	var beat: float = 0.5 + 0.5 * sin(_visual_time * 2.4 + phase)
 	var close: bool = _cart != null and is_instance_valid(_cart) \
 		and _present_in_range(_cart, index)
-	pickup.position.y = 0.10 - root.position.y
+	var base: Vector3 = _presents[index]["position"] as Vector3
+	pickup.position.y = (base.y + 0.10) - root.position.y
 	pickup.scale = Vector3(1.0 + beat * 0.06, 0.05, 1.0 + beat * 0.06)
 	var mat: StandardMaterial3D = node.get("pickup_mat") as StandardMaterial3D
 	if mat == null:
@@ -1564,7 +1611,9 @@ func _update_carry_trail(index: int, node: Dictionary, carrier: CartPlayer,
 		points.clear()
 		_trail_points[index] = points
 		return
-	var here := Vector3(carrier.global_position.x, CARRY_TRAIL_HEIGHT,
+	var trail_y: float = maxf(carrier.global_position.y - 0.22,
+		CARRY_TRAIL_HEIGHT)
+	var here := Vector3(carrier.global_position.x, trail_y,
 		carrier.global_position.z)
 	if points.is_empty() \
 			or points[points.size() - 1].distance_to(here) >= CARRY_TRAIL_STEP:
@@ -1755,7 +1804,7 @@ func _spawn_bot(index: int, ghost: bool) -> void:
 	var label := Label3D.new()
 	label.name = "BotTag"
 	label.text = "BOT %d" % (index + 1)
-	label.font = load(TITLE_FONT)
+	label.font = TITLE_FONT
 	label.font_size = 48
 	label.pixel_size = 0.008
 	label.outline_size = 14
@@ -2012,11 +2061,45 @@ func _bot_stop(cart: CartPlayer) -> void:
 
 func _bot_drive(cart: CartPlayer, ai: SandboxBot, target: Vector3,
 		delta: float, speed_scale: float) -> void:
-	var gap: float = _planar_distance(cart.global_position, target)
+	var waypoint: Vector3 = _elevated_waypoint(cart, target)
+	var gap: float = _planar_distance(cart.global_position, waypoint)
 	if gap > BOT_NEAR_DRIVE:
-		_sandbox_drive(ai, cart, target, delta)
+		_sandbox_drive(ai, cart, waypoint, delta)
 		return
-	_drive_to(cart, target, speed_scale)
+	_drive_to(cart, waypoint, speed_scale)
+
+
+func _elevated_waypoint(cart: CartPlayer, target: Vector3) -> Vector3:
+	## Routes ground-level AI karts cleanly onto the N/S bridge approach ramps
+	## (`harbour`) or the 4 hilltop dirt ramps (`farmyard`) when seeking a crate
+	## perched on an elevated 3D deck.
+	if cart == null or target.y < 1.0 or cart.global_position.y >= target.y - 0.8:
+		return target
+	var pos: Vector3 = cart.global_position
+	var canonical: String = CargoTheme.resolve(_theme_id)
+	if canonical == "harbour":
+		if absf(pos.x) <= 4.6 and absf(pos.z) >= 13.0:
+			return target
+		var ramp_z: float = -25.5 if pos.z < 0.0 else 25.5
+		return Vector3(0.0, 0.0, ramp_z)
+	if canonical == "farmyard":
+		if absf(pos.x) <= 4.5 or absf(pos.z) <= 4.5:
+			return target
+		var mouths: Array[Vector3] = [
+			Vector3(0.0, 0.0, -22.5),
+			Vector3(0.0, 0.0, 22.5),
+			Vector3(22.5, 0.0, 0.0),
+			Vector3(-22.5, 0.0, 0.0),
+		]
+		var best_mouth: Vector3 = mouths[0]
+		var best_dist: float = INF
+		for mouth: Vector3 in mouths:
+			var dist: float = _planar_distance(pos, mouth)
+			if dist < best_dist:
+				best_dist = dist
+				best_mouth = mouth
+		return best_mouth
+	return target
 
 
 func _sandbox_drive(ai: SandboxBot, cart: CartPlayer, target: Vector3,
@@ -2044,8 +2127,8 @@ func _drive_to(cart: CartPlayer, target: Vector3, speed_scale: float) -> void:
 	var steer: float = clampf(atan2(-local.x, -local.z) * 2.1, -1.0, 1.0)
 	var distance: float = Vector2(local.x, local.z).length()
 	var speed: float = Vector2(cart.velocity.x, cart.velocity.z).length()
-	var desired: float = (9.0 if distance > 10.0
-		else lerpf(1.6, 9.0, clampf(distance / 10.0, 0.0, 1.0))) * speed_scale
+	var desired: float = (12.0 if distance > 10.0
+		else lerpf(3.2, 11.0, clampf(distance / 10.0, 0.0, 1.0))) * speed_scale
 	var throttle: float = 1.0 if speed < desired else 0.0
 	var brake: float = 0.0
 	if speed > desired + 0.6:
@@ -2292,7 +2375,9 @@ func _tick_local_input(delta: float) -> void:
 		_restore_carry_slow(_cart)
 	var nearest: int = _nearest_present(_cart)
 	_local_hold_index = nearest
-	_local_holding = nearest >= 0 and Input.is_action_pressed(INTERACT_ACTION)
+	var planar_speed: float = Vector2(_cart.velocity.x, _cart.velocity.z).length()
+	_local_holding = nearest >= 0 and planar_speed < HOLD_MAX_SPEED \
+		and Input.is_action_pressed(INTERACT_ACTION)
 	if not _local_holding:
 		_local_hold_time = 0.0
 		_send_hold_request(-1, false, delta)
@@ -2361,18 +2446,35 @@ func _apply_theme_grip(delta: float) -> void:
 			continue
 		var grip: float = base_grip
 		var spin: float = 0.0
+		var drag: float = 0.0
+		var pos: Vector3 = cart.global_position
 		for zone: Dictionary in _hazards:
+			var max_y: float = float(zone.get("max_y", INF))
+			if pos.y > max_y:
+				continue
 			var centre: Vector3 = zone.get("centre", Vector3.ZERO) as Vector3
-			var radius: float = float(zone.get("radius", 0.0))
-			var offset: Vector3 = cart.global_position - centre
-			offset.y = 0.0
-			if offset.length_squared() <= radius * radius:
+			var inside: bool = false
+			if zone.has("half_extents"):
+				var half_ext: Vector2 = zone["half_extents"] as Vector2
+				inside = absf(pos.x - centre.x) <= half_ext.x \
+					and absf(pos.z - centre.z) <= half_ext.y
+			else:
+				var radius: float = float(zone.get("radius", 0.0))
+				var dx: float = pos.x - centre.x
+				var dz: float = pos.z - centre.z
+				inside = dx * dx + dz * dz <= radius * radius
+			if inside:
 				grip = minf(grip, float(zone.get("grip", grip)))
 				spin = maxf(spin, float(zone.get("spin", 0.0)))
+				drag = maxf(drag, float(zone.get("drag", 0.0)))
 		cart.surface_grip = clampf(grip, 0.2, 1.5)
-		if spin <= 0.0 or not cart.is_on_floor():
+		if not cart.is_on_floor():
 			continue
-		if cart.current_state != CartPlayer.CartState.DRIVING:
+		if drag > 1.0:
+			var damp: float = clampf(1.0 - (drag - 1.0) * delta * 1.8, 0.82, 1.0)
+			cart.velocity.x *= damp
+			cart.velocity.z *= damp
+		if spin <= 0.0 or cart.current_state != CartPlayer.CartState.DRIVING:
 			continue
 		var wobble: float = sin(_time * 2.7 + float(cart.get_instance_id() % 31)) * spin
 		cart.rotate_y(wobble * delta * 0.30)
@@ -2391,100 +2493,90 @@ func _build_hud() -> void:
 	_hud_root.name = "HudRoot"
 	_hud_root.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_hud_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_hud_root.theme = load(UI_THEME)
+	_hud_root.theme = UI_THEME
 	_canvas.add_child(_hud_root)
 
-	_timer_panel = PanelContainer.new()
-	_timer_panel.name = "TimerPlaque"
-	_timer_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_timer_panel.anchor_left = 0.5
-	_timer_panel.anchor_right = 0.5
-	_timer_panel.offset_left = -150.0
-	_timer_panel.offset_right = 150.0
-	_timer_panel.offset_top = SPACE_MARGIN
-	_timer_panel.offset_bottom = SPACE_MARGIN
-	_timer_panel.add_theme_stylebox_override("panel",
-		_panel_style(Color(0.118, 0.106, 0.227, 0.82)))
-	_hud_root.add_child(_timer_panel)
-	var timer_column := VBoxContainer.new()
-	timer_column.alignment = BoxContainer.ALIGNMENT_CENTER
-	timer_column.add_theme_constant_override("separation", SPACE_GAP)
-	_timer_panel.add_child(timer_column)
-	var timer_caption := _label("TIME", 13, Color(1, 1, 1, 0.62))
-	timer_caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	timer_column.add_child(timer_caption)
-	_timer_label = _label("5:00", 42, UiPalette.YELLOW, 8)
+	_scoreboard_panel = PanelContainer.new()
+	_scoreboard_panel.name = "ScoreboardBar"
+	_scoreboard_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_scoreboard_panel.anchor_left = 0.5
+	_scoreboard_panel.anchor_right = 0.5
+	_scoreboard_panel.offset_left = -SCOREBOARD_WIDTH * 0.5
+	_scoreboard_panel.offset_right = SCOREBOARD_WIDTH * 0.5
+	_scoreboard_panel.offset_top = SCOREBOARD_TOP
+	_scoreboard_panel.offset_bottom = SCOREBOARD_TOP + 56.0
+	_scoreboard_panel.add_theme_stylebox_override("panel", _scoreboard_style())
+	_hud_root.add_child(_scoreboard_panel)
+	_timer_panel = _scoreboard_panel
+
+	var bar_column := VBoxContainer.new()
+	bar_column.alignment = BoxContainer.ALIGNMENT_CENTER
+	bar_column.add_theme_constant_override("separation", 1)
+	bar_column.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_scoreboard_panel.add_child(bar_column)
+
+	var main_row := HBoxContainer.new()
+	main_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	main_row.add_theme_constant_override("separation", int(SPACE_GAP_SMALL))
+	main_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bar_column.add_child(main_row)
+
+	var dot_a := ColorRect.new()
+	dot_a.color = TEAM_COLORS[0]
+	dot_a.custom_minimum_size = Vector2(10, 10)
+	dot_a.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	dot_a.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	main_row.add_child(dot_a)
+
+	var name_a := _label(_team_names[0], 14, UiPalette.CREAM, 4)
+	name_a.custom_minimum_size = Vector2(124, 0)
+	name_a.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	name_a.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	name_a.clip_text = true
+	main_row.add_child(name_a)
+	_team_name_labels.append(name_a)
+
+	var score_a := _label("0", 22, UiPalette.YELLOW, 6)
+	score_a.custom_minimum_size = Vector2(24, 0)
+	score_a.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	main_row.add_child(score_a)
+	_score_labels.append(score_a)
+
+	var sep_left := _label("·", 16, Color(1.0, 1.0, 1.0, 0.45))
+	main_row.add_child(sep_left)
+
+	_timer_label = _label("2:00", 22, UiPalette.YELLOW, 6)
+	_timer_label.custom_minimum_size = Vector2(68, 0)
 	_timer_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	timer_column.add_child(_timer_label)
-	_overtime_label = _label("OVERTIME", 13, UiPalette.CREAM, 4)
-	_overtime_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_overtime_label.visible = false
-	timer_column.add_child(_overtime_label)
+	main_row.add_child(_timer_label)
 
-	_score_panel = PanelContainer.new()
-	_score_panel.name = "ScorePlaque"
-	_score_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_score_panel.offset_left = SPACE_MARGIN
-	_score_panel.offset_top = SPACE_MARGIN
-	_score_panel.offset_right = SPACE_MARGIN + 320.0
-	_score_panel.offset_bottom = SPACE_MARGIN
-	_score_panel.add_theme_stylebox_override("panel",
-		_panel_style(Color(0.118, 0.106, 0.227, 0.80)))
-	_hud_root.add_child(_score_panel)
-	var score_column := VBoxContainer.new()
-	score_column.add_theme_constant_override("separation", SPACE_GAP)
-	_score_panel.add_child(score_column)
-	_score_header_label = _label("DELIVERED  ·  FIRST TO %d" % _target, 12,
-		Color(1, 1, 1, 0.55))
-	score_column.add_child(_score_header_label)
-	for team in TEAM_COUNT:
-		var row := HBoxContainer.new()
-		row.add_theme_constant_override("separation", SPACE_GAP_SMALL)
-		score_column.add_child(row)
-		var dot := ColorRect.new()
-		dot.color = TEAM_COLORS[team]
-		dot.custom_minimum_size = Vector2(10, 10)
-		dot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		row.add_child(dot)
-		var name_label := _label(_team_names[team], 18, UiPalette.CREAM)
-		name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		name_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-		name_label.clip_text = true
-		row.add_child(name_label)
-		var value := _label("0", 26, UiPalette.YELLOW, 5)
-		value.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-		row.add_child(value)
-		var target := _label("/ %d" % _target, 12,
-			Color(1, 1, 1, 0.55))
-		target.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		row.add_child(target)
-		_team_name_labels.append(name_label)
-		_score_labels.append(value)
-		_target_labels.append(target)
+	var sep_right := _label("·", 16, Color(1.0, 1.0, 1.0, 0.45))
+	main_row.add_child(sep_right)
 
-	_theme_panel = PanelContainer.new()
-	_theme_panel.name = "ThemePlaque"
-	_theme_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_theme_panel.anchor_left = 1.0
-	_theme_panel.anchor_right = 1.0
-	_theme_panel.offset_left = -SPACE_MARGIN - 320.0
-	_theme_panel.offset_right = -SPACE_MARGIN
-	_theme_panel.offset_top = SPACE_MARGIN
-	_theme_panel.offset_bottom = SPACE_MARGIN
-	_theme_panel.add_theme_stylebox_override("panel",
-		_panel_style(Color(0.118, 0.106, 0.227, 0.76)))
-	_hud_root.add_child(_theme_panel)
-	var theme_column := VBoxContainer.new()
-	theme_column.add_theme_constant_override("separation", SPACE_GAP)
-	_theme_panel.add_child(theme_column)
-	theme_column.add_child(_label("ARENA", 12, Color(1, 1, 1, 0.55)))
-	_theme_name_label = _label(str(_theme.get("name", "DOCKYARD")), 24,
-		UiPalette.CREAM, 5)
-	theme_column.add_child(_theme_name_label)
-	_theme_detail_label = _label("", 12, Color(1, 1, 1, 0.62))
-	_theme_detail_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	theme_column.add_child(_theme_detail_label)
+	var score_b := _label("0", 22, UiPalette.CREAM, 6)
+	score_b.custom_minimum_size = Vector2(24, 0)
+	score_b.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	main_row.add_child(score_b)
+	_score_labels.append(score_b)
+
+	var name_b := _label(_team_names[1], 14, UiPalette.CREAM, 4)
+	name_b.custom_minimum_size = Vector2(124, 0)
+	name_b.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	name_b.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	name_b.clip_text = true
+	main_row.add_child(name_b)
+	_team_name_labels.append(name_b)
+
+	var dot_b := ColorRect.new()
+	dot_b.color = TEAM_COLORS[1]
+	dot_b.custom_minimum_size = Vector2(10, 10)
+	dot_b.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	dot_b.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	main_row.add_child(dot_b)
+
+	_arena_tag_label = _label("", 11, Color(1.0, 1.0, 1.0, 0.68))
+	_arena_tag_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	bar_column.add_child(_arena_tag_label)
 
 	_countdown_label = _label("3", 112, UiPalette.YELLOW, 14)
 	_countdown_label.theme_type_variation = &"TitleLabel"
@@ -2502,24 +2594,24 @@ func _build_hud() -> void:
 	_countdown_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	_hud_root.add_child(_countdown_label)
 
-	_toast_label = _label("", 26, Color.WHITE, 10)
+	_toast_label = _label("", 24, Color.WHITE, 10)
 	_toast_label.anchor_left = 0.5
 	_toast_label.anchor_right = 0.5
-	_toast_label.offset_left = -470.0
-	_toast_label.offset_right = 470.0
-	_toast_label.offset_top = SPACE_MARGIN
-	_toast_label.offset_bottom = SPACE_MARGIN + TOAST_HEIGHT
+	_toast_label.offset_left = -360.0
+	_toast_label.offset_right = 360.0
+	_toast_label.offset_top = SCOREBOARD_TOP + 68.0
+	_toast_label.offset_bottom = SCOREBOARD_TOP + 68.0 + TOAST_HEIGHT
 	_toast_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_toast_label.visible = false
 	_hud_root.add_child(_toast_label)
 
-	_prompt_label = _label("", 24, UiPalette.CREAM, 10)
+	_prompt_label = _label("", 20, UiPalette.CREAM, 8)
 	_prompt_label.anchor_left = 0.5
 	_prompt_label.anchor_right = 0.5
 	_prompt_label.anchor_top = 1.0
 	_prompt_label.anchor_bottom = 1.0
-	_prompt_label.offset_left = -430.0
-	_prompt_label.offset_right = 430.0
+	_prompt_label.offset_left = -220.0
+	_prompt_label.offset_right = 220.0
 	_prompt_label.offset_top = -SPACE_MARGIN - PROMPT_HEIGHT
 	_prompt_label.offset_bottom = -SPACE_MARGIN
 	_prompt_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -2532,20 +2624,22 @@ func _build_hud() -> void:
 
 
 func _layout_hud() -> void:
-	## Measure the plaques after layout and hang the toast under the lowest one,
-	## so the 24/16/8 scale holds and no plaque clips at 1280x720. Sizes come
-	## from the containers themselves: nothing here is an eyeballed height.
-	if _toast_label == null or _timer_panel == null:
+	## Measure the compact top-center scoreboard bar after layout (<= 64 px tall)
+	## and hang the toast cleanly below it so nothing overlaps at 960x540 or
+	## 1280x720.
+	if _toast_label == null or _scoreboard_panel == null:
 		return
-	var lowest: float = SPACE_MARGIN
-	for panel: PanelContainer in [_timer_panel, _score_panel, _theme_panel]:
-		if panel == null or not is_instance_valid(panel):
-			continue
-		var wanted: float = maxf(panel.get_combined_minimum_size().y, 1.0)
-		if absf(panel.size.y - wanted) > 0.5:
-			panel.size = Vector2(panel.size.x, wanted)
-		lowest = maxf(lowest, panel.position.y + panel.size.y)
-	var top: float = lowest + SPACE_GAP
+	var minimum: Vector2 = _scoreboard_panel.get_combined_minimum_size()
+	var wanted_w: float = maxf(SCOREBOARD_WIDTH, minimum.x + 8.0)
+	var wanted_h: float = clampf(maxf(minimum.y, 50.0), 50.0, SCOREBOARD_MAX_HEIGHT)
+	if absf(_scoreboard_panel.offset_left + wanted_w * 0.5) > 0.5 \
+			or absf(_scoreboard_panel.offset_right - wanted_w * 0.5) > 0.5:
+		_scoreboard_panel.offset_left = -wanted_w * 0.5
+		_scoreboard_panel.offset_right = wanted_w * 0.5
+	if absf(_scoreboard_panel.offset_bottom - (SCOREBOARD_TOP + wanted_h)) > 0.5:
+		_scoreboard_panel.offset_top = SCOREBOARD_TOP
+		_scoreboard_panel.offset_bottom = SCOREBOARD_TOP + wanted_h
+	var top: float = SCOREBOARD_TOP + wanted_h + 12.0
 	if absf(_toast_label.offset_top - top) > 0.5:
 		_toast_label.offset_top = top
 		_toast_label.offset_bottom = top + TOAST_HEIGHT
@@ -2553,15 +2647,13 @@ func _layout_hud() -> void:
 
 func _print_hud_rects() -> void:
 	## Measurement, not eyeballing: CART_CARGO_HUD=1 dumps every HUD rect and
-	## the content minimum it has to hold, so the 24/16/8 scale can be proven at
-	## 1280x720 instead of assumed.
+	## the content minimum it has to hold at both 960x540 and 1280x720.
 	var view: Vector2 = get_viewport().get_visible_rect().size
 	print("CARGO_HUD viewport=%dx%d margin=%.0f gap=%.0f small=%.0f radius=%d"
 		% [int(view.x), int(view.y), SPACE_MARGIN, SPACE_GAP, SPACE_GAP_SMALL,
 		CORNER_RADIUS])
 	var rows: Array = [
-		["timer", _timer_panel], ["score", _score_panel],
-		["theme", _theme_panel], ["toast", _toast_label],
+		["scoreboard", _scoreboard_panel], ["toast", _toast_label],
 		["prompt", _prompt_label], ["countdown", _countdown_label],
 	]
 	for row: Array in rows:
@@ -2577,11 +2669,14 @@ func _print_hud_rects() -> void:
 
 
 func _hud_clips() -> bool:
-	## True if any HUD control leaves the viewport or is smaller than its own
-	## content minimum. The self-test and the dump both report this.
+	## True if any HUD control leaves the viewport, exceeds the 64 px scoreboard
+	## height budget, or is smaller than its own content minimum.
 	var view: Vector2 = get_viewport().get_visible_rect().size
-	for control: Control in [_timer_panel, _score_panel, _theme_panel,
-			_toast_label, _prompt_label, _countdown_label]:
+	if _scoreboard_panel != null and is_instance_valid(_scoreboard_panel):
+		if _scoreboard_panel.get_global_rect().size.y > SCOREBOARD_MAX_HEIGHT + 0.5:
+			return true
+	for control: Control in [_scoreboard_panel, _toast_label, _prompt_label,
+			_countdown_label]:
 		if control == null or not is_instance_valid(control):
 			continue
 		var rect: Rect2 = control.get_global_rect()
@@ -2594,14 +2689,16 @@ func _hud_clips() -> bool:
 	return false
 
 
-func _panel_style(bg: Color) -> StyleBoxFlat:
+func _scoreboard_style() -> StyleBoxFlat:
 	var style := StyleBoxFlat.new()
-	style.bg_color = bg
-	style.set_corner_radius_all(CORNER_RADIUS)
-	style.content_margin_left = SPACE_MARGIN
-	style.content_margin_right = SPACE_MARGIN
-	style.content_margin_top = SPACE_MARGIN
-	style.content_margin_bottom = SPACE_MARGIN
+	style.bg_color = Color(0.118, 0.106, 0.227, 0.88)
+	style.border_color = UiPalette.OUTLINE
+	style.set_border_width_all(3)
+	style.set_corner_radius_all(14)
+	style.content_margin_left = 16.0
+	style.content_margin_right = 16.0
+	style.content_margin_top = 5.0
+	style.content_margin_bottom = 5.0
 	style.anti_aliasing = true
 	return style
 
@@ -2619,11 +2716,18 @@ func _label(text: String, size: int, colour: Color, outline: int = 0) -> Label:
 
 
 func _refresh_theme_text() -> void:
-	if _theme_name_label == null or _theme_detail_label == null:
+	if _arena_tag_label == null:
 		return
-	_theme_name_label.text = str(_theme.get("name", "DOCKYARD"))
-	_theme_detail_label.text = "%s  ·  %s" % [CargoTheme.present_label(_theme),
-		str(_theme.get("hazard_label", ""))]
+	var arena_name: String = str(_theme.get("name", "DOCKYARD"))
+	var blurb: String = str(_theme.get("blurb", "")).strip_edges()
+	if _overtime and _phase != Phase.FINISHED:
+		_arena_tag_label.text = "OVERTIME  ·  NEXT DELIVERY WINS  ·  %s" % arena_name
+		_arena_tag_label.add_theme_color_override("font_color", UiPalette.YELLOW)
+	else:
+		_arena_tag_label.text = ("FIRST TO %d  ·  %s  ·  %s" % [_target, arena_name, blurb]) \
+			if blurb != "" else ("FIRST TO %d  ·  %s" % [_target, arena_name])
+		_arena_tag_label.add_theme_color_override("font_color",
+			Color(1.0, 1.0, 1.0, 0.68))
 
 
 func _refresh_team_texts() -> void:
@@ -2645,8 +2749,7 @@ func _refresh_team_texts() -> void:
 func _refresh_score_now() -> void:
 	## Both teams are always on the board, each with its progress to the target
 	## so a glance answers "who is winning and how close is it".
-	if _score_header_label != null:
-		_score_header_label.text = "DELIVERED  ·  FIRST TO %d" % _target
+	_refresh_theme_text()
 	var leader: int = _leader()
 	for team in TEAM_COUNT:
 		var value: int = _score[team]
@@ -2654,8 +2757,6 @@ func _refresh_score_now() -> void:
 			_score_labels[team].text = str(value)
 			_score_labels[team].add_theme_color_override("font_color",
 				UiPalette.YELLOW if team == leader else UiPalette.CREAM)
-		if team < _target_labels.size():
-			_target_labels[team].text = "/ %d" % _target
 		var text: String = "%d / %d" % [value, _target]
 		for offset in 2:
 			var index: int = team * 2 + offset
@@ -2699,7 +2800,7 @@ func _refresh_hud() -> void:
 	if timer_text != _last_timer_text:
 		_last_timer_text = timer_text
 		_timer_label.text = timer_text
-	_overtime_label.visible = _overtime and _phase != Phase.FINISHED
+	_refresh_theme_text()
 	var scores := PackedStringArray([str(_score[0]), str(_score[1])])
 	if scores != _last_score_text:
 		_last_score_text = scores
@@ -2729,7 +2830,11 @@ func _refresh_prompt() -> void:
 				var progress: float = _local_hold_time
 				if _is_host or not _multiplayer:
 					progress = _local_hold_progress(_local_hold_index)
-				text = "LOADING  ·  %.1f s" % maxf(HOLD_SECONDS - progress, 0.0)
+				text = "LOADING  ·  %.2f s" % maxf(HOLD_SECONDS - progress, 0.0)
+			elif _cart != null and is_instance_valid(_cart) \
+					and Vector2(_cart.velocity.x, _cart.velocity.z).length() >= HOLD_MAX_SPEED \
+					and Input.is_action_pressed(INTERACT_ACTION):
+				text = "SLOW DOWN TO LOAD  ·  [%s]" % _interact_key_name()
 			else:
 				text = "HOLD  [%s]  TO LOAD" % _interact_key_name()
 	_prompt_label.text = text
@@ -2786,7 +2891,7 @@ func _pop_text(text: String, position: Vector3, colour: Color, size: int) -> voi
 	var pop := Label3D.new()
 	pop.name = "ScorePop"
 	pop.text = text
-	pop.font = load(TITLE_FONT)
+	pop.font = TITLE_FONT
 	pop.font_size = size
 	pop.pixel_size = 0.010
 	pop.outline_size = 16
@@ -2814,6 +2919,9 @@ func _build_result_card() -> void:
 	_result_root.visible = false
 	_result_root.add_to_group("nav_scope")
 	_hud_root.add_child(_result_root)
+	var pause_menu: Control = get_node_or_null("PauseMenu/Root") as Control
+	if pause_menu != null and not pause_menu.visibility_changed.is_connected(_on_pause_visibility_changed):
+		pause_menu.visibility_changed.connect(_on_pause_visibility_changed)
 
 	var dim := ColorRect.new()
 	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -2909,7 +3017,7 @@ func _build_result_card() -> void:
 
 func _make_button(text: String, colour: Color, height: float) -> Button:
 	var button := Button.new()
-	button.set_script(load(CANDY_BUTTON))
+	button.set_script(CANDY_BUTTON)
 	button.set("fill_color", colour)
 	button.text = text
 	button.custom_minimum_size = Vector2(0, height)
@@ -2938,11 +3046,29 @@ func _show_result() -> void:
 		.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
 	CursorController.set_menu_mode(true)
 	var pause_root: Control = get_node_or_null("PauseMenu/Root") as Control
-	if pause_root == null or not pause_root.visible:
+	if pause_root != null and pause_root.visible:
+		_result_root.remove_from_group("nav_scope")
+	else:
+		if not _result_root.is_in_group("nav_scope"):
+			_result_root.add_to_group("nav_scope")
 		MenuNav.refresh()
 		if _result_primary != null:
 			MenuNav.focus(_result_primary)
 	_play_one_shot(FINISH_FANFARE, -7.0, 1.0)
+
+
+func _on_pause_visibility_changed() -> void:
+	if _result_root == null or not _result_root.visible:
+		return
+	var pause_menu: Control = get_node_or_null("PauseMenu/Root") as Control
+	var pause_open: bool = pause_menu != null and pause_menu.visible
+	if pause_open:
+		_result_root.remove_from_group("nav_scope")
+	elif not _result_root.is_in_group("nav_scope"):
+		_result_root.add_to_group("nav_scope")
+	MenuNav.refresh()
+	if not pause_open and _result_primary != null:
+		MenuNav.focus(_result_primary)
 
 
 # --------------------------------------------------------------------------
@@ -3057,7 +3183,7 @@ func _spawn_remote_cart(peer_id: int) -> void:
 	var label := Label3D.new()
 	label.name = "NameTag"
 	label.text = Network.name_of(peer_id)
-	label.font = load(TITLE_FONT)
+	label.font = TITLE_FONT
 	label.font_size = 56
 	label.pixel_size = 0.010
 	label.outline_size = 16
@@ -3546,11 +3672,11 @@ func _run_self_test() -> void:
 	_selftest_bot["state"] = BOT_HOLD
 	_selftest_bot["present"] = _selftest_present
 	_selftest_bot["hold_time"] = 0.0
-	print("CARGO_SELFTEST step=hold present=%d seconds=%.1f"
+	print("CARGO_SELFTEST step=hold present=%d seconds=%.2f"
 		% [_selftest_present, HOLD_SECONDS])
 	var held: bool = await _selftest_wait_for_pickup()
 	if not held:
-		_fail_selftest("two second hold did not load the present")
+		_fail_selftest("hold did not load the present")
 		return
 	print("CARGO_SELFTEST step=pickup collected=%d present_state=%d"
 		% [_selftest_collected, int(_presents[_selftest_present]["state"])])
@@ -3572,7 +3698,11 @@ func _run_self_test() -> void:
 	print("CARGO_SELFTEST step=stats theme=%s objects=%d draw_calls=%d hazards=%d"
 		% [_theme_id, int(_stats.get("objects", 0)),
 		int(_stats.get("draw_calls", 0)), _hazards.size()])
-	print("CARGO_SELFTEST step=hud clips=%s" % str(_hud_clips()))
+	var hud_clipped: bool = _hud_clips()
+	print("CARGO_SELFTEST step=hud clips=%s" % str(hud_clipped))
+	if hud_clipped:
+		_fail_selftest("hud clipped viewport or minimum size")
+		return
 	print("CARGO_SELFTEST step=pass collected=%d deliveries=%d sim=%.1fs"
 		% [_selftest_collected, _selftest_deliveries, seconds])
 	get_tree().quit()
@@ -3649,10 +3779,10 @@ func _selftest_wait_for_pickup() -> bool:
 		if state != PRESENT_AVAILABLE:
 			return false
 		var hold: float = float(present["hold"])
-		var half: int = int(hold * 2.0)
-		if half > last_half:
-			last_half = half
-			print("CARGO_SELFTEST step=hold progress=%.1f/%.1f"
+		var step_bucket: int = int(hold * 10.0)
+		if step_bucket > last_half:
+			last_half = step_bucket
+			print("CARGO_SELFTEST step=hold progress=%.2f/%.2f"
 				% [hold, HOLD_SECONDS])
 		var spot: Vector3 = present["position"] as Vector3
 		if _planar_distance(_selftest_cart.global_position, spot) \

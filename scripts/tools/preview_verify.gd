@@ -38,14 +38,25 @@ const SOLID_MARGIN: float = 6.02
 ## Colliders whose lowest point is above this are overhead (start gantry beam).
 const DRIVE_UNDER: float = 3.2
 
-## A hill profile used by the terrain audit: two 3 m rises per lap.
+## A hill profile used by the terrain audit: two 3 m rises per lap on a clean
+## single-level test loop (shipped circuits carry `+` overpass tiles with
+## multi-level height grids, which require grade separation across crossings).
 const TEST_ELEVATION: Array[Dictionary] = [
 	{"at": 0.0, "height": 0.0},
 	{"at": 0.25, "height": 3.0},
 	{"at": 0.50, "height": 0.0},
 	{"at": 0.75, "height": 3.0},
 ]
-const TERRAIN_MAP: String = "stadium"
+const TERRAIN_MAP: String = "rolling_loop"
+const TEST_TERRAIN_GRID: PackedStringArray = [
+	"...............",
+	"..CSSSGSSSSSC..",
+	"..S.........S..",
+	"..S.........S..",
+	"..S.........S..",
+	"..CSSSSSSSSSC..",
+	"...............",
+]
 
 
 func _initialize() -> void:
@@ -74,8 +85,12 @@ func _audit_barriers() -> int:
 		var map_id: String = str(preset.get("id", TrackDefs.DEFAULT_ID))
 		var host := Node3D.new()
 		host.name = "Audit_" + map_id
+		var theme_opts: Dictionary = {"id": TrackDefs.theme_id_of(preset)}
+		var height_rows: PackedStringArray = TrackDefs.heights_of(preset)
+		if not height_rows.is_empty():
+			theme_opts["heights"] = height_rows
 		var spline: RefCounted = KenneyTiles.build(host,
-			TrackDefs.grid_of(preset), {"id": TrackDefs.theme_id_of(preset)})
+			TrackDefs.grid_of(preset), theme_opts)
 		if spline == null:
 			print("BARRIERS %s: FAIL (the grid did not build)" % map_id)
 			host.free()
@@ -163,11 +178,10 @@ static func _lowest(size: Vector3, collision: CollisionShape3D) -> float:
 ## the spline carries the height, the road colliders sit on it, and a barrier
 ## run placed on it follows the slope while keeping its clearance.
 func _audit_terrain() -> int:
-	var preset: Dictionary = TrackDefs.get_preset(TERRAIN_MAP)
 	var host := Node3D.new()
 	host.name = "AuditTerrain"
 	var spline: RefCounted = KenneyTiles.build(host,
-		TrackDefs.grid_of(preset), {"id": TERRAIN_MAP + "_rolling_test",
+		TEST_TERRAIN_GRID, {"id": TERRAIN_MAP + "_rolling_test",
 		"elevation": TEST_ELEVATION, "diagnostic": true})
 	if spline == null:
 		print("TERRAIN %s: FAIL (the elevated grid did not build)" % TERRAIN_MAP)
@@ -324,11 +338,27 @@ static func _world_transform(node: Node3D) -> Transform3D:
 # --------------------------------------------------------------------------
 
 
+func _expected_preview_ids() -> PackedStringArray:
+	var ids := PackedStringArray()
+	for preset: Dictionary in TrackDefs.PRESETS:
+		var map_id: String = str(preset.get("id", TrackDefs.DEFAULT_ID))
+		if map_id != "" and not ids.has(map_id):
+			ids.append(map_id)
+	if not ids.has("sandbox"):
+		ids.append("sandbox")
+	for preset: Dictionary in TrackDefs.PRESETS:
+		if not TrackDefs.is_minigame(preset):
+			continue
+		for theme_id: String in TrackDefs.theme_ids(preset):
+			if theme_id != "" and not ids.has(theme_id):
+				ids.append(theme_id)
+	return ids
+
+
 func _audit_previews() -> int:
 	var failures: int = 0
 	var seen: int = 0
-	for preset: Dictionary in TrackDefs.PRESETS:
-		var map_id: String = str(preset.get("id", TrackDefs.DEFAULT_ID))
+	for map_id: String in _expected_preview_ids():
 		var path: String = OUT_DIR + PREVIEW_PREFIX + map_id + ".png"
 		if not FileAccess.file_exists(path):
 			print("PREVIEW %s: missing (%s)" % [map_id, path])

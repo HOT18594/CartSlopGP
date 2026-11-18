@@ -65,10 +65,9 @@ const CANDIDATE_STEP: float = 4.2
 const CANDIDATE_JITTER: float = 2.0
 const MIN_SPACING: float = 3.0
 ## Band trees wanted. The in-site windswept trees are on top of this.
-const TREE_TARGET: int = 430
-## Share of the target each band side takes: north, east, south, west. The
-## quay side is shallower, so it carries a smaller share than the north.
-const SIDE_SHARE: Array[float] = [0.30, 0.22, 0.25, 0.23]
+const TREE_TARGET: int = 330
+## Share of the target each band side takes: north, east, south (harbour water = 0), west.
+const SIDE_SHARE: Array[float] = [0.38, 0.28, 0.0, 0.34]
 ## Hard clearance from the centreline: barrier clearance (8.02 m) plus a full
 ## tree canopy and the fence itself. The belt's inner edge lands near 28 m on
 ## this layout, so the number only matters on the legacy spline fallback.
@@ -810,6 +809,8 @@ static func _front_scrub(points: Array, placed: Array[Vector3],
 static func _scrub_allowed(spline: RefCounted, plan: RefCounted,
 		placed: Array[Vector3], point: Vector3, inside_fence: bool,
 		allowed: Dictionary) -> bool:
+	if plan.is_grid() and point.z >= float(plan.rows) * TILE - 2.5:
+		return false
 	if TileKit.spline_distance(spline, point) < SCRUB_CLEARANCE:
 		return false
 	var cell := Vector2i(floori(point.x / TILE), floori(point.z / TILE))

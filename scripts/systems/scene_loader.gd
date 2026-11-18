@@ -22,6 +22,9 @@ const TASK_TIMEOUT_MS: int = 25000
 ## while Meadow Loop takes ~3.7 s and the sandbox/driving scene ~0.5 s.
 const OVERLAY_SCENES: PackedStringArray = [
 	"res://scenes/minigames/grass_race.tscn",
+	"res://scenes/minigames/cargo_rush.tscn",
+	"res://scenes/minigames/knockout.tscn",
+	"res://scenes/minigames/bomb_tag.tscn",
 	"res://scenes/minigames/meadow_lobby.tscn",
 	"res://scenes/sandbox/sandbox.tscn",
 ]
@@ -39,6 +42,8 @@ const ALLOWED_SCENES: PackedStringArray = [
 	"res://scenes/sandbox/sandbox.tscn",
 	"res://scenes/minigames/grass_race.tscn",
 	"res://scenes/minigames/cargo_rush.tscn",
+	"res://scenes/minigames/knockout.tscn",
+	"res://scenes/minigames/bomb_tag.tscn",
 	"res://scenes/minigames/meadow_lobby.tscn",
 ]
 

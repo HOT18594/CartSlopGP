@@ -46,6 +46,13 @@ static func build(race: Node3D, spline) -> void:
 		return
 	if race.has_node(HOLDER_NAME):
 		return
+	var meadow_ground: Node3D = race.get_node_or_null("MeadowGround") as Node3D
+	if meadow_ground != null:
+		meadow_ground.visible = false
+	TileKit.dress_track(race, spline, {
+		"id": "dockyard",
+		"hoarding_density": 0.32,
+	})
 	var grid_stats: Dictionary = race.get_meta("kenney_grid_stats", {})
 	var plan: RefCounted = DockyardPlan.new(spline,
 		int(grid_stats.get("cols", 0)), int(grid_stats.get("rows", 0)))

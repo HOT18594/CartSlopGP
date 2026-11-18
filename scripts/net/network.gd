@@ -37,11 +37,20 @@ const MAX_PLAYERS: int = 8
 const GAME_SCENE: String = "res://scenes/sandbox/sandbox.tscn"
 const RACE_SCENE: String = "res://scenes/minigames/grass_race.tscn"
 const CARGO_SCENE: String = "res://scenes/minigames/cargo_rush.tscn"
-## A MINIGAMES room is either a race or a DELIVER (cargo) match. The event is
+const KNOCKOUT_SCENE: String = "res://scenes/minigames/knockout.tscn"
+const BOMB_TAG_SCENE: String = "res://scenes/minigames/bomb_tag.tscn"
+## A MINIGAMES room runs one of the four party/racing modes. The event is
 ## part of the session config so every peer picks the host's scene; it is never
 ## inferred from a client's own saved menu pick.
 const EVENT_RACE: String = "race"
 const EVENT_CARGO: String = "cargo"
+const EVENT_KNOCKOUT: String = "knockout"
+const EVENT_BOMB_TAG: String = "bomb_tag"
+const MINIGAME_EVENTS: Array[String] = [
+	EVENT_CARGO,
+	EVENT_KNOCKOUT,
+	EVENT_BOMB_TAG,
+]
 ## Two symmetric sides. 0 = ALPHA (blue), 1 = BETA (red).
 const TEAM_COUNT: int = 2
 const TEAM_NAMES: PackedStringArray = ["ALPHA", "BETA"]
@@ -78,6 +87,8 @@ const ALLOWED_SCENES: Array[String] = [
 	GAME_SCENE,
 	RACE_SCENE,
 	CARGO_SCENE,
+	KNOCKOUT_SCENE,
+	BOMB_TAG_SCENE,
 ]
 const MAX_BOT_COUNT: int = 5
 const MAX_LOBBY_ENTRIES: int = 200
@@ -915,18 +926,74 @@ static func event_for_scene(scene_path: String) -> String:
 	match scene_path:
 		CARGO_SCENE:
 			return EVENT_CARGO
+		KNOCKOUT_SCENE:
+			return EVENT_KNOCKOUT
+		BOMB_TAG_SCENE:
+			return EVENT_BOMB_TAG
 		RACE_SCENE:
 			return EVENT_RACE
 	return ""
 
 
+static func event_for_theme_id(theme_id: String) -> String:
+	## Map a minigame arena/theme id back to its owning event.
+	for preset: Dictionary in TrackDefs.PRESETS:
+		if TrackDefs.is_minigame(preset) and TrackDefs.theme_ids(preset).has(theme_id):
+			var scene_path: String = str(preset.get("scene", ""))
+			var ev: String = event_for_scene(scene_path)
+			if ev != "":
+				return ev
+	if theme_id.begins_with("ko_"):
+		return EVENT_KNOCKOUT
+	if theme_id.begins_with("bt_"):
+		return EVENT_BOMB_TAG
+	return EVENT_CARGO if TrackDefs.has_theme_id(theme_id) else ""
+
+
 func scene_for_event(event: String) -> String:
 	## The host's scene for an event. A blank event means the sandbox.
-	if event == EVENT_CARGO:
-		return CARGO_SCENE
-	if event == EVENT_RACE:
-		return RACE_SCENE
+	match event:
+		EVENT_CARGO:
+			return CARGO_SCENE
+		EVENT_KNOCKOUT:
+			return KNOCKOUT_SCENE
+		EVENT_BOMB_TAG:
+			return BOMB_TAG_SCENE
+		EVENT_RACE:
+			return RACE_SCENE
 	return GAME_SCENE
+
+
+func set_host_event(event: String, map_or_arena_id: String = "") -> void:
+	## Host helper used by the mode/map selector and lobby to set both the event
+	## and its map/arena in one atomic session update.
+	var clean_ev: String = event.strip_edges().to_lower()
+	if clean_ev == "cargo_rush" or clean_ev == "deliver":
+		clean_ev = EVENT_CARGO
+	if clean_ev == "" or clean_ev == "sandbox":
+		GameSettings.set_multiplayer_mode(GameSettings.GAME_SANDBOX)
+		if is_host:
+			configure_session(GameSettings.GAME_SANDBOX, GameSettings.bots_enabled,
+				GameSettings.effective_bot_count(), "", GAME_SCENE)
+			_push_room_state()
+		return
+	GameSettings.set_multiplayer_mode(GameSettings.GAME_MINIGAMES)
+	if clean_ev == EVENT_RACE or clean_ev == "racing":
+		if map_or_arena_id != "":
+			GameSettings.set_selected_map(map_or_arena_id)
+		if is_host:
+			configure_session(GameSettings.GAME_MINIGAMES, GameSettings.bots_enabled,
+				GameSettings.effective_bot_count(), GameSettings.selected_map, RACE_SCENE)
+			_push_room_state()
+		return
+	if clean_ev in MINIGAME_EVENTS:
+		if map_or_arena_id != "":
+			GameSettings.set_selected_minigame(map_or_arena_id)
+		if is_host:
+			configure_session(GameSettings.GAME_MINIGAMES, GameSettings.bots_enabled,
+				GameSettings.effective_bot_count(), GameSettings.selected_map,
+				scene_for_event(clean_ev))
+			_push_room_state()
 
 
 func is_deliver_session() -> bool:
@@ -1062,7 +1129,7 @@ func host_game(mode: String = "pi") -> void:
 	session_event = _infer_session_event(session_mode)
 	session_scene = scene_for_event(session_event)
 	session_minigame = GameSettings.selected_minigame \
-		if session_event == EVENT_CARGO else ""
+		if session_event in MINIGAME_EVENTS else ""
 	session_map_id = GameSettings.sanitize_map_id(GameSettings.selected_map)
 	# A fresh room starts with a clean, balanced team split.
 	_peer_teams.clear()
@@ -1266,6 +1333,12 @@ func _stop_lan_listener() -> void:
 		_lan_listener = null
 
 
+func _advertised_room_map() -> String:
+	if session_mode == GameSettings.GAME_MINIGAMES and session_event in MINIGAME_EVENTS:
+		return session_minigame if session_minigame != "" else session_map_id
+	return session_map_id
+
+
 func _poll_lan_listener() -> void:
 	if _lan_listener == null:
 		return
@@ -1300,7 +1373,7 @@ func _poll_lan_listener() -> void:
 			"mode": session_mode,
 			"event": session_event,
 			"state": room_state,
-			"map": session_map_id,
+			"map": _advertised_room_map(),
 			"version": str(ProjectSettings.get_setting("application/config/version", "")),
 		}
 		_lan_listener.set_dest_address(sender, sender_port)
@@ -1351,7 +1424,8 @@ func scan_lan_rooms(timeout: float = 1.4) -> Array:
 				"mode": str(room.get("mode", GameSettings.GAME_SANDBOX)),
 				"event": str(room.get("event", EVENT_RACE)),
 				"state": str(room.get("state", "lobby")),
-				"map": GameSettings.sanitize_map_id(str(room.get("map", ""))),
+				"map": str(room.get("map", "")) if TrackDefs.has_theme_id(str(room.get("map", ""))) \
+					else GameSettings.sanitize_map_id(str(room.get("map", ""))),
 			}
 		var now: int = Time.get_ticks_msec()
 		if now >= next_nudge:
@@ -1518,14 +1592,16 @@ func sync_server_clock(samples: int = 5) -> bool:
 	var got: bool = false
 	for i in maxi(samples, 1):
 		var t0: int = Time.get_ticks_msec()
-		var data: Dictionary = await _relay_get("/api/time", 2.0)
+		var data: Dictionary = await _relay_get("/api/ping?t=%d" % t0, 2.0)
+		if data.is_empty():
+			data = await _relay_get("/api/time", 2.0)
 		var t1: int = Time.get_ticks_msec()
 		if data.is_empty():
 			continue
-		var server_ms: int = int(data.get("time_ms", 0))
+		var server_ms: int = int(data.get("s", data.get("time_ms", 0)))
 		if server_ms <= 0:
 			continue
-		var rtt: int = t1 - t0
+		var rtt: int = maxi(t1 - t0, 0)
 		var offset: int = server_ms - (t0 + t1) / 2
 		_note_relay_rtt(rtt)
 		if not got or rtt < best_rtt:
@@ -1566,14 +1642,16 @@ func _note_relay_rtt(sample_ms: int) -> void:
 
 
 func _probe_relay_latency() -> void:
-	## Clients have no host ping probe. A small /api/time GET keeps the relay
+	## Clients have no host ping probe. A small /api/ping GET keeps the relay
 	## RTT and jitter fresh for the HUD and the adaptive bot poll interval.
 	if _relay_probe_pending or relay_base == "":
 		return
 	_relay_probe_pending = true
 	var started: int = Time.get_ticks_msec()
-	var data: Dictionary = await _relay_get("/api/time", 2.0)
-	var rtt: int = Time.get_ticks_msec() - started
+	var data: Dictionary = await _relay_get("/api/ping?t=%d" % started, 2.0)
+	if data.is_empty():
+		data = await _relay_get("/api/time", 2.0)
+	var rtt: int = maxi(Time.get_ticks_msec() - started, 0)
 	_relay_probe_pending = false
 	if data.is_empty() or not is_session_active():
 		return
@@ -1659,8 +1737,39 @@ func stream_race_state(race_id: String, secret: String, rows: Array) -> void:
 		race_state_stream_changed.emit(true, race_state_updates)
 
 
+func _extract_scene_track_points() -> Array:
+	## Sample up to 160 3D centreline points from the active race scene's spline
+	## so the Pi server simulates bots and lap validation on the exact grid map.
+	var tree: SceneTree = get_tree()
+	if tree == null or tree.current_scene == null:
+		return []
+	var spline: Variant = tree.current_scene.get("_spline")
+	if spline == null or not (spline is Object):
+		return []
+	var raw_pts: Variant = (spline as Object).get("points")
+	var pts: PackedVector3Array = PackedVector3Array()
+	if raw_pts is PackedVector3Array:
+		pts = raw_pts as PackedVector3Array
+	elif raw_pts is Array:
+		for item: Variant in raw_pts as Array:
+			if item is Vector3:
+				pts.append(item as Vector3)
+	var total: int = pts.size()
+	if total < 8:
+		return []
+	var max_samples: int = mini(total, 160)
+	var out: Array = []
+	for i in max_samples:
+		var idx: int = mini(int(floor(float(i) * float(total) / float(max_samples))), total - 1)
+		var v: Vector3 = pts[idx]
+		if not v.is_finite():
+			return []
+		out.append([snappedf(v.x, 0.01), snappedf(v.y, 0.01), snappedf(v.z, 0.01)])
+	return out
+
+
 func start_server_race(laps: int, bots: int, difficulty: int,
-		max_speed: float, seed: int) -> Dictionary:
+		max_speed: float, seed: int, track_points: Array = []) -> Dictionary:
 	if relay_base == "" or relay_token == "" or not is_host:
 		return {}
 	if not server_clock_ready:
@@ -1669,17 +1778,22 @@ func start_server_race(laps: int, bots: int, difficulty: int,
 		# Without the server clock the countdown and the race timer would be
 		# nonsense. Fall back to the host-run race instead of starting one.
 		return {}
+	var sampled: Array = track_points if not track_points.is_empty() \
+		else _extract_scene_track_points()
 	var payload: Dictionary = {
 		"token": relay_token,
 		"laps": clampi(laps, 1, 9),
 		"bots": clampi(bots, 0, 5),
 		"difficulty": clampi(difficulty, 0, 2),
-		"max_speed": clampf(max_speed, 8.0, 40.0),
+		"max_speed": clampf(max_speed, 8.0, 52.0),
 		"seed": seed,
 		# 1.7.0+ builds the server bot field from this map so its ghosts drive
-		# the same layout every peer builds locally. Older relays ignore it.
+		# the same layout every peer builds locally. 1.8.0+ also accepts exact
+		# 3D polyline points so any grid circuit works without static baking.
 		"map": GameSettings.sanitize_map_id(session_map_id),
 	}
+	if sampled.size() >= 8:
+		payload["points"] = sampled
 	var response: Dictionary = await _relay_post("/api/race/start", payload)
 	var race: Variant = response.get("race", {})
 	if race is Dictionary and str((race as Dictionary).get("id", "")) != "":
@@ -1758,7 +1872,9 @@ func _register_relay(local_port: int) -> bool:
 		"local_ip": local_address,
 		"tunnel": true,
 		"public": room_public,
-		"map": session_map_id,
+		"mode": session_mode,
+		"event": session_event,
+		"map": _advertised_room_map(),
 	})
 	if ticket != _host_ticket:
 		return false
@@ -1856,7 +1972,9 @@ func _relay_heartbeat_tick(delta: float) -> void:
 		"state": room_state,
 		"players": peer_count(),
 		"public": room_public,
-		"map": session_map_id,
+		"mode": session_mode,
+		"event": session_event,
+		"map": _advertised_room_map(),
 	}, HEARTBEAT_TIMEOUT)
 	var status: int = _relay_http_status
 	_relay_busy = false
@@ -1922,32 +2040,28 @@ func _push_room_state() -> void:
 		"public": room_public,
 		"mode": session_mode,
 		"event": session_event,
-		"map": session_map_id,
+		"map": _advertised_room_map(),
 	}
-	var http := HTTPRequest.new()
-	http.timeout = 3.0
-	add_child(http)
+	var http: HTTPRequest = _acquire_http(3.0)
 	http.request_completed.connect(func(_r: int, _c: int, _h: PackedStringArray,
-			_b: PackedByteArray) -> void: http.queue_free())
+			_b: PackedByteArray) -> void: _release_http(http), CONNECT_ONE_SHOT)
 	var error: Error = http.request(base + "/api/heartbeat", ["Content-Type: application/json"],
 		HTTPClient.METHOD_POST, JSON.stringify(body))
 	if error != OK:
-		http.queue_free()
+		_release_http(http)
 
 
 func _relay_unregister_async(token: String, base: String) -> void:
 	if token == "" or base == "":
 		return
-	var http := HTTPRequest.new()
-	http.timeout = 3.0
-	add_child(http)
+	var http: HTTPRequest = _acquire_http(3.0)
 	http.request_completed.connect(func(_r: int, _c: int, _h: PackedStringArray, _b: PackedByteArray) -> void:
-		http.queue_free())
+		_release_http(http), CONNECT_ONE_SHOT)
 	var headers: PackedStringArray = ["Content-Type: application/json"]
 	var error: Error = http.request(base + "/api/unregister", headers, HTTPClient.METHOD_POST,
 		JSON.stringify({"token": token}))
 	if error != OK:
-		http.queue_free()
+		_release_http(http)
 
 
 func _open_server() -> int:
@@ -2044,10 +2158,18 @@ func set_relay_server(raw: String) -> void:
 		return
 	var secure: bool = text.begins_with("https://")
 	var rest: String = text.trim_prefix("https://").trim_prefix("http://").trim_suffix("/")
-	var host: String = rest.get_slice("/", 0)
+	var authority: String = rest.get_slice("/", 0)
+	var host: String = authority
 	var http_port: int = 42777
-	if host.contains(":"):
-		var parts: PackedStringArray = host.split(":")
+	if authority.begins_with("["):
+		var close_idx: int = authority.find("]")
+		if close_idx <= 1:
+			return
+		host = authority.substr(0, close_idx + 1)
+		if close_idx + 1 < authority.length() and authority[close_idx + 1] == ":":
+			http_port = int(authority.substr(close_idx + 2))
+	elif authority.contains(":"):
+		var parts: PackedStringArray = authority.split(":")
 		host = parts[0]
 		http_port = int(parts[1]) if parts.size() > 1 else 42777
 	if host == "":
@@ -2351,7 +2473,7 @@ func configure_session(mode: String, bots: bool, count: int,
 		session_event = _infer_session_event(mode)
 	session_scene = scene_for_event(session_event)
 	session_minigame = GameSettings.selected_minigame \
-		if session_event == EVENT_CARGO else ""
+		if session_event in MINIGAME_EVENTS else ""
 	# The racing build travels in the same reliable packet as the map id. It is
 	# sanitised before it leaves (the receiver sanitises again), and a peer
 	# that never receives the trailing fields keeps its own saved build.
@@ -2376,8 +2498,10 @@ func _on_settings_session_changed() -> void:
 	var theme_id: String = GameSettings.selected_minigame
 	var map_id: String = GameSettings.selected_map
 	if theme_id != _last_pick_theme and TrackDefs.has_theme_id(theme_id):
-		_pending_event = EVENT_CARGO
-		_last_pick_event = EVENT_CARGO
+		var ev: String = event_for_theme_id(theme_id)
+		if ev != "":
+			_pending_event = ev
+			_last_pick_event = ev
 	elif map_id != _last_pick_map:
 		_pending_event = EVENT_RACE
 		_last_pick_event = EVENT_RACE
@@ -2400,14 +2524,17 @@ func _infer_session_event(mode: String) -> String:
 	if _pending_event != "":
 		event = _pending_event
 	elif theme_changed and TrackDefs.has_theme_id(theme_id):
-		event = EVENT_CARGO
+		var ev_from_theme: String = event_for_theme_id(theme_id)
+		if ev_from_theme != "":
+			event = ev_from_theme
 	elif map_changed:
 		event = EVENT_RACE
 	_pending_event = ""
-	if event != EVENT_CARGO and event != EVENT_RACE:
+	if event != EVENT_RACE and not (event in MINIGAME_EVENTS):
 		event = _last_pick_event
-	if event != EVENT_CARGO and event != EVENT_RACE:
-		event = EVENT_CARGO if TrackDefs.has_theme_id(theme_id) else EVENT_RACE
+	if event != EVENT_RACE and not (event in MINIGAME_EVENTS):
+		var fallback_ev: String = event_for_theme_id(theme_id)
+		event = fallback_ev if fallback_ev != "" else EVENT_RACE
 	_note_pick_snapshot()
 	_last_pick_event = event
 	return event
@@ -2444,7 +2571,7 @@ func _net_session_config(mode: String, bots: bool, count: int,
 	var clean_scene: String = scene if scene in ALLOWED_SCENES else ""
 	if clean_scene == "":
 		clean_scene = GAME_SCENE if mode == GameSettings.GAME_SANDBOX \
-			else (CARGO_SCENE if event == EVENT_CARGO else RACE_SCENE)
+			else scene_for_event(event if (event == EVENT_RACE or event in MINIGAME_EVENTS) else EVENT_RACE)
 	session_scene = clean_scene
 	session_event = event_for_scene(clean_scene) \
 		if mode == GameSettings.GAME_MINIGAMES else ""
@@ -2521,7 +2648,7 @@ func start_game(scene_path: String = "", mode: String = "") -> void:
 		target = scene_for_event(session_event)
 	if target not in ALLOWED_SCENES:
 		target = GAME_SCENE if chosen_mode == GameSettings.GAME_SANDBOX \
-			else (CARGO_SCENE if session_event == EVENT_CARGO else RACE_SCENE)
+			else scene_for_event(session_event if (session_event == EVENT_RACE or session_event in MINIGAME_EVENTS) else EVENT_RACE)
 	if chosen_mode == GameSettings.GAME_MINIGAMES:
 		session_event = event_for_scene(target)
 		if session_event == "":
@@ -2537,7 +2664,7 @@ func start_game(scene_path: String = "", mode: String = "") -> void:
 	session_bot_count = GameSettings.effective_bot_count()
 	session_map_id = GameSettings.sanitize_map_id(GameSettings.selected_map)
 	session_minigame = GameSettings.selected_minigame \
-		if session_event == EVENT_CARGO else ""
+		if session_event in MINIGAME_EVENTS else ""
 	session_racing_car_id = sanitize_racing_car_id(
 		GameSettings.racing_vehicle_id())
 	session_racing_allocation = sanitize_racing_allocation(
@@ -2577,6 +2704,12 @@ func _net_begin_game(scene_path: String, mode: String, bots: bool, count: int,
 			elif scene_path == CARGO_SCENE:
 				current.rpc_id(1, "_net_cargo_ready", session_minigame,
 					GameSettings.minigame_vehicle)
+			elif scene_path == KNOCKOUT_SCENE:
+				current.rpc_id(1, "_net_knockout_ready", session_minigame,
+					GameSettings.minigame_vehicle)
+			elif scene_path == BOMB_TAG_SCENE:
+				current.rpc_id(1, "_net_bomb_ready", session_minigame,
+					GameSettings.minigame_vehicle)
 		return
 	if _scene_load_path == scene_path:
 		# A previous retry already asked SceneLoader for this scene. It may
@@ -2599,7 +2732,15 @@ func _net_begin_game(scene_path: String, mode: String, bots: bool, count: int,
 		GameSettings.set_session_config(GameSettings.MODE_MULTIPLAYER, mode, bots, count)
 	var title: String = "STARTING SANDBOX"
 	if mode == GameSettings.GAME_MINIGAMES:
-		title = "STARTING DELIVER" if scene_path == CARGO_SCENE else "STARTING RACE"
+		match scene_path:
+			CARGO_SCENE:
+				title = "STARTING DELIVER"
+			KNOCKOUT_SCENE:
+				title = "STARTING KNOCKOUT"
+			BOMB_TAG_SCENE:
+				title = "STARTING BLAST TAG"
+			_:
+				title = "STARTING RACE"
 	SceneLoader.go_to(scene_path, title, "Syncing players...")
 
 

@@ -1,5 +1,7 @@
 extends RefCounted
 ## Reusable racing driver for the Meadow Loop rivals.
+
+const TrackDefs := preload("res://scripts/minigames/track_defs.gd")
 ##
 ## The driver precomputes everything it can once: four distinct racing lines
 ## sampled from the track spline (inside-apex, outside-sweep, late-apex and a
@@ -121,6 +123,7 @@ var line_mode: int = LineMode.NORMAL
 var line_changes: int = 0
 
 var _spline: RefCounted
+var _preset: Dictionary = {}
 var _count: int = 0
 var _length: float = 1.0
 var _step: float = 1.0
@@ -180,12 +183,21 @@ var _last_throttle: float = 0.0
 var _last_steer: float = 0.0
 
 
-func _init(spline: RefCounted, road_half: float = 5.5) -> void:
+func _init(spline: RefCounted, road_half: float = 5.5,
+		preset: Dictionary = {}) -> void:
 	## Build the racing line once, from the same spline the road is built from.
 	_spline = spline
+	_preset = preset
 	_half_width = maxf(road_half, 1.0)
 	_usable = maxf(_half_width - EDGE_MARGIN, 0.8)
 	_build_line()
+
+
+func set_preset(preset: Dictionary) -> void:
+	## Update the track preset used for surface-grip braking in _build_speed_profile.
+	_preset = preset
+	var tuned: float = clampf(inverse_lerp(0.62, 1.12, _skill), 0.0, 1.0)
+	_build_speed_profile(lerpf(0.86, 1.0, tuned))
 
 
 func configure(skill: float, lane_bias: float, boost_bias: float,
@@ -530,24 +542,34 @@ func _smooth_offsets(source: PackedFloat32Array) -> PackedFloat32Array:
 
 
 func _build_speed_profile(margin: float) -> void:
-	## v = sqrt(lat_accel / curvature) per sample, capped by the cart and skill,
-	## then a backward pass so each sample is slow enough to brake for the next.
+	## v = sqrt((lat_accel * grip) / curvature) per sample, capped by the cart
+	## and skill, then a backward pass so each sample is slow enough to brake for
+	## the next (including wet tarmac and glacier ice grip sectors).
 	if _count <= 0:
 		return
 	_speeds.resize(_count)
+	var total: float = maxf(_length, 0.001)
+	var has_preset: bool = not _preset.is_empty()
 	for i in _count:
 		var curvature: float = absf(_curvature[i])
+		var fraction: float = (float(i) * _step) / total
+		var grip: float = clampf(TrackDefs.grip_at(_preset, fraction), 0.35, 1.2) \
+			if has_preset else 1.0
 		var corner_speed: float = _speed_cap
 		if curvature > 0.0005:
-			corner_speed = sqrt(_lat_accel / curvature)
+			corner_speed = sqrt((_lat_accel * grip) / curvature)
 		_speeds[i] = maxf(minf(corner_speed, _speed_cap) * margin,
 			MIN_CORNER_SPEED)
 	# Two passes settle the wrap-around at the start/finish seam.
 	for _repetition in 2:
 		for i in range(_count - 1, -1, -1):
 			var next: int = (i + 1) % _count
+			var fraction: float = (float(i) * _step) / total
+			var grip: float = clampf(TrackDefs.grip_at(_preset, fraction), 0.35, 1.2) \
+				if has_preset else 1.0
+			var decel: float = _brake_decel * lerpf(1.0, grip, 0.55)
 			var allowed: float = sqrt(_speeds[next] * _speeds[next]
-				+ 2.0 * _brake_decel * _step)
+				+ 2.0 * decel * _step)
 			_speeds[i] = minf(_speeds[i], allowed)
 
 

@@ -120,6 +120,7 @@ static func build(holder: Node3D, spline: RefCounted, plan: Dictionary,
 	# that is left. Every pass registers its footprint, so a later prop is
 	# skipped rather than drawn through an earlier one.
 	var placed: Array = []
+	_ground_and_terraces(holder, spline, plan, stats)
 	_grandstands(holder, spline, plan, stats, placed)
 	_catch_fence(holder, spline, plan, stats, placed)
 	_floodlights(holder, spline, plan, stats, placed)
@@ -156,7 +157,6 @@ static func _grandstands(holder: Node3D, spline: RefCounted, plan: Dictionary,
 	for index in sites.size():
 		var site: Dictionary = sites[index]
 		var point: Vector3 = (site["position"] as Vector3)
-		point.y = 0.0
 		var lap: float = fposmod(start + STAND_BAY * (float(index) + 0.5), total)
 		if not Props.site_ok(spline, point, STAND_REACH):
 			continue
@@ -182,7 +182,6 @@ static func _grandstands(holder: Node3D, spline: RefCounted, plan: Dictionary,
 	for index in upper_sites.size():
 		var site: Dictionary = upper_sites[index]
 		var point: Vector3 = (site["position"] as Vector3)
-		point.y = 0.0
 		var lap: float = fposmod(start + STAND_BAY * 2.0 \
 			* (float(index) + 0.5), total)
 		if not Props.site_ok(spline, point, STAND_REACH):
@@ -337,7 +336,6 @@ static func _tyre_walls(holder: Node3D, spline: RefCounted, plan: Dictionary,
 			TYRE_STACK_SPACING)
 		for index in mini(sites.size(), TYRE_STACKS_PER_CORNER):
 			var point: Vector3 = (sites[index] as Dictionary)["position"]
-			point.y = 0.0
 			if not Props.site_ok(spline, point, TYRE_REACH):
 				continue
 			if not Props.side_ok(spline, point, outside):
@@ -373,7 +371,6 @@ static func _marshal_posts(holder: Node3D, spline: RefCounted,
 		if sites.is_empty():
 			continue
 		var point: Vector3 = (sites[0] as Dictionary)["position"]
-		point.y = 0.0
 		if not Props.site_ok(spline, point, MARSHAL_REACH):
 			continue
 		if not Props.side_ok(spline, point, outside):
@@ -414,7 +411,6 @@ static func _camera_cranes(holder: Node3D, spline: RefCounted,
 		var lap: float = total * (float(index) + 0.5) / float(CAMERA_CRANES)
 		var path: float = Props.ring_position(ring, lap)
 		var point: Vector3 = Props.ring_point(ring, path)
-		point.y = 0.0
 		if not Props.site_ok(spline, point, CAMERA_REACH):
 			continue
 		if not Props.side_ok(spline, point, outside):
@@ -452,7 +448,6 @@ static func _floodlights(holder: Node3D, spline: RefCounted, plan: Dictionary,
 			/ float(FLOODLIGHTS)
 		var path: float = Props.ring_position(ring, lap)
 		var point: Vector3 = Props.ring_point(ring, path)
-		point.y = 0.0
 		if not Props.site_ok(spline, point, LIGHT_REACH):
 			continue
 		if not Props.side_ok(spline, point, outside):
@@ -508,7 +503,6 @@ static func _board(batches: Dictionary, body_node: StaticBody3D,
 		kind: String, placed: Array) -> void:
 	var path: float = Props.ring_position(ring_path, lap)
 	var point: Vector3 = Props.ring_point(ring_path, path)
-	point.y = 0.0
 	var model: String = _sign_model(kind)
 	var scale: float = TileCatalog.sign_scale(kind) \
 		* (BOARD_SCALE if model == TileCatalog.BILLBOARD_LOW else 1.0)
@@ -561,7 +555,6 @@ static func _flags(holder: Node3D, spline: RefCounted, plan: Dictionary,
 		var lap: float = total * float(index) / float(FLAG_COUNT)
 		var path: float = Props.ring_position(ring, lap)
 		var point: Vector3 = Props.ring_point(ring, path)
-		point.y = 0.0
 		if not Props.site_ok(spline, point, FLAG_REACH):
 			continue
 		if not Props.side_ok(spline, point, outside):
@@ -611,7 +604,6 @@ static func _cliff_walls(holder: Node3D, spline: RefCounted, plan: Dictionary,
 			float(span["to"]), 15.0)
 		for site: Dictionary in sites:
 			var point: Vector3 = (site["position"] as Vector3)
-			point.y = 0.0
 			if not Props.site_ok(spline, point, CLIFF_REACH):
 				continue
 			if not Props.side_ok(spline, point, outside):
@@ -654,7 +646,7 @@ static func _footbridge(holder: Node3D, spline: RefCounted, plan: Dictionary,
 		Vector3.ONE * Props.NATURE_SCALE, true)
 	var seam: float = 0.05
 	var module_offset: float = (centre_size.x + side_size.x) * 0.5 + seam
-	var deck_top: float = BRIDGE_DECK + Props.LAYER_APRON
+	var deck_top: float = centre.y + BRIDGE_DECK + Props.LAYER_APRON
 	var modules: Array[Dictionary] = [
 		{"model": BRIDGE_SIDE, "offset": -module_offset},
 		{"model": BRIDGE_CENTER, "offset": 0.0},
@@ -678,9 +670,10 @@ static func _footbridge(holder: Node3D, spline: RefCounted, plan: Dictionary,
 	var deck_width: float = side_size.x + module_offset * 2.0
 	Props.box(body, centre + Vector3.UP * BRIDGE_DECK, yaw,
 		Vector3(deck_width, 0.5, centre_size.z))
+	var pier_offset: float = maxf(deck_width * 0.5 + 0.45, 9.2)
 	for side: float in [-1.0, 1.0]:
-		var pier: Vector3 = centre + right * (side * (deck_width * 0.5 + 0.45))
-		pier.y = 0.0
+		var pier: Vector3 = centre + right * (side * pier_offset)
+		pier.y = centre.y
 		Props.box(body, pier, yaw,
 			Vector3(1.4, BRIDGE_DECK - Props.LAYER_APRON,
 				centre_size.z * 0.7))
@@ -756,3 +749,143 @@ static func _band_draws(entries: Array) -> int:
 ## variation cannot come from a random generator.
 static func _hash(a: int, b: int) -> int:
 	return absi((a * 73856093) ^ (b * 19349663))
+
+
+# --------------------------------------------------------------------------
+# cartoon turf ground + terraced stadium berms
+
+
+## One merged vertex-coloured cartoon mesh covering the whole stadium ground and
+## raising clean earthen/concrete stadium terraces beneath every elevated track
+## sector so grandstands, floodlights, cranes and flags never float in mid-air.
+static func _ground_and_terraces(holder: Node3D, spline: RefCounted,
+		plan: Dictionary, stats: Dictionary) -> void:
+	var bounds: Rect2 = plan["bounds"] as Rect2
+	var cx: float = bounds.position.x + bounds.size.x * 0.5
+	var cz: float = bounds.position.y + bounds.size.y * 0.5
+	var verts := PackedVector3Array()
+	var normals := PackedVector3Array()
+	var colors := PackedColorArray()
+
+	var turf_outer := Color("6fae4a")
+	var turf_inner := Color("79ba53")
+	var berm_top := Color("66a244")
+	var berm_wall := Color("8b8e92")
+
+	# Wide outer cartoon turf sheet covering 1500 x 1500 m at Z_GROUND (-0.02 m)
+	var half_ext: float = 750.0
+	var ground_y: float = TileKit.Z_GROUND
+	_push_quad(verts, normals, colors,
+		Vector3(cx - half_ext, ground_y, cz - half_ext),
+		Vector3(cx + half_ext, ground_y, cz - half_ext),
+		Vector3(cx + half_ext, ground_y, cz + half_ext),
+		Vector3(cx - half_ext, ground_y, cz + half_ext),
+		turf_outer)
+
+	# Mowed infield stadium turf pad slightly above outer grass (-0.014 m)
+	var pad_min := Vector2(bounds.position.x - 24.0, bounds.position.y - 24.0)
+	var pad_max := Vector2(bounds.end.x + 24.0, bounds.end.y + 24.0)
+	_push_quad(verts, normals, colors,
+		Vector3(pad_min.x, ground_y + 0.006, pad_min.y),
+		Vector3(pad_max.x, ground_y + 0.006, pad_min.y),
+		Vector3(pad_max.x, ground_y + 0.006, pad_max.y),
+		Vector3(pad_min.x, ground_y + 0.006, pad_max.y),
+		turf_inner)
+
+	# Continuous stadium terrace embankment under elevated bowl props & stands,
+	# plus viaduct piers under the 9.0 m stadium sky-bridge.
+	var outside: float = float(plan["outside"])
+	var inner_ring: Dictionary = Props.ring(spline, outside, 8.6)
+	var outer_ring: Dictionary = Props.ring(spline, outside, 46.5)
+	if bool(inner_ring.get("ok", false)) and bool(outer_ring.get("ok", false)):
+		var total: float = maxf(float(plan["total"]), 1.0)
+		var steps: int = 144
+		for i in steps:
+			var lap0: float = total * float(i) / float(steps)
+			var lap1: float = total * float(i + 1) / float(steps)
+			var h0: float = float(spline.height_at(lap0))
+			var h1: float = float(spline.height_at(lap1))
+			if maxf(h0, h1) < 0.08:
+				continue
+			var a_in: Vector3 = Props.ring_point(inner_ring,
+				Props.ring_position(inner_ring, lap0))
+			var b_in: Vector3 = Props.ring_point(inner_ring,
+				Props.ring_position(inner_ring, lap1))
+			var a_out: Vector3 = Props.ring_point(outer_ring,
+				Props.ring_position(outer_ring, lap0))
+			var b_out: Vector3 = Props.ring_point(outer_ring,
+				Props.ring_position(outer_ring, lap1))
+			a_in.y = h0 - 0.015
+			b_in.y = h1 - 0.015
+			a_out.y = h0 - 0.015
+			b_out.y = h1 - 0.015
+			_push_quad(verts, normals, colors, a_in, b_in, b_out, a_out, berm_top)
+			_push_quad(verts, normals, colors,
+				Vector3(a_in.x, ground_y, a_in.z),
+				Vector3(b_in.x, ground_y, b_in.z),
+				b_in, a_in, berm_wall)
+			_push_quad(verts, normals, colors,
+				a_out, b_out,
+				Vector3(b_out.x, ground_y, b_out.z),
+				Vector3(a_out.x, ground_y, a_out.z), berm_wall.darkened(0.08))
+			# Infield sky-bridge concrete fascia & support columns on high spans
+			if i % 3 == 0 and minf(h0, h1) >= 2.8:
+				var f_mid: Dictionary = Props.frame(spline, (lap0 + lap1) * 0.5)
+				var p_mid: Vector3 = f_mid["position"]
+				var r_mid: Vector3 = f_mid["right"]
+				var fwd_mid: Vector3 = f_mid["forward"]
+				for p_side: float in [-3.8, 3.8]:
+					var col_base: Vector3 = p_mid + r_mid * p_side
+					var hw: Vector3 = r_mid * 0.65
+					var hd: Vector3 = fwd_mid * 0.65
+					var y_top: float = p_mid.y - 0.08
+					var c0 := Vector3(col_base.x, ground_y, col_base.z) - hw - hd
+					var c1 := Vector3(col_base.x, ground_y, col_base.z) + hw - hd
+					var c2 := Vector3(col_base.x, ground_y, col_base.z) + hw + hd
+					var c3 := Vector3(col_base.x, ground_y, col_base.z) - hw + hd
+					var t0 := Vector3(c0.x, y_top, c0.z)
+					var t1 := Vector3(c1.x, y_top, c1.z)
+					var t2 := Vector3(c2.x, y_top, c2.z)
+					var t3 := Vector3(c3.x, y_top, c3.z)
+					_push_quad(verts, normals, colors, c0, c1, t1, t0, berm_wall)
+					_push_quad(verts, normals, colors, c1, c2, t2, t1, berm_wall.darkened(0.08))
+					_push_quad(verts, normals, colors, c2, c3, t3, t2, berm_wall)
+					_push_quad(verts, normals, colors, c3, c0, t0, t3, berm_wall.darkened(0.08))
+
+	var mesh := ArrayMesh.new()
+	var arrays: Array = []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = verts
+	arrays[Mesh.ARRAY_NORMAL] = normals
+	arrays[Mesh.ARRAY_COLOR] = colors
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	var mat := StandardMaterial3D.new()
+	mat.vertex_color_use_as_albedo = true
+	mat.albedo_color = Color.WHITE
+	mat.roughness = 1.0
+	mat.metallic = 0.0
+	mat.specular_mode = BaseMaterial3D.SPECULAR_DISABLED
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	mesh.surface_set_material(0, mat)
+	var inst := MeshInstance3D.new()
+	inst.name = "StadiumTurfAndTerraces"
+	inst.mesh = mesh
+	inst.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	holder.add_child(inst)
+	stats["draws"] = int(stats.get("draws", 0)) + 1
+
+
+static func _push_quad(verts: PackedVector3Array, normals: PackedVector3Array,
+		colors: PackedColorArray, a: Vector3, b: Vector3, c: Vector3,
+		d: Vector3, color: Color) -> void:
+	var n: Vector3 = (b - a).cross(c - a)
+	if n.length_squared() > 0.000001:
+		n = n.normalized()
+		if n.y < 0.0 and absf(a.y - c.y) < 0.01:
+			n = -n
+	else:
+		n = Vector3.UP
+	for pt: Vector3 in [a, b, c, a, c, d]:
+		verts.append(pt)
+		normals.append(n)
+		colors.append(color)

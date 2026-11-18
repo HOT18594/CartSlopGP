@@ -64,10 +64,17 @@ func _style_node(node: Node) -> void:
 		var focusable := node as Control
 		if not focusable.has_meta("nav_skip"):
 			focusable.focus_mode = Control.FOCUS_ALL
-	# Small colour swatches opt out of the size tokens but still need a ring.
+	# Small colour swatches and custom LineEdits opt out of size tokens but still need a ring.
 	if node.has_meta("skip_kit"):
 		if node is Button:
 			apply_focus_ring(node as Control, _corner_radius_of(node as Control))
+		elif node is LineEdit:
+			var line := node as Control
+			var line_normal: StyleBox = line.get_theme_stylebox("normal")
+			var radius: int = 14
+			if line_normal is StyleBoxFlat and (line_normal as StyleBoxFlat).corner_radius_top_left > 0:
+				radius = (line_normal as StyleBoxFlat).corner_radius_top_left
+			apply_focus_ring(line, radius)
 		return
 	if node is OptionButton or node is MenuButton:
 		return
@@ -89,10 +96,10 @@ func _style_node(node: Node) -> void:
 				button.custom_minimum_size.y = BUTTON_HEIGHT
 			if not button.has_theme_font_size_override("font_size"):
 				button.add_theme_font_size_override("font_size", BUTTON_FONT)
-			# Every action label is optically centred in its pill. The styleboxes
-			# use symmetric top/bottom content margins, so vertical centring
-			# comes from Button itself; this pins the horizontal side.
-			button.alignment = HORIZONTAL_ALIGNMENT_CENTER
+			# Every action label is optically centred in its pill unless a list
+			# or team row explicitly preserves left alignment via keep_align.
+			if not bool(button.get_meta("keep_align", false)):
+				button.alignment = HORIZONTAL_ALIGNMENT_CENTER
 		apply_focus_ring(button, _corner_radius_of(button))
 	elif node is LineEdit:
 		var field := node as LineEdit
@@ -134,8 +141,8 @@ func _focus_style(radius: int) -> StyleBoxFlat:
 	style.expand_margin_top = 3.0
 	style.expand_margin_right = 3.0
 	style.expand_margin_bottom = 3.0
-	style.shadow_color = Color(0.06, 0.05, 0.12, 0.65)
-	style.shadow_size = 2
+	style.shadow_color = Color(0.06, 0.05, 0.14, 0.72)
+	style.shadow_size = 4
 	style.shadow_offset = Vector2.ZERO
 	style.anti_aliasing = true
 	_focus_styles[radius] = style

@@ -26,12 +26,14 @@ extends RefCounted
 ## row instead of silently dressing a different circuit.
 
 const TrackDefs := preload("res://scripts/minigames/track_defs.gd")
+const TileKit := preload("res://scripts/minigames/tile_kit.gd")
 const StadiumLayout := preload("res://scripts/minigames/maps/stadium/stadium_layout.gd")
 const StadiumGrid := preload("res://scripts/minigames/maps/stadium/stadium_grid.gd")
 
 const THEME_ID: String = "stadium"
 const HOLDER_NAME: String = "StadiumDressing"
 const META_STATS: String = "stadium_dressing_stats"
+const HOARDING_DENSITY: float = 0.42
 
 
 ## Builds the whole stadium dressing under `race`. `spline` is the grid spline
@@ -50,6 +52,13 @@ static func build(race: Node3D, spline) -> void:
 	if track == null:
 		push_warning("StadiumTheme: the spline is not a RefCounted; nothing was dressed.")
 		return
+	var meadow_ground: Node3D = race.get_node_or_null("MeadowGround") as Node3D
+	if meadow_ground != null:
+		meadow_ground.visible = false
+	TileKit.dress_track(race, track, {
+		"id": THEME_ID,
+		"hoarding_density": HOARDING_DENSITY,
+	})
 	var preset: Dictionary = TrackDefs.get_preset(THEME_ID)
 	var rows: PackedStringArray = TrackDefs.grid_of(preset)
 	if rows.is_empty():

@@ -1,29 +1,40 @@
 # Cart Slop GP
 
-An arcade racing game about shopping carts. Pick a cart (or a sedan, a van, a
-box truck, a police cruiser...), drift around a playground, then race one of four
-circuits against friends and AI rivals. Made with **Godot 4**.
+An arcade racing & party kart brawler about shopping carts and street rides.
+Pick a cart (or a sedan, a sports car, a van, a box truck, a police cruiser...),
+hop-drift through five vertical racing circuits, or battle friends in three
+multiplayer party modes. Made with **Godot 4**.
 
 ![Stadium Circuit](assets/ui/art/preview_stadium.png)
 
 ## What's in the game
 
-- **7 vehicles**, each with its own mass, top speed, engine sound, smoke and
-  tyre marks: shopping cart, sedan, sports car, taxi, van, box truck and
-  police cruiser.
-- **Four race circuits** built from modular kit pieces on one closed lap each:
-  Stadium Circuit, Dockyard, Glacier Pass and the Meadow Loop. Terrain rises and
-  falls, and each track has its own surface (wet lane, ice) and jump.
-- **Cargo Rush**: a team mode where you carry presents home while the other team
-  tries to do the same.
-- **Sandbox**: a 140 x 140 m arena with ramps, a drift bowl, a mesa, boost
-  pads, cones, crates and speed bumps. Drift for skid marks, boost, honk and
-  reset when you get stuck.
-- **Race AI** that follows a racing line, brakes before corners, overtakes,
-  defends, and rides the ramps instead of driving through them.
-- **Multiplayer for up to 8 players** (plus bots): host a room on your own
-  network, or use a 5-letter room code through the online relay. The host
-  chooses the game, map, vehicle and bot count.
+- **7 vehicles**, all paintable and tuneable in the Racing Garage, each with its
+  own mass, top speed, 4-gear engine audio, smoke, rear-wheel drift sparks and
+  tyre marks: shopping cart, sedan, sports car, taxi, van, box truck and police
+  cruiser.
+- **5 high-verticality race circuits** (`857–1,050 m` laps, `7.5–13.5 m` climbs,
+  bridges, viaducts, and holographic Speed-Up Aurora boost zones):
+  **Stadium Circuit**, **Redwood Valley**, **Sunset Canyon**, **Dockyard Quay**,
+  and **Glacier Pass**.
+- **3 party minigames (2–8 players online/LAN + Solo vs AI)** with **3 unique 3D
+  maps each** (9 party arenas total):
+  - **Deliver (Cargo Rush)**: 2-team crate heist across *Harbour Overpass*,
+    *Windmill Hills*, and *Glacier Bowl*.
+  - **Knockout (Bumper Royale)**: Smash-style Knockback % (`0%–250%`),
+    Power-Slam Surge, and collapsing stages across *Skytop Helipad*, *Molten
+    Foundry*, and *Fractured Iceberg*.
+  - **Blast Tag (Hot-Potato Chase)**: Ticking Mega-Bomb with Carrier Panic
+    Overdrive, Ram-Pass immunity shields, Runner Juke Surges, and detonation
+    shockwaves across *Terrace Plaza*, *Canyon Labyrinth*, and *Twin Ferries*.
+- **Sandbox Stunt Park**: an expanded `144 x 144 m` free-roam park with a
+  Handling Loop, twin stunt kickers, a banked `16°` Drift Bowl, mesa climbs,
+  Speed-Up Aurora pads, cones, and crate pyramids.
+- **Arcade hop-drift & 3-tier mini-turbo**: tap handbrake to hop into a
+  committed drift and charge **SPARK**, **BLAZE**, and **ULTRA!** boosts.
+- **Multiplayer for up to 8 players** (plus bots): host on your local network or
+  create a 5-letter room code through the online relay. The host picks any of
+  the 5 modes and 15 maps right from the room lobby.
 - **Settings** for audio, fullscreen, quality, HUD size, camera shake, stick
   deadzone, boost/drift toggles, reduced motion and frame rate. Gamepad and
   keyboard both work.
@@ -61,6 +72,7 @@ or right-click **Open**. Do not disable Gatekeeper system-wide.
 | Steer | A / D or Left / Right | Left stick |
 | Handbrake / drift | Space or `,` | A |
 | Boost | Shift, Left Mouse or `.` | X |
+| Action / Surge (Pickup, Power-Slam, Juke) | E / F or Right Mouse | B |
 | Horn | H | Right shoulder |
 | Reset cart | R or `/` | Y |
 | Player list (hold) | Tab | - |

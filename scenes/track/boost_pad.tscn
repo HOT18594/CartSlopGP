@@ -5,60 +5,64 @@
 [ext_resource type="Shader" path="res://scripts/effects/speed_zone_wisps.gdshader" id="3_wisps"]
 
 [sub_resource type="BoxShape3D" id="2_shape"]
-size = Vector3(5.0, 0.4, 2.6)
+size = Vector3(6.2, 0.5, 3.4)
 
 [sub_resource type="ShaderMaterial" id="4_auroramat"]
 shader = ExtResource("2_aurora")
-shader_parameter/deep_color = Color(0.02, 0.08, 0.55, 1)
-shader_parameter/glow_color = Color(0.08, 0.42, 1, 1)
-shader_parameter/crest_color = Color(0.32, 0.86, 1, 1)
-shader_parameter/intensity = 1.0
-shader_parameter/pulse_speed = 0.5
-shader_parameter/drift_speed = 0.05
-shader_parameter/curtain_speed = 0.22
+shader_parameter/deep_color = Color(0.039, 0.133, 0.659, 1)
+shader_parameter/glow_color = Color(0.078, 0.722, 1, 1)
+shader_parameter/crest_color = Color(0.58, 1, 1, 1)
+shader_parameter/edge_color = Color(0.847, 0.361, 1, 1)
+shader_parameter/intensity = 1.9
+shader_parameter/pulse_speed = 0.85
+shader_parameter/drift_speed = 0.12
+shader_parameter/curtain_speed = 0.65
+shader_parameter/chevron_speed = 2.15
 
 [sub_resource type="QuadMesh" id="5_fieldmesh"]
 material = SubResource("4_auroramat")
-size = Vector2(5.0, 2.6)
+size = Vector2(6.2, 3.4)
 
 [sub_resource type="ShaderMaterial" id="6_wispmat"]
 shader = ExtResource("3_wisps")
-shader_parameter/tint = Color(0.28, 0.7, 1, 1)
-shader_parameter/intensity = 0.22
-shader_parameter/rise_speed = 0.4
-shader_parameter/sway_amount = 0.11
-shader_parameter/core_width = 0.1
+shader_parameter/tint = Color(0.08, 0.78, 1, 1)
+shader_parameter/top_tint = Color(0.78, 0.34, 1, 1)
+shader_parameter/crest_tint = Color(0.62, 1, 1, 1)
+shader_parameter/intensity = 0.52
+shader_parameter/rise_speed = 0.78
+shader_parameter/sway_amount = 0.13
+shader_parameter/core_width = 0.12
 
 [sub_resource type="QuadMesh" id="7_wispmesh"]
 material = SubResource("6_wispmat")
-size = Vector2(0.6, 0.95)
+size = Vector2(0.76, 1.35)
 
 [sub_resource type="StandardMaterial3D" id="8_puffmat"]
 transparency = 1
 shading_mode = 0
 blend_mode = 1
 billboard_mode = 3
-albedo_color = Color(0.5, 0.92, 1, 0.55)
+albedo_color = Color(0.72, 0.98, 1, 0.88)
 emission_enabled = true
-emission = Color(0.28, 0.8, 1, 1)
-emission_energy_multiplier = 1.1
+emission = Color(0.35, 0.92, 1, 1)
+emission_energy_multiplier = 2.2
 
 [sub_resource type="QuadMesh" id="9_puffquad"]
 material = SubResource("8_puffmat")
-size = Vector2(0.22, 0.22)
+size = Vector2(0.28, 0.28)
 
 [sub_resource type="ParticleProcessMaterial" id="10_puffproc"]
 lifetime_randomness = 0.25
 emission_shape = 3
-emission_box_extents = Vector3(1.9, 0.04, 0.9)
-direction = Vector3(0, 1, 0)
-spread = 18.0
-initial_velocity_min = 0.5
-initial_velocity_max = 1.1
-gravity = Vector3(0, 1.2, 0)
-scale_min = 0.35
-scale_max = 0.75
-color = Color(0.55, 0.95, 1, 0.85)
+emission_box_extents = Vector3(2.5, 0.06, 1.35)
+direction = Vector3(0, 0.85, -0.52)
+spread = 24.0
+initial_velocity_min = 1.6
+initial_velocity_max = 3.8
+gravity = Vector3(0, 1.6, 0)
+scale_min = 0.45
+scale_max = 0.95
+color = Color(0.65, 0.98, 1, 0.92)
 
 [node name="BoostPad" type="Area3D"]
 collision_layer = 0
@@ -66,30 +70,40 @@ collision_mask = 10
 script = ExtResource("1_padscript")
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.2, 0)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.25, 0)
 shape = SubResource("2_shape")
 
 [node name="SpeedZone" type="MeshInstance3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 0, -1, 0, 1, 0, 0, 0.035, 0)
+transform = Transform3D(1, 0, 0, 0, 0, -1, 0, 1, 0, 0, 0.038, 0)
 cast_shadow = 0
 mesh = SubResource("5_fieldmesh")
 
-[node name="WispLeft" type="MeshInstance3D" parent="."]
-transform = Transform3D(0.9553, 0, -0.2955, 0, 1, 0, 0.2955, 0, 0.9553, -1.12, 0.49, -0.42)
+[node name="WispLeftFront" type="MeshInstance3D" parent="."]
+transform = Transform3D(0.9553, 0, -0.2955, 0, 1, 0, 0.2955, 0, 0.9553, -2.44, 0.675, -0.82)
 cast_shadow = 0
 mesh = SubResource("7_wispmesh")
 
-[node name="WispRight" type="MeshInstance3D" parent="."]
-transform = Transform3D(0.8936, 0, 0.2187, 0, 0.92, 0, -0.2187, 0, 0.8936, 1.18, 0.46, 0.4)
+[node name="WispLeftBack" type="MeshInstance3D" parent="."]
+transform = Transform3D(0.9394, 0, 0.3429, 0, 1, 0, -0.3429, 0, 0.9394, -2.5, 0.675, 0.82)
+cast_shadow = 0
+mesh = SubResource("7_wispmesh")
+
+[node name="WispRightFront" type="MeshInstance3D" parent="."]
+transform = Transform3D(0.9553, 0, 0.2955, 0, 1, 0, -0.2955, 0, 0.9553, 2.44, 0.675, -0.82)
+cast_shadow = 0
+mesh = SubResource("7_wispmesh")
+
+[node name="WispRightBack" type="MeshInstance3D" parent="."]
+transform = Transform3D(0.9394, 0, -0.3429, 0, 1, 0, 0.3429, 0, 0.9394, 2.5, 0.675, 0.82)
 cast_shadow = 0
 mesh = SubResource("7_wispmesh")
 
 [node name="Puff" type="GPUParticles3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.12, 0)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.14, 0)
 cast_shadow = 0
 emitting = false
-amount = 12
-lifetime = 0.5
+amount = 24
+lifetime = 0.55
 one_shot = true
 explosiveness = 1.0
 process_material = SubResource("10_puffproc")

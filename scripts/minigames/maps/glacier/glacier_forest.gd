@@ -168,12 +168,12 @@ const SUMMIT_REACH: Array[float] = [32.0, 50.0]
 const SUMMIT_RADIUS: Array[float] = [30.0, 26.0]
 const STAND_LATERAL: float = 23.0
 const STAND_SITES: Array[Dictionary] = [
-	{"fraction": 0.02, "side": 1.0},
-	{"fraction": 0.52, "side": -1.0},
+	{"fraction": 0.53, "side": -1.0},
+	{"fraction": 0.67, "side": -1.0},
 ]
 ## Mirrors glacier_layout: a stand on a deck above this is moved to the base.
 const STAND_DECK_LIMIT: float = 2.5
-const STAND_FALLBACK: float = 0.40
+const STAND_FALLBACK: float = 0.60
 const STAND_CLEARING: float = 26.0
 const STAND_LANE: float = 20.0
 const CLEAR_FLOOR: float = 0.04
@@ -470,6 +470,9 @@ static func _sites(spline: RefCounted) -> Dictionary:
 		var road: Vector3 = site["road"] as Vector3
 		clearings.append({"at": at, "radius": STAND_CLEARING})
 		clearings.append({"at": road.lerp(at, 0.55), "radius": STAND_LANE})
+	# Open sightline and basin for the frozen turquoise alpine lake south of the valley straight
+	clearings.append({"at": Vector3(164.0, 0.0, 248.0), "radius": 38.0})
+	clearings.append({"at": Vector3(164.0, 0.0, 222.0), "radius": 24.0})
 	return {"centre": centre, "max_deck": max_deck, "clearings": clearings,
 		"hairpin": hairpin}
 

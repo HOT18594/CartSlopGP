@@ -61,6 +61,10 @@ static func build(race: Node3D, spline) -> void:
 		return
 	if race.has_node(HOLDER_NAME):
 		return
+	TileKit.dress_track(race, spline, {
+		"id": "glacier",
+		"hoarding_density": 0.28,
+	})
 	var preset: Dictionary = GlacierSurface.preset_for(race)
 	var holder := Node3D.new()
 	holder.name = HOLDER_NAME

@@ -28,19 +28,20 @@ func _ready() -> void:
 	UpdateChecker.download_progress.connect(_on_progress)
 	UpdateChecker.download_finished.connect(_on_download_finished)
 	UpdateChecker.download_failed.connect(_on_download_failed)
-	# Two-button focus loop so Tab never escapes behind the dim.
 	_primary_button.focus_next = _primary_button.get_path_to(_secondary_button)
 	_primary_button.focus_previous = _primary_button.get_path_to(_secondary_button)
 	_secondary_button.focus_next = _secondary_button.get_path_to(_primary_button)
 	_secondary_button.focus_previous = _secondary_button.get_path_to(_primary_button)
 
 
+func _fit_buttons() -> void:
+	if _primary_button != null and _primary_button.has_method("fit_text"):
+		_primary_button.call("fit_text")
+	if _secondary_button != null and _secondary_button.has_method("fit_text"):
+		_secondary_button.call("fit_text")
+
+
 func _process(delta: float) -> void:
-	# Self-healing: if the download finished while this panel was hidden,
-	# freed by a scene change, or its finished signal was otherwise missed,
-	# the RESTART & UPDATE button used to stay greyed out forever. Whenever
-	# the zip for the advertised version is actually on disk, promote the
-	# dialog to the ready-to-install state no matter what happened before.
 	if _install_ready or _busy:
 		return
 	_heal_timer += delta
@@ -52,8 +53,6 @@ func _process(delta: float) -> void:
 	if not UpdateChecker.has_downloaded_update(UpdateChecker.latest_version):
 		return
 	_show_install_state()
-	if visible:
-		pass
 
 
 func _desktop_updates() -> bool:
@@ -74,6 +73,7 @@ func open() -> void:
 		_primary_button.text = "DOWNLOADING..."
 		_primary_button.disabled = true
 		_secondary_button.text = "HIDE"
+		_fit_buttons()
 		_progress_bar.visible = true
 		_progress_label.visible = true
 		var ratio: float = UpdateChecker.get_download_ratio()
@@ -103,16 +103,14 @@ func open() -> void:
 		_primary_button.text = "OPEN DOWNLOAD PAGE"
 		_primary_button.disabled = false
 		_secondary_button.text = "LATER"
+	_fit_buttons()
 	show()
 	UiAnim.pop($Center/Panel)
 	MenuNav.refresh()
 	MenuNav.focus(_primary_button)
-	# No automatic download: a 100 MB transfer is the player's choice. The
-	# panel shows the size and waits for DOWNLOAD UPDATE.
 
 
 func request_close() -> void:
-	## Single-overlay Escape: the update dialog closes itself and nothing else.
 	close()
 
 
@@ -124,6 +122,7 @@ func _show_install_state() -> void:
 	_primary_button.text = "RESTART & UPDATE"
 	_primary_button.disabled = false
 	_secondary_button.text = "RELEASE NOTES"
+	_fit_buttons()
 	_progress_bar.visible = true
 	_progress_bar.value = 100.0
 	_progress_label.visible = true
@@ -135,7 +134,7 @@ func _on_primary() -> void:
 		_notes_label.text = "Installing and restarting..."
 		if not UpdateChecker.install_downloaded_update():
 			if UpdateChecker.last_error == "read_only_app_location":
-				_notes_label.text = "Cannot replace the app in this folder. Move Cart Slop GP somewhere writable (for example your Applications folder with an admin account), or install from the release page."
+				_notes_label.text = "Cannot replace the app in this folder. Move Cart Slop GP somewhere writable, or install from the release page."
 			else:
 				_notes_label.text = "Could not install automatically (%s). Use RELEASE NOTES to download it manually." % UpdateChecker.last_error
 		return
@@ -147,6 +146,7 @@ func _on_primary() -> void:
 	_primary_button.disabled = true
 	_primary_button.text = "DOWNLOADING..."
 	_secondary_button.text = "HIDE"
+	_fit_buttons()
 	_progress_bar.visible = true
 	_progress_label.visible = true
 	_progress_bar.value = 0.0
@@ -186,8 +186,6 @@ func _on_progress(ratio: float, received: int, total: int) -> void:
 
 func _on_download_finished(_path: String) -> void:
 	_busy = false
-	# Ask before closing the game. The installer waits for this process to
-	# exit, swaps the files and relaunches the new build.
 	_show_install_state()
 	if not visible:
 		show()
@@ -202,12 +200,12 @@ func _on_download_failed(reason: String) -> void:
 	_primary_button.disabled = false
 	_primary_button.text = "TRY AGAIN"
 	_secondary_button.text = "OPEN RELEASE PAGE"
+	_fit_buttons()
 	if reason == "stalled_connection":
 		_notes_label.text = "The download stalled. Press TRY AGAIN to retry, or use the release page."
 	else:
 		_notes_label.text = "Download failed (%s). You can retry or use the release page." % reason
 	if not visible:
-		# A failure that happens while the panel is hidden must not be silent.
 		show()
 		UiAnim.pop($Center/Panel)
 		MenuNav.refresh()

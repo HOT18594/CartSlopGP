@@ -1,8 +1,9 @@
-[gd_scene load_steps=7 format=3]
+[gd_scene load_steps=8 format=3]
 
 [ext_resource type="Script" path="res://scripts/minigames/cargo_rush.gd" id="1_cargo"]
 [ext_resource type="PackedScene" path="res://scenes/player/cart_player.tscn" id="2_cart"]
 [ext_resource type="PackedScene" path="res://scenes/ui/pause_menu.tscn" id="3_pause"]
+[ext_resource type="PackedScene" path="res://scenes/ui/hud.tscn" id="4_hud"]
 
 [sub_resource type="ProceduralSkyMaterial" id="sky_mat"]
 sky_top_color = Color(0.18, 0.52, 0.74, 1)
@@ -43,5 +44,7 @@ directional_shadow_max_distance = 120.0
 
 [node name="CartPlayer" parent="." instance=ExtResource("2_cart")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.35, 44.5)
+
+[node name="HUD" parent="." instance=ExtResource("4_hud")]
 
 [node name="PauseMenu" parent="." instance=ExtResource("3_pause")]

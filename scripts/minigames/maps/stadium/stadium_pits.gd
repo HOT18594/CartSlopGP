@@ -92,7 +92,6 @@ static func _pit_lane(holder: Node3D, spline: RefCounted, plan: Dictionary,
 			/ float(PIT_RAIL_PIECES)
 		var point: Vector3 = Props.deck_point(spline, lap,
 			PIT_WALL_LATERAL * inside)
-		point.y = 0.0
 		if not Props.site_ok(spline, point, 1.0):
 			continue
 		var yaw: float = Props.along_yaw(spline, lap)
@@ -112,13 +111,12 @@ static func _pit_lane(holder: Node3D, spline: RefCounted, plan: Dictionary,
 	# The service lane itself: flat kit pit-straight slabs at grade, split off
 	# the main straight at both ends so it reads as a lane and not a terrace.
 	var lane: Array = []
-	var lane_body := Props.body(holder, "PitLaneApron")
+	var splits: Array = []
 	for index in GARAGES:
 		var lap: float = from + length * (float(index) + 0.5) \
 			/ float(GARAGES)
 		var point: Vector3 = Props.deck_point(spline, lap,
 			PIT_LANE_LATERAL * inside)
-		point.y = 0.0
 		if not Props.site_ok(spline, point, 8.0):
 			continue
 		lane.append(Props.fit(PIT_TILE, point, Props.along_yaw(spline, lap),
@@ -126,16 +124,15 @@ static func _pit_lane(holder: Node3D, spline: RefCounted, plan: Dictionary,
 	for entry: float in [from - 8.0, to + 8.0]:
 		var point: Vector3 = Props.deck_point(spline, entry,
 			PIT_SPLIT_LATERAL * inside)
-		point.y = 0.0
 		if not Props.site_ok(spline, point, 8.0):
 			continue
-		lane.append(Props.fit(PIT_SPLIT, point,
+		splits.append(Props.fit(PIT_SPLIT, point,
 			Props.along_yaw(spline, entry) + 0.32,
 			Vector3.ONE * Props.PROP_SCALE))
 	stats["draws"] = int(stats.get("draws", 0)) + Props.batch(holder,
-		PIT_TILE, lane.slice(0, GARAGES), "PitLaneSlabs", false)
+		PIT_TILE, lane, "PitLaneSlabs", false)
 	stats["draws"] = int(stats.get("draws", 0)) + Props.batch(holder,
-		PIT_SPLIT, lane.slice(GARAGES, lane.size()), "PitLaneSplits", false)
+		PIT_SPLIT, splits, "PitLaneSplits", false)
 
 	# The garage row: eight doors facing the lane, one closed, one corner piece
 	# at each end, plus the office block and its roof behind them.
@@ -146,7 +143,6 @@ static func _pit_lane(holder: Node3D, spline: RefCounted, plan: Dictionary,
 			/ float(GARAGES)
 		var point: Vector3 = Props.deck_point(spline, lap,
 			GARAGE_LATERAL * inside)
-		point.y = 0.0
 		if not Props.site_ok(spline, point, 11.9):
 			continue
 		var yaw: float = Props.along_yaw(spline, lap) + PI
@@ -172,7 +168,6 @@ static func _pit_lane(holder: Node3D, spline: RefCounted, plan: Dictionary,
 		var lap: float = from + length * (0.25 + 0.5 * float(index))
 		var point: Vector3 = Props.deck_point(spline, lap,
 			OFFICE_LATERAL * inside)
-		point.y = 0.0
 		if not Props.site_ok(spline, point, 11.9):
 			continue
 		var yaw: float = Props.along_yaw(spline, lap) + PI
@@ -180,6 +175,8 @@ static func _pit_lane(holder: Node3D, spline: RefCounted, plan: Dictionary,
 			Vector3.ONE * Props.PROP_SCALE))
 		Props.model_body(office_body, OFFICE, point, yaw,
 			Vector3.ONE * Props.PROP_SCALE)
+	if office_body.get_child_count() == 0:
+		office_body.free()
 	stats["draws"] = int(stats.get("draws", 0)) \
 		+ Props.batch(holder, OFFICE, offices, "PitOfficeRow", true)
 
@@ -201,14 +198,12 @@ static func _start_box(holder: Node3D, spline: RefCounted, plan: Dictionary,
 	for side: float in [-1.0, 1.0]:
 		var lateral: float = TOWER_LATERAL * (outside if side < 0.0 else inside)
 		var point: Vector3 = Props.deck_point(spline, start + 6.0, lateral)
-		point.y = 0.0
 		_start_piece(batches, body, spline, BANNER_RED, point,
 			Props.face_track_yaw(spline, point))
 	# One green tower marks the pit exit at the end of the lane.
 	var run: Dictionary = _pit_run(plan)
 	var exit_point: Vector3 = Props.deck_point(spline,
 		float(run["to"]) + 10.0, TOWER_LATERAL * inside)
-	exit_point.y = 0.0
 	_start_piece(batches, body, spline, BANNER_GREEN, exit_point,
 		Props.face_track_yaw(spline, exit_point))
 	# Sponsor boards face the start box from the infield edge of the lane.
@@ -216,7 +211,6 @@ static func _start_box(holder: Node3D, spline: RefCounted, plan: Dictionary,
 		var lap: float = start + 20.0 + float(index) * 28.0
 		var point: Vector3 = Props.deck_point(spline, lap,
 			BOARD_LATERAL * inside)
-		point.y = 0.0
 		_start_piece(batches, body, spline, "billboardLow", point,
 			Props.face_track_yaw(spline, point))
 	var placed: int = 0
@@ -272,7 +266,6 @@ static func _paddock(holder: Node3D, spline: RefCounted, plan: Dictionary,
 		var row: float = PADDOCK_LATERAL + PADDOCK_SPREAD \
 			* float(index % 2)
 		var point: Vector3 = Props.deck_point(spline, lap, row * inside)
-		point.y = 0.0
 		if not Props.site_ok(spline, point, 11.4):
 			continue
 		var yaw: float = Props.along_yaw(spline, lap) + PI
@@ -289,8 +282,9 @@ static func _paddock(holder: Node3D, spline: RefCounted, plan: Dictionary,
 			model, tents[model] as Array, "Paddock_" + model, true)
 	var dish_point: Vector3 = Props.deck_point(spline,
 		from + length * 0.5, (PADDOCK_LATERAL - 8.0) * inside)
-	dish_point.y = 0.0
 	if not Props.site_ok(spline, dish_point, 5.0):
+		if body.get_child_count() == 0:
+			body.free()
 		return
 	var dish_yaw: float = Props.face_track_yaw(spline, dish_point)
 	var dish: Array = [Props.fit(TIMING, dish_point, dish_yaw,

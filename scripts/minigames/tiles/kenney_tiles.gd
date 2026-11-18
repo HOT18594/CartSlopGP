@@ -410,7 +410,7 @@ static func build(parent: Node3D, rows: PackedStringArray,
 	_report_seams(spline, tiles, heights,
 		road_audit.get("tile_tris", []) as Array)
 	_schedule_prop_audit(parent)
-	_schedule_track_detail(parent, spline, theme_id)
+	_schedule_track_detail(parent, spline, theme, theme_id)
 
 	parent.set_meta("kenney_spline", spline)
 	parent.set_meta(HEIGHTS_META, heights)
@@ -451,7 +451,7 @@ static func _schedule_prop_audit(parent: Node3D) -> void:
 ## cycle because tile_kit preloads this file. A theme can opt out by setting
 ## `kenney_skip_track_detail` on the race root before build().
 static func _schedule_track_detail(parent: Node3D, spline: GridSpline,
-		theme_id: String) -> void:
+		theme: Variant, theme_id: String) -> void:
 	if parent == null or spline == null:
 		return
 	if bool(parent.get_meta("kenney_skip_track_detail", false)):
@@ -459,7 +459,13 @@ static func _schedule_track_detail(parent: Node3D, spline: GridSpline,
 	var script: Script = load("res://scripts/minigames/tile_kit.gd") as Script
 	if script == null or not script.has_method("dress_track"):
 		return
-	script.call("dress_track", parent, spline, theme_id)
+	var opts: Variant = theme_id
+	if theme is Dictionary and (theme as Dictionary).has("hoarding_density"):
+		opts = {
+			"id": theme_id,
+			"hoarding_density": float((theme as Dictionary)["hoarding_density"]),
+		}
+	script.call("dress_track", parent, spline, opts)
 
 
 ## ASCII character of every placed tile, in lap order. Diagnostics helper.

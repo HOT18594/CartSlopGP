@@ -20,8 +20,8 @@ const FALLBACK_FOG := Color("dbe8ef")
 ## Used only when a bare preview stage has no race preset. The real glacier
 ## preset always carries its spans, so this is a last-resort mirror of them.
 const FALLBACK_SPANS: Array[Dictionary] = [
-	{"from": 0.28, "to": 0.52},
-	{"from": 0.66, "to": 0.80},
+	{"from": 0.21, "to": 0.38},
+	{"from": 0.46, "to": 0.70},
 ]
 
 

@@ -13,15 +13,16 @@ extends RefCounted
 ## prop on the lattice; only the source of the hinge points differs.
 
 const TileKit := preload("res://scripts/minigames/tile_kit.gd")
+const KenneyTiles := preload("res://scripts/minigames/tiles/kenney_tiles.gd")
 const TrackDefs := preload("res://scripts/minigames/track_defs.gd")
 
 const TILE: float = TileKit.TILE_SIZE
 ## A lattice prop must stay this far from the centreline. One cell of verge
 ## keeps the fence, signs and tree line clear of the barrier run.
 const VERGE_CLEAR: float = TILE * 0.85
-## Grid roads are painted on the kit's 0.02-unit slab, which the engine lifts to
-## its measured top; the legacy ribbon sits at grass_race's ROAD_Y.
-const GRID_ROAD_TOP: float = 0.33
+## Grid roads sit at KenneyTiles.ROAD_SURFACE above the spline deck; the legacy
+## ribbon sits at grass_race's ROAD_Y.
+const GRID_ROAD_TOP: float = KenneyTiles.ROAD_SURFACE
 const SPLINE_ROAD_TOP: float = 0.05
 
 var spline: RefCounted
@@ -303,23 +304,21 @@ func outer_band_cells() -> Array[Vector2i]:
 	return cells
 
 
-## One more lattice ring outside the parsed grid, so the treeline gains depth
-## without crowding the fence. The ground apron covers this ring.
+## One more lattice ring outside the parsed grid on the three landward sides;
+## the southern seaward edge (row >= rows) is the open harbour water basin.
 func beyond_band_cells() -> Array[Vector2i]:
 	var cells: Array[Vector2i] = []
 	if not grid:
 		return cells
 	for col in range(-1, cols + 1):
 		cells.append(Vector2i(col, -1))
-		cells.append(Vector2i(col, rows))
 	for row in rows:
 		cells.append(Vector2i(-1, row))
 		cells.append(Vector2i(cols, row))
 	return cells
 
 
-## Two more lattice rings outside the parsed grid. The apron plane is 2200 m, so
-## the horizon can hold a dense treeline without new ground.
+## Two more lattice rings outside the parsed grid on the three landward sides.
 func far_band_cells() -> Array[Vector2i]:
 	var cells: Array[Vector2i] = []
 	if not grid:
@@ -327,8 +326,7 @@ func far_band_cells() -> Array[Vector2i]:
 	for ring in range(2, 4):
 		for col in range(-ring, cols + ring):
 			cells.append(Vector2i(col, -ring))
-			cells.append(Vector2i(col, rows - 1 + ring))
-		for row in range(-ring + 1, rows - 1 + ring):
+		for row in range(-ring + 1, rows):
 			cells.append(Vector2i(-ring, row))
 			cells.append(Vector2i(cols - 1 + ring, row))
 	return cells

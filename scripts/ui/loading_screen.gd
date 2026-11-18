@@ -1,12 +1,8 @@
 extends Control
 const UiAnim := preload("res://scripts/ui/ui_anim.gd")
-## Themed loading overlay. Everything sits directly on the SlopMart parking
-## lot illustration. There is NO card or panel: the sky, store, trees and
-## checker strip stay visible around the progress bar.
-##
-## Contrast comes from a soft vertical scrim and font outlines, not a box.
-## The fill is damped toward the real load value, so the bar never snaps and
-## the number always agrees with what is drawn.
+## Themed loading overlay: full-bleed concept artwork, smooth rainbow progress
+## bar, destination title + hint from SceneLoader.go_to(), and rotating tip
+## anchored cleanly above SCREEN_MARGIN = 24 without bar-shadow overlap.
 
 const UiPalette := preload("res://scripts/ui/ui_palette.gd")
 const CartDrawing := preload("res://scripts/ui/cart_drawing.gd")
@@ -20,18 +16,18 @@ const ART_PATHS: PackedStringArray = [
 ]
 
 const TIPS: PackedStringArray = [
-	"TIP: Hold SPACE to drift around corners.",
+	"TIP: Hold SPACE to drift and charge a 3-tier speed boost.",
 	"TIP: Boost pads refill your meter instantly.",
-	"TIP: You can drive over the speed bumps - floor it.",
-	"TIP: Press R to reset the cart if you get stuck.",
-	"TIP: Crates and cones are light - ram them.",
+	"TIP: You can launch off speed bumps — floor it.",
+	"TIP: Press R to reset your cart back onto the track.",
+	"TIP: Crates and cones are light — smash right through them.",
 ]
 
-const SEGMENTS: int = 10
 const BAR_X: float = 0.15
 const BAR_W: float = 0.70
-const BAR_TOP: float = 0.885
-const BAR_HEIGHT: float = 0.042
+const SAFE_BOTTOM: float = 24.0
+const TIP_HEIGHT: float = 24.0
+const BAR_BOTTOM_CLEARANCE: float = 70.0 ## Clears 24 px margin + 24 px tip + 22 px shadow gap.
 
 var progress: float = 0.0
 var indeterminate: bool = false
@@ -40,6 +36,7 @@ var _time: float = 0.0
 var _shown: float = 0.0
 var _tip_index: int = 0
 var _tip_timer: float = 0.0
+var _title_label: Label
 var _tip_label: Label
 var _percent_label: Label
 var _caption_label: Label
@@ -56,47 +53,59 @@ var _last_percent: int = -1
 func _ready() -> void:
 	_display = load(DISPLAY_FONT)
 	randomize_art()
-	# Swallow clicks while the overlay is up: the menu underneath is about to
-	# be replaced, and a blind click must not trigger its buttons.
 	mouse_filter = Control.MOUSE_FILTER_STOP
+	_title_label = get_node_or_null("Title") as Label
 	_tip_label = get_node_or_null("Tip") as Label
 	_percent_label = get_node_or_null("Percent") as Label
 	_caption_label = get_node_or_null("Caption") as Label
 	_message_label = get_node_or_null("Message") as Label
-	var title_label: Label = get_node_or_null("Title") as Label
-	if title_label != null:
-		title_label.visible = false
+	if _title_label != null:
+		_title_label.visible = false
 	_place_labels()
-	resized.connect(queue_redraw)
+	resized.connect(_on_resized)
 	_show_tip()
 	_refresh_labels()
 
 
+func _on_resized() -> void:
+	_place_labels()
+	queue_redraw()
+
+
+func _bar_rect(area: Vector2) -> Rect2:
+	var bar_h: float = clampf(area.y * 0.042, 26.0, 34.0)
+	var bar_top: float = maxf(area.y - BAR_BOTTOM_CLEARANCE - bar_h, 64.0)
+	return Rect2(area.x * BAR_X, bar_top, area.x * BAR_W, bar_h)
+
+
 func _place_labels() -> void:
-	## The bar lives on the lower band. The two labels that survived the art
-	## pass are pinned to it so the number can never drift away from the fill.
+	var area: Vector2 = size if size.y > 1.0 else get_viewport_rect().size
+	var bar: Rect2 = _bar_rect(area)
 	if _percent_label != null:
-		_percent_label.anchor_left = BAR_X + BAR_W
-		_percent_label.anchor_right = BAR_X + BAR_W
-		_percent_label.anchor_top = BAR_TOP
-		_percent_label.anchor_bottom = BAR_TOP
-		_percent_label.offset_left = -260.0
-		_percent_label.offset_top = -48.0
-		_percent_label.offset_right = 0.0
-		_percent_label.offset_bottom = -6.0
+		_percent_label.anchor_left = 0.0
+		_percent_label.anchor_right = 0.0
+		_percent_label.anchor_top = 0.0
+		_percent_label.anchor_bottom = 0.0
+		_percent_label.offset_left = bar.end.x - 160.0
+		_percent_label.offset_right = bar.end.x
+		_percent_label.offset_top = bar.position.y - 46.0
+		_percent_label.offset_bottom = bar.position.y - 6.0
 		_percent_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-		_percent_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		_percent_label.vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM
 		_percent_label.add_theme_font_size_override("font_size", 32)
 	if _tip_label != null:
 		_tip_label.anchor_left = 0.0
 		_tip_label.anchor_right = 1.0
-		_tip_label.anchor_top = BAR_TOP + BAR_HEIGHT + 0.018
-		_tip_label.anchor_bottom = BAR_TOP + BAR_HEIGHT + 0.060
-		_tip_label.offset_left = 0.0
-		_tip_label.offset_right = 0.0
-		_tip_label.offset_top = 0.0
-		_tip_label.offset_bottom = 0.0
+		_tip_label.anchor_top = 1.0
+		_tip_label.anchor_bottom = 1.0
+		_tip_label.offset_left = SAFE_BOTTOM
+		_tip_label.offset_right = -SAFE_BOTTOM
+		_tip_label.offset_top = -(SAFE_BOTTOM + TIP_HEIGHT)
+		_tip_label.offset_bottom = -SAFE_BOTTOM
 		_tip_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		_tip_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	if _title_label != null:
+		_title_label.visible = false
 	if _caption_label != null:
 		_caption_label.visible = false
 	if _message_label != null:
@@ -121,6 +130,14 @@ func set_indeterminate(value: bool) -> void:
 	queue_redraw()
 
 
+func set_destination(title: String, hint: String = "") -> void:
+	if _title_label != null:
+		_title_label.text = title
+	if _message_label != null:
+		_message_label.text = hint
+	queue_redraw()
+
+
 func _process(delta: float) -> void:
 	if not is_visible_in_tree():
 		return
@@ -139,9 +156,6 @@ func _process(delta: float) -> void:
 
 
 func _refresh_labels() -> void:
-	# The bar is the primary read; the number above its right edge tells the
-	# player how much real work is left. Network tasks are indeterminate, so
-	# they show the task title instead of a fake percentage.
 	if _percent_label != null:
 		_percent_label.visible = not indeterminate
 		if not indeterminate:
@@ -149,6 +163,8 @@ func _refresh_labels() -> void:
 			if percent != _last_percent:
 				_last_percent = percent
 				_percent_label.text = "%d%%" % percent
+	if _title_label != null:
+		_title_label.visible = false
 	if _caption_label != null:
 		_caption_label.visible = false
 	if _message_label != null:
@@ -169,23 +185,38 @@ func _fill_ratio() -> float:
 	return _shown
 
 
-func _bar_rect(area: Vector2) -> Rect2:
-	return Rect2(area.x * BAR_X, area.y * BAR_TOP, area.x * BAR_W,
-		maxf(area.y * BAR_HEIGHT, 28.0))
-
-
 func set_task(active: bool, title: String = "", message: String = "") -> void:
-	## Network tasks (hosting, joining) have no scene progress, so show what the
-	## wait is for instead of an unexplained indeterminate bar.
 	_task_mode = active
 	_task_title = title
 	_task_message = message
 	queue_redraw()
 
 
+func _resolved_heading() -> String:
+	if _task_mode and _task_title.strip_edges() != "":
+		return _task_title.strip_edges().to_upper()
+	if _title_label != null:
+		var dest: String = _title_label.text.strip_edges()
+		if dest != "" and dest.to_upper() != "LOADING":
+			return dest.to_upper()
+	return "LOADING..."
+
+
+func _resolved_hint() -> String:
+	if _task_mode:
+		return _task_message.strip_edges()
+	if _message_label != null:
+		var msg: String = _message_label.text.strip_edges()
+		if msg != "":
+			return msg
+	if _caption_label != null:
+		var cap: String = _caption_label.text.strip_edges()
+		if cap != "" and cap.to_upper() != "LOADING SCENE":
+			return cap
+	return ""
+
+
 func randomize_art() -> void:
-	## A different AI background on every transition. The concept art is for
-	## loading/transition screens, not for the map picker.
 	if ART_PATHS.is_empty():
 		return
 	var next: int = randi_range(0, ART_PATHS.size() - 1)
@@ -213,14 +244,12 @@ func _draw() -> void:
 	_draw_bar(area)
 
 
-
 func _draw_art(area: Vector2) -> void:
-	## Aspect-cover the AI lot instead of stretching it.
 	var source: Vector2 = _art.get_size()
 	if source.x <= 0.0 or source.y <= 0.0:
 		return
-	var scale: float = maxf(area.x / source.x, area.y / source.y)
-	var drawn: Vector2 = source * scale
+	var cover_scale: float = maxf(area.x / source.x, area.y / source.y)
+	var drawn: Vector2 = source * cover_scale
 	var origin: Vector2 = (area - drawn) * 0.5
 	draw_texture_rect(_art, Rect2(origin, drawn), false)
 
@@ -278,15 +307,12 @@ func _draw_hills(area: Vector2) -> void:
 				- sin(t * PI * 5.0 + phase) * amp * 0.25
 			points.append(Vector2(t * area.x, y))
 		points.append(Vector2(area.x, area.y))
-		# Close along the bottom edge; crossing the wavy top would make the
-		# triangulation fail and Godot logs "Invalid polygon data".
 		points.append(Vector2(0.0, area.y))
 		draw_colored_polygon(points, color)
 	draw_rect(Rect2(0.0, base_y, area.x, area.y - base_y), Color(0.80, 0.75, 0.81, 0.58))
 
 
 func _draw_backdrop(area: Vector2) -> void:
-	# Parking-bay lines and a small SlopMart fill the strip above the bar.
 	var vanish := Vector2(area.x * 0.50, area.y * 0.47)
 	for index in range(-4, 5):
 		if index == 0:
@@ -335,20 +361,27 @@ func _small_tree(base: Vector2, radius: float) -> void:
 
 
 func _draw_scrim(area: Vector2) -> void:
-	## A soft vertical darkening, NOT a rectangle. It fades in and out so the
-	## illustration stays visible while the outlined labels remain readable.
-	var top: float = area.y * 0.44
-	var height: float = area.y * 0.48
-	var bands: int = 80
+	## Soft bottom gradient scrim so destination text, progress bar, and tip
+	## stay legible over any bright background illustration.
+	var top: float = area.y * 0.62
+	var height: float = area.y - top
+	var bands: int = 48
 	var step: float = height / float(bands)
 	for band in bands:
 		var t: float = (float(band) + 0.5) / float(bands)
-		var falloff: float = sin(t * PI)
-		var alpha: float = 0.20 * pow(falloff, 1.4)
-		# Exact float height, no +1 overlap: overlapping translucent bands
-		# showed up as visible horizontal stripes over flat AI artwork.
+		var alpha: float = 0.46 * pow(t, 1.35)
 		draw_rect(Rect2(0.0, top + step * float(band), area.x, step),
-			Color(0.06, 0.08, 0.18, alpha))
+			Color(0.05, 0.07, 0.16, alpha))
+
+
+func _draw_outlined_text(font: Font, pos: Vector2, text_value: String,
+		font_size: int, fill: Color, max_w: float = -1.0) -> void:
+	for offset: Vector2 in [Vector2(-2, 0), Vector2(2, 0), Vector2(0, -2),
+			Vector2(0, 2), Vector2(-1, -1), Vector2(1, 1)]:
+		draw_string(font, pos + offset, text_value,
+			HORIZONTAL_ALIGNMENT_LEFT, max_w, font_size, UiPalette.OUTLINE)
+	draw_string(font, pos, text_value,
+		HORIZONTAL_ALIGNMENT_LEFT, max_w, font_size, fill)
 
 
 func _draw_bar(area: Vector2) -> void:
@@ -356,25 +389,19 @@ func _draw_bar(area: Vector2) -> void:
 	var ratio: float = clampf(_fill_ratio(), 0.0, 1.0)
 	var radius: float = bar.size.y * 0.5
 
-	# A soft shadow anchors the bar to the art without a panel.
-	draw_rect(Rect2(bar.position.x + 4.0, bar.end.y - 2.0,
-		bar.size.x - 8.0, 10.0), Color(0.06, 0.05, 0.14, 0.22))
-
 	var track := StyleBoxFlat.new()
 	track.bg_color = Color(0.05, 0.07, 0.15, 0.92)
 	track.set_corner_radius_all(int(radius))
 	track.set_border_width_all(4)
 	track.border_color = UiPalette.CREAM
-	track.shadow_color = Color(0.03, 0.03, 0.08, 0.45)
-	track.shadow_size = 10
-	track.shadow_offset = Vector2(0, 5)
+	track.shadow_color = Color(0.03, 0.03, 0.08, 0.42)
+	track.shadow_size = 8
+	track.shadow_offset = Vector2(0, 4)
 	draw_style_box(track, bar)
 
-	var inner: Rect2 = Rect2(bar.position + Vector2(4, 4),
-		bar.size - Vector2(8, 8))
+	var inner := Rect2(bar.position + Vector2(4, 4), bar.size - Vector2(8, 8))
 	var fill_width: float = inner.size.x * ratio
 	if fill_width > 1.0:
-		# One continuous rainbow fill, no segment dividers.
 		var strips: int = 48
 		var strip_width: float = inner.size.x / float(strips)
 		for strip in strips:
@@ -387,56 +414,30 @@ func _draw_bar(area: Vector2) -> void:
 			var hue: float = fposmod(t * 0.82 + _time * 0.035, 1.0)
 			var color := Color.from_hsv(hue, 0.72, 1.0)
 			draw_rect(Rect2(x, inner.position.y, width, inner.size.y), color)
-		# A moving cream sheen keeps the bar alive without extra nodes.
 		var shine_x: float = inner.position.x + fposmod(_time * 220.0,
 			inner.size.x + 160.0) - 160.0
 		for stripe in 2:
 			var sx: float = shine_x + float(stripe) * 42.0
 			if sx > inner.position.x and sx < inner.position.x + fill_width - 10.0:
 				draw_rect(Rect2(sx, inner.position.y + 3.0, 10.0,
-					inner.size.y - 6.0), Color(1, 1, 1, 0.18))
+					inner.size.y - 6.0), Color(1, 1, 1, 0.22))
+		# Glossy top-half specular sheen across the active loading bar.
+		draw_rect(Rect2(inner.position.x + 4.0, inner.position.y + 2.0,
+			maxf(fill_width - 8.0, 0.0), maxf(inner.size.y * 0.34, 3.0)),
+			Color(1.0, 1.0, 1.0, 0.28))
 
-	# Task text (hosting/joining) or LOADING... above the bar's left edge.
 	if _display != null:
-		var title: String = _task_title if _task_mode and _task_title != "" else "LOADING..."
-		var font_size: int = 22
-		var baseline: Vector2 = Vector2(bar.position.x + 2.0, bar.position.y - 10.0)
-		for offset: Vector2 in [Vector2(-2, 0), Vector2(2, 0), Vector2(0, -2),
-				Vector2(0, 2)]:
-			draw_string(_display, baseline + offset, title,
-				HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, UiPalette.OUTLINE)
-		draw_string(_display, baseline, title,
-			HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, UiPalette.CREAM)
-		if _task_mode and _task_message != "":
-			draw_string(_display, baseline + Vector2(2.0, -28.0), _task_message,
-				HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(1, 0.965, 0.89, 0.92))
-
-
-func _draw_cart(area: Vector2, inner: Rect2, ratio: float) -> void:
-	var scale: float = area.y / 2100.0
-	var head_x: float = inner.position.x + inner.size.x * clampf(ratio, 0.0, 1.0)
-	var cart_x: float = clampf(head_x, inner.position.x + 82.0 * scale,
-		inner.end.x - 90.0 * scale)
-	var cart_y: float = inner.position.y - 7.0
-	var bounce: float = sin(_time * 13.0) * 2.0
-	for i in 3:
-		var age: float = fmod(_time * 2.0 + i * 0.33, 1.0)
-		var alpha: float = (1.0 - age) * 0.28
-		draw_circle(Vector2(cart_x - (78.0 + age * 40.0) * scale,
-			cart_y - (26.0 + age * 14.0) * scale + bounce),
-			(3.0 + age * 7.0) * maxf(scale * 2.0, 0.6),
-			Color(0.88, 0.90, 0.95, alpha))
-	CartDrawing.draw_cart(self, Vector2(cart_x, cart_y + bounce), scale, false)
-
-
-func _draw_checker(area: Vector2) -> void:
-	var band: float = maxf(area.y * 0.035, 12.0)
-	var square: float = band
-	var y: float = area.y - band
-	var index: int = 0
-	var x: float = 0.0
-	while x < area.x:
-		draw_rect(Rect2(x, y, square, band),
-			UiPalette.CREAM if index % 2 == 0 else UiPalette.OUTLINE)
-		x += square
-		index += 1
+		var heading: String = _resolved_heading()
+		var hint: String = _resolved_hint()
+		var max_text_w: float = maxf(bar.size.x - 160.0, 120.0)
+		if hint != "":
+			_draw_outlined_text(_display,
+				Vector2(bar.position.x + 2.0, bar.position.y - 30.0),
+				heading, 26, UiPalette.YELLOW, max_text_w)
+			_draw_outlined_text(_display,
+				Vector2(bar.position.x + 3.0, bar.position.y - 10.0),
+				hint.to_upper(), 15, UiPalette.CREAM, max_text_w)
+		else:
+			_draw_outlined_text(_display,
+				Vector2(bar.position.x + 2.0, bar.position.y - 12.0),
+				heading, 26, UiPalette.CREAM, max_text_w)

@@ -2,6 +2,66 @@
 
 Player-facing notes, newest first.
 
+## [0.8.0] - 2026-11-17
+
+### Two brand-new party modes, a rebuilt Deliver mode, and 9 unique 3D arenas
+
+- **Knockout (Bumper Royale)**: 2–8 player (+ AI) last-cart-standing brawler.
+  Hits build Smash-style **Knockback %** (`0%–250%`), **Power-Slam Surge**
+  (`E` / `F` / Right Mouse / Gamepad `B`) delivers heavy shockwave hits, and
+  outer platform sectors collapse as the round heats up. Play across **Skytop
+  Helipad**, **Molten Foundry**, and **Fractured Iceberg**.
+- **Blast Tag (Hot-Potato Chase)**: 2–8 player (+ AI) 2-minute chase with a
+  ticking **Mega-Bomb** overhead (`+18%` Carrier Panic Overdrive), **Ram-Pass**
+  with a `1.8 s` Cyan Immunity Shield, **Runner Juke Surge** smoke dodges, and
+  `0.0 s` detonation shockwaves across **Terrace Plaza**, **Canyon Labyrinth**,
+  and **Twin Ferries**.
+- **Deliver (Cargo Rush) Overhaul**: Rebuilt from flat retextures into three
+  distinct 3D maps — **Harbour Overpass** (`+2.2 m` steel bridge & water
+  channels), **Windmill Hills** (`+2.0 m` barn plateau & mud plank bridges),
+  and **Glacier Bowl** (sunken slick-ice bowl & snow-berm jump kickers) — with
+  faster `0.45 s` crate pickups and `120 s` matches.
+
+### Five longer, high-verticality racing circuits & Speed-Up Aurora
+
+- Added **Sunset Canyon** (`987 m` lap, `12.0 m` mesa climb, sandstone arches,
+  canyon oasis) and expanded all circuits to `857–1,050 m` laps with real
+  bridges, viaducts, and `7.5–13.5 m` elevation changes (**Stadium Circuit**,
+  **Redwood Valley**, **Sunset Canyon**, **Dockyard Quay**, **Glacier Pass**).
+- Rebuilt the **Speed-Up Aurora** boost zones with rushing holographic speed
+  chevrons, glowing lateral energy rails, tall vertical wisps, and reactive
+  surge flashes on trigger.
+
+### Arcade hop-drift, 3-tier mini-turbo & driving feel
+
+- **Hop + Committed Drift**: Tapping handbrake pops a crisp suspension hop into
+  a locked drift angle with smooth counter-steer carving instead of slowing you
+  down like a foot brake.
+- **3-Tier Mini-Turbo**: Hold drifts to charge **SPARK** (cyan), **BLAZE**
+  (amber), and **ULTRA!** (magenta) boosts with rear-wheel sparks, tier-up
+  chimes, twin exhaust flame cones, 4-gear engine audio, and a `102°` camera
+  FOV kick.
+- Shopping Cart now supports custom paint colours and Racing Garage stat
+  tuning.
+
+### Steam-grade UI, widescreen key art & 18 map screenshots
+
+- Simplified navigation: **SOLO** opens a clean **SELECT MODE** hub showing all
+  5 modes front-and-center, and **MULTIPLAYER** presents 3 clear cards
+  (**CREATE ONLINE ROOM**, **CREATE LAN ROOM**, **JOIN ROOM**) plus a clean
+  2-column room lobby with live map screenshots.
+- Rendered `1600x900` 3D screenshots for all 18 circuits, party maps, and
+  modes, paired with new widescreen menu key art, tactile beveled buttons,
+  slanted power-cell stat bars, and a redesigned racing HUD (`WRONG WAY`,
+  `FINAL LAP!`, `NEW BEST LAP!`, drift tier pips) with zero clipping at `720p`
+  and `540p`.
+
+### Server 1.8.0 & bug fixes
+
+- Upgraded the Raspberry Pi relay/web server to **v1.8.0** with custom 3D track
+  polylines, Knockout/Blast Tag room events, live console leaderboards, memory
+  reporting fixes, and non-destructive Windows self-updates.
+
 ## [0.7.3] - 2026-11-17
 
 ### Windows players can actually start the game

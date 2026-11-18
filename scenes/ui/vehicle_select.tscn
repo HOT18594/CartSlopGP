@@ -43,85 +43,88 @@ layout_mode = 2
 
 [node name="Body" type="VBoxContainer" parent="Center/Panel"]
 layout_mode = 2
-theme_override_constants/separation = 16
+theme_override_constants/separation = 10
 
 [node name="Title" type="Label" parent="Center/Panel/Body"]
 layout_mode = 2
 theme_type_variation = &"TitleLabel"
 theme_override_colors/font_color = Color(0.117647, 0.105882, 0.227451, 1)
-theme_override_font_sizes/font_size = 40
+theme_override_font_sizes/font_size = 36
 text = "PICK YOUR RIDE"
 horizontal_alignment = 1
 
-[node name="ViewportContainer" type="SubViewportContainer" parent="Center/Panel/Body"]
-custom_minimum_size = Vector2(470, 176)
+[node name="TurntableRow" type="HBoxContainer" parent="Center/Panel/Body"]
+layout_mode = 2
+theme_override_constants/separation = 12
+alignment = 1
+
+[node name="PrevButton" type="Button" parent="Center/Panel/Body/TurntableRow"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(56, 62)
+layout_mode = 2
+size_flags_vertical = 4
+theme_override_font_sizes/font_size = 26
+text = "<"
+script = ExtResource("4")
+fill_color = Color(0.270588, 0.713726, 0.941176, 1)
+corner_radius = 16
+shadow_offset = 6
+
+[node name="ViewportContainer" type="SubViewportContainer" parent="Center/Panel/Body/TurntableRow"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(440, 156)
 layout_mode = 2
 stretch = true
 
-[node name="Preview" type="SubViewport" parent="Center/Panel/Body/ViewportContainer"]
+[node name="Preview" type="SubViewport" parent="Center/Panel/Body/TurntableRow/ViewportContainer"]
 transparent_bg = true
 handle_input_locally = false
-size = Vector2i(520, 190)
+size = Vector2i(500, 176)
 render_target_update_mode = 4
 own_world_3d = true
 
-[node name="PreviewCamera" type="Camera3D" parent="Center/Panel/Body/ViewportContainer/Preview"]
+[node name="PreviewCamera" type="Camera3D" parent="Center/Panel/Body/TurntableRow/ViewportContainer/Preview"]
 unique_name_in_owner = true
 fov = 34.0
 
-[node name="Sun" type="DirectionalLight3D" parent="Center/Panel/Body/ViewportContainer/Preview"]
+[node name="Sun" type="DirectionalLight3D" parent="Center/Panel/Body/TurntableRow/ViewportContainer/Preview"]
 transform = Transform3D(0.87, -0.35, 0.35, 0, 0.7, 0.71, -0.5, -0.62, 0.61, 0, 4, 0)
 
-[node name="ModelRoot" type="Node3D" parent="Center/Panel/Body/ViewportContainer/Preview"]
+[node name="ModelRoot" type="Node3D" parent="Center/Panel/Body/TurntableRow/ViewportContainer/Preview"]
 unique_name_in_owner = true
 
-[node name="Shadow" type="MeshInstance3D" parent="Center/Panel/Body/ViewportContainer/Preview"]
+[node name="Shadow" type="MeshInstance3D" parent="Center/Panel/Body/TurntableRow/ViewportContainer/Preview"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.01, 0)
 cast_shadow = 0
 mesh = SubResource("shadow_mesh")
 surface_material_override/0 = SubResource("shadow_mat")
 
-[node name="NameRow" type="HBoxContainer" parent="Center/Panel/Body"]
-layout_mode = 2
-theme_override_constants/separation = 8
-alignment = 1
-
-[node name="PrevButton" type="Button" parent="Center/Panel/Body/NameRow"]
+[node name="NextButton" type="Button" parent="Center/Panel/Body/TurntableRow"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(84, 48)
-layout_mode = 2
-theme_override_font_sizes/font_size = 16
-text = "PREV"
-script = ExtResource("4")
-corner_radius = 16
-shadow_offset = 6
-
-[node name="NameLabel" type="Label" parent="Center/Panel/Body/NameRow"]
-unique_name_in_owner = true
-custom_minimum_size = Vector2(340, 0)
+custom_minimum_size = Vector2(56, 62)
 layout_mode = 2
 size_flags_vertical = 4
-theme_type_variation = &"TitleLabel"
-theme_override_colors/font_color = Color(0.117647, 0.105882, 0.227451, 1)
-theme_override_font_sizes/font_size = 30
-text = "SHOPPING CART"
-horizontal_alignment = 1
-
-[node name="NextButton" type="Button" parent="Center/Panel/Body/NameRow"]
-unique_name_in_owner = true
-custom_minimum_size = Vector2(84, 48)
-layout_mode = 2
-theme_override_font_sizes/font_size = 16
-text = "NEXT"
+theme_override_font_sizes/font_size = 26
+text = ">"
 script = ExtResource("4")
+fill_color = Color(0.270588, 0.713726, 0.941176, 1)
 corner_radius = 16
 shadow_offset = 6
+
+[node name="NameLabel" type="Label" parent="Center/Panel/Body"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_type_variation = &"TitleLabel"
+theme_override_colors/font_color = Color(0.117647, 0.105882, 0.227451, 1)
+theme_override_font_sizes/font_size = 28
+text = "SHOPPING CART"
+horizontal_alignment = 1
 
 [node name="IndexLabel" type="Label" parent="Center/Panel/Body"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_override_colors/font_color = Color(0.109804, 0.427451, 0.580392, 1)
-theme_override_font_sizes/font_size = 16
+theme_override_font_sizes/font_size = 15
 text = "1 / 7"
 horizontal_alignment = 1
 
@@ -132,10 +135,10 @@ theme_override_constants/separation = 16
 
 [node name="DriveButton" type="Button" parent="Center/Panel/Body/ActionRow"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(240, 60)
+custom_minimum_size = Vector2(240, 54)
 layout_mode = 2
 size_flags_horizontal = 4
-theme_override_font_sizes/font_size = 24
+theme_override_font_sizes/font_size = 22
 text = "LET'S DRIVE"
 script = ExtResource("4")
 fill_color = Color(1, 0.823529, 0.180392, 1)
@@ -144,7 +147,7 @@ shadow_offset = 6
 
 [node name="BackButton" type="Button" parent="Center/Panel/Body/ActionRow"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(240, 60)
+custom_minimum_size = Vector2(240, 54)
 layout_mode = 2
 size_flags_horizontal = 4
 theme_override_font_sizes/font_size = 18
@@ -153,4 +156,3 @@ script = ExtResource("4")
 fill_color = Color(0.94902, 0.329412, 0.356863, 1)
 corner_radius = 16
 shadow_offset = 6
-

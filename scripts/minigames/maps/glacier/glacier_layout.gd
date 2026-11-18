@@ -53,7 +53,7 @@ const START_TOWERS: Array[String] = ["bannerTowerRed", "bannerTowerGreen"]
 const SNOWBANK_MODELS: Array[String] = [
 	"rock_largeA", "rock_largeB", "rock_largeF", "rock_tallA",
 ]
-const SNOWBANK_LATERAL: float = 13.0
+const SNOWBANK_LATERAL: float = 18.2
 const SNOWBANK_STEP: float = 13.0
 const SNOWBANK_SCALE_MIN: float = 0.80
 const SNOWBANK_SCALE_MAX: float = 1.25
@@ -62,7 +62,7 @@ const SNOWBANK_MAX: int = 64
 ## Avalanche fencing: Kenney's catch fence panel authored 1 m long, 0.5 m tall
 ## per model unit. Placed at 7 m per piece so a run reads as a fence line.
 const FENCE_MODEL: String = "fenceStraight"
-const FENCE_LATERAL: float = 10.4
+const FENCE_LATERAL: float = 15.6
 const FENCE_LENGTH: float = 7.0
 const FENCE_HEIGHT: float = 3.4
 const FENCE_SPACING: float = 8.0
@@ -82,8 +82,9 @@ const SUMMIT_FLAGS: int = 6
 
 ## Clearance a foliage cell centre needs from the centreline, in metres.
 const FOLIAGE_CLEARANCE: float = ROAD_HALF + TILE * 0.5
-## Clearance for an upright prop that the kit places by cell.
-const PROP_CLEARANCE: float = ROAD_HALF + TileKit.BARRIER_OFFSET + 1.8
+## Clearance for an upright prop that the kit places by cell (>= 7.5 m outside
+## clearance_path so snapped cell props never encroach on the road or barriers).
+const PROP_CLEARANCE: float = ROAD_HALF + TileKit.BARRIER_OFFSET + 8.5
 
 ## Grandstands: a 16 m kit footprint two cells out, facing the track.
 const STAND_MODELS: Array[String] = ["grandStandCovered", "grandStand"]
@@ -170,8 +171,8 @@ static func _barrier_ring(holder: Node3D, spline: RefCounted,
 static func _grandstands(holder: Node3D, spline: RefCounted, total: float,
 		reserved: Dictionary) -> int:
 	var specs: Array[Dictionary] = [
-		{"fraction": 0.02, "side": 1.0},
-		{"fraction": 0.52, "side": -1.0},
+		{"fraction": 0.53, "side": -1.0},
+		{"fraction": 0.67, "side": -1.0},
 	]
 	var entries: Array = []
 	var points: Array = []
@@ -181,7 +182,7 @@ static func _grandstands(holder: Node3D, spline: RefCounted, total: float,
 		var fraction: float = float(spec["fraction"])
 		if _deck_at(spline, total * fraction) > 2.5:
 			# The chosen stretch is a high shelf; move the stand to the base.
-			fraction = 0.40
+			fraction = 0.60
 		var distance: float = total * fraction
 		var side: float = float(spec["side"])
 		var forward: Vector3 = spline.sample(distance)["forward"] as Vector3
@@ -189,6 +190,8 @@ static func _grandstands(holder: Node3D, spline: RefCounted, total: float,
 		var base: Vector3 = (spline.sample(distance)["position"] as Vector3) \
 			+ right * (STAND_LATERAL * side)
 		base.y = 0.0
+		if GlacierProps.clearance(spline, base) < 20.5:
+			continue
 		var model: String = STAND_MODELS[index % STAND_MODELS.size()]
 		var yaw: float = atan2(-forward.x, -forward.z) \
 			+ (PI * 0.5 if side > 0.0 else -PI * 0.5)
@@ -256,14 +259,14 @@ static func _split_plan(spline: RefCounted, centre: Vector3, forward: Vector3,
 		elif index == SPLIT_APRON_PIECES - 1:
 			flank -= 1.5
 		var at: Vector3 = centre + forward * along + right * (flank * side)
-		at.y = SPLIT_APRON_Y
+		at.y = centre.y + SPLIT_APRON_Y
 		entries.append({"model": SPLIT_APRON_MODEL, "kind": "apron",
 			"position": at, "yaw": yaw + turn * side})
 	for index in 2:
 		var along: float = (float(index) - 0.5) * TILE * 1.2
 		var base: Vector3 = centre + forward * along \
 			+ right * (SPLIT_GARAGE_LATERAL * side)
-		base.y = 0.0
+		base.y = centre.y
 		if GlacierProps.clearance(spline, base) < GlacierProps.SOLID_CLEARANCE:
 			return {}
 		entries.append({"model": SPLIT_GARAGE_MODEL, "kind": "garage",
@@ -274,9 +277,9 @@ static func _split_plan(spline: RefCounted, centre: Vector3, forward: Vector3,
 		var along: float = (float(index) - float(SPLIT_PYLONS - 1) * 0.5) \
 			* (span * 0.22)
 		var at: Vector3 = centre + forward * along \
-			+ right * ((SPLIT_APRON_LATERAL - 7.0) * side)
-		at.y = SPLIT_APRON_Y
-		if GlacierProps.clearance(spline, at) < GlacierProps.SOLID_CLEARANCE:
+			+ right * ((SPLIT_APRON_LATERAL - 6.5) * side)
+		at.y = centre.y + SPLIT_APRON_Y
+		if GlacierProps.clearance(spline, at) < 16.8:
 			return {}
 		entries.append({"model": ICE_MARKER, "kind": "pylon", "position": at,
 			"yaw": yaw})
@@ -445,11 +448,10 @@ static func _snowbanks(holder: Node3D, spline: RefCounted) -> int:
 				break
 			var at: Vector3 = GlacierProps.path_point(path,
 				(float(index) + 0.5) * SNOWBANK_STEP)
-			var jitter := Vector3(rng.randf_range(-2.4, 2.4), 0.0,
-				rng.randf_range(-2.4, 2.4))
+			var jitter := Vector3(rng.randf_range(-1.2, 1.2), 0.0,
+				rng.randf_range(-1.2, 1.2))
 			var base := Vector3(at.x + jitter.x, 0.0, at.z + jitter.z)
-			if GlacierProps.clearance(spline, base) \
-					< GlacierProps.SOLID_CLEARANCE:
+			if GlacierProps.clearance(spline, base) < 18.2:
 				continue
 			var model: String = SNOWBANK_MODELS[index \
 				% SNOWBANK_MODELS.size()]
@@ -462,7 +464,7 @@ static func _snowbanks(holder: Node3D, spline: RefCounted) -> int:
 			var plan: Vector2 = GlacierProps.footprint(model, scale, true)
 			var height: float = GlacierProps.height(model, scale, true)
 			GlacierProps.box(body, base + Vector3.UP * (height * 0.5),
-				Vector3(minf(plan.x, 5.5), height, minf(plan.y, 5.5)))
+				Vector3(minf(plan.x, 4.2), height, minf(plan.y, 4.2)))
 	if entries.is_empty():
 		body.free()
 		return 0
@@ -498,8 +500,7 @@ static func _fences(holder: Node3D, spline: RefCounted) -> int:
 				at + FENCE_LENGTH * 0.5)
 			if behind.angle_to(ahead) > FENCE_MAX_TURN:
 				continue
-			if GlacierProps.clearance(spline, point) \
-					< GlacierProps.SOLID_CLEARANCE:
+			if GlacierProps.clearance(spline, point) < 15.4:
 				continue
 			var yaw: float = GlacierProps.axis_yaw(FENCE_MODEL, scale,
 				forward)
@@ -530,9 +531,9 @@ static func _free_cell(spline: RefCounted, distance: float, side: float,
 	var base: float = fposmod(round(distance / QUARTER) * QUARTER, total)
 	for step in 5:
 		var probe: float = fposmod(base + float(step) * TILE * 0.5, total)
-		for lateral_step in 3:
+		for lateral_step in 4:
 			var lateral: float = TileKit.ROAD_HALF + TileKit.BARRIER_OFFSET \
-				+ TILE * (0.55 + 0.5 * float(lateral_step))
+				+ TILE * (0.65 + 0.55 * float(lateral_step))
 			var cell: Vector2i = _cell_of(_sample_point(spline, probe,
 				lateral * side))
 			if _is_reserved(reserved, cell):
@@ -542,8 +543,42 @@ static func _free_cell(spline: RefCounted, distance: float, side: float,
 	return INVALID_CELL
 
 
-## Longest straight run of the lap, which the split apron is laid along.
+## Longest low/valley straight run of the lap (falling back to overall longest),
+## which the split apron is laid along so pit garages sit on the valley floor
+## rather than floating off the 9 m summit ridge.
 static func _longest_straight(spline: RefCounted) -> Dictionary:
+	if spline != null:
+		var tiles: Variant = spline.get("tiles")
+		if tiles is Array and not (tiles as Array).is_empty():
+			var best_low: Dictionary = {}
+			var run_from: float = 0.0
+			var run_to: float = 0.0
+			var in_run: bool = false
+			for entry: Variant in tiles as Array:
+				if not (entry is Dictionary):
+					continue
+				var tile: Dictionary = entry as Dictionary
+				var kind: String = str(tile.get("tile", ""))
+				var straight: bool = kind == "S" or kind == "P" or kind == "E" \
+					or kind == "B" or kind == "J"
+				var low_deck: bool = float(tile.get("height", 0.0)) <= 2.5
+				var from: float = float(tile.get("from", 0.0))
+				var to: float = float(tile.get("to", from))
+				if straight and low_deck:
+					if not in_run:
+						run_from = from
+						in_run = true
+					run_to = to
+					continue
+				if in_run and run_to - run_from > float(best_low.get("span", 0.0)):
+					best_low = {"distance": (run_from + run_to) * 0.5,
+						"span": run_to - run_from}
+				in_run = false
+			if in_run and run_to - run_from > float(best_low.get("span", 0.0)):
+				best_low = {"distance": (run_from + run_to) * 0.5,
+					"span": run_to - run_from}
+			if float(best_low.get("span", 0.0)) >= TILE * 3.0:
+				return best_low
 	return GlacierProps.longest_straight(spline)
 
 ## Lap fraction of the highest deck, sampled finely enough that the summit flag

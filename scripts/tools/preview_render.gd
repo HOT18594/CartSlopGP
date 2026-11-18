@@ -1,35 +1,43 @@
 extends Node
-## Renders the menu preview image for every map in TrackDefs.
+## Renders 1600x900 menu preview screenshots (`res://assets/ui/art/preview_<id>.png`)
+## for EVERY selectable race circuit, game mode cover, sandbox park, and
+## individual minigame map (18 previews total):
 ##
-## This is a tool scene, not a game screen. Run it with the editor binary in
-## windowed mode; `--headless` uses a dummy renderer and captures blank frames,
-## so the tool refuses to run there:
+##   * 5 Racing Circuits: `stadium`, `meadow`, `canyon`, `dockyard`, `glacier`
+##   * 4 Mode Covers: `cargo_rush`, `knockout`, `bomb_tag`, `sandbox`
+##   * 3 Deliver Maps: `harbour`, `farmyard`, `snowfield`
+##   * 3 Knockout Maps: `ko_rooftop`, `ko_foundry`, `ko_iceberg`
+##   * 3 Blast Tag Maps: `bt_plaza`, `bt_labyrinth`, `bt_ferries`
 ##
+## Run windowed (never `--headless`):
 ##     Godot_v4.7.2-stable_win64_console.exe --path godot_project \
 ##         res://scripts/tools/preview_render.tscn
-##
-## For every race map it builds the real grass_race scene (falling back to the
-## grid engine plus the map theme if that scene cannot build), then installs a
-## cartoon preview grade: a palette-driven sky gradient, a palette-matched sun
-## and ambient, a three-quarter isometric camera framed to the circuit bounds
-## with a margin, and a soft vignette. The start line is checked to be inside
-## the frame before the 1600x900 PNG is captured to
-## res://assets/ui/art/preview_<map_id>.png.
-##
-## Every PNG is reloaded from disk and must be over 120 KB, at least 24 colours
-## and not a flat fill, so a blank or broken capture can never reach the menu.
-## The exit code is the number of previews that failed, so a build can gate on
-## it. New PNGs are invisible to ResourceLoader until Godot imports them: run
-## once more with `--headless --import` before the menu will show the new cards.
-##
-## No photoreal texture is referenced here: the fallback ground is a flat
-## palette plane and the sky is a gradient, matching the Kenney cartoon art.
 
 const TrackDefs := preload("res://scripts/minigames/track_defs.gd")
 const KenneyTiles := preload("res://scripts/minigames/tiles/kenney_tiles.gd")
+const CargoTheme := preload("res://scripts/minigames/cargo_rush_theme.gd")
+const SceneryKit := preload("res://scripts/minigames/scenery/scenery_kit.gd")
+const PropBatch := preload("res://scripts/minigames/scenery/prop_batch.gd")
 
 const RACE_SCENE: String = "res://scenes/minigames/grass_race.tscn"
-const THEME_PATH: String = "res://scripts/minigames/maps/%s_theme.gd"
+const KO_MAPS_SCRIPT: String = "res://scripts/minigames/knockout_maps.gd"
+const BT_MAPS_SCRIPT: String = "res://scripts/minigames/bomb_tag_maps.gd"
+const SANDBOX_PARK_SCRIPTS: Array[String] = [
+	"res://scripts/sandbox_park.gd",
+	"res://scripts/sandbox/sandbox_park.gd",
+	"res://scripts/minigames/sandbox_park.gd",
+	"res://scripts/world/sandbox_park.gd",
+]
+const SANDBOX_SCENES: Array[String] = [
+	"res://scenes/sandbox.tscn",
+	"res://scenes/sandbox/sandbox_world.tscn",
+	"res://scenes/sandbox/sandbox.tscn",
+	"res://scenes/world/sandbox.tscn",
+]
+const PREVIEW_CAR_MODELS: Array[String] = [
+	"raceCarRed", "raceCarOrange", "raceCarGreen", "raceCarWhite",
+]
+
 const OUT_DIR: String = "res://assets/ui/art/"
 const PREVIEW_PREFIX: String = "preview_"
 const DRY_RUN_ENV: String = "CART_PREVIEW_DRY_RUN"
@@ -43,44 +51,165 @@ const MAX_FLAT_RATIO: float = 0.94
 const SAMPLE_STEP: int = 8
 const WAIT_FRAMES: int = 8
 
-## Three-quarter isometric: a 38 degree lens, a 40 degree look-down and one of
-## twelve fixed yaws, whichever frames the circuit and the start line best.
 const CAMERA_FOV: float = 38.0
 const CAMERA_PITCH_DEG: float = 33.0
 const CAMERA_YAW_STEPS: int = 24
-## Fraction of the frame the circuit plus its margin may occupy.
 const FRAME_FILL: float = 0.95
-## Room around the circuit bounds for barriers, stands and run-off, in metres.
 const FRAME_PAD: float = 10.0
-## The palette sky is a menu chip, not a painted sky: the gradient leans on
-## this canonical cartoon blue while keeping the map's own hue in the mix.
 const SKY_BLUE := Color("4a9fd8")
 const SKY_HORIZON := Color("cfe9f5")
-## The fallback ground plate: a flat cartoon colour under the grid map.
 const GROUND_SIZE: float = 900.0
-## Oversized backdrop planes (the race scene's 1400 m meadow) are trimmed to
-## BACKDROP_TRIM of their size so the sky is visible above the horizon.
 const BACKDROP_MIN_SIZE: float = 600.0
 const BACKDROP_TRIM: float = 0.52
-## Height of the tallest trackside prop, kept in frame while fitting.
 const SCENERY_HEIGHT: float = 10.0
-## A minigame arena has no centreline; its floor is 100 m across, so frame that.
-const MINIGAME_RADIUS: float = 66.0
-## Flat + fallback art tints when a preset carries no palette.
+const MINIGAME_RADIUS: float = 54.0
+const ARENA_CLAMP_HALF: float = 72.0
+
 const FALLBACK_GROUND := Color("6fae4a")
 const FALLBACK_SKY := Color("bfe9ff")
 const FALLBACK_HAZE := Color("cfe8d4")
 const FALLBACK_KERB := Color("c23a2c")
 
+## Bespoke sky/sun/fog presets for all 18 map & mode preview targets.
+const ENVIRONMENTS: Dictionary = {
+	"stadium": {
+		"sky_top": Color("3c95d6"), "sky_horizon": Color("d3eef8"),
+		"sun_color": Color("fff6e5"), "sun_energy": 1.18,
+		"sun_rot": Vector3(-52.0, -34.0, 0.0),
+		"fog_color": Color("cfe8d8"), "fog_density": 0.00042,
+	},
+	"meadow": {
+		"sky_top": Color("3298c9"), "sky_horizon": Color("d5f1e2"),
+		"sun_color": Color("fff4d9"), "sun_energy": 1.22,
+		"sun_rot": Vector3(-48.0, -42.0, 0.0),
+		"fog_color": Color("cdebd9"), "fog_density": 0.00050,
+	},
+	"canyon": {
+		"sky_top": Color("d96b38"), "sky_horizon": Color("ffd296"),
+		"sun_color": Color("ffd494"), "sun_energy": 1.28,
+		"sun_rot": Vector3(-38.0, -54.0, 0.0),
+		"fog_color": Color("f6c28b"), "fog_density": 0.00055,
+	},
+	"dockyard": {
+		"sky_top": Color("3a82b8"), "sky_horizon": Color("cde1eb"),
+		"sun_color": Color("fff5e8"), "sun_energy": 1.18,
+		"sun_rot": Vector3(-50.0, -28.0, 0.0),
+		"fog_color": Color("c2d7e2"), "fog_density": 0.00048,
+	},
+	"glacier": {
+		"sky_top": Color("4592cf"), "sky_horizon": Color("e5f3fc"),
+		"sun_color": Color("f2f8ff"), "sun_energy": 1.16,
+		"sun_rot": Vector3(-49.0, -36.0, 0.0),
+		"fog_color": Color("dbeaf4"), "fog_density": 0.00058,
+	},
+	"sandbox": {
+		"sky_top": Color("3596da"), "sky_horizon": Color("d8f2ec"),
+		"sun_color": Color("fff6e2"), "sun_energy": 1.22,
+		"sun_rot": Vector3(-48.0, -36.0, 0.0),
+		"fog_color": Color("d2ece2"), "fog_density": 0.00040,
+	},
+	"cargo_rush": {
+		"sky_top": Color("2f85c4"), "sky_horizon": Color("d2ebf7"),
+		"sun_color": Color("fff6e6"), "sun_energy": 1.20,
+		"sun_rot": Vector3(-50.0, -32.0, 0.0),
+		"fog_color": Color("cce4f0"), "fog_density": 0.00038,
+	},
+	"harbour": {
+		"sky_top": Color("2b80bf"), "sky_horizon": Color("cfe8f5"),
+		"sun_color": Color("fff6e6"), "sun_energy": 1.22,
+		"sun_rot": Vector3(-49.0, -34.0, 0.0),
+		"fog_color": Color("c9e3f0"), "fog_density": 0.00038,
+	},
+	"farmyard": {
+		"sky_top": Color("3892cc"), "sky_horizon": Color("e6f0cf"),
+		"sun_color": Color("fff2d4"), "sun_energy": 1.24,
+		"sun_rot": Vector3(-46.0, -40.0, 0.0),
+		"fog_color": Color("dfeac8"), "fog_density": 0.00036,
+	},
+	"snowfield": {
+		"sky_top": Color("4b94d1"), "sky_horizon": Color("eaf5fd"),
+		"sun_color": Color("f4f9ff"), "sun_energy": 1.18,
+		"sun_rot": Vector3(-50.0, -30.0, 0.0),
+		"fog_color": Color("e1effa"), "fog_density": 0.00042,
+	},
+	"knockout": {
+		"sky_top": Color("3158a8"), "sky_horizon": Color("f4b895"),
+		"sun_color": Color("ffe2bd"), "sun_energy": 1.26,
+		"sun_rot": Vector3(-42.0, -44.0, 0.0),
+		"fog_color": Color("e8c4b0"), "fog_density": 0.00035,
+	},
+	"ko_rooftop": {
+		"sky_top": Color("2e56a6"), "sky_horizon": Color("f5be9b"),
+		"sun_color": Color("ffe4c2"), "sun_energy": 1.26,
+		"sun_rot": Vector3(-42.0, -42.0, 0.0),
+		"fog_color": Color("eac8b5"), "fog_density": 0.00035,
+	},
+	"ko_foundry": {
+		"sky_top": Color("4a2824"), "sky_horizon": Color("e87838"),
+		"sun_color": Color("ffc285"), "sun_energy": 1.30,
+		"sun_rot": Vector3(-44.0, -36.0, 0.0),
+		"fog_color": Color("d97a46"), "fog_density": 0.00045,
+	},
+	"ko_iceberg": {
+		"sky_top": Color("2f7ec0"), "sky_horizon": Color("dff2fc"),
+		"sun_color": Color("f0f8ff"), "sun_energy": 1.20,
+		"sun_rot": Vector3(-48.0, -32.0, 0.0),
+		"fog_color": Color("d5ebf8"), "fog_density": 0.00040,
+	},
+	"bomb_tag": {
+		"sky_top": Color("377fc4"), "sky_horizon": Color("fbe0b8"),
+		"sun_color": Color("fff0d4"), "sun_energy": 1.24,
+		"sun_rot": Vector3(-46.0, -38.0, 0.0),
+		"fog_color": Color("f0dec2"), "fog_density": 0.00038,
+	},
+	"bt_plaza": {
+		"sky_top": Color("3482ca"), "sky_horizon": Color("fce2bd"),
+		"sun_color": Color("fff1d8"), "sun_energy": 1.24,
+		"sun_rot": Vector3(-46.0, -36.0, 0.0),
+		"fog_color": Color("f2e0c6"), "fog_density": 0.00036,
+	},
+	"bt_labyrinth": {
+		"sky_top": Color("cf6534"), "sky_horizon": Color("ffd194"),
+		"sun_color": Color("ffd599"), "sun_energy": 1.28,
+		"sun_rot": Vector3(-40.0, -48.0, 0.0),
+		"fog_color": Color("f4c188"), "fog_density": 0.00045,
+	},
+	"bt_ferries": {
+		"sky_top": Color("2879b8"), "sky_horizon": Color("cde6f4"),
+		"sun_color": Color("fff6e8"), "sun_energy": 1.22,
+		"sun_rot": Vector3(-48.0, -30.0, 0.0),
+		"fog_color": Color("c6e0ee"), "fog_density": 0.00040,
+	},
+}
+
+const MAP_VIEWS: Dictionary = {
+	"stadium": {"pad": 13.0, "pitch_deg": 33.0},
+	"meadow": {"pad": 14.0, "pitch_deg": 34.0},
+	"canyon": {"pad": 15.0, "pitch_deg": 34.0},
+	"dockyard": {"pad": 15.0, "pitch_deg": 33.0},
+	"glacier": {"pad": 16.0, "pitch_deg": 34.0},
+	"sandbox": {"pad": 8.0, "pitch_deg": 33.0, "yaw_deg": 38.0},
+	"cargo_rush": {"pad": 6.0, "pitch_deg": 34.0, "yaw_deg": 32.0},
+	"harbour": {"pad": 6.0, "pitch_deg": 33.0, "yaw_deg": 34.0},
+	"farmyard": {"pad": 6.0, "pitch_deg": 34.0, "yaw_deg": 40.0},
+	"snowfield": {"pad": 6.0, "pitch_deg": 34.0, "yaw_deg": 28.0},
+	"knockout": {"pad": 6.0, "pitch_deg": 33.0, "yaw_deg": 36.0},
+	"ko_rooftop": {"pad": 6.0, "pitch_deg": 32.0, "yaw_deg": 36.0},
+	"ko_foundry": {"pad": 6.0, "pitch_deg": 34.0, "yaw_deg": 30.0},
+	"ko_iceberg": {"pad": 6.0, "pitch_deg": 33.0, "yaw_deg": 42.0},
+	"bomb_tag": {"pad": 6.0, "pitch_deg": 34.0, "yaw_deg": 35.0},
+	"bt_plaza": {"pad": 6.0, "pitch_deg": 34.0, "yaw_deg": 35.0},
+	"bt_labyrinth": {"pad": 6.0, "pitch_deg": 35.0, "yaw_deg": 40.0},
+	"bt_ferries": {"pad": 6.0, "pitch_deg": 33.0, "yaw_deg": 32.0},
+}
+
 var _viewport: SubViewport
 
 
 func _ready() -> void:
+	var targets: Array[Dictionary] = _all_targets()
 	if OS.get_environment(DRY_RUN_ENV) == "1":
-		# Boot-only check for CI/`--quit-after`: proves the tool scene loads
-		# without touching the art folder or needing a renderer.
-		print("preview_render: dry run, %d map(s) registered" \
-			% TrackDefs.PRESETS.size())
+		print("preview_render: dry run, %d target(s) registered" % targets.size())
 		get_tree().quit(0)
 		return
 	if DisplayServer.get_name() == "headless":
@@ -91,15 +220,65 @@ func _ready() -> void:
 	await get_tree().process_frame
 	var failures: int = 0
 	var records: Array[Dictionary] = []
-	for preset: Dictionary in TrackDefs.PRESETS:
-		var record: Dictionary = await _render_preset(preset)
+	for target: Dictionary in targets:
+		var record: Dictionary = await _render_target(target)
 		records.append(record)
 		if not bool(record["ok"]):
 			failures += 1
 	_report(records, failures)
-	# Quitting without a frame of slack can drop the last queued log lines.
 	await get_tree().process_frame
 	get_tree().quit(failures)
+
+
+## Builds the complete ordered list of 18 preview targets:
+## 5 circuits + 3 minigame mode covers + sandbox + 9 individual minigame maps.
+func _all_targets() -> Array[Dictionary]:
+	var targets: Array[Dictionary] = []
+	var seen: Dictionary = {}
+	for preset: Dictionary in TrackDefs.PRESETS:
+		var id: String = str(preset.get("id", ""))
+		if id == "" or seen.has(id):
+			continue
+		seen[id] = true
+		if TrackDefs.is_map(preset):
+			targets.append({
+				"id": id,
+				"target_kind": "race_map",
+				"preset": TrackDefs.get_preset(id),
+			})
+		else:
+			targets.append({
+				"id": id,
+				"target_kind": "minigame_cover",
+				"game_id": id,
+				"arena_id": TrackDefs.default_theme(preset),
+				"preset": preset,
+			})
+	# Sandbox free-roam park cover
+	if not seen.has("sandbox"):
+		seen["sandbox"] = true
+		targets.append({
+			"id": "sandbox",
+			"target_kind": "sandbox",
+			"preset": {"id": "sandbox", "kind": TrackDefs.KIND_MINIGAME},
+		})
+	# Every individual minigame map in TrackDefs
+	for preset: Dictionary in TrackDefs.PRESETS:
+		if not TrackDefs.is_minigame(preset):
+			continue
+		var game_id: String = str(preset.get("id", ""))
+		for theme_id: String in TrackDefs.theme_ids(preset):
+			if theme_id == "" or seen.has(theme_id):
+				continue
+			seen[theme_id] = true
+			targets.append({
+				"id": theme_id,
+				"target_kind": "minigame_map",
+				"game_id": game_id,
+				"arena_id": theme_id,
+				"preset": preset,
+			})
+	return targets
 
 
 # --------------------------------------------------------------------------
@@ -111,7 +290,6 @@ func _make_viewport() -> SubViewport:
 	var viewport := SubViewport.new()
 	viewport.name = "PreviewViewport"
 	viewport.size = Vector2i(WIDTH, HEIGHT)
-	# A private World3D keeps each map from seeing the leftovers of the last.
 	viewport.own_world_3d = true
 	viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 	viewport.msaa_3d = Viewport.MSAA_4X
@@ -126,53 +304,52 @@ func _make_viewport() -> SubViewport:
 # --------------------------------------------------------------------------
 
 
-func _render_preset(preset: Dictionary) -> Dictionary:
-	var map_id: String = str(preset.get("id", TrackDefs.DEFAULT_ID))
+func _render_target(target: Dictionary) -> Dictionary:
+	var map_id: String = str(target.get("id", TrackDefs.DEFAULT_ID))
+	var target_kind: String = str(target.get("target_kind", "race_map"))
+	var preset: Dictionary = (target.get("preset", {}) as Dictionary).duplicate(true)
+	preset["id"] = map_id
+
 	var stage := Node3D.new()
 	stage.name = "Map_" + map_id
 	_viewport.add_child(stage)
-	var built_from_scene: bool = false
-	if TrackDefs.is_minigame(preset):
-		built_from_scene = _build_minigame(preset, stage)
-		if not built_from_scene:
-			var skipped: Dictionary = _skip_minigame(map_id)
-			stage.queue_free()
-			await _wait_frames(2)
-			return skipped
+
+	var built_ok: bool = false
+	var arena_info: Dictionary = {}
+	if target_kind == "race_map":
+		built_ok = _build_race_map(preset, stage)
+		if not built_ok:
+			built_ok = _build_grid_fallback(preset, stage)
+	elif target_kind == "sandbox":
+		arena_info = _build_sandbox_preview(stage)
+		built_ok = _count_geometry(stage) > 4
 	else:
-		built_from_scene = _build_race_map(preset, stage)
-		if not built_from_scene:
-			built_from_scene = _build_grid_fallback(preset, stage)
-	# Lighting is installed after the map so the map's own sky and sun can be
-	# replaced by the palette grade rather than stacking on top of them.
+		var game_id: String = str(target.get("game_id", map_id))
+		var arena_id: String = str(target.get("arena_id", map_id))
+		arena_info = _build_arena_preview(game_id, arena_id, preset, stage)
+		built_ok = _count_geometry(stage) > 4
+
+	if target_kind != "race_map":
+		_stage_preview_karts(stage, arena_info, map_id)
+
 	_trim_backdrop(stage)
 	_install_lighting(stage, preset)
-	var framing: Dictionary = _framing_for(preset, stage)
+	var framing: Dictionary = _framing_for(target_kind, preset, stage, arena_info)
 	var camera: Camera3D = _install_camera(stage, framing)
 	var start_ndc: Vector2 = _start_ndc(framing, camera)
 	_install_vignette(stage)
 	await _wait_frames(WAIT_FRAMES)
 	var image: Image = await _capture()
 	var path: String = OUT_DIR + PREVIEW_PREFIX + map_id + ".png"
-	var saved: bool = image != null and _save(image, path)
+	var saved: bool = built_ok and image != null and _save(image, path)
 	var record: Dictionary = _verify(map_id, path) if saved else {
 		"id": map_id, "path": path, "ok": false, "bytes": 0,
 		"colours": 0, "flat": 1.0, "note": "capture failed",
 	}
-	record["scene"] = built_from_scene
+	record["scene"] = built_ok
 	record["start_ndc"] = start_ndc
-	# A minigame scene is owned by another workstream and may be mid-rewrite.
-	# Never leave a broken card behind: drop the file so the menu keeps its
-	# fallback, and do not fail the map pass over an optional preview.
-	if TrackDefs.is_minigame(preset) and not bool(record["ok"]):
-		if FileAccess.file_exists(path):
-			DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
-		record["ok"] = true
-		record["note"] = "skipped: preview failed verification"
-		record["skipped"] = true
 	print("PREVIEW %s  %s  (%d bytes, %d colours, flat %.0f%%, start ndc %s%s)" % [
-		map_id, "SKIP" if bool(record.get("skipped", false)) \
-			else ("OK" if bool(record["ok"]) else "FAIL"),
+		map_id, "OK" if bool(record["ok"]) else "FAIL",
 		int(record["bytes"]), int(record["colours"]),
 		float(record["flat"]) * 100.0, str(start_ndc),
 		"" if str(record.get("note", "")) == "" \
@@ -185,18 +362,14 @@ func _render_preset(preset: Dictionary) -> Dictionary:
 
 
 # --------------------------------------------------------------------------
-# map building
+# race map building
 # --------------------------------------------------------------------------
 
 
-## The race scene lays a 1400 m meadow under every map, which fills the whole
-## frame from a three-quarter camera and hides the palette sky. Trimming the
-## oversized backdrop planes (never the map-sized theme ground) to a plate that
-## ends inside the shot gives the card a horizon and a visible sky gradient.
 func _trim_backdrop(stage: Node3D) -> void:
 	for node: Node in _nodes_of_type(stage, "MeshInstance3D"):
 		var instance := node as MeshInstance3D
-		if instance.mesh == null:
+		if instance.mesh == null or not (instance.mesh is PlaneMesh):
 			continue
 		var box: AABB = instance.mesh.get_aabb()
 		if box.size.x < BACKDROP_MIN_SIZE or box.size.z < BACKDROP_MIN_SIZE:
@@ -204,19 +377,14 @@ func _trim_backdrop(stage: Node3D) -> void:
 		instance.scale = Vector3(BACKDROP_TRIM, 1.0, BACKDROP_TRIM)
 
 
-## Instantiates the real race scene against `preset` and hides its HUD. The
-## scene's _ready runs while the node is added, so the map (road, colliders,
-## barrier ring and theme dressing) is complete when this returns.
 func _build_race_map(preset: Dictionary, stage: Node3D) -> bool:
 	if OS.get_environment(FORCE_FALLBACK_ENV) == "1":
-		# Test hook: exercise the grid/theme path without breaking the scene.
 		return false
 	if not ResourceLoader.exists(RACE_SCENE):
 		return false
 	var packed: PackedScene = load(RACE_SCENE) as PackedScene
 	if packed == null:
 		return false
-	# grass_race reads selected_map in _ready, which add_child triggers below.
 	_set_autoload_property("GameSettings", "selected_map",
 		str(preset.get("id", TrackDefs.DEFAULT_ID)))
 	var race := packed.instantiate() as Node3D
@@ -227,16 +395,16 @@ func _build_race_map(preset: Dictionary, stage: Node3D) -> bool:
 	return _count_geometry(race) > 8
 
 
-## Fallback map build: the tile engine plus the map's own theme on a bare
-## Node3D, with a flat cartoon ground. This is the same road, colliders and
-## dressing the race scene assembles, minus the karts and HUD.
 func _build_grid_fallback(preset: Dictionary, stage: Node3D) -> bool:
 	var rows: PackedStringArray = TrackDefs.grid_of(preset)
 	if rows.is_empty():
 		return false
 	_build_ground(stage, preset)
-	var spline: RefCounted = KenneyTiles.build(stage, rows,
-		{"id": TrackDefs.theme_id_of(preset)})
+	var theme_dict: Dictionary = {"id": TrackDefs.theme_id_of(preset)}
+	var height_rows: PackedStringArray = TrackDefs.heights_of(preset)
+	if not height_rows.is_empty():
+		theme_dict["heights"] = height_rows
+	var spline: RefCounted = KenneyTiles.build(stage, rows, theme_dict)
 	if spline == null:
 		return false
 	var theme_path: String = TrackDefs.theme_path_of(preset)
@@ -247,8 +415,6 @@ func _build_grid_fallback(preset: Dictionary, stage: Node3D) -> bool:
 	return _count_geometry(stage) > 8
 
 
-## Flat cartoon ground in the map palette. A single palette colour, no texture:
-## the preview never introduces photoreal art.
 func _build_ground(stage: Node3D, preset: Dictionary) -> void:
 	var palette: Dictionary = _palette(preset)
 	var plane := PlaneMesh.new()
@@ -267,39 +433,281 @@ func _build_ground(stage: Node3D, preset: Dictionary) -> void:
 	stage.add_child(ground)
 
 
-## Instantiates a hand-built minigame scene for its preview. The arena owns its
-## own layout, so this only hides the HUD and lets the map build.
-func _build_minigame(preset: Dictionary, stage: Node3D) -> bool:
+# --------------------------------------------------------------------------
+# minigame & sandbox arena building (dynamic load + bespoke 3D fallback)
+# --------------------------------------------------------------------------
+
+
+func _build_arena_preview(game_id: String, arena_id: String,
+		preset: Dictionary, stage: Node3D) -> Dictionary:
+	if game_id == "cargo_rush":
+		return CargoTheme.build_arena(stage, arena_id)
+
+	var script_path: String = KO_MAPS_SCRIPT if game_id == "knockout" \
+		else BT_MAPS_SCRIPT
+	var built: Variant = _try_call_map_builder(script_path, stage, arena_id)
+	if _count_geometry(stage) > 4:
+		if built is Dictionary:
+			return built as Dictionary
+		return {"spawns": _default_arena_spawns(arena_id)}
+
+	# Secondary fallback: try instantiating the minigame scene if it exists
 	var scene_path: String = str(preset.get("scene", ""))
-	if scene_path == "" or not ResourceLoader.exists(scene_path):
-		return false
-	var packed: PackedScene = load(scene_path) as PackedScene
-	if packed == null:
-		return false
-	var theme_id: String = TrackDefs.default_theme(preset)
-	if theme_id != "":
-		_set_autoload_property("GameSettings", "selected_minigame", theme_id)
-	var scene := packed.instantiate() as Node3D
-	if scene == null:
-		return false
-	stage.add_child(scene)
-	_hide_overlays(scene)
-	return _count_geometry(scene) > 8
+	if scene_path != "" and ResourceLoader.exists(scene_path):
+		_set_autoload_property("GameSettings", "selected_minigame", arena_id)
+		var packed: PackedScene = load(scene_path) as PackedScene
+		if packed != null:
+			var inst := packed.instantiate() as Node3D
+			if inst != null:
+				stage.add_child(inst)
+				_hide_overlays(inst)
+				if _count_geometry(inst) > 4:
+					return {"spawns": _default_arena_spawns(arena_id), "has_scene_karts": true}
+				inst.queue_free()
+
+	# Tertiary fallback: rich bespoke 3D stage matching that exact map's design
+	return _build_bespoke_fallback_arena(stage, game_id, arena_id)
 
 
-## A minigame preview is optional: its scene belongs to another workstream and
-## may need a session or be mid-rewrite. Report the skip without failing the
-## map pass, and never leave a broken card in the art folder.
-func _skip_minigame(map_id: String) -> Dictionary:
-	var path: String = OUT_DIR + PREVIEW_PREFIX + map_id + ".png"
-	if FileAccess.file_exists(path):
-		DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
-	print("PREVIEW %s  SKIP  (scene did not build)" % map_id)
-	return {
-		"id": map_id, "path": path, "ok": true, "skipped": true,
-		"bytes": 0, "colours": 0, "flat": 1.0,
-		"note": "skipped: scene did not build",
-	}
+func _build_sandbox_preview(stage: Node3D) -> Dictionary:
+	for script_path: String in SANDBOX_PARK_SCRIPTS:
+		if not ResourceLoader.exists(script_path):
+			continue
+		var script: Script = load(script_path) as Script
+		if script == null:
+			continue
+		var res: Variant = _invoke_builder_method(script, "build", stage, "sandbox")
+		if _count_geometry(stage) > 4:
+			_ensure_floor_under(stage, Color("66ab48"))
+			if res is Dictionary:
+				return res as Dictionary
+			return {"spawns": _default_arena_spawns("sandbox")}
+	for scene_path: String in SANDBOX_SCENES:
+		if not ResourceLoader.exists(scene_path):
+			continue
+		var packed: PackedScene = load(scene_path) as PackedScene
+		if packed == null:
+			continue
+		var inst := packed.instantiate() as Node3D
+		if inst != null:
+			stage.add_child(inst)
+			_hide_overlays(inst)
+			if _count_geometry(inst) > 4:
+				return {"spawns": _default_arena_spawns("sandbox"), "has_scene_karts": true}
+			inst.queue_free()
+	return _build_bespoke_fallback_arena(stage, "sandbox", "sandbox")
+
+
+func _try_call_map_builder(script_path: String, stage: Node3D,
+		arena_id: String) -> Variant:
+	if not ResourceLoader.exists(script_path):
+		return null
+	var script: Script = load(script_path) as Script
+	if script == null:
+		return null
+	for method_name: String in ["build_arena", "build_map", "build"]:
+		var res: Variant = _invoke_builder_method(script, method_name, stage, arena_id)
+		if _count_geometry(stage) > 4:
+			return res
+	return null
+
+
+func _invoke_builder_method(script: Script, method_name: String,
+		stage: Node3D, arena_id: String) -> Variant:
+	for entry: Dictionary in script.get_script_method_list():
+		if str(entry.get("name", "")) != method_name:
+			continue
+		var args: Array = entry.get("args", []) as Array
+		var defaults: Array = entry.get("default_args", []) as Array
+		var min_args: int = args.size() - defaults.size()
+		if args.size() >= 2 and min_args <= 2:
+			return script.call(method_name, stage, arena_id)
+		if args.size() >= 1 and min_args <= 1:
+			return script.call(method_name, stage)
+	return null
+
+
+func _ensure_floor_under(stage: Node3D, tint: Color) -> void:
+	for node: Node in _nodes_of_type(stage, "MeshInstance3D"):
+		var inst := node as MeshInstance3D
+		if inst.mesh != null and inst.mesh.get_aabb().size.x >= 180.0:
+			return
+	var plane := PlaneMesh.new()
+	plane.size = Vector2(520.0, 520.0)
+	var floor_node := MeshInstance3D.new()
+	floor_node.name = "SandboxPreviewGround"
+	floor_node.mesh = plane
+	floor_node.position = Vector3(0.0, -0.05, 0.0)
+	floor_node.material_override = CargoTheme.flat_material(tint, false)
+	stage.add_child(floor_node)
+
+
+## Stages 4 vibrant Kenney race karts (`raceCarRed/Orange/Green/White`) on the
+## arena's spawn points when the stage doesn't already carry live karts.
+func _stage_preview_karts(stage: Node3D, info: Dictionary,
+		arena_id: String) -> void:
+	if bool(info.get("has_scene_karts", false)):
+		return
+	var spawns: Array[Transform3D] = _extract_spawns(info, arena_id)
+	var holder := Node3D.new()
+	holder.name = "PreviewKarts"
+	stage.add_child(holder)
+	for i in mini(PREVIEW_CAR_MODELS.size(), spawns.size()):
+		var model: String = PREVIEW_CAR_MODELS[i]
+		var raw: Vector3 = CargoTheme.scaled_size(model, Vector3.ONE)
+		var longest: float = maxf(maxf(raw.x, raw.z), 0.25)
+		var scale_factor: float = 3.1 / longest
+		var xform: Transform3D = spawns[i]
+		var yaw: float = atan2(xform.basis.z.x, xform.basis.z.z)
+		CargoTheme.place_model(holder, model,
+			xform.origin + Vector3.UP * 0.02, yaw,
+			Vector3.ONE * scale_factor, "PreviewKart_%d" % i)
+
+
+func _extract_spawns(info: Dictionary, arena_id: String) -> Array[Transform3D]:
+	var out: Array[Transform3D] = []
+	for key: String in ["spawns", "spawn_points", "kart_spawns", "starts", "positions"]:
+		if not info.has(key):
+			continue
+		var raw: Variant = info[key]
+		if raw is Array:
+			for item: Variant in raw as Array:
+				if item is Transform3D:
+					out.append(item as Transform3D)
+				elif item is Vector3:
+					var pt: Vector3 = item as Vector3
+					var yaw: float = atan2(pt.x, pt.z)
+					out.append(Transform3D(Basis(Vector3.UP, yaw), pt))
+				elif item is Dictionary:
+					var d: Dictionary = item as Dictionary
+					var p_var: Variant = d.get("position", d.get("pos", Vector3.ZERO))
+					if p_var is Vector3:
+						var p: Vector3 = p_var as Vector3
+						var yw: float = float(d.get("yaw", atan2(p.x, p.z)))
+						out.append(Transform3D(Basis(Vector3.UP, yw), p))
+		elif raw is PackedVector3Array:
+			for pt: Vector3 in raw as PackedVector3Array:
+				out.append(Transform3D(Basis(Vector3.UP, atan2(pt.x, pt.z)), pt))
+		if out.size() >= 4:
+			return out
+	return _default_arena_spawns(arena_id)
+
+
+func _default_arena_spawns(arena_id: String) -> Array[Transform3D]:
+	match arena_id:
+		"ko_foundry":
+			return [
+				Transform3D(Basis(Vector3.UP, -PI * 0.5), Vector3(-18.0, 0.2, -6.0)),
+				Transform3D(Basis(Vector3.UP, PI * 0.5), Vector3(18.0, 0.2, 6.0)),
+				Transform3D(Basis(Vector3.UP, 0.0), Vector3(-16.0, 0.2, 10.0)),
+				Transform3D(Basis(Vector3.UP, PI), Vector3(16.0, 0.2, -10.0)),
+			]
+		"ko_iceberg":
+			return [
+				Transform3D(Basis(Vector3.UP, 0.75), Vector3(12.0, 0.2, 12.0)),
+				Transform3D(Basis(Vector3.UP, -2.35), Vector3(-12.0, 0.2, -12.0)),
+				Transform3D(Basis(Vector3.UP, -0.75), Vector3(-12.0, 0.2, 12.0)),
+				Transform3D(Basis(Vector3.UP, 2.35), Vector3(12.0, 0.2, -12.0)),
+			]
+		"bt_ferries":
+			return [
+				Transform3D(Basis(Vector3.UP, -PI * 0.5), Vector3(-18.0, 1.2, -8.0)),
+				Transform3D(Basis(Vector3.UP, PI * 0.5), Vector3(18.0, 1.2, 8.0)),
+				Transform3D(Basis(Vector3.UP, 0.2), Vector3(-18.0, 1.2, 12.0)),
+				Transform3D(Basis(Vector3.UP, PI - 0.2), Vector3(18.0, 1.2, -12.0)),
+			]
+		_:
+			return [
+				Transform3D(Basis(Vector3.UP, 0.65), Vector3(13.0, 0.25, 13.0)),
+				Transform3D(Basis(Vector3.UP, -2.45), Vector3(-13.0, 0.25, -13.0)),
+				Transform3D(Basis(Vector3.UP, -0.65), Vector3(-13.0, 0.25, 13.0)),
+				Transform3D(Basis(Vector3.UP, 2.45), Vector3(13.0, 0.25, -13.0)),
+			]
+
+
+## Bespoke 3D arena fallback used ONLY if `knockout_maps.gd`, `bomb_tag_maps.gd`
+## or `sandbox_park.gd` is not yet on disk when preview_render runs standalone.
+func _build_bespoke_fallback_arena(stage: Node3D, game_id: String,
+		arena_id: String) -> Dictionary:
+	var batch := PropBatch.new()
+	if arena_id == "sandbox":
+		_ensure_floor_under(stage, Color("68ad49"))
+		batch.add_cylinder(Transform3D(Basis.IDENTITY, Vector3(0.0, 0.12, 0.0)),
+			34.0, 0.24, 36, Color("48525c"))
+		for idx in 4:
+			var ang: float = float(idx) * PI * 0.5 + 0.4
+			var p := Vector3(cos(ang) * 18.0, 0.9, sin(ang) * 18.0)
+			batch.add_box(Transform3D(Basis(Vector3.UP, -ang), p),
+				Vector3(6.5, 1.8, 9.0), Color("e8a838") if idx % 2 == 0 else Color("3a8fd6"))
+		CargoTheme.place_model(stage, "grandStandCovered", Vector3(0.0, 0.0, -44.0),
+			0.0, Vector3.ONE * 12.0, "ParkStand")
+	elif game_id == "knockout":
+		var backdrop := Color("1c2d42")
+		if arena_id == "ko_foundry":
+			backdrop = Color("cf4b1b")
+			for sx: float in [-1.0, 1.0]:
+				batch.add_box(Transform3D(Basis.IDENTITY, Vector3(sx * 19.0, 1.0, 0.0)),
+					Vector3(20.0, 2.0, 34.0), Color("3f4652"))
+				batch.add_box(Transform3D(Basis.IDENTITY, Vector3(sx * 19.0, 2.08, 0.0)),
+					Vector3(18.6, 0.14, 32.6), Color("f09c38"))
+			for bz: float in [-9.0, 9.0]:
+				batch.add_box(Transform3D(Basis.IDENTITY, Vector3(0.0, 1.85, bz)),
+					Vector3(18.5, 0.5, 5.8), Color("6d7885"))
+		elif arena_id == "ko_iceberg":
+			backdrop = Color("1f6f9f")
+			batch.add_cylinder(Transform3D(Basis.IDENTITY, Vector3(0.0, 0.9, 0.0)),
+				30.0, 1.8, 10, Color("bfe8f8"))
+			batch.add_cylinder(Transform3D(Basis.IDENTITY, Vector3(0.0, 1.86, 0.0)),
+				24.0, 0.16, 10, Color("7bd4ee"))
+			for idx in 4:
+				var a: float = PI * 0.25 + float(idx) * PI * 0.5
+				batch.add_cylinder(Transform3D(Basis.IDENTITY,
+					Vector3(cos(a) * 21.0, 3.2, sin(a) * 21.0)),
+					2.2, 3.2, 7, Color("effaff"))
+		else:
+			batch.add_cylinder(Transform3D(Basis.IDENTITY, Vector3(0.0, 1.0, 0.0)),
+				30.0, 2.0, 8, Color("465362"))
+			batch.add_cylinder(Transform3D(Basis.IDENTITY, Vector3(0.0, 2.06, 0.0)),
+				22.0, 0.14, 8, Color("5a697a"))
+			batch.add_cylinder(Transform3D(Basis.IDENTITY, Vector3(0.0, 2.55, 0.0)),
+				7.5, 0.95, 20, Color("f2b638"))
+		_ensure_floor_under(stage, backdrop)
+	else:
+		if arena_id == "bt_labyrinth":
+			_ensure_floor_under(stage, Color("d88248"))
+			batch.add_box(Transform3D(Basis.IDENTITY, Vector3(0.0, 0.08, 0.0)),
+				Vector3(68.0, 0.16, 68.0), Color("c9723c"))
+			batch.add_box(Transform3D(Basis.IDENTITY, Vector3(0.0, 2.4, 0.0)),
+				Vector3(10.0, 0.5, 34.0), Color("e69d56"))
+			for sx: float in [-1.0, 1.0]:
+				for sz: float in [-1.0, 1.0]:
+					batch.add_box(Transform3D(Basis.IDENTITY,
+						Vector3(sx * 16.0, 2.2, sz * 16.0)),
+						Vector3(6.5, 4.4, 6.5), Color("a84c28"))
+		elif arena_id == "bt_ferries":
+			_ensure_floor_under(stage, Color("1f75a6"))
+			for sx: float in [-1.0, 1.0]:
+				batch.add_box(Transform3D(Basis.IDENTITY, Vector3(sx * 18.0, 0.6, 0.0)),
+					Vector3(20.0, 1.2, 46.0), Color("b84434") if sx < 0.0 else Color("2d6d9a"))
+				batch.add_box(Transform3D(Basis.IDENTITY, Vector3(sx * 18.0, 1.26, 0.0)),
+					Vector3(18.4, 0.14, 43.0), Color("53606e"))
+			for bz: float in [-10.0, 10.0]:
+				batch.add_box(Transform3D(Basis.IDENTITY, Vector3(0.0, 1.25, bz)),
+					Vector3(16.5, 0.36, 6.0), Color("f0b836"))
+		else:
+			_ensure_floor_under(stage, Color("4c5b6b"))
+			batch.add_box(Transform3D(Basis.IDENTITY, Vector3(0.0, 0.3, 0.0)),
+				Vector3(64.0, 0.6, 64.0), Color("5f7082"))
+			batch.add_box(Transform3D(Basis.IDENTITY, Vector3(0.0, 1.4, 0.0)),
+				Vector3(36.0, 1.6, 36.0), Color("75889c"))
+			batch.add_box(Transform3D(Basis.IDENTITY, Vector3(0.0, 2.7, 0.0)),
+				Vector3(16.0, 1.2, 16.0), Color("f2ba42"))
+	var mesh_inst := MeshInstance3D.new()
+	mesh_inst.name = "FallbackArenaMesh"
+	mesh_inst.mesh = batch.build()
+	mesh_inst.material_override = SceneryKit.vertex_material()
+	stage.add_child(mesh_inst)
+	return {"spawns": _default_arena_spawns(arena_id)}
 
 
 # --------------------------------------------------------------------------
@@ -307,7 +715,6 @@ func _skip_minigame(map_id: String) -> Dictionary:
 # --------------------------------------------------------------------------
 
 
-## The flat cartoon palette the theme reads: {ground, sky, haze, kerb}.
 func _palette(preset: Dictionary) -> Dictionary:
 	var raw: Variant = preset.get("palette", {})
 	if raw is Dictionary and not (raw as Dictionary).is_empty():
@@ -316,9 +723,6 @@ func _palette(preset: Dictionary) -> Dictionary:
 		"haze": FALLBACK_HAZE, "kerb": FALLBACK_KERB}
 
 
-## Keeps a palette hue but pushes its value and saturation, so the sky gradient
-## reads as painted cartoon art instead of a menu-chip tint. Godot's Color has
-## no HSV accessor, so the conversion is written out.
 func _grade_colour(colour: Color, value: float,
 		saturation: float) -> Color:
 	var maximum: float = maxf(colour.r, maxf(colour.g, colour.b))
@@ -340,32 +744,34 @@ func _grade_colour(colour: Color, value: float,
 		clampf(maximum * value, 0.02, 1.0), 1.0)
 
 
-## Sky gradient, sun and ambient derived from the map palette: the sky runs from
-## the palette sky at the zenith to its haze at the horizon, the sun is a warm
-## white biased towards that sky, and the ambient is the haze.
 func _install_lighting(stage: Node3D, preset: Dictionary) -> void:
+	var map_id: String = str(preset.get("id", TrackDefs.DEFAULT_ID))
 	var palette: Dictionary = _palette(preset)
-	# The palette is authored for flat UI chips, so the preview pushes its
-	# saturation and value into a card-grade sky gradient instead of copying the
-	# washed-out menu tints straight into the 3D scene.
-	var sky_colour: Color = _grade_colour(
+	var env_spec: Dictionary = ENVIRONMENTS.get(map_id, {}) as Dictionary
+	var sky_colour: Color = env_spec.get("sky_top", _grade_colour(
 		(palette.get("sky", FALLBACK_SKY) as Color).lerp(SKY_BLUE, 0.55),
-		0.86, 1.35)
-	var haze: Color = _grade_colour(
+		0.86, 1.35)) as Color
+	var haze: Color = env_spec.get("sky_horizon", _grade_colour(
 		(palette.get("haze", FALLBACK_HAZE) as Color).lerp(SKY_HORIZON, 0.55),
-		1.0, 1.05)
+		1.0, 1.05)) as Color
+	var sun_col: Color = env_spec.get("sun_color", Color(1.0, 0.96, 0.88).lerp(
+		palette.get("sky", FALLBACK_SKY), 0.30)) as Color
+	var sun_energy: float = float(env_spec.get("sun_energy", 1.18))
+	var sun_rot: Vector3 = env_spec.get("sun_rot",
+		Vector3(-52.0, -34.0, 0.0)) as Vector3
+	var fog_col: Color = env_spec.get("fog_color", haze) as Color
+	var fog_dens: float = float(env_spec.get("fog_density", 0.00045))
 	for node: Node in _nodes_of_type(stage, "DirectionalLight3D"):
 		node.get_parent().remove_child(node)
 		node.free()
 	var sun := DirectionalLight3D.new()
 	sun.name = "PreviewSun"
-	sun.rotation_degrees = Vector3(-52.0, -34.0, 0.0)
-	sun.light_color = Color(1.0, 0.96, 0.88).lerp(
-		palette.get("sky", FALLBACK_SKY), 0.30)
-	sun.light_energy = 1.18
+	sun.rotation_degrees = sun_rot
+	sun.light_color = sun_col
+	sun.light_energy = sun_energy
 	sun.shadow_enabled = true
 	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS
-	sun.directional_shadow_max_distance = 1200.0
+	sun.directional_shadow_max_distance = 1400.0
 	stage.add_child(sun)
 
 	for node: Node in _nodes_of_type(stage, "WorldEnvironment"):
@@ -375,9 +781,6 @@ func _install_lighting(stage: Node3D, preset: Dictionary) -> void:
 	sky_material.sky_top_color = sky_colour
 	sky_material.sky_horizon_color = haze
 	sky_material.sky_curve = 0.38
-	# The preview camera always looks down, so the rays behind the map hit the
-	# sky material's lower hemisphere. Painting that hemisphere as sky keeps the
-	# card's backdrop a gradient instead of another slab of ground colour.
 	sky_material.ground_horizon_color = haze
 	sky_material.ground_bottom_color = sky_colour.darkened(0.18)
 	sky_material.sun_angle_max = 9.0
@@ -389,16 +792,16 @@ func _install_lighting(stage: Node3D, preset: Dictionary) -> void:
 	environment.sky = sky
 	environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
 	environment.ambient_light_color = haze.lightened(0.05)
-	environment.ambient_light_energy = 0.35
+	environment.ambient_light_energy = 0.38
 	environment.tonemap_mode = Environment.TONE_MAPPER_FILMIC
-	environment.tonemap_exposure = 0.95
+	environment.tonemap_exposure = 0.96
 	environment.tonemap_white = 1.00
 	environment.fog_enabled = true
-	environment.fog_light_color = haze
+	environment.fog_light_color = fog_col
 	environment.fog_light_energy = 1.0
-	environment.fog_density = 0.0005
-	environment.fog_sky_affect = 0.30
-	environment.fog_aerial_perspective = 0.35
+	environment.fog_density = fog_dens
+	environment.fog_sky_affect = 0.28
+	environment.fog_aerial_perspective = 0.32
 	environment.adjustment_enabled = true
 	environment.adjustment_brightness = 1.00
 	environment.adjustment_contrast = 1.15
@@ -409,59 +812,78 @@ func _install_lighting(stage: Node3D, preset: Dictionary) -> void:
 	stage.add_child(world)
 
 
-## Circuit framing points: the live centreline expanded outwards by FRAME_PAD,
-## so barriers, stands and run-off are inside the shot. A minigame is framed
-## from its own geometry instead.
-func _framing_for(preset: Dictionary, stage: Node3D) -> Dictionary:
-	if TrackDefs.is_minigame(preset):
-		var bounds: AABB = _visual_bounds(stage)
+func _framing_for(target_kind: String, preset: Dictionary, stage: Node3D,
+		arena_info: Dictionary) -> Dictionary:
+	var map_id: String = str(preset.get("id", TrackDefs.DEFAULT_ID))
+	var view_spec: Dictionary = MAP_VIEWS.get(map_id, {}) as Dictionary
+	var pad: float = float(view_spec.get("pad", FRAME_PAD))
+	var pitch_deg: float = float(view_spec.get("pitch_deg", CAMERA_PITCH_DEG))
+	if target_kind != "race_map":
+		var clamp_half: float = 38.0 if map_id == "knockout" or map_id.begins_with("ko_") else ARENA_CLAMP_HALF
+		var bounds: AABB = arena_info.get("bounds", AABB()) as AABB
+		if bounds.size.length_squared() < 1.0:
+			bounds = _visual_bounds(stage, clamp_half)
 		if bounds.size.length_squared() > 1.0:
-			return _expand_framing(_box_corners(bounds))
+			var min_p := Vector3(
+				maxf(bounds.position.x, -clamp_half),
+				maxf(bounds.position.y, -2.0),
+				maxf(bounds.position.z, -clamp_half))
+			var max_p := Vector3(
+				minf(bounds.end.x, clamp_half),
+				minf(bounds.end.y, 16.0),
+				minf(bounds.end.z, clamp_half))
+			if max_p.x - min_p.x > 8.0 and max_p.z - min_p.z > 8.0:
+				bounds = AABB(min_p, max_p - min_p)
+			var mg_framing: Dictionary = _expand_framing(_box_corners(bounds), pad)
+			mg_framing["pitch_deg"] = pitch_deg
+			if view_spec.has("yaw_deg"):
+				mg_framing["yaw_deg"] = float(view_spec["yaw_deg"])
+			return mg_framing
 		var arena := PackedVector3Array()
 		for index in 24:
 			var angle: float = TAU * float(index) / 24.0
 			arena.append(Vector3(cos(angle), 0.0, sin(angle)) * MINIGAME_RADIUS)
-		return {"centre": Vector3.ZERO, "points": arena}
+		var def_framing: Dictionary = {
+			"centre": Vector3.ZERO, "points": arena, "pitch_deg": pitch_deg,
+		}
+		if view_spec.has("yaw_deg"):
+			def_framing["yaw_deg"] = float(view_spec["yaw_deg"])
+		return def_framing
+
 	var points: PackedVector3Array = _track_points_from(stage)
 	if points.is_empty():
-		# A broken race scene still has the grid build on the stage, which
-		# stores its own spline on the root.
 		var stored: Variant = stage.get_meta("kenney_spline", null)
 		if stored is RefCounted \
 				and (stored as RefCounted).get("points") is PackedVector3Array:
 			points = (stored as RefCounted).get("points") as PackedVector3Array
-	var framing: Dictionary = _expand_framing(points)
+	var framing: Dictionary = _expand_framing(points, pad)
+	framing["pitch_deg"] = pitch_deg
 	if not points.is_empty():
 		framing["start"] = points[0]
 	return framing
 
 
-## Bounds centre plus a fixed pad, so the camera frame includes the barrier ring
-## and the grandstands, and the centreline itself is not treated as the edge.
-func _expand_framing(points: PackedVector3Array) -> Dictionary:
+func _expand_framing(points: PackedVector3Array,
+		pad: float = FRAME_PAD) -> Dictionary:
 	if points.is_empty():
-		return {"centre": Vector3.ZERO,
-			"points": PackedVector3Array()}
+		return {"centre": Vector3.ZERO, "points": PackedVector3Array()}
 	var min_point: Vector3 = points[0]
 	var max_point: Vector3 = points[0]
 	for point: Vector3 in points:
 		min_point = min_point.min(point)
 		max_point = max_point.max(point)
 	var centre: Vector3 = (min_point + max_point) * 0.5
-	centre.y = 0.0
+	centre.y = (min_point.y + max_point.y) * 0.35
 	var expanded := PackedVector3Array()
 	for point: Vector3 in points:
 		var offset: Vector3 = point - centre
 		offset.y = 0.0
-		expanded.append(Vector3(point.x, 0.0, point.z)
-			+ offset.normalized() * FRAME_PAD)
+		var dir: Vector3 = offset.normalized() if offset.length_squared() > 0.001 \
+			else Vector3.ZERO
+		expanded.append(point + dir * pad)
 	return {"centre": centre, "points": expanded}
 
 
-## Fits a three-quarter isometric camera around the expanded circuit. Twelve
-## yaws are tried; each is fitted so every point and prop top stays inside
-## FRAME_FILL, then the one that keeps the start line nearest the lower centre
-## of the frame wins, so the start/finish is always visible.
 func _install_camera(stage: Node3D, framing: Dictionary) -> Camera3D:
 	var centre: Vector3 = framing["centre"] as Vector3
 	var points: PackedVector3Array = framing["points"] as PackedVector3Array
@@ -471,7 +893,17 @@ func _install_camera(stage: Node3D, framing: Dictionary) -> Camera3D:
 	camera.near = 0.5
 	camera.far = 6000.0
 	stage.add_child(camera)
-	var pitch: float = deg_to_rad(CAMERA_PITCH_DEG)
+	var pitch: float = deg_to_rad(float(framing.get("pitch_deg", CAMERA_PITCH_DEG)))
+	if framing.has("yaw_deg"):
+		var fixed_yaw: float = deg_to_rad(float(framing["yaw_deg"]))
+		var fixed_dir := Vector3(sin(fixed_yaw) * cos(pitch), sin(pitch),
+			cos(fixed_yaw) * cos(pitch))
+		var fixed_dist: float = _fit_distance(centre, points, fixed_dir)
+		camera.look_at_from_position(centre + fixed_dir * fixed_dist, centre,
+			Vector3.UP)
+		camera.current = true
+		return camera
+
 	var best_eye: Vector3 = centre + Vector3(0.0, 1.0, 0.0) * 200.0
 	var best_score: float = INF
 	var start: Vector3 = framing.get("start", centre) as Vector3
@@ -490,9 +922,6 @@ func _install_camera(stage: Node3D, framing: Dictionary) -> Camera3D:
 	return camera
 
 
-## Lower score is better: a framed circuit scores on how much of the frame it
-## fills, and a start line low in the frame is rewarded so it reads as the
-## subject rather than a speck on the far side.
 func _camera_score(centre: Vector3, points: PackedVector3Array, eye: Vector3,
 		start: Vector3) -> float:
 	var extent: float = _frame_extent(centre, points, (eye - centre).normalized(),
@@ -500,8 +929,6 @@ func _camera_score(centre: Vector3, points: PackedVector3Array, eye: Vector3,
 	if extent > FRAME_FILL:
 		return 100.0 + extent
 	var ndc: Vector2 = _project(eye, centre, start)
-	# NDC y grows upwards; the lower-middle third of the frame is where the
-	# start/finish reads best, so penalise distance from (0, -0.3).
 	var score: float = absf(ndc.x) * 1.2 + absf(ndc.y + 0.3) * 1.5
 	score += absf(extent - FRAME_FILL) * 2.0
 	if absf(ndc.x) > 0.85 or ndc.y < -0.9:
@@ -509,8 +936,6 @@ func _camera_score(centre: Vector3, points: PackedVector3Array, eye: Vector3,
 	return score
 
 
-## Normalised device coordinates of `point` for a camera at `eye` looking at
-## `target`. Fails safe to the frame edge when the point is behind the camera.
 func _project(eye: Vector3, target: Vector3, point: Vector3) -> Vector2:
 	var forward: Vector3 = (target - eye).normalized()
 	var right: Vector3 = forward.cross(Vector3.UP).normalized()
@@ -525,7 +950,6 @@ func _project(eye: Vector3, target: Vector3, point: Vector3) -> Vector2:
 		relative.dot(up) / depth / tan_vertical)
 
 
-## Start line position in frame for the installed camera, for the report.
 func _start_ndc(framing: Dictionary, camera: Camera3D) -> Vector2:
 	if camera == null or not framing.has("start"):
 		return Vector2.ZERO
@@ -533,12 +957,10 @@ func _start_ndc(framing: Dictionary, camera: Camera3D) -> Vector2:
 		framing["start"] as Vector3)
 
 
-## Smallest eye distance at which every ground point and every prop top stays
-## inside FRAME_FILL of the frame. `direction` points from the target to the eye.
 func _fit_distance(centre: Vector3, points: PackedVector3Array,
 		direction: Vector3) -> float:
 	if points.is_empty():
-		return MINIGAME_RADIUS * 4.0
+		return MINIGAME_RADIUS * 3.6
 	var radius: float = 1.0
 	for point: Vector3 in points:
 		radius = maxf(radius, point.distance_to(centre))
@@ -553,7 +975,6 @@ func _fit_distance(centre: Vector3, points: PackedVector3Array,
 	return high
 
 
-## Largest |NDC| coordinate over the circuit and its prop tops at `distance`.
 func _frame_extent(centre: Vector3, points: PackedVector3Array,
 		direction: Vector3, distance: float) -> float:
 	var eye: Vector3 = centre + direction * distance
@@ -574,8 +995,6 @@ func _frame_extent(centre: Vector3, points: PackedVector3Array,
 	return worst
 
 
-## A soft dark vignette keeps the eye on the circuit and makes the card read as
-## designed art rather than a raw screenshot.
 func _install_vignette(stage: Node3D) -> void:
 	var gradient := Gradient.new()
 	gradient.offsets = PackedFloat32Array([0.0, 0.58, 1.0])
@@ -607,8 +1026,6 @@ func _install_vignette(stage: Node3D) -> void:
 # --------------------------------------------------------------------------
 
 
-## The live centreline the built race scene uses. Reading it keeps the camera
-## correct no matter whether the map is a grid circuit or a minigame.
 func _track_points_from(root: Node) -> PackedVector3Array:
 	for child: Node in root.get_children():
 		if _has_property(child, "_track_points"):
@@ -646,33 +1063,46 @@ func _has_property(node: Node, property: String) -> bool:
 	return false
 
 
-## World bounds of the visible arena geometry. Ground slabs and horizon shells
-## are skipped so a 1400 m backdrop cannot zoom the arena out to a dot.
-func _visual_bounds(root: Node) -> AABB:
+func _visual_bounds(root: Node, clamp_half: float = 70.0) -> AABB:
 	var state: Dictionary = {}
-	_collect_visual_bounds(root, state)
+	_collect_visual_bounds(root, state, clamp_half)
 	if not state.has("bounds"):
 		return AABB()
 	return state["bounds"] as AABB
 
 
-func _collect_visual_bounds(root: Node, state: Dictionary) -> void:
+func _collect_visual_bounds(root: Node, state: Dictionary,
+		clamp_half: float = 70.0) -> void:
 	for child: Node in root.get_children():
 		if child is MeshInstance3D:
 			var mesh: Mesh = (child as MeshInstance3D).mesh
 			if mesh != null:
 				var local: AABB = mesh.get_aabb()
-				# Flat slabs are ground/aprons and define no play area; huge
-				# meshes are backdrops. The arena walls and props frame it.
-				if local.size.y >= 0.08 and local.size.x <= 240.0 \
-						and local.size.z <= 240.0:
+				if local.size.y >= 0.08 and local.size.x <= 150.0 \
+						and local.size.z <= 150.0:
 					var world: AABB = _transform_aabb(
 						(child as MeshInstance3D).global_transform, local)
-					if state.has("bounds"):
-						state["bounds"] = (state["bounds"] as AABB).merge(world)
-					else:
-						state["bounds"] = world
-		_collect_visual_bounds(child, state)
+					if absf(world.get_center().x) <= clamp_half \
+							and absf(world.get_center().z) <= clamp_half:
+						_merge_bounds(state, world)
+		elif child is MultiMeshInstance3D:
+			var mm: MultiMesh = (child as MultiMeshInstance3D).multimesh
+			if mm != null and mm.mesh != null and mm.instance_count > 0:
+				var m_local: AABB = mm.mesh.get_aabb()
+				var parent_xf: Transform3D = (child as MultiMeshInstance3D).global_transform
+				var limit: int = mini(mm.instance_count, 96)
+				for idx in limit:
+					var ixf: Transform3D = parent_xf * mm.get_instance_transform(idx)
+					if absf(ixf.origin.x) <= clamp_half and absf(ixf.origin.z) <= clamp_half:
+						_merge_bounds(state, _transform_aabb(ixf, m_local))
+		_collect_visual_bounds(child, state, clamp_half)
+
+
+func _merge_bounds(state: Dictionary, world: AABB) -> void:
+	if state.has("bounds"):
+		state["bounds"] = (state["bounds"] as AABB).merge(world)
+	else:
+		state["bounds"] = world
 
 
 func _transform_aabb(xform: Transform3D, box: AABB) -> AABB:
@@ -730,8 +1160,6 @@ func _save(image: Image, path: String) -> bool:
 	return true
 
 
-## Reloads the PNG from disk and checks it is a real 1600x900 picture: over
-## 120 KB, many distinct colours and no single dominant flat fill.
 func _verify(map_id: String, path: String) -> Dictionary:
 	var absolute: String = ProjectSettings.globalize_path(path)
 	var record: Dictionary = {
@@ -780,9 +1208,6 @@ func _verify(map_id: String, path: String) -> Dictionary:
 # --------------------------------------------------------------------------
 
 
-## Sets a property on an autoload through the tree instead of a global name.
-## Autoload identifiers are not resolvable by `--check-only`, so going through
-## /root keeps the tool parseable without the known false positive.
 func _set_autoload_property(autoload_name: String, property: String,
 		value: Variant) -> void:
 	var autoload: Node = get_node_or_null("/root/" + autoload_name)
@@ -791,8 +1216,6 @@ func _set_autoload_property(autoload_name: String, property: String,
 
 
 func _hide_overlays(root: Node) -> void:
-	## The race and minigame scenes both parent their UI to the map node. A
-	## preview must not contain the HUD, pause menu or result card.
 	for child: Node in root.get_children():
 		if child is CanvasLayer:
 			(child as CanvasLayer).visible = false
@@ -827,12 +1250,9 @@ func _nodes_of_type(root: Node, type_name: String) -> Array[Node]:
 
 
 func _report(records: Array[Dictionary], failures: int) -> void:
-	print("---- preview_render: %d map(s), %d failure(s) ----" % [
+	print("---- preview_render: %d preview(s), %d failure(s) ----" % [
 		records.size(), failures])
 	for record: Dictionary in records:
-		if bool(record.get("skipped", false)):
-			print("  %s -> SKIPPED (no card written)" % str(record["id"]))
-			continue
 		print("  %s -> %s" % [
 			str(record["id"]),
 			ProjectSettings.globalize_path(str(record["path"]))])

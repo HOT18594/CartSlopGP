@@ -25,10 +25,10 @@ anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
-theme_override_constants/margin_left = 96
-theme_override_constants/margin_top = 40
-theme_override_constants/margin_right = 96
-theme_override_constants/margin_bottom = 40
+theme_override_constants/margin_left = 110
+theme_override_constants/margin_top = 24
+theme_override_constants/margin_right = 110
+theme_override_constants/margin_bottom = 24
 
 [node name="Panel" type="PanelContainer" parent="Frame"]
 layout_mode = 2
@@ -37,7 +37,7 @@ size_flags_vertical = 3
 
 [node name="Shell" type="VBoxContainer" parent="Frame/Panel"]
 layout_mode = 2
-theme_override_constants/separation = 12
+theme_override_constants/separation = 10
 
 [node name="Header" type="HBoxContainer" parent="Frame/Panel/Shell"]
 layout_mode = 2
@@ -48,14 +48,14 @@ layout_mode = 2
 size_flags_horizontal = 3
 theme_type_variation = &"TitleLabel"
 theme_override_colors/font_color = Color(0.117647, 0.105882, 0.227451, 1)
-theme_override_font_sizes/font_size = 40
+theme_override_font_sizes/font_size = 38
 text = "MULTIPLAYER"
 vertical_alignment = 1
 
 [node name="BackButton" type="Button" parent="Frame/Panel/Shell/Header"]
 unique_name_in_owner = true
 layout_mode = 2
-custom_minimum_size = Vector2(120, 48)
+custom_minimum_size = Vector2(120, 46)
 theme_override_font_sizes/font_size = 17
 text = "BACK"
 script = ExtResource("4")
@@ -75,8 +75,17 @@ horizontal_scroll_mode = 0
 vertical_scroll_mode = 1
 follow_focus = true
 
-[node name="Body" type="VBoxContainer" parent="Frame/Panel/Shell/Content"]
-custom_minimum_size = Vector2(860, 0)
+[node name="ContentPad" type="MarginContainer" parent="Frame/Panel/Shell/Content"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+theme_override_constants/margin_left = 14
+theme_override_constants/margin_top = 8
+theme_override_constants/margin_right = 14
+theme_override_constants/margin_bottom = 14
+
+[node name="Body" type="VBoxContainer" parent="Frame/Panel/Shell/Content/ContentPad"]
+unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
@@ -88,7 +97,7 @@ unique_name_in_owner = true
 visible = false
 layout_mode = 2
 theme_override_colors/font_color = Color(0.78, 0.19, 0.22, 1)
-theme_override_font_sizes/font_size = 15
+theme_override_font_sizes/font_size = 14
 text = ""
 horizontal_alignment = 1
 autowrap_mode = 3

@@ -53,6 +53,8 @@ const RACING_SCENES: PackedStringArray = [
 ## car just because the session mode is GAME_MINIGAMES.
 const NON_RACING_SCENES: PackedStringArray = [
 	"res://scenes/minigames/cargo_rush.tscn",
+	"res://scenes/minigames/knockout.tscn",
+	"res://scenes/minigames/bomb_tag.tscn",
 	"res://scenes/minigames/meadow_lobby.tscn",
 ]
 
@@ -195,8 +197,9 @@ func _process(delta: float) -> void:
 	_quality_timer = 0.0
 	var fps: float = Engine.get_frames_per_second()
 	var ceiling: float = preset_scale()
-	if fps < 45.0 and _resolution_scale > 0.85:
-		_resolution_scale = maxf(0.85, _resolution_scale - 0.02)
+	var floor_scale: float = maxf(0.65, ceiling - 0.16)
+	if fps < 45.0 and _resolution_scale > floor_scale:
+		_resolution_scale = maxf(floor_scale, _resolution_scale - 0.02)
 	elif fps > 58.5 and _resolution_scale < ceiling:
 		_resolution_scale = minf(ceiling, _resolution_scale + 0.02)
 	var viewport: Viewport = get_viewport()
@@ -482,9 +485,16 @@ static func sanitize_map_id(raw: String) -> String:
 
 
 static func map_id_or_empty(raw: String) -> String:
-	## The registry id when `raw` names a race map (legacy `meadow_loop`
-	## included), or "" for a cargo theme, a minigame id or an unknown value.
-	var key: String = "circuit" if raw == "meadow_loop" else raw
+	## The registry id when `raw` names a race map (legacy aliases included),
+	## or "" for a cargo theme, a minigame id or an unknown value.
+	var key: String = raw.strip_edges()
+	for _hop in TrackDefs.LEGACY_IDS.size() + 1:
+		if not TrackDefs.LEGACY_IDS.has(key):
+			break
+		var next: String = str(TrackDefs.LEGACY_IDS[key])
+		if next == key:
+			break
+		key = next
 	for preset: Dictionary in TrackDefs.PRESETS:
 		if TrackDefs.is_map(preset) and str(preset.get("id", "")) == key:
 			return key
@@ -975,7 +985,7 @@ func settings_summary_lines() -> PackedStringArray:
 		% [_percent(master_volume), _percent(music_volume), _percent(sfx_volume)])
 	lines.append("VIDEO    %s  %s  HUD %d%%  shake x%.2f"
 		% [quality_name(), "dynamic" if dynamic_resolution else "fixed",
-			_percent(hud_scale), clampf(camera_shake, 0.0, 1.5)])
+			roundi(clampf(hud_scale, 0.75, 1.5) * 100.0), clampf(camera_shake, 0.0, 1.5)])
 	lines.append("COMFORT  reduce motion %s  FPS %s"
 		% [_on_off(reduce_motion), _on_off(show_fps)])
 	lines.append("CONTROLS deadzone %d%%  boost %s  drift %s"
@@ -1009,4 +1019,4 @@ static func _on_off(value: bool) -> String:
 
 
 static func _hold_or_toggle(value: bool) -> String:
-	return "hold" if value else "toggle"
+	return "toggle" if value else "hold"

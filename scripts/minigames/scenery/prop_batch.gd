@@ -90,6 +90,22 @@ func add_cylinder(xform: Transform3D, radius: float, height: float,
 		add_triangle(center_bottom, xform * bottom0, xform * bottom1, color)
 
 
+## Adds a capped cone of `height` along local Y, transformed by `xform`.
+func add_cone(xform: Transform3D, radius: float, height: float,
+		segments: int, color: Color) -> void:
+	var count: int = maxi(segments, 3)
+	var half: float = height * 0.5
+	var apex: Vector3 = xform * Vector3(0.0, half, 0.0)
+	var center_bottom: Vector3 = xform * Vector3(0.0, -half, 0.0)
+	for i in count:
+		var a0: float = TAU * float(i) / float(count)
+		var a1: float = TAU * float(i + 1) / float(count)
+		var bottom0 := Vector3(cos(a0) * radius, -half, sin(a0) * radius)
+		var bottom1 := Vector3(cos(a1) * radius, -half, sin(a1) * radius)
+		add_triangle(xform * bottom0, apex, xform * bottom1, color)
+		add_triangle(center_bottom, xform * bottom0, xform * bottom1, color)
+
+
 ## Merges everything added so far. Returns null when the batch is empty.
 func build() -> ArrayMesh:
 	return SceneryKit.mesh_from(_verts, _colors, _indices, true)

@@ -1,21 +1,20 @@
 shader_type spatial;
 render_mode unshaded, blend_add, depth_draw_never, cull_disabled, shadows_disabled, fog_disabled;
 
-// Cart Slop GP: aurora speed zone. A translucent ground field of soft blue-cyan
-// curtains that drift and breathe over the road. Every pad in the world shares
-// this one material and one compiled shader; all motion comes from TIME, so
-// nothing is animated or allocated from script.
+// Cart Slop GP: holographic arcade aurora speed zone with 3 forward-rushing
+// chevron waves and glowing lateral rails. Unmistakable from 100 m away on
+// tarmac, dirt, and bright glacier ice.
 
-uniform vec4 deep_color : source_color = vec4(0.02, 0.08, 0.55, 1.0);
-uniform vec4 glow_color : source_color = vec4(0.08, 0.42, 1.00, 1.0);
-uniform vec4 crest_color : source_color = vec4(0.32, 0.86, 1.00, 1.0);
-uniform float intensity : hint_range(0.0, 3.0) = 1.9;
-uniform float pulse_speed : hint_range(0.0, 2.0) = 0.5;
-uniform float drift_speed : hint_range(0.0, 0.5) = 0.05;
-uniform float curtain_speed : hint_range(0.0, 2.0) = 0.22;
+uniform vec4 deep_color : source_color = vec4(0.039, 0.133, 0.659, 1.0); // #0a22a8
+uniform vec4 glow_color : source_color = vec4(0.078, 0.722, 1.000, 1.0); // #14b8ff
+uniform vec4 crest_color : source_color = vec4(0.580, 1.000, 1.000, 1.0); // #94ffff
+uniform vec4 edge_color : source_color = vec4(0.847, 0.361, 1.000, 1.0); // #d85cff
+uniform float intensity : hint_range(0.0, 4.0) = 1.9;
+uniform float pulse_speed : hint_range(0.0, 4.0) = 0.85;
+uniform float drift_speed : hint_range(0.0, 1.0) = 0.12;
+uniform float curtain_speed : hint_range(0.0, 4.0) = 0.65;
+uniform float chevron_speed : hint_range(0.0, 6.0) = 2.15;
 
-// Two-octave value noise, cheap on purpose: no texture fetch, no loop, so the
-// mobile renderer sees a handful of instructions per pixel on a small quad.
 float hash21(vec2 p) {
 	p = fract(p * vec2(123.34, 456.21));
 	p += dot(p, p + 45.32);
@@ -37,39 +36,72 @@ void fragment() {
 	vec2 uv = UV;
 	float t = TIME;
 
-	// Soft elliptical falloff: the field ends in a glow, never a rectangle.
+	// SpeedZone QuadMesh is rotated -90 deg on X: UV.y = 1.0 is +Z (entry),
+	// UV.y = 0.0 is -Z (forward boost exit).
+	float forward_uv = 1.0 - uv.y;
+	float abs_x = abs(uv.x - 0.5) * 2.0;
+
+	// Sleek elliptical capsule falloff so ends feather smoothly with zero box cut.
 	vec2 offset = (uv - vec2(0.5)) * 2.0;
-	float falloff = 1.0 - smoothstep(0.42, 1.05, length(offset * vec2(0.94, 1.0)));
-	falloff *= falloff;
+	float ellip = 1.0 - smoothstep(0.48, 1.04, length(offset * vec2(0.88, 0.98)));
+	float end_fade = smoothstep(0.0, 0.15, uv.y) * smoothstep(1.0, 0.85, uv.y);
+	float side_fade = 1.0 - smoothstep(0.88, 1.0, abs_x);
+	float falloff = clamp(ellip * 0.82 + end_fade * side_fade * 0.36, 0.0, 1.0);
 
-	// Low-frequency noise bends the curtains so they breathe instead of scroll.
-	vec2 drift = vec2(t * drift_speed, -t * drift_speed * 0.62);
-	float low = value_noise(uv * vec2(3.4, 1.7) + drift);
-	float high = value_noise(uv * vec2(7.5, 3.1) - drift * 1.8);
-	float warp = (low - 0.5) * 0.62 + (high - 0.5) * 0.22;
+	// Flowing plasma aurora curtains warped by two-octave noise.
+	vec2 drift = vec2(t * drift_speed, -t * drift_speed * 1.45);
+	float low = value_noise(vec2(uv.x * 3.8, forward_uv * 2.2) + drift);
+	float high = value_noise(vec2(uv.x * 8.2, forward_uv * 4.0) - drift * 1.9);
+	float warp = (low - 0.5) * 0.56 + (high - 0.5) * 0.22;
 
-	// Vertical curtains: narrow light ribbons sliding across the field plus one
-	// fine fold, all warped by the noise. Nothing has a hard edge, so the pad
-	// never reads as paint, but the ribbons stay distinct from the dark gaps.
-	float ribbon_a = sin((uv.x + warp * 1.1) * 18.0 + t * curtain_speed);
-	float ribbon_b = sin((uv.x - warp * 0.9) * 9.5 - t * curtain_speed * 0.62 + 1.9);
-	float ribbon_c = sin((uv.x + warp * 0.6) * 30.0 + t * curtain_speed * 1.5 + 0.7);
-	float bands = ribbon_a * 0.52 + ribbon_b * 0.33 + ribbon_c * 0.15;
-	float curtain = smoothstep(0.22, 0.80, bands * 0.5 + 0.5);
+	float ribbon_a = sin((uv.x + warp * 1.05) * 18.0 + t * curtain_speed);
+	float ribbon_b = sin((uv.x - warp * 0.85) * 10.5 - t * curtain_speed * 0.72 + 1.7);
+	float ribbon_c = sin((uv.x + warp * 0.55) * 28.0 + t * curtain_speed * 1.55 + 0.6);
+	float bands = ribbon_a * 0.50 + ribbon_b * 0.34 + ribbon_c * 0.16;
+	float curtain = smoothstep(0.18, 0.82, bands * 0.5 + 0.5);
 
-	// Slow energy travelling along the pad plus soft lengthwise breakup, so the
-	// ribbons breathe instead of reading as uniform stripes.
-	float flow = sin(uv.y * 4.6 - t * 0.5 + low * 5.0) * 0.5 + 0.5;
-	float shimmer = 0.72 + 0.28 * flow;
-	float length_var = mix(0.62, 1.0, smoothstep(0.15, 0.85, low * 0.6 + high * 0.4));
+	// Forward plasma shimmer rushing toward -Z.
+	float flow = sin(forward_uv * 6.2 - t * 2.8 + low * 4.2) * 0.5 + 0.5;
+	float shimmer = 0.78 + 0.22 * flow;
 
-	vec3 color = mix(deep_color.rgb, glow_color.rgb, curtain);
-	color = mix(color, crest_color.rgb, pow(curtain, 4.0) * 0.55);
-	color *= shimmer;
+	// 3 soft, luminous forward-scrolling speed chevrons pointing toward -Z.
+	float lane_mask = (1.0 - smoothstep(0.64, 0.86, abs_x)) * end_fade;
+	float chev_coord = (forward_uv + abs_x * 0.28 + warp * 0.05) * 3.0 - t * chevron_speed;
+	float chev_f = fract(chev_coord);
+	float chev_wake = smoothstep(0.14, 0.68, chev_f) * smoothstep(0.88, 0.68, chev_f);
+	float chev_core = exp(-pow((chev_f - 0.68) / 0.092, 2.0));
+	float chevron = (chev_wake * 0.68 + chev_core * 0.96) * lane_mask;
 
-	float pulse = 0.88 + 0.12 * sin(t * pulse_speed * TAU);
-	float alpha = falloff * (0.34 + 0.95 * curtain) * length_var * intensity * pulse;
+	// Sleek holographic edge rails at x ~ 0.08 and x ~ 0.92 (abs(uv.x - 0.5) = 0.42).
+	float rail_dist = abs(abs(uv.x - 0.5) - 0.42);
+	float rail_pulse = 0.72 + 0.28 * sin(forward_uv * 10.0 - t * chevron_speed * 2.6);
+	float rail_core = exp(-pow(rail_dist / 0.015, 2.0)) * end_fade;
+	float rail_glow = exp(-pow(rail_dist / 0.045, 2.0)) * end_fade * rail_pulse;
+	float edge_aura = exp(-pow(rail_dist / 0.085, 2.0)) * end_fade;
+
+	// Compose electric indigo -> vivid cyan -> neon aqua-white + magenta edge shimmer.
+	vec3 plasma = mix(deep_color.rgb, glow_color.rgb, curtain);
+	plasma = mix(plasma, crest_color.rgb, pow(curtain, 3.0) * 0.52);
+	plasma = mix(plasma, edge_color.rgb, edge_aura * (0.42 + 0.26 * sin(t * 2.4 + forward_uv * 5.0)));
+	plasma *= shimmer;
+
+	vec3 chev_col = mix(glow_color.rgb, crest_color.rgb, clamp(chev_core * 0.85 + 0.25, 0.0, 1.0));
+	vec3 rail_col = mix(glow_color.rgb, crest_color.rgb, clamp(rail_core * 0.9 + 0.2, 0.0, 1.0))
+			+ edge_color.rgb * edge_aura * 0.35;
+
+	float surge_boost = max(intensity - 1.9, 0.0) * 0.55;
+	vec3 color = plasma * (0.65 + 0.45 * curtain)
+			+ chev_col * chevron * (1.28 + surge_boost)
+			+ rail_col * (rail_glow * 0.95 + rail_core * 1.15);
+	color *= (0.78 + 0.28 * clamp(intensity / 1.9, 0.0, 2.0));
+
+	float pulse = 0.92 + 0.08 * sin(t * pulse_speed * TAU);
+	float field_alpha = falloff * (0.30 + 0.52 * curtain)
+			+ chevron * 0.62
+			+ rail_glow * 0.58
+			+ rail_core * 0.42;
+	float alpha = field_alpha * (intensity / 1.9) * pulse;
 
 	ALBEDO = color;
-	ALPHA = clamp(alpha, 0.0, 0.55);
+	ALPHA = clamp(alpha, 0.0, 0.90);
 }

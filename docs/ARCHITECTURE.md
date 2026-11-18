@@ -26,12 +26,18 @@ dies with a race belongs in the race scene.
 ## Screen flow
 
 ```
-main_menu → play_menu ─┬→ vehicle_select ─→ minigames_menu ─→ meadow_lobby → grass_race
-                       └→ room_browser ────→ (join) ────────→ meadow_lobby
-sandbox (direct from play_menu)
+main_menu → play_menu ─┬→ SOLO ────────→ minigames_menu (SELECT MODE) ─→ vehicle_select ─┬→ grass_race
+                       │                                                                 ├→ cargo_rush
+                       │                                                                 ├→ knockout
+                       │                                                                 ├→ bomb_tag
+                       │                                                                 └→ sandbox
+                       └→ MULTIPLAYER ─→ lobby_menu ─┬→ CREATE ONLINE / LAN ROOM ─→ room lobby ─→ match scene
+                                                     └→ JOIN ROOM (code or room_browser)
 ```
 
-`PlayMenu` picks the game (Race or Deliver), then the map or arena inside it.
+`PlayMenu` offers **SOLO** and **MULTIPLAYER**. **SOLO** opens `minigames_menu`
+(`SELECT MODE`), showing all 5 modes (`RACING`, `DELIVER`, `KNOCKOUT`,
+`BLAST TAG`, `SANDBOX`) front-and-center with `1600x900` map screenshots.
 `SceneLoader` performs every transition — never call `change_scene_to_file`
 directly, or the fade and the loading overlay are skipped.
 

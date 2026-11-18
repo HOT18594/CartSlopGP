@@ -38,6 +38,17 @@ const RACING_GRIP_PER_POINT: float = 0.028
 const RACING_STEER_PER_POINT: float = 0.010
 const RACING_MASS_PER_POINT: float = 24.0
 const RACING_PUSH_PER_POINT: float = 0.030
+## Shopping Cart racing deltas. Applied around RACING_DEFAULT_ALLOCATION (3 pts
+## per stat) so a balanced 3/3/3/3 build preserves stock Shopping Cart feel while
+## +/- garage tuning shifts speed, leg-push acceleration, grip and ballast.
+const CART_RACING_BASE_POINTS: float = 3.0
+const CART_SPEED_PER_POINT: float = 0.65
+const CART_ACCEL_PER_POINT: float = 1.25
+const CART_GRIP_PER_POINT: float = 0.035
+const CART_STEER_PER_POINT: float = 0.015
+const CART_MASS_PER_POINT: float = 4.5
+const CART_PUSH_PER_POINT: float = 0.045
+const CART_WEIGHT_ACCEL_DRAG: float = 0.18
 
 ## Keys used by the vehicle-picker comparison bars. Keep display order here.
 const STAT_KEYS: PackedStringArray = [
@@ -421,11 +432,9 @@ static func stat_ratio(entry: Dictionary, key: String, ranges: Dictionary) -> fl
 
 
 static func racing_stat_ranges() -> Dictionary:
-	## Min/max for the four allocatable racing stats. Each stat moves
-	## independently, so probing the chassis at zero and at the per-stat cap
-	## covers the full range a composed entry can reach without simulating play.
-	## The stock cart default is deliberately excluded: its handling is not
-	## composed from points, so it is not one of the sampled variants.
+	## Min/max for the four allocatable racing stats across every legal racing
+	## choice (including the tunable Shopping Cart). Probing each chassis at zero
+	## and at the per-stat cap covers the full range a composed entry can reach.
 	var ranges: Dictionary = {}
 	for key: String in STAT_KEYS:
 		ranges[key] = {"min": INF, "max": -INF}
@@ -436,7 +445,7 @@ static func racing_stat_ranges() -> Dictionary:
 			allocation[other] = 0
 		allocation[stat_key] = RACING_STAT_MAX
 		variants.append(allocation)
-	for base: Dictionary in RACING_VEHICLES:
+	for base: Dictionary in racing_all():
 		var id: String = str(base.get("id", ""))
 		for allocation: Dictionary in variants:
 			var values: Dictionary = stats_for(compose_racing_entry(id, allocation))
@@ -548,16 +557,39 @@ static func compose_racing_entry(id: String, allocation: Dictionary,
 		tint: Color = Color(0, 0, 0, 0)) -> Dictionary:
 	## Turn a chassis id plus a point spend into a normal catalog entry. Every
 	## field player_cart.gd and vehicle_visual.gd already read is preserved; only
-	## mass, engine_power, max_speed, grip, steering and push_scale are rewritten
-	## from the four allocation axes, so the physics shape is unchanged.
-	## The stock cart default is not a composed chassis: return its catalog entry
-	## untouched so the garage preview is exactly the cart a race spawns.
+	## mass, engine_power/push_accel, max_speed, grip, steering and push_scale are
+	## rewritten from the four allocation axes, so the physics shape is unchanged.
+	## For the Shopping Cart, allocation deltas apply around the balanced 3/3/3/3
+	## default so stock allocation keeps baseline feel while +/- tuning and paint work.
+	var clean: Dictionary = sanitize_allocation(allocation)
 	if id == DEFAULT_ID:
-		return find(DEFAULT_ID)
+		var stock_base: Dictionary = find(DEFAULT_ID)
+		if stock_base.is_empty():
+			return {}
+		var cart_entry: Dictionary = stock_base.duplicate(true)
+		var d_speed: float = float(clean["top_speed"]) - CART_RACING_BASE_POINTS
+		var d_accel: float = float(clean["accel"]) - CART_RACING_BASE_POINTS
+		var d_grip: float = float(clean["grip"]) - CART_RACING_BASE_POINTS
+		var d_weight: float = float(clean["weight"]) - CART_RACING_BASE_POINTS
+		cart_entry["max_speed"] = maxf(float(stock_base.get("max_speed", 19.0))
+			+ CART_SPEED_PER_POINT * d_speed, 8.0)
+		cart_entry["push_accel"] = maxf(float(stock_base.get("push_accel", 15.0))
+			+ CART_ACCEL_PER_POINT * d_accel - CART_WEIGHT_ACCEL_DRAG * d_weight, 6.0)
+		cart_entry["grip"] = maxf(float(stock_base.get("grip", 0.90))
+			+ CART_GRIP_PER_POINT * d_grip, 0.5)
+		cart_entry["steering"] = maxf(float(stock_base.get("steering", 1.05))
+			+ CART_STEER_PER_POINT * d_grip, 0.6)
+		cart_entry["mass"] = maxf(float(stock_base.get("mass", 45.0))
+			+ CART_MASS_PER_POINT * d_weight, 20.0)
+		cart_entry["push_scale"] = maxf(float(stock_base.get("push_scale", 0.50))
+			+ CART_PUSH_PER_POINT * d_weight, 0.2)
+		cart_entry["racing_allocation"] = clean
+		if tint.a > 0.0:
+			cart_entry["tint_color"] = tint
+		return cart_entry
 	var base: Dictionary = racing_find(id)
 	if base.is_empty():
 		return {}
-	var clean: Dictionary = sanitize_allocation(allocation)
 	var entry: Dictionary = base.duplicate(true)
 	entry["max_speed"] = float(base.get("max_speed", 0.0)) \
 		+ RACING_SPEED_PER_POINT * float(clean["top_speed"])
@@ -578,12 +610,16 @@ static func compose_racing_entry(id: String, allocation: Dictionary,
 
 
 static func tinted_racing_entry(id: String, tint: Color) -> Dictionary:
-	## Base chassis plus a paint tint only. Remote ghosts use this: their
-	## collider mass/dimensions must come from the shared chassis, not from the
-	## local player's point spend. The stock cart cannot be repainted, so its
-	## catalog entry passes through unchanged.
+	## Base chassis plus a paint tint only. Remote ghosts use this when only a
+	## colour swatch is needed, including custom Shopping Cart paint.
 	if id == DEFAULT_ID:
-		return find(DEFAULT_ID)
+		var stock_base: Dictionary = find(DEFAULT_ID)
+		if stock_base.is_empty():
+			return {}
+		var cart_entry: Dictionary = stock_base.duplicate(true)
+		if tint.a > 0.0:
+			cart_entry["tint_color"] = tint
+		return cart_entry
 	var base: Dictionary = racing_find(id)
 	if base.is_empty():
 		return {}

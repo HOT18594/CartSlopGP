@@ -79,10 +79,10 @@ const BARRIER_CLEARANCE: float = ROAD_HALF + BARRIER_OFFSET
 ## swallowing the wall.
 const STAND_OFFSET: float = TILE_SIZE * 1.15
 ## A barrier piece is a 4 m chord, so on the outside of a corner its middle sags
-## inside the arc and a tilted piece on a hill shifts a couple of centimetres.
+## inside the arc and a tilted piece on a steep hill shifts several centimetres.
 ## The placement line is pushed out by this much so even after both effects no
 ## piece comes inside BARRIER_CLEARANCE.
-const BARRIER_SAG: float = 0.30
+const BARRIER_SAG: float = 0.48
 ## Meta flag on every barrier body, so an audit can find the wall even when two
 ## runs share a node name.
 const BARRIER_META: String = "tile_barrier"
@@ -95,7 +95,7 @@ const BANK_SPACING: float = 7.0
 const BANK_MODELS: Array[String] = [
 	"rock_largeA", "rock_largeB", "rock_tallA", "rock_largeF",
 ]
-const TYRE_OFFSET: float = 2.0
+const TYRE_OFFSET: float = 2.8
 
 ## Trackside detail (detail only: no colliders, so it can never narrow the road).
 ## A painted kerb line sits on the kit's raised kerb at the lane edge; low
@@ -822,7 +822,12 @@ static func tyre_stack(parent: Node3D, spline: RefCounted, dist: float,
 	var direction: float = 1.0 if side >= 0.0 else -1.0
 	var lateral: float = _snap_lateral(ROAD_HALF + TYRE_OFFSET) * direction
 	var distance: float = _snap_distance(spline, dist)
+	var min_centre_dist: float = ROAD_HALF + 0.65 + TYRE_COLLIDER_RADIUS
 	var point: Vector3 = _point_at(spline, distance, lateral)
+	if spline_distance(spline, point) < min_centre_dist:
+		point = _point_at(spline, distance, -lateral)
+		if spline_distance(spline, point) < min_centre_dist:
+			return 0
 	var body := _static_body(parent, "Tyres_%d" % int(round(distance)))
 	var transforms: Array = []
 	var colours: Array = []
@@ -847,32 +852,59 @@ static func tyre_stack(parent: Node3D, spline: RefCounted, dist: float,
 
 
 ## The shared trackside detail pass: a painted kerb line on both lane edges, low
-## advertising hoardings on the verge and a marker on the outside of every
-## corner. Everything is merged into one vertex-coloured mesh (one draw call)
-## and carries no collider, so it can never narrow the racing surface. Called
-## once by KenneyTiles.build; a theme can skip it with
-## `race.set_meta("kenney_skip_track_detail", true)`.
+## advertising hoardings clustered near stands/corners and a marker on the
+## outside of every corner. Everything is merged into one vertex-coloured mesh
+## (one draw call) and carries no collider, so it can never narrow the racing
+## surface. `options` may be a theme_id String or a Dictionary carrying
+## {"id": String, "hoarding_density": float (0..1)}.
 ##
 ## Returns {kerbs, hoardings, markers}.
 static func dress_track(parent: Node3D, spline: RefCounted,
-		theme_id: String = "") -> Dictionary:
+		options: Variant = "") -> Dictionary:
 	if parent == null or spline == null:
 		return {}
 	var root: Node = _scene_root(parent)
 	if root == null:
 		return {}
+	var theme_id: String = ""
+	var explicit_density: bool = false
+	var density: float = -1.0
+	if options is Dictionary:
+		var opt_dict: Dictionary = options as Dictionary
+		theme_id = str(opt_dict.get("id", opt_dict.get("theme", "")))
+		if opt_dict.has("hoarding_density"):
+			density = clampf(float(opt_dict["hoarding_density"]), 0.0, 1.0)
+			explicit_density = true
+	else:
+		theme_id = str(options)
+	if density < 0.0:
+		if root.has_meta("kenney_hoarding_density"):
+			density = clampf(float(root.get_meta("kenney_hoarding_density")),
+				0.0, 1.0)
+		else:
+			density = _default_hoarding_density(theme_id)
 	if root.has_meta(DETAIL_META):
 		var cached: Variant = root.get_meta(DETAIL_META)
-		return cached as Dictionary if cached is Dictionary else {}
+		if not explicit_density and cached is Dictionary:
+			return cached as Dictionary
+		var prev_holder: Node = parent.get_node_or_null(DETAIL_HOLDER)
+		if prev_holder == null:
+			prev_holder = root.find_child(DETAIL_HOLDER, true, false)
+		if prev_holder != null:
+			if prev_holder.get_parent() != null:
+				prev_holder.get_parent().remove_child(prev_holder)
+			prev_holder.free()
 	var verts := PackedVector3Array()
 	var normals := PackedVector3Array()
 	var colors := PackedColorArray()
 	var kerbs: int = _build_kerb_detail(spline, verts, normals, colors)
-	var hoardings: int = _build_hoarding_detail(spline, verts, normals, colors)
+	var hoardings: int = _build_hoarding_detail(spline, verts, normals, colors,
+		density)
 	var markers: int = _build_corner_marker_detail(spline, verts, normals,
 		colors)
 	var stats: Dictionary = {
 		"kerbs": kerbs, "hoardings": hoardings, "markers": markers,
+		"hoarding_density": density,
 	}
 	if not verts.is_empty():
 		var holder := Node3D.new()
@@ -892,10 +924,25 @@ static func dress_track(parent: Node3D, spline: RefCounted,
 		instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		holder.add_child(instance)
 	root.set_meta(DETAIL_META, stats)
-	print("TRACK DETAIL %s: %d kerb quads, %d hoardings, %d corner markers, %s" % [
-		theme_id if theme_id != "" else "grid", kerbs, hoardings, markers,
-		"1 batched draw" if not verts.is_empty() else "no geometry"])
+	print("TRACK DETAIL %s: %d kerb quads, %d hoardings (density %.2f), %d corner markers, %s" % [
+		theme_id if theme_id != "" else "grid", kerbs, hoardings, density,
+		markers, "1 batched draw" if not verts.is_empty() else "no geometry"])
 	return stats
+
+
+static func _default_hoarding_density(theme_id: String) -> float:
+	match theme_id:
+		"stadium":
+			return 0.42
+		"dockyard":
+			return 0.32
+		"meadow":
+			return 0.24
+		"canyon":
+			return 0.22
+		"glacier":
+			return 0.28
+	return 0.35
 
 
 ## A painted red/cream band on the kit's raised kerb along both lane edges. The
@@ -942,13 +989,16 @@ static func _build_kerb_detail(spline: RefCounted,
 	return quads
 
 
-## Low hoarding boards on the verge, evenly repeated around the lap. Each board
-## is a cream frame with a coloured inset, so the line reads as advertising even
-## without a text texture.
+## Low hoarding boards on the verge. When `density < 1.0`, boards cluster near
+## the start/pit straight and corner apexes/exits while leaving straightaways,
+## viaducts and scenic overlooks wide open over the barriers.
 static func _build_hoarding_detail(spline: RefCounted,
 		verts: PackedVector3Array, normals: PackedVector3Array,
-		colors: PackedColorArray) -> int:
-	var placed: int = 0
+		colors: PackedColorArray, density: float = 0.35) -> int:
+	if density <= 0.001:
+		return 0
+	var candidates: Array[Dictionary] = []
+	var lap_len: float = maxf(float(spline.total_length), 1.0)
 	for side: float in [-1.0, 1.0]:
 		var path: Dictionary = TileGeometry.clearance_path(spline, side,
 			HOARDING_LATERAL, CLEARANCE_STEP)
@@ -969,24 +1019,77 @@ static func _build_hoarding_detail(spline: RefCounted,
 			if tangent.length_squared() < 0.000001:
 				continue
 			tangent = tangent.normalized()
-			var right: Vector3 = tangent.cross(Vector3.UP).normalized()
-			var outward: Vector3 = right * side
-			var base: float = point.y - HOARDING_SINK
-			var centre := Vector3(point.x, base + HOARDING_HEIGHT * 0.5,
-				point.z)
-			var basis := Basis(tangent, Vector3.UP, right)
-			_append_detail_box(verts, normals, colors,
-				Transform3D(basis, centre),
-				Vector3(HOARDING_WIDTH, HOARDING_HEIGHT, HOARDING_DEPTH),
-				DETAIL_CREAM)
-			var inset_centre: Vector3 = centre - outward \
-				* (HOARDING_DEPTH * 0.5)
-			_append_detail_box(verts, normals, colors,
-				Transform3D(basis, inset_centre),
-				Vector3(HOARDING_WIDTH - 0.22, HOARDING_HEIGHT - 0.22,
-					HOARDING_DEPTH + 0.06),
-				_detail_color(DETAIL_PALETTE, placed, DETAIL_RED))
-			placed += 1
+			var score: float = 1.0
+			if density < 0.999:
+				var hit: Dictionary = spline.closest(point)
+				var s: float = float(hit.get("s", 0.0))
+				var curve: float = spline.curvature_at(s, 6.0)
+				# Positive curvature turns left -> right side (+1) is outside.
+				var outside_bonus: float = 0.32 if curve * side > 0.004 else 0.0
+				var curve_score: float = clampf(absf(curve) / 0.045, 0.0, 1.0)
+				var start_gap: float = minf(s, lap_len - s)
+				var start_score: float = 1.0 - smoothstep(14.0, 42.0, start_gap)
+				var pit_score: float = 0.0
+				if spline.has_method("tile_at"):
+					var kind: String = str(spline.tile_at(s))
+					if kind == "P" or kind == "E" or kind == "G":
+						pit_score = 0.75
+				var bridge_penalty: float = 0.70 \
+					if point.y > TileGeometry.ROAD_SURFACE + 2.1 else 0.0
+				# Group into 4-board sponsor clusters so boards never pepper singly.
+				var cluster_wave: float = 0.18 * sin(float(index / 4) * 2.3 + side)
+				score = maxf(curve_score * 0.85 + outside_bonus,
+					maxf(start_score * 0.95, pit_score)) \
+					+ cluster_wave - bridge_penalty
+			candidates.append({
+				"point": point,
+				"tangent": tangent,
+				"side": side,
+				"score": score,
+				"order": candidates.size(),
+			})
+	if candidates.is_empty():
+		return 0
+	var keep_count: int = candidates.size()
+	if density < 0.999:
+		keep_count = clampi(int(round(float(candidates.size()) * density)),
+			0, candidates.size())
+		if keep_count <= 0:
+			return 0
+		var ranked: Array[Dictionary] = candidates.duplicate()
+		ranked.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+			return float(a["score"]) > float(b["score"]))
+		var keep_orders: Dictionary = {}
+		for i in keep_count:
+			keep_orders[int(ranked[i]["order"])] = true
+		var filtered: Array[Dictionary] = []
+		for entry: Dictionary in candidates:
+			if keep_orders.has(int(entry["order"])):
+				filtered.append(entry)
+		candidates = filtered
+	var placed: int = 0
+	for entry: Dictionary in candidates:
+		var point: Vector3 = entry["point"] as Vector3
+		var tangent: Vector3 = entry["tangent"] as Vector3
+		var side: float = float(entry["side"])
+		var right: Vector3 = tangent.cross(Vector3.UP).normalized()
+		var outward: Vector3 = right * side
+		var base: float = point.y - HOARDING_SINK
+		var centre := Vector3(point.x, base + HOARDING_HEIGHT * 0.5,
+			point.z)
+		var basis := Basis(tangent, Vector3.UP, right)
+		_append_detail_box(verts, normals, colors,
+			Transform3D(basis, centre),
+			Vector3(HOARDING_WIDTH, HOARDING_HEIGHT, HOARDING_DEPTH),
+			DETAIL_CREAM)
+		var inset_centre: Vector3 = centre - outward \
+			* (HOARDING_DEPTH * 0.5)
+		_append_detail_box(verts, normals, colors,
+			Transform3D(basis, inset_centre),
+			Vector3(HOARDING_WIDTH - 0.22, HOARDING_HEIGHT - 0.22,
+				HOARDING_DEPTH + 0.06),
+			_detail_color(DETAIL_PALETTE, placed, DETAIL_RED))
+		placed += 1
 	return placed
 
 

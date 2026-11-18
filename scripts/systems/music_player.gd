@@ -57,7 +57,9 @@ func _track_for_current_scene() -> String:
 func track_for_path(path: String) -> String:
 	if path.ends_with("sandbox.tscn"):
 		return SANDBOX_TRACK
-	if path.ends_with("grass_race.tscn") or path.ends_with("meadow_lobby.tscn"):
+	if path.ends_with("grass_race.tscn") or path.ends_with("meadow_lobby.tscn") \
+			or path.ends_with("cargo_rush.tscn") or path.ends_with("knockout.tscn") \
+			or path.ends_with("bomb_tag.tscn"):
 		return RACE_TRACK
 	if path.contains("/ui/"):
 		return MENU_TRACK

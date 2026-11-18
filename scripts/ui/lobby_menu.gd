@@ -1,49 +1,51 @@
 extends Control
 const UiAnim := preload("res://scripts/ui/ui_anim.gd")
-## Multiplayer lobby. One segmented control splits the page into two modes:
-##
-##   header: title / back
-##   profile row: name + tag colour (idle only, compact)
-##   idle: HOST | JOIN segmented control
-##         HOST: one BOTS tile strip + two equal host tiles (LAN / ONLINE)
-##         JOIN: one code field + equal JOIN / SEARCH tiles
-##   room: real code + COPY/LEAVE, 8 player slots, host settings, START
-##   client: title LOBBY, real code, read-only setup summary
-##
-## Room lists never dump into the page. SEARCH opens the RoomBrowser popup in
-## merged mode: one list, LAN rooms first, every row badged LAN or ONLINE.
+## Party-game multiplayer lobby:
+## - Idle Screen: compact player strip (Name + Colour dots + Server status pill)
+##   above 3 self-explanatory visual cards (CREATE ONLINE ROOM, CREATE LAN ROOM,
+##   JOIN A ROOM with 5-letter code + Room Browser).
+## - Active Room Screen: clean 2-column video-game lobby fitting 1280x720 with
+##   zero scrolling — Left column shows the live 16:9 map screenshot, mode badge,
+##   map title, [CHANGE MODE & MAP], [GARAGE], BOTS & PUBLIC/PRIVATE controls;
+##   Right column shows the Room Code bar + Players list (or ALPHA vs BETA teams
+##   in DELIVER); pinned footer holds [LEAVE ROOM] + [START MATCH].
 
 const PLAY_MENU_SCENE: String = "res://scenes/ui/play_menu.tscn"
 const MINIGAMES_SCENE: String = "res://scenes/ui/minigames_menu.tscn"
 const VEHICLE_SCENE: String = "res://scenes/ui/vehicle_select.tscn"
 const LOBBY_SCENE: String = "res://scenes/ui/lobby_menu.tscn"
 const ROOM_BROWSER_SCENE: String = "res://scenes/ui/room_browser.tscn"
+const ART_DIR: String = "res://assets/ui/art/"
+const PREVIEW_DIR: String = "res://assets/ui/minigames/"
+
 const Catalog := preload("res://scripts/vehicles/vehicle_catalog.gd")
 const UiPalette := preload("res://scripts/ui/ui_palette.gd")
-const FOCUS_SLIDER := preload("res://scripts/ui/focus_slider.gd")
-const CargoTheme := preload("res://scripts/minigames/cargo_rush_theme.gd")
 const TrackDefs := preload("res://scripts/minigames/track_defs.gd")
+const VehicleSelect := preload("res://scripts/ui/vehicle_select.gd")
+const MinigamesMenu := preload("res://scripts/ui/minigames_menu.gd")
 
-## The room's game is one of these three. SANDBOX and the two MINIGAMES events
-## are written through Network.configure_session's scene argument, so the exact
-## scene (RACE vs CARGO) is part of the replicated session config.
 const KIND_SANDBOX: String = "sandbox"
 const KIND_RACE: String = "race"
 const KIND_DELIVER: String = "deliver"
-const KIND_LABELS: PackedStringArray = ["SANDBOX", "RACING", "DELIVER"]
-const KIND_VALUES: Array[String] = [KIND_SANDBOX, KIND_RACE, KIND_DELIVER]
-## Team columns are the ALPHA/BETA sides cargo_rush scores against.
+const KIND_KNOCKOUT: String = "knockout"
+const KIND_BOMB_TAG: String = "bomb_tag"
+
+const KIND_LABELS: PackedStringArray = [
+	"SANDBOX", "RACING", "DELIVER", "KNOCKOUT", "BLAST TAG",
+]
+const KIND_VALUES: Array[String] = [
+	KIND_SANDBOX, KIND_RACE, KIND_DELIVER, KIND_KNOCKOUT, KIND_BOMB_TAG,
+]
+
 const TEAM_LABELS: PackedStringArray = ["ALPHA", "BETA"]
 const TEAM_COLORS: Array[Color] = [UiPalette.BLUE, UiPalette.RED]
 
-const SERVER_DOWN: String = "Game server is down. Try again later."
-const OFFLINE_TEXT: String = "Online play is unavailable right now. LAN play still works."
+const SERVER_DOWN: String = "Online server is unreachable right now. LAN rooms still work."
 const LEAVE_WARNING: String = "Leaving will close the room for everyone."
 const MAX_SLOTS: int = 8
+const PANEL_MAX_WIDTH: float = 1088.0
 
-## Same BOTS tile strip the single-player PLAY menu shows: six equal tiles,
-## 0 = NONE. The lobby reuses UiKit.segmented instead of inventing a style.
-const BOT_LABELS: PackedStringArray = ["NONE", "1", "2", "3", "4", "5"]
+const BOT_LABELS: PackedStringArray = ["0", "1", "2", "3", "4", "5"]
 const BOT_VALUES: Array[int] = [0, 1, 2, 3, 4, 5]
 
 const TAG_COLORS: Array[Dictionary] = [
@@ -57,63 +59,97 @@ const TAG_COLORS: Array[Dictionary] = [
 	{"name": "PURPLE", "hex": "a06cff"},
 ]
 
+
+class _LobbyArtFallback extends Control:
+	var accent: Color = Color("38d6f0")
+	var art_id: String = ""
+
+	func _ready() -> void:
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+		resized.connect(queue_redraw)
+
+	func _draw() -> void:
+		var w: float = size.x
+		var h: float = size.y
+		if w < 8.0 or h < 8.0:
+			return
+		var top_col := Color("141933")
+		var bot_col := accent.darkened(0.36)
+		for b in 18:
+			var t: float = float(b) / 17.0
+			draw_rect(Rect2(0.0, h * float(b) / 18.0, w, h / 18.0 + 1.5),
+				top_col.lerp(bot_col, t))
+		var c := Vector2(w * 0.5, h * 0.46)
+		var r: float = minf(w, h) * 0.32
+		for ring in 3:
+			draw_arc(c, r * (1.2 - float(ring) * 0.28), 0.0, TAU, 36,
+				Color(accent.lightened(0.25), 0.22 + float(ring) * 0.14), 2.5, true)
+
+
+@onready var _frame: MarginContainer = $Frame
+@onready var _panel: PanelContainer = $Frame/Panel
+@onready var _shell: VBoxContainer = $Frame/Panel/Shell
 @onready var _title: Label = $Frame/Panel/Shell/Header/Title
 @onready var _profile_row: HBoxContainer = $Frame/Panel/Shell/ProfileRow
-@onready var _body: VBoxContainer = $Frame/Panel/Shell/Content/Body
+@onready var _body: VBoxContainer = %Body
 @onready var _status: Label = %StatusLabel
 @onready var _back_button: Button = %BackButton
 
 var _name_input: LineEdit
-var _typing_label: Label
-var _typing_active: bool = false
-var _typing_blink: float = 0.0
-var _idle_box: VBoxContainer
-var _offline_banner: PanelContainer
-var _offline_label: Label
+var _server_pill_style: StyleBoxFlat
+var _server_pill_label: Label
 var _retry_button: Button
-var _mode_switch: Button
-var _host_page: VBoxContainer
-var _join_page: VBoxContainer
-var _bots_strip: Button
-var _room_box: VBoxContainer
+var _tag_swatch_buttons: Dictionary = {}
+
+var _idle_box: VBoxContainer
+var _host_pi_button: Button
+var _lan_button: Button
 var _join_input: LineEdit
 var _join_button: Button
-var _join_status: Label
-var _lan_button: Button
 var _browse_button: Button
-var _host_pi_button: Button
-var _host_card: VBoxContainer
+var _join_status: Label
+
+var _room_box: VBoxContainer
+var _room_footer: HBoxContainer
+var _leave_button: Button
+var _start_button: Button
+var _client_wait_label: Label
+
+var _lobby_preview_tex: TextureRect
+var _lobby_preview_fallback: _LobbyArtFallback
+var _lobby_mode_chip_style: StyleBoxFlat
+var _lobby_mode_chip_label: Label
+var _lobby_map_title: Label
+var _lobby_map_sub: Label
+
+var _game_pill: Button
+var _change_mode_button: Button
+var _map_button: Button
+var _vehicle_button: Button
+var _room_bots_pill: Button
+var _visibility_pill: Button
+var _visibility_box: Control
+
 var _code_caption: Label
 var _code_label: Label
 var _copy_button: Button
-var _leave_button: Button
 var _host_hint: Label
+
+var _players_card: PanelContainer
 var _players_box: VBoxContainer
 var _players_header: Label
-var _teams_card: VBoxContainer
+
+var _teams_card: PanelContainer
 var _teams_lock_button: Button
 var _teams_hint: Label
 var _team_lists: Array[VBoxContainer] = []
 var _team_headers: Array[Label] = []
 var _team_focus_peer: int = 0
-var _config_box: VBoxContainer
-var _settings_row: GridContainer
-var _setting_views: Dictionary = {} ## key -> Button / Control
-var _summary: Label
-var _client_note: Label
-var _start_button: Button
-var _game_pill: Button
-var _room_bots_slider: HSlider
-var _room_bots_value_label: Label
-var _map_button: Button
-var _vehicle_button: Button
-var _visibility_pill: Button
-var _visibility_box: VBoxContainer
+
 var _browser: Control
 var _browser_mode: String = "all"
-var _mode: String = "host"
-var _tag_swatch_buttons: Dictionary = {} ## hex -> Button
 var _state: String = "idle"
+var _local_kind: String = KIND_RACE
 var _server_checked: bool = false
 var _client_code: String = ""
 var _leave_armed: bool = false
@@ -122,7 +158,10 @@ var _leave_ticket: int = 0
 
 func _ready() -> void:
 	CursorController.set_menu_mode(true)
+	_tune_shell_chrome()
 	_build_ui()
+	resized.connect(_fit_panel)
+	_fit_panel()
 	Network.host_started.connect(_on_host_started)
 	Network.host_failed.connect(_on_host_failed)
 	Network.join_succeeded.connect(_on_join_succeeded)
@@ -140,6 +179,7 @@ func _ready() -> void:
 	Network.server_status_changed.connect(_on_server_status)
 
 	_name_input.text = GameSettings.player_name
+	_local_kind = _detect_initial_kind()
 	_set_state("idle")
 	_set_server_status(false, "checking")
 	_probe_server()
@@ -148,6 +188,50 @@ func _ready() -> void:
 	elif Network.is_client and Network.is_connected_to_server():
 		_on_join_succeeded()
 	call_deferred("_enter")
+	if OS.get_environment("CART_UI_MEASURE") == "1":
+		_report_layout.call_deferred()
+
+
+func _tune_shell_chrome() -> void:
+	if _panel != null:
+		var base: StyleBox = _panel.get_theme_stylebox("panel")
+		if base is StyleBoxFlat:
+			var style: StyleBoxFlat = (base as StyleBoxFlat).duplicate() as StyleBoxFlat
+			style.content_margin_left = 26.0
+			style.content_margin_right = 26.0
+			style.content_margin_top = 18.0
+			style.content_margin_bottom = 18.0
+			_panel.add_theme_stylebox_override("panel", style)
+	if _shell != null:
+		_shell.add_theme_constant_override("separation", 8)
+	if _body != null:
+		_body.alignment = BoxContainer.ALIGNMENT_BEGIN
+		_body.add_theme_constant_override("separation", 10)
+	var content_pad := get_node_or_null("Frame/Panel/Shell/Content/ContentPad") as MarginContainer
+	if content_pad != null:
+		content_pad.add_theme_constant_override("margin_left", 8)
+		content_pad.add_theme_constant_override("margin_right", 8)
+		content_pad.add_theme_constant_override("margin_top", 4)
+		content_pad.add_theme_constant_override("margin_bottom", 8)
+
+
+func _fit_panel() -> void:
+	if _frame == null:
+		return
+	var vp: Vector2 = size if size.x > 1.0 else get_viewport_rect().size
+	if vp.x < 1.0 or vp.y < 1.0:
+		return
+	var target_w: float = minf(PANEL_MAX_WIDTH, maxf(320.0, vp.x - 48.0))
+	var side_margin: int = maxi(24, int(floor((vp.x - target_w) * 0.5)))
+	var vert_margin: int = 24 if vp.y >= 660.0 else 14
+	_frame.add_theme_constant_override("margin_left", side_margin)
+	_frame.add_theme_constant_override("margin_right", side_margin)
+	_frame.add_theme_constant_override("margin_top", vert_margin)
+	_frame.add_theme_constant_override("margin_bottom", vert_margin)
+
+
+func _report_layout() -> void:
+	await UiKit.report_screen(self, "lobby:idle")
 
 
 func _enter() -> void:
@@ -163,44 +247,12 @@ func _enter() -> void:
 
 
 func _focus_idle() -> void:
-	## Idle lobby: land on the main action of whichever mode is showing.
-	_focus_mode()
-
-
-func _focus_mode() -> void:
-	if _mode == "join":
-		if _join_input != null and _join_input.editable:
-			MenuNav.focus(_join_input)
-		elif _join_button != null and not _join_button.disabled:
-			MenuNav.focus(_join_button)
-		elif _browse_button != null:
-			MenuNav.focus(_browse_button)
-		return
 	if _host_pi_button != null and not _host_pi_button.disabled:
 		MenuNav.focus(_host_pi_button)
 	elif _lan_button != null:
 		MenuNav.focus(_lan_button)
-	elif _bots_strip != null:
-		MenuNav.focus(_bots_strip)
-
-
-func _set_mode(mode: String, move_focus: bool = true) -> void:
-	## One page at a time. Hiding a page never clears the code field, so typed
-	## input survives a trip through HOST and back.
-	_mode = "join" if mode == "join" else "host"
-	if _host_page != null:
-		_host_page.visible = _mode == "host"
-	if _join_page != null:
-		_join_page.visible = _mode == "join"
-	if _mode_switch != null:
-		_mode_switch.call("set_index", 1 if _mode == "join" else 0)
-	MenuNav.refresh()
-	if move_focus and _state == "idle":
-		_focus_mode()
-
-
-func _on_mode_changed(value: Variant) -> void:
-	_set_mode(str(value))
+	elif _browse_button != null:
+		MenuNav.focus(_browse_button)
 
 
 func _focus_host() -> void:
@@ -209,7 +261,6 @@ func _focus_host() -> void:
 
 
 func _focus_client() -> void:
-	## Clients cannot start the race, so the useful action is LEAVE.
 	if _leave_button != null and _leave_button.visible:
 		MenuNav.focus(_leave_button)
 
@@ -223,8 +274,8 @@ func _candy(text: String, color: Color, height: int, font_size: int) -> Button:
 
 
 func _pill(labels: PackedStringArray, values: Array, start_index: int,
-		tile_width: float = 78.0) -> Button:
-	return UiKit.segmented(labels, values, start_index, tile_width, 48.0)
+		tile_width: float = 78.0, height: float = 42.0) -> Button:
+	return UiKit.segmented(labels, values, start_index, tile_width, height)
 
 
 func _caption(text: String) -> Label:
@@ -233,14 +284,16 @@ func _caption(text: String) -> Label:
 	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	label.add_theme_font_size_override("font_size", 13)
 	label.add_theme_color_override("font_color", UiPalette.BLUE_DARK)
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return label
 
 
 func _section(text: String) -> Label:
 	var label := Label.new()
 	label.text = text
-	label.add_theme_font_size_override("font_size", 18)
+	label.add_theme_font_size_override("font_size", 15)
 	label.add_theme_color_override("font_color", UiPalette.INK)
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return label
 
 
@@ -249,141 +302,94 @@ func _hint(text: String) -> Label:
 	label.text = text
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	label.custom_minimum_size = Vector2(0, 28)
-	label.add_theme_font_size_override("font_size", 13)
+	label.add_theme_font_size_override("font_size", 12)
 	label.add_theme_color_override("font_color", UiPalette.MUTED)
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return label
 
 
-func _desc(text: String) -> Label:
-	var label := Label.new()
-	label.text = text
-	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	label.add_theme_font_size_override("font_size", 14)
-	label.add_theme_color_override("font_color", UiPalette.MUTED)
-	return label
-
-
-func _heading(text: String) -> Label:
-	var label := Label.new()
-	label.text = text
-	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	label.theme_type_variation = &"TitleLabel"
-	label.add_theme_font_size_override("font_size", 24)
-	label.add_theme_color_override("font_color", UiPalette.INK)
-	return label
-
-
-func _card(parent: Node) -> VBoxContainer:
-	## Tinted rounded block, no outline: the page gap separates modes and the
-	## block groups one mode's controls, so a card never draws a frame itself.
+func _card_panel(parent: Node, pad_h: int = 14, pad_v: int = 12,
+		tint: Color = Color(1.0, 1.0, 1.0, 0.54)) -> PanelContainer:
 	var panel := PanelContainer.new()
 	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var style := StyleBoxFlat.new()
-	style.bg_color = Color(1.0, 1.0, 1.0, 0.45)
+	style.bg_color = tint
 	style.set_corner_radius_all(UiKit.CORNER_RADIUS)
-	style.content_margin_left = 20
-	style.content_margin_right = 20
-	style.content_margin_top = 14
-	style.content_margin_bottom = 14
+	style.set_border_width_all(2)
+	style.border_color = Color(0.12, 0.11, 0.23, 0.16)
+	style.content_margin_left = pad_h
+	style.content_margin_right = pad_h
+	style.content_margin_top = pad_v
+	style.content_margin_bottom = pad_v
+	style.anti_aliasing = true
 	panel.add_theme_stylebox_override("panel", style)
 	parent.add_child(panel)
-	var column := VBoxContainer.new()
-	column.add_theme_constant_override("separation", UiKit.SPACING_TIGHT)
-	column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	panel.add_child(column)
-	return column
+	return panel
 
 
-func _soft_disabled_style() -> StyleBoxFlat:
-	## One quiet disabled tint, same radius as every other control.
+func _chip(text: String, bg: Color, fg: Color = UiPalette.INK) -> PanelContainer:
+	var chip := PanelContainer.new()
+	chip.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	chip.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var style := StyleBoxFlat.new()
-	style.bg_color = Color("d8d3e4")
-	style.set_corner_radius_all(UiKit.CORNER_RADIUS)
-	style.content_margin_left = 22
-	style.content_margin_right = 22
-	style.content_margin_top = 10
-	style.content_margin_bottom = 10
-	return style
+	style.bg_color = bg
+	style.set_corner_radius_all(8)
+	style.set_border_width_all(2)
+	style.border_color = UiPalette.OUTLINE
+	style.content_margin_left = 8.0
+	style.content_margin_right = 8.0
+	style.content_margin_top = 2.0
+	style.content_margin_bottom = 2.0
+	style.anti_aliasing = true
+	chip.add_theme_stylebox_override("panel", style)
+	var lbl := Label.new()
+	lbl.text = text
+	lbl.add_theme_font_size_override("font_size", 11)
+	lbl.add_theme_color_override("font_color", fg)
+	lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	chip.add_child(lbl)
+	return chip
 
 
 func _apply_soft_disabled(button: Button) -> void:
-	if button != null:
-		button.add_theme_stylebox_override("disabled", _soft_disabled_style())
-
-
-func _bots_text(total: int) -> String:
-	return "%d BOT%s" % [total, "" if total == 1 else "S"]
-
-
-func _make_bots_strip(start: int) -> Button:
-	## The same segmented BOTS strip the single-player PLAY menu uses, built
-	## from the shared UiKit helper so this screen adds no third selection
-	## style. One focus stop, like every other strip: left/right (or the d-pad)
-	## moves the selection, a click picks the tile under the pointer.
-	var strip: Button = UiKit.segmented(BOT_LABELS, BOT_VALUES,
-		clampi(start, 0, BOT_VALUES.size() - 1), 84.0, 52.0)
-	strip.tooltip_text = "How many AI carts join the room."
-	strip.connect("option_changed", _on_bots_option)
-	return strip
-
-
-func _make_bots_slider(start: int) -> HSlider:
-	## Real slider, integer steps 0-5. FocusSlider supplies the focus ring and
-	## keyboard/gamepad left/right handling; the shoulder buttons are wired in
-	## _on_slider_shoulder because this project maps no shoulder menu action.
-	var slider := HSlider.new()
-	slider.set_script(FOCUS_SLIDER)
-	slider.min_value = 0.0
-	slider.max_value = 5.0
-	slider.step = 1.0
-	slider.value = clampf(float(start), 0.0, 5.0)
-	slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	slider.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	slider.custom_minimum_size = Vector2(240, 40)
-	slider.tooltip_text = "How many AI carts join the room. Left/right or L1/R1 changes it."
-	slider.value_changed.connect(_on_bots_slider_value)
-	slider.gui_input.connect(func(event: InputEvent) -> void:
-		_on_slider_shoulder(event, slider))
-	return slider
-
-
-func _bots_value() -> Label:
-	var label := Label.new()
-	label.custom_minimum_size = Vector2(116, 0)
-	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	label.add_theme_font_size_override("font_size", 22)
-	label.add_theme_color_override("font_color", UiPalette.INK)
-	label.text = _bots_text(GameSettings.effective_bot_count())
-	return label
-
-
-func _on_slider_shoulder(event: InputEvent, slider: HSlider) -> void:
-	## L1/R1 nudge the focused bots slider one step. Godot's slider already
-	## consumes the d-pad, so only the shoulder buttons are handled here.
-	if slider == null or not slider.has_focus():
+	if button == null:
 		return
-	if not (event is InputEventJoypadButton):
-		return
-	var button := event as InputEventJoypadButton
-	if not button.pressed:
-		return
-	var direction: int = 0
-	if button.button_index == JOY_BUTTON_LEFT_SHOULDER:
-		direction = -1
-	elif button.button_index == JOY_BUTTON_RIGHT_SHOULDER:
-		direction = 1
-	if direction == 0:
-		return
-	slider.value = clampf(slider.value + float(direction) * maxf(slider.step, 1.0),
-		slider.min_value, slider.max_value)
-	slider.accept_event()
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color("d8d3e4")
+	style.set_corner_radius_all(UiKit.CORNER_RADIUS)
+	style.set_border_width_all(4)
+	style.border_color = Color(0.32, 0.30, 0.42, 0.55)
+	var normal: StyleBox = button.get_theme_stylebox("normal")
+	if normal != null:
+		style.content_margin_left = normal.get_margin(SIDE_LEFT)
+		style.content_margin_right = normal.get_margin(SIDE_RIGHT)
+		style.content_margin_top = normal.get_margin(SIDE_TOP)
+		style.content_margin_bottom = normal.get_margin(SIDE_BOTTOM)
+	else:
+		style.content_margin_left = 26.0
+		style.content_margin_right = 26.0
+		style.content_margin_top = 10.0
+		style.content_margin_bottom = 10.0
+	style.anti_aliasing = true
+	button.add_theme_stylebox_override("disabled", style)
+
+
+func _texture_at(path: String) -> Texture2D:
+	if path == "" or not ResourceLoader.exists(path):
+		return null
+	return load(path) as Texture2D
+
+
+func _first_texture(paths: Array[String]) -> Texture2D:
+	for path: String in paths:
+		var tex: Texture2D = _texture_at(path)
+		if tex != null:
+			return tex
+	return null
 
 
 # --------------------------------------------------------------------------
-# layout
+# UI build
 
 
 func _build_ui() -> void:
@@ -392,66 +398,91 @@ func _build_ui() -> void:
 	_create_browser()
 	_build_idle()
 	_build_room()
+	_build_room_footer()
 	_set_status("")
 
 
 func _build_profile() -> void:
-	_profile_row.add_child(_caption("NAME"))
+	## Compact top strip: PLAYER: [Name] + colour dots + ONLINE/LAN status pill.
+	_profile_row.alignment = BoxContainer.ALIGNMENT_BEGIN
+	_profile_row.add_theme_constant_override("separation", 10)
+
+	_profile_row.add_child(_caption("PLAYER"))
 	_name_input = LineEdit.new()
 	_name_input.placeholder_text = "YOUR NAME"
 	_name_input.max_length = 16
 	_name_input.alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_name_input.custom_minimum_size = Vector2(220, 46)
+	_name_input.custom_minimum_size = Vector2(188, 42)
 	_name_input.set_meta("skip_kit", true)
-	_name_input.tooltip_text = "The name other players see in the room."
-	_name_input.add_theme_font_size_override("font_size", 22)
+	UiKit.apply_focus_ring(_name_input, 14)
+	_name_input.add_theme_font_size_override("font_size", 18)
 	_name_input.text_submitted.connect(func(_t: String) -> void: _commit_name())
 	_name_input.focus_exited.connect(_commit_name)
-	_name_input.focus_entered.connect(_on_name_focus.bind(true))
-	_name_input.focus_exited.connect(_on_name_focus.bind(false))
 	_profile_row.add_child(_name_input)
-	# Always visible with a reserved width. TYPING fades in and out, so the
-	# row never reflows when the name field gains focus.
-	_typing_label = Label.new()
-	_typing_label.text = "TYPING"
-	_typing_label.custom_minimum_size = Vector2(60, 0)
-	_typing_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	_typing_label.add_theme_font_size_override("font_size", 10)
-	_typing_label.add_theme_color_override("font_color", UiPalette.GRASS)
-	_typing_label.modulate.a = 0.0
-	_typing_label.visible = true
-	# Parent it: an unparented Node is never freed with the lobby scene and
-	# would leak one Label on every visit. Alpha controls the fade instead.
-	_profile_row.add_child(_typing_label)
 
-	_profile_row.add_child(_caption("TAG"))
-	var swatch_grid := GridContainer.new()
-	swatch_grid.columns = 8
-	swatch_grid.add_theme_constant_override("h_separation", 5)
+	var swatch_grid := HBoxContainer.new()
+	swatch_grid.add_theme_constant_override("separation", 6)
+	swatch_grid.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	_profile_row.add_child(swatch_grid)
 	for swatch: Dictionary in TAG_COLORS:
 		var hex: String = str(swatch["hex"])
 		var swatch_button := Button.new()
-		# UiKit must not force these into 54 px tall pills.
 		swatch_button.set_meta("skip_kit", true)
-		swatch_button.custom_minimum_size = Vector2(44, 44)
-		swatch_button.tooltip_text = "%s NAME TAG" % str(swatch["name"])
+		swatch_button.custom_minimum_size = Vector2(32, 32)
+		swatch_button.tooltip_text = "%s TAG" % str(swatch["name"])
 		var swatch_style := StyleBoxFlat.new()
 		swatch_style.bg_color = Color(hex)
-		swatch_style.set_corner_radius_all(8)
+		swatch_style.set_corner_radius_all(9)
 		swatch_style.set_border_width_all(3)
 		swatch_style.border_color = UiPalette.INK
+		swatch_style.anti_aliasing = true
 		swatch_button.add_theme_stylebox_override("normal", swatch_style)
-		var hover_style: StyleBoxFlat = swatch_style.duplicate()
+		var hover_style: StyleBoxFlat = swatch_style.duplicate() as StyleBoxFlat
 		hover_style.bg_color = Color(hex).lightened(0.12)
 		swatch_button.add_theme_stylebox_override("hover", hover_style)
-		swatch_button.add_theme_stylebox_override("pressed", hover_style)
+		var pressed_style: StyleBoxFlat = swatch_style.duplicate() as StyleBoxFlat
+		pressed_style.bg_color = Color(hex).darkened(0.08)
+		swatch_button.add_theme_stylebox_override("pressed", pressed_style)
 		swatch_button.resized.connect(func() -> void:
 			swatch_button.pivot_offset = swatch_button.size * 0.5)
 		swatch_button.pressed.connect(_on_tag_color.bind(hex))
 		swatch_grid.add_child(swatch_button)
 		_tag_swatch_buttons[hex] = swatch_button
 	_refresh_tag_swatches()
+
+	var spacer := Control.new()
+	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_profile_row.add_child(spacer)
+
+	var server_pill := PanelContainer.new()
+	server_pill.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	server_pill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_server_pill_style = StyleBoxFlat.new()
+	_server_pill_style.bg_color = Color(UiPalette.BLUE, 0.22)
+	_server_pill_style.set_corner_radius_all(12)
+	_server_pill_style.set_border_width_all(2)
+	_server_pill_style.border_color = UiPalette.OUTLINE
+	_server_pill_style.content_margin_left = 12.0
+	_server_pill_style.content_margin_right = 12.0
+	_server_pill_style.content_margin_top = 5.0
+	_server_pill_style.content_margin_bottom = 5.0
+	_server_pill_style.anti_aliasing = true
+	server_pill.add_theme_stylebox_override("panel", _server_pill_style)
+	_server_pill_label = Label.new()
+	_server_pill_label.text = "● CHECKING..."
+	_server_pill_label.add_theme_font_size_override("font_size", 13)
+	_server_pill_label.add_theme_color_override("font_color", UiPalette.INK)
+	_server_pill_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	server_pill.add_child(_server_pill_label)
+	_profile_row.add_child(server_pill)
+
+	_retry_button = _candy("RETRY", UiPalette.CREAM, 40, 13)
+	_retry_button.custom_minimum_size = Vector2(88, 40)
+	_retry_button.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_retry_button.visible = false
+	_retry_button.pressed.connect(_retry_server)
+	_profile_row.add_child(_retry_button)
+	_apply_soft_disabled(_retry_button)
 
 
 func _create_browser() -> void:
@@ -468,308 +499,447 @@ func _on_browser_closed() -> void:
 
 
 func _build_idle() -> void:
+	## 3 clean self-explanatory visual cards side-by-side:
+	## [CREATE ONLINE ROOM] | [CREATE LAN ROOM] | [JOIN A ROOM]
 	_idle_box = VBoxContainer.new()
-	_idle_box.add_theme_constant_override("separation", UiKit.SPACING)
+	_idle_box.add_theme_constant_override("separation", 14)
 	_idle_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_idle_box.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_idle_box.alignment = BoxContainer.ALIGNMENT_CENTER
 	_body.add_child(_idle_box)
 
-	_build_offline_banner()
+	var cards_row := HBoxContainer.new()
+	cards_row.add_theme_constant_override("separation", 16)
+	cards_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_idle_box.add_child(cards_row)
 
-	# The segmented control is the only thing both modes share. Only the
-	# selected page is visible; the switch itself is one focus stop.
-	var mode_row := HBoxContainer.new()
-	mode_row.alignment = BoxContainer.ALIGNMENT_CENTER
-	mode_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_idle_box.add_child(mode_row)
-	_mode_switch = UiKit.segmented(PackedStringArray(["HOST", "JOIN"]),
-		["host", "join"], 0, 170.0, 54.0)
-	_mode_switch.set_meta("nav_default", true)
-	_mode_switch.tooltip_text = "HOST: open a room.  JOIN: use a code or search."
-	_mode_switch.connect("option_changed", _on_mode_changed)
-	mode_row.add_child(_mode_switch)
-
-	_host_page = VBoxContainer.new()
-	_host_page.add_theme_constant_override("separation", UiKit.SPACING)
-	_host_page.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_idle_box.add_child(_host_page)
-	_build_host_page()
-
-	_join_page = VBoxContainer.new()
-	_join_page.add_theme_constant_override("separation", UiKit.SPACING)
-	_join_page.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_idle_box.add_child(_join_page)
-	_build_join_page()
-
-	_set_mode("host", false)
-
-
-func _build_host_page() -> void:
-	var host_col: VBoxContainer = _card(_host_page)
-	host_col.add_theme_constant_override("separation", UiKit.SPACING)
-	host_col.add_child(_heading("HOST A ROOM"))
-
-	# BOTS: the same selectable tile strip as single player, not a slider. It
-	# writes the same field the old slider did (GameSettings.set_bot_total),
-	# which Network.host_game() reads when it opens the session.
-	var bots_caption: Label = _caption("BOTS")
-	bots_caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	host_col.add_child(bots_caption)
-	_bots_strip = _make_bots_strip(GameSettings.effective_bot_count())
-	_bots_strip.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	host_col.add_child(_bots_strip)
-
-	# Two equal doors: the choice is LAN or ONLINE, nothing below it.
-	var actions := HBoxContainer.new()
-	actions.add_theme_constant_override("separation", UiKit.SPACING)
-	actions.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	host_col.add_child(actions)
-	_lan_button = _candy("HOST ON LAN", UiPalette.BLUE, 64, 19)
-	_lan_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_lan_button.tooltip_text = "Host on this Wi-Fi. Friends on the same network find it automatically."
-	_lan_button.pressed.connect(_on_host_lan)
-	actions.add_child(_lan_button)
-	_host_pi_button = _candy("HOST ONLINE", UiPalette.YELLOW, 64, 19)
+	# 1. CREATE ONLINE ROOM card
+	var online_panel: PanelContainer = _card_panel(cards_row, 16, 14,
+		Color(1.0, 0.96, 0.84, 0.72))
+	var online_col := VBoxContainer.new()
+	online_col.add_theme_constant_override("separation", 10)
+	online_col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	online_panel.add_child(online_col)
+	online_col.add_child(_idle_art_banner(
+		_first_texture([ART_DIR + "scene_arena.png", ART_DIR + "preview_stadium.png"]),
+		"5-LETTER CODE", UiPalette.YELLOW))
+	var online_title := Label.new()
+	online_title.text = "ONLINE ROOM"
+	online_title.theme_type_variation = &"TitleLabel"
+	online_title.add_theme_font_size_override("font_size", 24)
+	online_title.add_theme_color_override("font_color", UiPalette.INK)
+	online_col.add_child(online_title)
+	var online_desc := UiKit.caption("Host over the internet and share a 5-letter code with friends.")
+	online_desc.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	online_col.add_child(online_desc)
+	_host_pi_button = _candy("CREATE ONLINE ROOM", UiPalette.YELLOW, 56, 17)
+	_host_pi_button.name = "CreateOnlineButton"
+	_host_pi_button.set_meta("nav_default", true)
 	_host_pi_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_host_pi_button.tooltip_text = "Open a public online room. You get a 5-letter code to share."
 	_host_pi_button.pressed.connect(_on_host_pi)
-	actions.add_child(_host_pi_button)
+	online_col.add_child(_host_pi_button)
 	_apply_soft_disabled(_host_pi_button)
+	_host_pi_button.fit_text()
 
+	# 2. CREATE LAN ROOM card
+	var lan_panel: PanelContainer = _card_panel(cards_row, 16, 14,
+		Color(0.90, 0.96, 1.0, 0.72))
+	var lan_col := VBoxContainer.new()
+	lan_col.add_theme_constant_override("separation", 10)
+	lan_col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	lan_panel.add_child(lan_col)
+	lan_col.add_child(_idle_art_banner(
+		_first_texture([ART_DIR + "bg_parking.png", ART_DIR + "scene_road.png"]),
+		"LOCAL WI-FI", UiPalette.BLUE))
+	var lan_title := Label.new()
+	lan_title.text = "LAN ROOM"
+	lan_title.theme_type_variation = &"TitleLabel"
+	lan_title.add_theme_font_size_override("font_size", 24)
+	lan_title.add_theme_color_override("font_color", UiPalette.INK)
+	lan_col.add_child(lan_title)
+	var lan_desc := UiKit.caption("Instant zero-lag local room for players on the same Wi-Fi.")
+	lan_desc.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	lan_col.add_child(lan_desc)
+	_lan_button = _candy("CREATE LAN ROOM", UiPalette.BLUE, 56, 17)
+	_lan_button.name = "CreateLanButton"
+	_lan_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_lan_button.pressed.connect(_on_host_lan)
+	lan_col.add_child(_lan_button)
+	_lan_button.fit_text()
 
-func _build_join_page() -> void:
-	var join_col: VBoxContainer = _card(_join_page)
-	join_col.add_theme_constant_override("separation", UiKit.SPACING)
-	join_col.add_child(_heading("JOIN A ROOM"))
+	# 3. JOIN A ROOM card
+	var join_panel: PanelContainer = _card_panel(cards_row, 16, 14,
+		Color(0.94, 0.98, 1.0, 0.78))
+	var join_col := VBoxContainer.new()
+	join_col.add_theme_constant_override("separation", 10)
+	join_col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	join_panel.add_child(join_col)
+
+	var join_head := HBoxContainer.new()
+	join_head.add_theme_constant_override("separation", 8)
+	join_col.add_child(join_head)
+	var join_title := Label.new()
+	join_title.text = "JOIN A ROOM"
+	join_title.theme_type_variation = &"TitleLabel"
+	join_title.add_theme_font_size_override("font_size", 24)
+	join_title.add_theme_color_override("font_color", UiPalette.INK)
+	join_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	join_head.add_child(join_title)
+	join_head.add_child(_chip("CODE OR LIST", UiPalette.CYAN))
+
+	var join_sub := UiKit.caption("Enter a friend's 5-letter code or browse open rooms:")
+	join_col.add_child(join_sub)
+
 	_join_input = LineEdit.new()
 	_join_input.placeholder_text = "5-LETTER CODE"
 	_join_input.max_length = 5
 	_join_input.alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_join_input.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_join_input.custom_minimum_size = Vector2(0, 52)
+	_join_input.custom_minimum_size = Vector2(0, 50)
 	_join_input.add_theme_font_size_override("font_size", 22)
-	_join_input.tooltip_text = "Type the room code the host shared with you, or press SEARCH."
-	# UiKit would flatten this field back to 50 px / 18 px; keep the big code.
 	_join_input.set_meta("skip_kit", true)
 	UiKit.apply_focus_ring(_join_input, 14)
 	_join_input.text_changed.connect(_on_code_typed)
 	_join_input.text_submitted.connect(func(_t: String) -> void: _on_join_pressed())
 	join_col.add_child(_join_input)
 
-	# JOIN and SEARCH are peers: two equal tiles, never a stretched bar.
-	var actions := HBoxContainer.new()
-	actions.add_theme_constant_override("separation", UiKit.SPACING)
-	actions.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	join_col.add_child(actions)
-	_join_button = _candy("JOIN", UiPalette.YELLOW, 60, 20)
+	_join_button = _candy("JOIN BY CODE", UiPalette.YELLOW, 52, 18)
+	_join_button.name = "JoinByCodeButton"
 	_join_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_join_button.tooltip_text = "Join the room for the code above."
 	_join_button.pressed.connect(_on_join)
-	actions.add_child(_join_button)
+	join_col.add_child(_join_button)
 	_apply_soft_disabled(_join_button)
-	_browse_button = _candy("SEARCH", UiPalette.CYAN, 60, 20)
+	_join_button.fit_text()
+
+	_browse_button = _candy("BROWSE PUBLIC & LAN ROOMS", UiPalette.CYAN, 52, 16)
+	_browse_button.name = "BrowseRoomsButton"
 	_browse_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_browse_button.tooltip_text = "Scan LAN rooms and public online rooms in one list."
 	_browse_button.pressed.connect(_on_search)
-	actions.add_child(_browse_button)
+	join_col.add_child(_browse_button)
+	_browse_button.fit_text()
 
 	_join_status = Label.new()
 	_join_status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_join_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_join_status.custom_minimum_size = Vector2(0, 34)
-	_join_status.add_theme_font_size_override("font_size", 13)
+	_join_status.custom_minimum_size = Vector2(0, 20)
+	_join_status.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_join_status.add_theme_font_size_override("font_size", 12)
 	_join_status.add_theme_color_override("font_color", UiPalette.RED)
 	join_col.add_child(_join_status)
 
 
-func _build_offline_banner() -> void:
-	_offline_banner = PanelContainer.new()
-	_offline_banner.visible = false
-	_offline_banner.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+func _idle_art_banner(texture: Texture2D, badge_text: String,
+		accent: Color) -> PanelContainer:
+	var frame := PanelContainer.new()
+	frame.custom_minimum_size = Vector2(0.0, 128.0)
+	frame.clip_contents = true
+	frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var style := StyleBoxFlat.new()
-	# A warm tint carries the warning; no outline, no drop shadow.
-	style.bg_color = Color(UiPalette.YELLOW, 0.85)
-	style.set_corner_radius_all(16)
-	style.content_margin_left = 20
-	style.content_margin_right = 20
-	style.content_margin_top = 12
-	style.content_margin_bottom = 12
-	_offline_banner.add_theme_stylebox_override("panel", style)
-	_idle_box.add_child(_offline_banner)
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 12)
-	_offline_banner.add_child(row)
-	_offline_label = Label.new()
-	_offline_label.text = OFFLINE_TEXT
-	_offline_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_offline_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	_offline_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_offline_label.add_theme_font_size_override("font_size", 14)
-	_offline_label.add_theme_color_override("font_color", UiPalette.INK)
-	row.add_child(_offline_label)
-	_retry_button = _candy("RETRY", UiPalette.CREAM, 44, 14)
-	_retry_button.custom_minimum_size = Vector2(100, 44)
-	_retry_button.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	_retry_button.pressed.connect(_retry_server)
-	row.add_child(_retry_button)
-	_apply_soft_disabled(_retry_button)
+	style.bg_color = UiPalette.OUTLINE
+	style.set_corner_radius_all(14)
+	style.content_margin_left = 4.0
+	style.content_margin_right = 4.0
+	style.content_margin_top = 4.0
+	style.content_margin_bottom = 4.0
+	style.anti_aliasing = true
+	frame.add_theme_stylebox_override("panel", style)
+	if texture != null:
+		var tex_rect := TextureRect.new()
+		tex_rect.texture = texture
+		tex_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		tex_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+		tex_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		frame.add_child(tex_rect)
+	else:
+		var fb := _LobbyArtFallback.new()
+		fb.accent = accent
+		frame.add_child(fb)
+	var overlay := Control.new()
+	overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	frame.add_child(overlay)
+	var pill := _chip(badge_text, accent)
+	pill.anchor_left = 1.0
+	pill.anchor_right = 1.0
+	pill.offset_right = -8.0
+	pill.offset_top = 8.0
+	pill.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	overlay.add_child(pill)
+	return frame
 
 
 func _build_room() -> void:
+	## 2-Column Video Game Lobby:
+	## Left: Live 16:9 Map Screenshot + Mode/Map/Garage/Bots/Visibility controls.
+	## Right: Room Code bar + Players list (or ALPHA vs BETA teams in DELIVER).
 	_room_box = VBoxContainer.new()
 	_room_box.add_theme_constant_override("separation", 10)
 	_room_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_body.add_child(_room_box)
 
-	_host_card = _card(_room_box)
-	var split := HBoxContainer.new()
-	split.add_theme_constant_override("separation", UiKit.SPACING_WIDE)
-	split.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_host_card.add_child(split)
-	var left := VBoxContainer.new()
-	left.add_theme_constant_override("separation", UiKit.SPACING_TIGHT)
-	left.alignment = BoxContainer.ALIGNMENT_CENTER
-	left.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	left.size_flags_stretch_ratio = 0.95
-	split.add_child(left)
-	var right := VBoxContainer.new()
-	right.add_theme_constant_override("separation", UiKit.SPACING_TIGHT / 2)
-	right.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	right.size_flags_stretch_ratio = 1.05
-	split.add_child(right)
+	var columns := HBoxContainer.new()
+	columns.add_theme_constant_override("separation", 16)
+	columns.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_room_box.add_child(columns)
+
+	# --- LEFT COLUMN: Selected Game & Map Card ---
+	var left_panel: PanelContainer = _card_panel(columns, 14, 12,
+		Color(1.0, 1.0, 1.0, 0.58))
+	left_panel.size_flags_stretch_ratio = 1.08
+	var left_col := VBoxContainer.new()
+	left_col.add_theme_constant_override("separation", 8)
+	left_col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	left_panel.add_child(left_col)
+
+	# Live 16:9 screenshot frame with overlaid mode badge & map title
+	var shot_frame := PanelContainer.new()
+	shot_frame.custom_minimum_size = Vector2(0.0, 162.0)
+	shot_frame.clip_contents = true
+	shot_frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var shot_style := StyleBoxFlat.new()
+	shot_style.bg_color = UiPalette.OUTLINE
+	shot_style.set_corner_radius_all(14)
+	shot_style.content_margin_left = 4.0
+	shot_style.content_margin_right = 4.0
+	shot_style.content_margin_top = 4.0
+	shot_style.content_margin_bottom = 4.0
+	shot_style.anti_aliasing = true
+	shot_frame.add_theme_stylebox_override("panel", shot_style)
+	left_col.add_child(shot_frame)
+
+	var shot_stack := Control.new()
+	shot_stack.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	shot_frame.add_child(shot_stack)
+
+	_lobby_preview_fallback = _LobbyArtFallback.new()
+	_lobby_preview_fallback.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	shot_stack.add_child(_lobby_preview_fallback)
+
+	_lobby_preview_tex = TextureRect.new()
+	_lobby_preview_tex.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_lobby_preview_tex.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	_lobby_preview_tex.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_lobby_preview_tex.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	shot_stack.add_child(_lobby_preview_tex)
+
+	# Bottom dark scrim for map title readability over bright screenshots
+	var scrim := ColorRect.new()
+	scrim.color = Color(0.04, 0.05, 0.14, 0.68)
+	scrim.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	scrim.anchor_left = 0.0
+	scrim.anchor_right = 1.0
+	scrim.anchor_top = 1.0
+	scrim.anchor_bottom = 1.0
+	scrim.offset_top = -56.0
+	scrim.offset_bottom = 0.0
+	shot_stack.add_child(scrim)
+
+	var mode_chip := PanelContainer.new()
+	mode_chip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	mode_chip.anchor_left = 0.0
+	mode_chip.anchor_top = 0.0
+	mode_chip.offset_left = 10.0
+	mode_chip.offset_top = 10.0
+	_lobby_mode_chip_style = StyleBoxFlat.new()
+	_lobby_mode_chip_style.bg_color = UiPalette.GRASS
+	_lobby_mode_chip_style.set_corner_radius_all(8)
+	_lobby_mode_chip_style.set_border_width_all(2)
+	_lobby_mode_chip_style.border_color = UiPalette.OUTLINE
+	_lobby_mode_chip_style.content_margin_left = 10.0
+	_lobby_mode_chip_style.content_margin_right = 10.0
+	_lobby_mode_chip_style.content_margin_top = 3.0
+	_lobby_mode_chip_style.content_margin_bottom = 3.0
+	_lobby_mode_chip_style.anti_aliasing = true
+	mode_chip.add_theme_stylebox_override("panel", _lobby_mode_chip_style)
+	_lobby_mode_chip_label = Label.new()
+	_lobby_mode_chip_label.text = "RACING"
+	_lobby_mode_chip_label.theme_type_variation = &"TitleLabel"
+	_lobby_mode_chip_label.add_theme_font_size_override("font_size", 13)
+	_lobby_mode_chip_label.add_theme_color_override("font_color", UiPalette.INK)
+	_lobby_mode_chip_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	mode_chip.add_child(_lobby_mode_chip_label)
+	shot_stack.add_child(mode_chip)
+
+	var map_info_box := VBoxContainer.new()
+	map_info_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	map_info_box.anchor_left = 0.0
+	map_info_box.anchor_right = 1.0
+	map_info_box.anchor_top = 1.0
+	map_info_box.anchor_bottom = 1.0
+	map_info_box.offset_left = 12.0
+	map_info_box.offset_right = -12.0
+	map_info_box.offset_top = -52.0
+	map_info_box.offset_bottom = -6.0
+	map_info_box.add_theme_constant_override("separation", 0)
+	shot_stack.add_child(map_info_box)
+
+	_lobby_map_title = Label.new()
+	_lobby_map_title.text = "STADIUM CIRCUIT"
+	_lobby_map_title.theme_type_variation = &"TitleLabel"
+	_lobby_map_title.add_theme_font_size_override("font_size", 22)
+	_lobby_map_title.add_theme_color_override("font_color", Color.WHITE)
+	_lobby_map_title.add_theme_color_override("font_outline_color", UiPalette.OUTLINE)
+	_lobby_map_title.add_theme_constant_override("outline_size", 5)
+	_lobby_map_title.clip_text = true
+	_lobby_map_title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	_lobby_map_title.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	map_info_box.add_child(_lobby_map_title)
+
+	_lobby_map_sub = Label.new()
+	_lobby_map_sub.text = "3 LAPS  ·  CIRCUIT RACE"
+	_lobby_map_sub.add_theme_font_size_override("font_size", 12)
+	_lobby_map_sub.add_theme_color_override("font_color", Color(0.86, 0.94, 1.0, 0.92))
+	_lobby_map_sub.clip_text = true
+	_lobby_map_sub.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	_lobby_map_sub.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	map_info_box.add_child(_lobby_map_sub)
+
+	# Quick 5-mode pill selector
+	_game_pill = _pill(KIND_LABELS, KIND_VALUES, 1, 74.0, 40.0)
+	_game_pill.name = "ModePill"
+	_game_pill.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_game_pill.connect("option_changed", func(value: Variant) -> void: _on_game_mode(str(value)))
+	left_col.add_child(_game_pill)
+
+	# [CHANGE MODE & MAP] + quick [MAP] button
+	var mode_btn_row := HBoxContainer.new()
+	mode_btn_row.add_theme_constant_override("separation", 10)
+	mode_btn_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	left_col.add_child(mode_btn_row)
+
+	_change_mode_button = _candy("CHANGE MODE & MAP", UiPalette.CYAN, 46, 16)
+	_change_mode_button.name = "ChangeModeMapButton"
+	_change_mode_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_change_mode_button.pressed.connect(_on_open_all_modes)
+	mode_btn_row.add_child(_change_mode_button)
+
+	_map_button = _candy("MAP", UiPalette.YELLOW, 46, 15)
+	_map_button.name = "QuickMapButton"
+	_map_button.custom_minimum_size = Vector2(118, 46)
+	_map_button.pressed.connect(_on_choose_map)
+	mode_btn_row.add_child(_map_button)
+
+	# [GARAGE: <vehicle>]
+	_vehicle_button = _candy("GARAGE: SHOPPING CART", Color("8ed8f6"), 44, 15)
+	_vehicle_button.name = "GarageButton"
+	_vehicle_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_vehicle_button.pressed.connect(_on_change_vehicle)
+	left_col.add_child(_vehicle_button)
+
+	# Compact row: BOTS [0..5] + ROOM [PRIVATE / PUBLIC]
+	var bottom_opts := HBoxContainer.new()
+	bottom_opts.add_theme_constant_override("separation", 10)
+	bottom_opts.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	left_col.add_child(bottom_opts)
+
+	var bots_lbl := _caption("BOTS")
+	bottom_opts.add_child(bots_lbl)
+
+	_room_bots_pill = _pill(BOT_LABELS, BOT_VALUES,
+		clampi(GameSettings.effective_bot_count(), 0, 5), 34.0, 40.0)
+	_room_bots_pill.name = "RoomBotsPill"
+	_room_bots_pill.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_room_bots_pill.connect("option_changed", _on_bots_option)
+	bottom_opts.add_child(_room_bots_pill)
+
+	_visibility_pill = _pill(PackedStringArray(["PRIVATE", "PUBLIC"]),
+		[false, true], 1 if GameSettings.room_public else 0, 68.0, 40.0)
+	_visibility_pill.name = "VisibilityPill"
+	_visibility_pill.connect("option_changed", _on_visibility_changed)
+	_visibility_box = _visibility_pill
+	bottom_opts.add_child(_visibility_pill)
+
+	# --- RIGHT COLUMN: Room Code + Players / Teams ---
+	var right_col := VBoxContainer.new()
+	right_col.add_theme_constant_override("separation", 10)
+	right_col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	right_col.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	right_col.size_flags_stretch_ratio = 0.94
+	columns.add_child(right_col)
+
+	var code_card: PanelContainer = _card_panel(right_col, 16, 10,
+		Color(1.0, 0.97, 0.88, 0.72))
+	var code_outer := VBoxContainer.new()
+	code_outer.add_theme_constant_override("separation", 2)
+	code_card.add_child(code_outer)
+
+	var code_row := HBoxContainer.new()
+	code_row.add_theme_constant_override("separation", 12)
+	code_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	code_outer.add_child(code_row)
+
+	var code_stack := VBoxContainer.new()
+	code_stack.add_theme_constant_override("separation", 0)
+	code_stack.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	code_row.add_child(code_stack)
 
 	_code_caption = _caption("ROOM CODE")
-	_code_caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_code_caption.add_theme_font_size_override("font_size", 12)
-	left.add_child(_code_caption)
+	_code_caption.add_theme_font_size_override("font_size", 11)
+	code_stack.add_child(_code_caption)
+
 	_code_label = Label.new()
 	_code_label.text = "-----"
-	_code_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_code_label.theme_type_variation = &"TitleLabel"
-	_code_label.add_theme_font_size_override("font_size", 46)
+	_code_label.add_theme_font_size_override("font_size", 32)
 	_code_label.add_theme_color_override("font_color", UiPalette.INK)
-	left.add_child(_code_label)
-	var code_row := HBoxContainer.new()
-	code_row.add_theme_constant_override("separation", 8)
-	code_row.alignment = BoxContainer.ALIGNMENT_CENTER
-	left.add_child(code_row)
-	_copy_button = _candy("COPY", UiPalette.CYAN, 44, 14)
-	_copy_button.custom_minimum_size = Vector2(120, 44)
-	_copy_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_copy_button.tooltip_text = "Copy the room code to the clipboard."
+	code_stack.add_child(_code_label)
+
+	_copy_button = _candy("COPY CODE", UiPalette.CYAN, 42, 14)
+	_copy_button.custom_minimum_size = Vector2(124, 42)
+	_copy_button.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	_copy_button.pressed.connect(_on_copy_code)
 	code_row.add_child(_copy_button)
-	_leave_button = _candy("LEAVE ROOM", UiPalette.RED, 44, 14)
-	_leave_button.custom_minimum_size = Vector2(140, 44)
-	_leave_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_leave_button.tooltip_text = "Close the room for everyone. Press twice to confirm."
-	_leave_button.pressed.connect(_on_leave_pressed)
-	code_row.add_child(_leave_button)
-	_visibility_pill = _pill(PackedStringArray(["PRIVATE", "PUBLIC"]),
-		[false, true], 1 if GameSettings.room_public else 0, 96.0)
-	_visibility_pill.tooltip_text = "PRIVATE: CODE ONLY  ·  PUBLIC: LISTED IN THE BROWSER"
-	_visibility_pill.connect("option_changed", _on_visibility_changed)
-	_visibility_box = _setting_box("ROOM", "room", _visibility_pill,
-		UiPalette.PINK, false)
-	left.add_child(_visibility_box)
+	_copy_button.fit_text()
+
 	_host_hint = _hint("")
-	left.add_child(_host_hint)
+	_host_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	_host_hint.visible = false
+	code_outer.add_child(_host_hint)
 
-	_players_header = _section("PLAYERS")
-	_players_header.add_theme_font_size_override("font_size", 16)
-	right.add_child(_players_header)
+	# Players Roster Card (FFA modes)
+	_players_card = _card_panel(right_col, 14, 12, Color(1.0, 1.0, 1.0, 0.56))
+	_players_card.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	var players_col := VBoxContainer.new()
+	players_col.add_theme_constant_override("separation", 6)
+	players_col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_players_card.add_child(players_col)
+
+	_players_header = _section("PLAYERS   1 / %d" % MAX_SLOTS)
+	players_col.add_child(_players_header)
+
 	_players_box = VBoxContainer.new()
-	_players_box.add_theme_constant_override("separation", 1)
-	right.add_child(_players_box)
+	_players_box.add_theme_constant_override("separation", 5)
+	players_col.add_child(_players_box)
 
-	_build_teams()
-
-	_config_box = VBoxContainer.new()
-	_config_box.add_theme_constant_override("separation", UiKit.SPACING_TIGHT)
-	_room_box.add_child(_config_box)
-	_config_box.add_child(_section("HOST SETTINGS"))
-	# Two equal columns of larger blocks instead of four narrow pills: MODE is
-	# a tile strip, BOTS is a slider, MAP and CAR are full-width action tiles.
-	_settings_row = GridContainer.new()
-	_settings_row.columns = 2
-	_settings_row.add_theme_constant_override("h_separation", UiKit.SPACING)
-	_settings_row.add_theme_constant_override("v_separation", UiKit.SPACING_TIGHT)
-	_config_box.add_child(_settings_row)
-
-	_game_pill = _pill(KIND_LABELS, KIND_VALUES, 0, 100.0)
-	_game_pill.tooltip_text = "SANDBOX: free roam.  RACING: a circuit.  DELIVER: Cargo Rush teams."
-	_game_pill.connect("option_changed", func(value: Variant) -> void: _on_game_mode(str(value)))
-	_settings_row.add_child(_setting_box("MODE", "mode", _game_pill, UiPalette.YELLOW, false))
-
-	_room_bots_slider = _make_bots_slider(GameSettings.effective_bot_count())
-	_room_bots_slider.custom_minimum_size = Vector2(120, 34)
-	_room_bots_slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	var bots_cell := HBoxContainer.new()
-	bots_cell.add_theme_constant_override("separation", UiKit.SPACING_TIGHT)
-	bots_cell.custom_minimum_size = Vector2(0, 48)
-	bots_cell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	bots_cell.add_child(_room_bots_slider)
-	_room_bots_value_label = _bots_value()
-	_room_bots_value_label.custom_minimum_size = Vector2(86, 0)
-	_room_bots_value_label.add_theme_font_size_override("font_size", 16)
-	bots_cell.add_child(_room_bots_value_label)
-	_settings_row.add_child(_setting_box("BOTS", "bots", bots_cell, UiPalette.GRASS))
-
-	_map_button = _candy("", UiPalette.CREAM, 48, 15)
-	_map_button.tooltip_text = "CHOOSE MAP"
-	_map_button.pressed.connect(_on_choose_map)
-	_settings_row.add_child(_setting_box("MAP", "map", _map_button, UiPalette.CYAN))
-
-	_vehicle_button = _candy("", UiPalette.CREAM, 48, 15)
-	_vehicle_button.tooltip_text = "CHOOSE VEHICLE"
-	_vehicle_button.pressed.connect(_on_change_vehicle)
-	_settings_row.add_child(_setting_box("CAR", "vehicle", _vehicle_button, UiPalette.BLUE))
-
-	_summary = Label.new()
-	_summary.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_summary.add_theme_font_size_override("font_size", 15)
-	_summary.add_theme_color_override("font_color", UiPalette.MUTED)
-	_summary.visible = false
-	_room_box.add_child(_summary)
-
-	_start_button = _candy("START", UiPalette.YELLOW, 64, 26)
-	_start_button.custom_minimum_size = Vector2(320, 64)
-	_start_button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	_start_button.tooltip_text = "Start the race for everyone in the room."
-	_start_button.pressed.connect(_on_start_pressed)
-	_room_box.add_child(_start_button)
-
-	_client_note = Label.new()
-	_client_note.text = "ONLY THE HOST CAN START THE RACE."
-	_client_note.visible = false
-	_client_note.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_client_note.add_theme_font_size_override("font_size", 13)
-	_client_note.add_theme_color_override("font_color", UiPalette.BLUE_DARK)
-	_room_box.add_child(_client_note)
+	# Teams Roster Card (DELIVER mode)
+	_build_teams(right_col)
 
 
-func _build_teams() -> void:
-	## DELIVER only: two columns, one per side. Every player row is a button,
-	## so click-to-move is always available; left/right on a focused row also
-	## picks a side. Nothing here is drag-and-drop-only.
-	_teams_card = _card(_room_box)
+func _build_teams(parent: VBoxContainer) -> void:
+	_teams_card = _card_panel(parent, 14, 10, Color(1.0, 1.0, 1.0, 0.56))
+	_teams_card.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	var teams_vbox := VBoxContainer.new()
+	teams_vbox.add_theme_constant_override("separation", 6)
+	teams_vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_teams_card.add_child(teams_vbox)
+
 	var header := HBoxContainer.new()
 	header.add_theme_constant_override("separation", UiKit.SPACING_TIGHT)
-	_teams_card.add_child(header)
+	teams_vbox.add_child(header)
 	var title := _section("TEAMS")
 	title.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	header.add_child(title)
 	var spacer := Control.new()
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header.add_child(spacer)
-	_teams_lock_button = _candy("AUTO BALANCE", UiPalette.GRASS, 40, 13)
-	_teams_lock_button.custom_minimum_size = Vector2(170, 40)
-	_teams_lock_button.tooltip_text = "AUTO: joins and leaves are balanced. LOCKED: the split never moves."
+	_teams_lock_button = _candy("AUTO BALANCE", UiPalette.GRASS, 40, 12)
+	_teams_lock_button.custom_minimum_size = Vector2(154, 40)
 	_teams_lock_button.pressed.connect(_on_teams_lock_pressed)
 	header.add_child(_teams_lock_button)
+
 	var columns := HBoxContainer.new()
-	columns.add_theme_constant_override("separation", UiKit.SPACING)
+	columns.add_theme_constant_override("separation", 12)
 	columns.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_teams_card.add_child(columns)
+	teams_vbox.add_child(columns)
 	for team in TEAM_LABELS.size():
 		var column := VBoxContainer.new()
 		column.add_theme_constant_override("separation", 4)
@@ -777,7 +947,6 @@ func _build_teams() -> void:
 		columns.add_child(column)
 		var team_label := _section("%s  0" % TEAM_LABELS[team])
 		team_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		team_label.add_theme_font_size_override("font_size", 16)
 		team_label.add_theme_color_override("font_color", TEAM_COLORS[team])
 		column.add_child(team_label)
 		_team_headers.append(team_label)
@@ -786,8 +955,46 @@ func _build_teams() -> void:
 		column.add_child(list)
 		_team_lists.append(list)
 	_teams_hint = _hint("")
-	_teams_card.add_child(_teams_hint)
+	teams_vbox.add_child(_teams_hint)
 	_teams_card.visible = false
+
+
+func _build_room_footer() -> void:
+	## Pinned outside ScrollContainer so [LEAVE ROOM] and [START MATCH] are
+	## always 100% visible at 1280x720 with zero clipping.
+	_room_footer = HBoxContainer.new()
+	_room_footer.name = "RoomFooter"
+	_room_footer.add_theme_constant_override("separation", UiKit.SPACING)
+	_room_footer.visible = false
+	_shell.add_child(_room_footer)
+
+	_leave_button = _candy("LEAVE ROOM", UiPalette.RED, 52, 16)
+	_leave_button.custom_minimum_size = Vector2(196, 52)
+	_leave_button.pressed.connect(_on_leave_pressed)
+	_room_footer.add_child(_leave_button)
+	_leave_button.fit_text()
+
+	var spacer := Control.new()
+	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_room_footer.add_child(spacer)
+
+	_client_wait_label = Label.new()
+	_client_wait_label.text = "WAITING FOR HOST TO START..."
+	_client_wait_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_client_wait_label.add_theme_font_size_override("font_size", 16)
+	_client_wait_label.add_theme_color_override("font_color", UiPalette.BODY_BLUE)
+	_client_wait_label.visible = false
+	_room_footer.add_child(_client_wait_label)
+
+	_start_button = _candy("START MATCH", UiPalette.YELLOW, 54, 21)
+	_start_button.custom_minimum_size = Vector2(296, 54)
+	_start_button.pressed.connect(_on_start_pressed)
+	_room_footer.add_child(_start_button)
+	_start_button.fit_text()
+
+
+# --------------------------------------------------------------------------
+# teams
 
 
 func _on_teams_lock_pressed() -> void:
@@ -797,13 +1004,11 @@ func _on_teams_lock_pressed() -> void:
 
 
 func _on_team_row_pressed(peer_id: int) -> void:
-	## Click-to-move: a player row always sends that player to the other side.
 	_team_focus_peer = peer_id
 	_move_peer_to_team(peer_id, 1 - Network.team_for_peer(peer_id))
 
 
 func _on_team_row_input(event: InputEvent, peer_id: int) -> void:
-	## Arrow-key alternative to the click. LEFT = ALPHA, RIGHT = BETA.
 	if not (event is InputEventKey):
 		return
 	var key := event as InputEventKey
@@ -830,14 +1035,13 @@ func _move_peer_to_team(peer_id: int, team: int) -> void:
 
 
 func _refresh_teams() -> void:
-	## Rebuild both columns from the replicated assignment table. Called on
-	## every team change, name change and peer join/leave, so a stale roster
-	## cannot survive a network event.
 	if _teams_card == null:
 		return
-	var show: bool = _state != "idle" and _is_deliver_room()
-	_teams_card.visible = show
-	if not show:
+	var deliver_mode: bool = _state != "idle" and _is_deliver_room()
+	_teams_card.visible = deliver_mode
+	if _players_card != null:
+		_players_card.visible = _state != "idle" and not deliver_mode
+	if not deliver_mode:
 		return
 	var ids: Array[int] = []
 	if Network.is_session_active():
@@ -865,14 +1069,12 @@ func _refresh_teams() -> void:
 		if peer_id == 1:
 			label_text = "HOST · " + label_text
 		var row: Button = _candy(label_text, TEAM_COLORS[side].lightened(0.08),
-			38, 14)
+			40, 13)
+		row.set_meta("keep_align", true)
 		row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		row.alignment = HORIZONTAL_ALIGNMENT_LEFT
 		row.disabled = not movable
-		if movable:
-			row.tooltip_text = "Click to switch %s to the other team. Left/right arrow keys also work." % label_text
-		else:
-			row.tooltip_text = "The host sets the teams."
+		row.fit_text()
 		row.pressed.connect(_on_team_row_pressed.bind(peer_id))
 		row.gui_input.connect(_on_team_row_input.bind(peer_id))
 		_team_lists[side].add_child(row)
@@ -891,13 +1093,10 @@ func _refresh_teams() -> void:
 			else "AUTO BALANCE"
 		_teams_lock_button.set("fill_color",
 			UiPalette.YELLOW if Network.teams_locked else UiPalette.GRASS)
+		_teams_lock_button.fit_text()
 	if _teams_hint != null:
-		if not movable:
-			_teams_hint.text = "THE HOST SET THIS SPLIT."
-		elif Network.teams_locked:
-			_teams_hint.text = "LOCKED · JOINS AND LEAVES LEAVE TEAMS AS THEY ARE."
-		else:
-			_teams_hint.text = "CLICK A PLAYER (OR LEFT/RIGHT) TO SWITCH SIDES · AUTO BALANCE ON."
+		_teams_hint.visible = movable
+		_teams_hint.text = "CLICK A PLAYER TO SWITCH TEAMS" if movable else ""
 
 
 func _focus_team_row(row: Button) -> void:
@@ -905,81 +1104,239 @@ func _focus_team_row(row: Button) -> void:
 		MenuNav.focus(row)
 
 
+# --------------------------------------------------------------------------
+# mode & map resolution (5 modes)
+
+
+func _net_const(prop: String, fallback: String) -> String:
+	if prop in Network:
+		var val: String = str(Network.get(prop))
+		if val != "":
+			return val
+	return fallback
+
+
 func _is_deliver_room() -> bool:
 	return _current_kind() == KIND_DELIVER
 
 
-func _current_kind() -> String:
-	## The room's actual game. While a room exists the replicated session
-	## config is authoritative; the local pick is only a pre-host fallback.
-	if Network.is_session_active():
-		if Network.session_mode != GameSettings.GAME_MINIGAMES:
-			return KIND_SANDBOX
-		return KIND_DELIVER if Network.is_deliver_session() else KIND_RACE
+func _is_party_kind(kind: String) -> bool:
+	return kind in [KIND_DELIVER, KIND_KNOCKOUT, KIND_BOMB_TAG]
+
+
+func _preset_id_for_kind(kind: String) -> String:
+	match kind:
+		KIND_DELIVER:
+			return "cargo_rush"
+		KIND_KNOCKOUT:
+			return "knockout"
+		KIND_BOMB_TAG:
+			return "bomb_tag"
+	return ""
+
+
+func _kind_for_preset_id(preset_id: String) -> String:
+	match preset_id:
+		"cargo_rush", "cargo", "deliver":
+			return KIND_DELIVER
+		"knockout":
+			return KIND_KNOCKOUT
+		"bomb_tag", "blast_tag":
+			return KIND_BOMB_TAG
+	return ""
+
+
+func _kind_for_arena_id(arena_id: String) -> String:
+	if arena_id == "":
+		return ""
+	for raw: Dictionary in TrackDefs.PRESETS:
+		if not TrackDefs.is_minigame(raw):
+			continue
+		if TrackDefs.theme_ids(raw).has(arena_id):
+			return _kind_for_preset_id(str(raw.get("id", "")))
+	if arena_id.begins_with("ko_"):
+		return KIND_KNOCKOUT
+	if arena_id.begins_with("bt_"):
+		return KIND_BOMB_TAG
+	return ""
+
+
+func _detect_initial_kind() -> String:
 	if GameSettings.multiplayer_mode != GameSettings.GAME_MINIGAMES:
 		return KIND_SANDBOX
-	return KIND_DELIVER if TrackDefs.has_theme_id(GameSettings.selected_minigame) \
-		else KIND_RACE
+	var by_arena: String = _kind_for_arena_id(GameSettings.selected_minigame)
+	if by_arena != "":
+		return by_arena
+	return KIND_RACE
 
 
-func _arena_name() -> String:
-	var theme_id: String = GameSettings.selected_minigame
-	if Network.is_session_active() and Network.session_minigame != "":
-		theme_id = Network.session_minigame
-	var theme: Dictionary = CargoTheme.get_theme(theme_id)
-	return str(theme.get("name", "DOCKYARD"))
+func _current_kind() -> String:
+	if Network.is_session_active():
+		if "session_event" in Network:
+			var ev: String = str(Network.get("session_event")).strip_edges().to_lower()
+			match ev:
+				"sandbox":
+					return KIND_SANDBOX
+				"race", "racing":
+					return KIND_RACE
+				"cargo", "cargo_rush", "deliver":
+					return KIND_DELIVER
+				"knockout":
+					return KIND_KNOCKOUT
+				"bomb_tag", "blast_tag":
+					return KIND_BOMB_TAG
+		if Network.session_mode != GameSettings.GAME_MINIGAMES:
+			return KIND_SANDBOX
+		if "session_scene" in Network:
+			var sc: String = str(Network.get("session_scene"))
+			if sc.ends_with("knockout.tscn"):
+				return KIND_KNOCKOUT
+			if sc.ends_with("bomb_tag.tscn"):
+				return KIND_BOMB_TAG
+			if sc == Network.CARGO_SCENE or sc.ends_with("cargo_rush.tscn"):
+				return KIND_DELIVER
+			if sc == Network.RACE_SCENE or sc.ends_with("grass_race.tscn"):
+				return KIND_RACE
+		var by_session_arena: String = _kind_for_arena_id(Network.session_minigame)
+		if by_session_arena != "":
+			return by_session_arena
+		if Network.is_deliver_session():
+			return KIND_DELIVER
+		return KIND_RACE
+	return _local_kind
 
 
-func _setting_box(label_text: String, key: String, control: Control, accent: Color,
-		expand: bool = true) -> VBoxContainer:
-	var box := VBoxContainer.new()
-	box.add_theme_constant_override("separation", 4)
-	box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	var label := Label.new()
-	label.text = label_text
-	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	label.add_theme_font_size_override("font_size", 17)
-	label.add_theme_color_override("font_color", UiPalette.INK)
-	box.add_child(label)
-	control.custom_minimum_size = Vector2(control.custom_minimum_size.x, 48)
-	control.size_flags_horizontal = Control.SIZE_EXPAND_FILL if expand \
-		else Control.SIZE_SHRINK_CENTER
-	box.add_child(control)
-	_decorate_setting(control, key, accent)
-	return box
+func _scene_for_kind(kind: String) -> String:
+	match kind:
+		KIND_SANDBOX:
+			return Network.GAME_SCENE
+		KIND_RACE:
+			return Network.RACE_SCENE
+		KIND_DELIVER:
+			return Network.CARGO_SCENE
+		KIND_KNOCKOUT:
+			return _net_const("KNOCKOUT_SCENE", "res://scenes/minigames/knockout.tscn")
+		KIND_BOMB_TAG:
+			return _net_const("BOMB_TAG_SCENE", "res://scenes/minigames/bomb_tag.tscn")
+	return Network.RACE_SCENE
 
 
-func _decorate_setting(control: Control, key: String, _accent: Color) -> void:
-	## The value is the control itself, not a second tiny badge layered on top.
-	if control is Button:
-		var button := control as Button
-		for state: String in ["font_color", "font_hover_color", "font_pressed_color",
-				"font_focus_color", "font_disabled_color"]:
-			button.add_theme_color_override(state, UiPalette.INK)
-		button.add_theme_font_size_override("font_size", 17)
-	_setting_views[key] = control
+func _event_for_kind(kind: String) -> String:
+	match kind:
+		KIND_SANDBOX:
+			return _net_const("EVENT_SANDBOX", "sandbox")
+		KIND_RACE:
+			return _net_const("EVENT_RACE", "race")
+		KIND_DELIVER:
+			return _net_const("EVENT_CARGO", "cargo_rush")
+		KIND_KNOCKOUT:
+			return _net_const("EVENT_KNOCKOUT", "knockout")
+		KIND_BOMB_TAG:
+			return _net_const("EVENT_BOMB_TAG", "bomb_tag")
+	return "race"
 
 
-func _set_badge(key: String, text: String, _color: Color) -> void:
-	var control: Control = _setting_views.get(key)
-	if control is Button:
-		(control as Button).text = text
+func _ensure_arena_for_kind(kind: String) -> String:
+	var pid: String = _preset_id_for_kind(kind)
+	if pid == "":
+		return ""
+	var preset: Dictionary = TrackDefs.get_minigame(pid)
+	if preset.is_empty():
+		return GameSettings.selected_minigame
+	var valid_ids: PackedStringArray = TrackDefs.theme_ids(preset)
+	var current: String = Network.session_minigame \
+		if (Network.is_session_active() and Network.session_minigame != "") \
+		else GameSettings.selected_minigame
+	if valid_ids.has(current):
+		return current
+	var fallback_id: String = TrackDefs.default_theme(preset)
+	if fallback_id != "":
+		GameSettings.set_selected_minigame(fallback_id)
+	return fallback_id
 
 
-func _on_name_focus(focused: bool) -> void:
-	_typing_active = focused
-	if focused:
-		_typing_blink = 0.0
+func _lobby_display_for_kind(kind: String, active: bool) -> Dictionary:
+	if kind == KIND_SANDBOX:
+		return {
+			"mode": "SANDBOX",
+			"accent": UiPalette.YELLOW,
+			"title": "SLOPMART STUNT PARK",
+			"sub": "FREE ROAM  ·  STUNTS & OPEN PLAY",
+			"texture": _first_texture([
+				ART_DIR + "preview_sandbox.png",
+				ART_DIR + "bg_parking.png",
+				ART_DIR + "scene_road.png",
+				ART_DIR + "scene_arena.png",
+			]),
+		}
+	if kind == KIND_RACE:
+		var map_id: String = Network.session_map_id \
+			if (active and Network.session_map_id != "") \
+			else GameSettings.selected_map
+		var preset: Dictionary = TrackDefs.get_preset(map_id)
+		var track_name: String = str(preset.get("name",
+			GameSettings.minigame_name(map_id))).to_upper()
+		var pfile: String = str(preset.get("preview", ""))
+		var tex: Texture2D = _first_texture([
+			ART_DIR + "preview_" + map_id + ".png",
+			ART_DIR + pfile if pfile != "" else "",
+			PREVIEW_DIR + pfile if pfile != "" else "",
+			ART_DIR + "preview_stadium.png",
+		])
+		return {
+			"mode": "RACING",
+			"accent": UiPalette.GRASS,
+			"title": track_name,
+			"sub": "3 LAPS  ·  CIRCUIT RACE",
+			"texture": tex,
+		}
 
+	var pid: String = _preset_id_for_kind(kind)
+	var preset: Dictionary = TrackDefs.get_minigame(pid)
+	var arena_id: String = Network.session_minigame \
+		if (active and Network.session_minigame != "") \
+		else GameSettings.selected_minigame
+	var valid_ids: PackedStringArray = TrackDefs.theme_ids(preset)
+	if not valid_ids.is_empty() and not valid_ids.has(arena_id):
+		arena_id = TrackDefs.default_theme(preset)
 
-func _process(delta: float) -> void:
-	if _typing_label == null:
-		return
-	var target: float = 0.0
-	if _typing_active:
-		_typing_blink += delta
-		target = 0.55 + 0.45 * sin(_typing_blink * 7.0)
-	_typing_label.modulate.a = UiAnim.damp(_typing_label.modulate.a, target, delta, 14.0)
+	var arena_name: String = arena_id.to_upper()
+	var names: PackedStringArray = TrackDefs.theme_names(preset)
+	var idx: int = valid_ids.find(arena_id)
+	if idx >= 0 and idx < names.size():
+		arena_name = names[idx].to_upper()
+	else:
+		var raw_themes: Variant = preset.get("themes", [])
+		if raw_themes is Array:
+			for item: Variant in raw_themes as Array:
+				if item is Dictionary and str((item as Dictionary).get("id", "")) == arena_id:
+					arena_name = str((item as Dictionary).get("name", arena_name)).to_upper()
+					break
+
+	var mode_label: String = "DELIVER"
+	var mode_accent: Color = UiPalette.CYAN
+	var mode_sub: String = "2 TEAMS  ·  CAPTURE & SCORE CRATES"
+	if kind == KIND_KNOCKOUT:
+		mode_label = "KNOCKOUT"
+		mode_accent = UiPalette.ORANGE
+		mode_sub = "FFA BRAWL  ·  LAST CART STANDING"
+	elif kind == KIND_BOMB_TAG:
+		mode_label = "BLAST TAG"
+		mode_accent = UiPalette.PINK
+		mode_sub = "HOT POTATO  ·  PASS THE MEGA-BOMB"
+
+	var tex: Texture2D = _first_texture([
+		ART_DIR + "preview_" + arena_id + ".png",
+		ART_DIR + "preview_" + pid + ".png",
+		ART_DIR + "scene_arena.png" if kind == KIND_DELIVER else "",
+	])
+	return {
+		"mode": mode_label,
+		"accent": mode_accent,
+		"title": arena_name if arena_name != "" else mode_label,
+		"sub": mode_sub,
+		"texture": tex,
+	}
 
 
 # --------------------------------------------------------------------------
@@ -987,8 +1344,6 @@ func _process(delta: float) -> void:
 
 
 func _on_search() -> void:
-	## One scan covers both sources. The browser merges LAN first, then online,
-	## and badges every row so the player knows what they are joining.
 	if Network.join_pending:
 		_set_status("A join is already in progress.")
 		return
@@ -996,36 +1351,8 @@ func _on_search() -> void:
 	_browser.call("open", "all")
 
 
-func _on_lan_scan() -> void:
-	_on_find_lan()
-
-
-func _on_browse() -> void:
-	_on_browse_online()
-
-
 func _on_join() -> void:
 	_on_join_pressed()
-
-
-func _on_find_lan() -> void:
-	if Network.join_pending:
-		_set_status("A join is already in progress.")
-		return
-	_browser_mode = "lan"
-	_browser.call("open", "lan")
-
-
-func _on_browse_online() -> void:
-	if Network.join_pending:
-		_set_status("A join is already in progress.")
-		return
-	if _server_checked and not Network.server_online:
-		_set_status(SERVER_DOWN)
-		UiAnim.shake(_idle_box, 5.0)
-		return
-	_browser_mode = "online"
-	_browser.call("open", "online")
 
 
 func _on_browser_host(mode: String) -> void:
@@ -1040,13 +1367,10 @@ func _on_room_selected(room: Dictionary) -> void:
 	if Network.join_pending:
 		_set_status("A join is already in progress.")
 		return
-	# The merged browser tags each row with its source; single-source opens
-	# fall back to the mode the lobby asked for.
 	var source: String = str(room.get("_source", _browser_mode))
 	if source == "lan":
 		Network.join_lan_room(room)
 		return
-	# Public rooms are joined from the row itself; no code is shown or typed.
 	_client_code = ""
 	Network.set_meta("last_join_code", "")
 	_set_status("Joining the room...")
@@ -1070,8 +1394,10 @@ func _retry_server() -> void:
 	_server_checked = false
 	if _retry_button != null:
 		_retry_button.disabled = true
-	if _offline_label != null:
-		_offline_label.text = "Checking online play..."
+	if _server_pill_label != null:
+		_server_pill_label.text = "● CHECKING..."
+	if _server_pill_style != null:
+		_server_pill_style.bg_color = Color(UiPalette.BLUE, 0.25)
 	_probe_server()
 
 
@@ -1080,9 +1406,11 @@ func _on_server_status(online: bool, detail: String) -> void:
 
 
 func _set_server_status(online: bool, detail: String) -> void:
-	# Players do not need a server status light. Online means nothing is shown.
-	# Offline gets one warm banner above the mode switch, after the check finishes.
 	if detail == "checking":
+		if _server_pill_label != null:
+			_server_pill_label.text = "● CHECKING..."
+		if _server_pill_style != null:
+			_server_pill_style.bg_color = Color(UiPalette.BLUE, 0.25)
 		return
 	_server_checked = true
 	if _join_button != null:
@@ -1094,11 +1422,12 @@ func _set_server_status(online: bool, detail: String) -> void:
 	if _host_pi_button != null:
 		_host_pi_button.disabled = not online
 		_apply_soft_disabled(_host_pi_button)
-	if _offline_banner != null:
-		_offline_banner.visible = not online
-	if _offline_label != null:
-		_offline_label.text = OFFLINE_TEXT
+	if _server_pill_label != null:
+		_server_pill_label.text = "● ONLINE" if online else "● LAN ONLY"
+	if _server_pill_style != null:
+		_server_pill_style.bg_color = UiPalette.GRASS if online else UiPalette.YELLOW
 	if _retry_button != null:
+		_retry_button.visible = not online
 		_retry_button.disabled = false
 	_refresh_status()
 
@@ -1112,27 +1441,23 @@ func _set_state(state: String) -> void:
 	var idle: bool = state == "idle"
 	_idle_box.visible = idle
 	_room_box.visible = not idle
+	if _room_footer != null:
+		_room_footer.visible = not idle
 	_profile_row.visible = idle
-	if _host_page != null:
-		_host_page.visible = _mode == "host"
-	if _join_page != null:
-		_join_page.visible = _mode == "join"
-	_config_box.visible = state == "host"
 	_start_button.visible = state == "host"
+	if _client_wait_label != null:
+		_client_wait_label.visible = state == "client"
 	_visibility_box.visible = state == "host"
-	_client_note.visible = state == "client"
 	_copy_button.visible = state != "idle" and not Network.is_lan() \
 		and _code_label.text.length() == 5 and _code_label.text != "-----"
 	_leave_button.visible = not idle
 	_code_caption.visible = not idle
-	_title.text = "MULTIPLAYER" if idle else ("YOUR ROOM" if state == "host" else "LOBBY")
+	_title.text = "MULTIPLAYER" if idle else ("YOUR ROOM" if state == "host" else "ROOM LOBBY")
 	_reset_leave_button()
 	if idle:
 		_code_label.text = "-----"
-		# Re-arm the online doors after a session ends. Before the first probe
-		# finishes (_server_checked false) they stay live instead of reading
-		# broken for several seconds. SEARCH stays live offline: it also scans
-		# LAN rooms, which need no server.
+		_host_hint.text = ""
+		_host_hint.visible = false
 		if _server_checked:
 			var online: bool = Network.server_online
 			_join_button.disabled = not online
@@ -1141,7 +1466,7 @@ func _set_state(state: String) -> void:
 			_join_input.focus_mode = Control.FOCUS_ALL if online else Control.FOCUS_NONE
 		_refresh_status()
 	else:
-		UiAnim.fade_in(_room_box, 0.22)
+		UiAnim.fade_in(_room_box, 0.20)
 	_refresh_config()
 	_refresh_players()
 	_refresh_teams()
@@ -1154,98 +1479,82 @@ func _refresh_config() -> void:
 	var active: bool = Network.is_session_active()
 	var host: bool = Network.is_host and _state == "host"
 	var kind: String = _current_kind()
+	_local_kind = kind
 	var kind_index: int = KIND_VALUES.find(kind)
 	_game_pill.call("set_index", maxi(kind_index, 0))
 	_game_pill.disabled = not host
+
 	var bots: int = Network.session_bot_count if active else GameSettings.effective_bot_count()
 	_set_bots_views(clampi(bots, 0, 5))
-	if _room_bots_slider != null:
-		_room_bots_slider.editable = host
-		_room_bots_slider.focus_mode = Control.FOCUS_ALL if host \
-			else Control.FOCUS_NONE
-	# The host's session choice is authoritative for the whole room, so a
-	# client shows the host's game/map instead of its own local pick.
-	var map_id: String = Network.session_map_id if active \
-		else GameSettings.selected_map
-	var map_text: String = "FREEROAM"
-	var map_color: Color = UiPalette.TEXT_DIM
+	if _room_bots_pill != null:
+		_room_bots_pill.disabled = not host
+
+	# Update live 16:9 screenshot + mode badge + map title
+	var display: Dictionary = _lobby_display_for_kind(kind, active)
+	var accent: Color = display.get("accent", UiPalette.GRASS) as Color
+	if _lobby_mode_chip_style != null:
+		_lobby_mode_chip_style.bg_color = accent
+	if _lobby_mode_chip_label != null:
+		_lobby_mode_chip_label.text = str(display.get("mode", "RACING"))
+	if _lobby_map_title != null:
+		_lobby_map_title.text = str(display.get("title", "MAP"))
+	if _lobby_map_sub != null:
+		_lobby_map_sub.text = str(display.get("sub", ""))
+	var tex: Texture2D = display.get("texture", null) as Texture2D
+	if _lobby_preview_tex != null:
+		_lobby_preview_tex.texture = tex
+		_lobby_preview_tex.visible = tex != null
+	if _lobby_preview_fallback != null:
+		_lobby_preview_fallback.accent = accent
+		_lobby_preview_fallback.queue_redraw()
+
+	if _change_mode_button != null:
+		_change_mode_button.disabled = not host
+		_change_mode_button.text = "CHANGE MODE & MAP" if host else "HOST PICKS MODE"
+		if _change_mode_button.disabled:
+			_apply_soft_disabled(_change_mode_button)
+		_change_mode_button.fit_text()
+
+	if _map_button != null:
+		_map_button.visible = kind != KIND_SANDBOX and host
+		_map_button.disabled = not host or kind == KIND_SANDBOX
+		_map_button.text = "PICK TRACK" if kind == KIND_RACE else "PICK MAP"
+		_map_button.fit_text()
+
+	var vehicle_id: String = GameSettings.selected_vehicle
 	if kind == KIND_RACE:
-		map_text = GameSettings.minigame_name(map_id)
-		map_color = UiPalette.CYAN
-	elif kind == KIND_DELIVER:
-		map_text = "CARGO RUSH"
-		map_color = UiPalette.YELLOW
-	_set_badge("map", map_text, map_color)
-	_map_button.disabled = not host or kind == KIND_SANDBOX
-	if kind == KIND_DELIVER:
-		_map_button.tooltip_text = "CHOOSE ARENA · %s" % _arena_name()
-	else:
-		_map_button.tooltip_text = "CHOOSE MAP"
-	if _map_button.disabled:
-		_apply_soft_disabled(_map_button)
-	var vehicle_id: String = GameSettings.minigame_vehicle \
-		if kind != KIND_SANDBOX else GameSettings.selected_vehicle
+		vehicle_id = GameSettings.racing_vehicle_id()
+	elif _is_party_kind(kind):
+		vehicle_id = GameSettings.minigame_vehicle
 	var vehicle: Dictionary = Catalog.find(vehicle_id)
-	var vehicle_text: String = str(vehicle.get("name", "SHOPPING CART"))
+	var vehicle_text: String = "GARAGE: " + str(vehicle.get("name", "SHOPPING CART"))
 	if _state == "client" and kind != KIND_SANDBOX:
-		# A minigame forces the host's setup; the client's local pick is not
-		# what it will drive.
-		vehicle_text = "HOST CHOICE"
-	_set_badge("vehicle", vehicle_text, UiPalette.BLUE)
-	# room_public is replicated, so a client sees the host's PUBLIC/PRIVATE
-	# state instead of its own saved preference (the old label bug).
+		vehicle_text = "CAR: HOST CHOICE"
+	if _vehicle_button != null:
+		_vehicle_button.text = vehicle_text
+		_vehicle_button.disabled = _state == "client" and kind != KIND_SANDBOX
+		if _vehicle_button.disabled:
+			_apply_soft_disabled(_vehicle_button)
+		_vehicle_button.fit_text()
+
 	var public_room: bool = Network.room_public if active else GameSettings.room_public
 	_visibility_pill.call("set_index", 1 if public_room else 0)
 	_visibility_pill.disabled = not host
-	if kind == KIND_RACE:
-		_start_button.text = "START RACE"
-	elif kind == KIND_DELIVER:
-		_start_button.text = "START MATCH"
-	else:
-		_start_button.text = "START SANDBOX"
-	_client_note.text = "ONLY THE HOST CAN START THE MATCH." \
-		if kind != KIND_SANDBOX else "ONLY THE HOST CAN START THE GAME."
-	_refresh_summary()
-	# The team card appears/disappears with the replicated game kind, so it is
-	# refreshed from the same config update as the MODE label.
+
+	match kind:
+		KIND_RACE:
+			_start_button.text = "START RACE"
+		KIND_DELIVER:
+			_start_button.text = "START DELIVER"
+		KIND_KNOCKOUT:
+			_start_button.text = "START KNOCKOUT"
+		KIND_BOMB_TAG:
+			_start_button.text = "START BLAST TAG"
+		_:
+			_start_button.text = "START SANDBOX"
+	_start_button.fit_text()
 	_refresh_teams()
-
-
-func _setup_line() -> String:
-	var active: bool = Network.is_session_active()
-	var kind: String = _current_kind()
-	var map_id: String = Network.session_map_id if active \
-		else GameSettings.selected_map
-	var map_text: String = "FREEROAM"
-	if kind == KIND_RACE:
-		map_text = GameSettings.minigame_name(map_id)
-	elif kind == KIND_DELIVER:
-		map_text = "CARGO RUSH · " + _arena_name()
-	var vehicle_id: String = GameSettings.minigame_vehicle \
-		if kind != KIND_SANDBOX else GameSettings.selected_vehicle
-	var vehicle: Dictionary = Catalog.find(vehicle_id)
-	var vehicle_text: String = str(vehicle.get("name", "SHOPPING CART"))
-	if _state == "client" and kind != KIND_SANDBOX:
-		vehicle_text = "HOST CHOICE"
-	var bots: int = Network.session_bot_count if active else GameSettings.effective_bot_count()
-	bots = clampi(bots, 0, 5)
-	var bot_text: String = "NO BOTS" if bots <= 0 else ("%d BOT%s" % [bots, "" if bots == 1 else "S"])
-	var kind_text: String = KIND_LABELS[clampi(KIND_VALUES.find(kind), 0,
-		KIND_LABELS.size() - 1)]
-	return "%s  ·  %s  ·  %s  ·  %s" % [
-		kind_text, map_text, vehicle_text, bot_text]
-
-
-func _refresh_summary() -> void:
-	if _summary == null:
-		return
-	if _state == "client":
-		_summary.text = "HOST SETUP  ·  " + _setup_line()
-	elif _state == "host":
-		_summary.text = _setup_line()
-	else:
-		_summary.text = ""
-	_summary.visible = _summary.text != ""
+	_refresh_players()
 
 
 # --------------------------------------------------------------------------
@@ -1267,10 +1576,14 @@ func _refresh_tag_swatches() -> void:
 	var selected: String = GameSettings.player_tag_color
 	for hex: String in _tag_swatch_buttons:
 		var button: Button = _tag_swatch_buttons[hex]
-		var style: StyleBoxFlat = button.get_theme_stylebox("normal") as StyleBoxFlat
-		if style != null:
-			style.set_border_width_all(6 if hex == selected else 3)
-		button.scale = Vector2.ONE * (1.12 if hex == selected else 1.0)
+		var chosen: bool = hex == selected
+		for state: String in ["normal", "hover", "pressed"]:
+			var style: StyleBoxFlat = button.get_theme_stylebox(state) as StyleBoxFlat
+			if style == null:
+				continue
+			style.set_border_width_all(5 if chosen else 3)
+			style.border_color = UiPalette.INK
+		button.scale = Vector2.ONE * (1.14 if chosen else 1.0)
 
 
 func _on_code_typed(text: String) -> void:
@@ -1311,7 +1624,7 @@ func _begin_host(mode: String) -> void:
 	_set_state("host")
 	_code_caption.text = "OPENING"
 	_code_label.text = "....."
-	_host_hint.text = "Starting the room..."
+	_set_host_hint("Starting the room...")
 	_copy_button.visible = false
 	_start_button.visible = false
 	_set_status("")
@@ -1323,8 +1636,8 @@ func _on_host_started(code: String) -> void:
 	_set_status("")
 	_start_button.visible = true
 	if Network.is_lan():
-		_code_caption.text = "ROOM ON THIS WI-FI"
-		_code_label.text = "LAN"
+		_code_caption.text = "LOCAL WI-FI"
+		_code_label.text = "LAN ROOM"
 		_copy_button.visible = false
 	else:
 		_code_caption.text = "ROOM CODE"
@@ -1339,8 +1652,6 @@ func _on_host_started(code: String) -> void:
 
 func _on_visibility_changed(value: Variant) -> void:
 	if not Network.is_host:
-		# A client cannot change visibility; snap the pill back to the
-		# replicated room value instead of leaving a lie on screen.
 		_refresh_config()
 		return
 	var public_room: bool = bool(value)
@@ -1350,19 +1661,22 @@ func _on_visibility_changed(value: Variant) -> void:
 	_refresh_config()
 
 
+func _set_host_hint(text: String) -> void:
+	if _host_hint == null:
+		return
+	_host_hint.text = text
+	_host_hint.visible = text != ""
+
+
 func _refresh_visibility_hint() -> void:
 	if _host_hint == null or _state != "host":
 		return
-	if Network.is_lan():
-		if Network.room_public:
-			_host_hint.text = ""
-		else:
-			_host_hint.text = "Switch ROOM to PUBLIC so friends can find it."
+	if Network.room_public:
+		_set_host_hint("Listed in Room Browser.")
+	elif Network.is_lan():
+		_set_host_hint("Switch to PUBLIC so Wi-Fi players see your room.")
 	else:
-		if Network.room_public:
-			_host_hint.text = ""
-		else:
-			_host_hint.text = "Share this code with your friends."
+		_set_host_hint("Share this 5-letter code with friends.")
 
 
 func _on_host_failed(reason: String) -> void:
@@ -1398,7 +1712,7 @@ func _on_join_pressed() -> void:
 	Network.set_meta("last_join_code", code)
 	_join_button.disabled = true
 	_apply_soft_disabled(_join_button)
-	_set_join_status("Connecting to the Cart Slop server...")
+	_set_join_status("Connecting...")
 	Network.join_game(code)
 
 
@@ -1410,8 +1724,6 @@ func _on_join_failed(reason: String) -> void:
 	_join_button.disabled = not Network.server_online
 	_apply_soft_disabled(_join_button)
 	_set_join_status(reason)
-	# A room-browser pick writes "Joining..." into the bottom bar. Clear that
-	# stale message now that the attempt is over; the join card holds the error.
 	if _status.text.begins_with("Joining"):
 		_set_status("")
 
@@ -1422,21 +1734,19 @@ func _on_join_succeeded() -> void:
 	_set_join_status("")
 	_client_code = str(Network.get_meta("last_join_code", _join_input.text)).strip_edges().to_upper()
 	if Network.is_lan():
-		_code_caption.text = "LAN ROOM"
-		_code_label.text = "LAN"
+		_code_caption.text = "LOCAL WI-FI"
+		_code_label.text = "LAN ROOM"
 		_copy_button.visible = false
-		_host_hint.text = "Connected over Wi-Fi. Waiting for the host..."
 	elif _client_code.length() == 5:
 		_code_caption.text = "ROOM CODE"
 		_code_label.text = _client_code
 		_copy_button.visible = true
-		_host_hint.text = "You're in. Waiting for the host to start."
 	else:
 		_code_caption.text = "CONNECTED"
-		_code_label.text = "ROOM"
+		_code_label.text = "ONLINE"
 		_copy_button.visible = false
-		_host_hint.text = "Waiting for the host to start..."
-	_title.text = "LOBBY"
+	_set_host_hint("Connected — host chooses the mode & map.")
+	_title.text = "ROOM LOBBY"
 	_refresh_config()
 	_refresh_players()
 	_refresh_teams()
@@ -1466,8 +1776,6 @@ func _set_join_status(text: String) -> void:
 
 
 func _refresh_status() -> void:
-	## Keep a real join/host error. When idle and offline, the warm banner is
-	## the only message; StatusLabel stays hidden unless an action failed.
 	if _status.text != "" and _status.text != SERVER_DOWN:
 		return
 	if _server_checked and not Network.server_online and _status.text == SERVER_DOWN:
@@ -1480,44 +1788,45 @@ func _refresh_status() -> void:
 # host configuration
 
 
+func _apply_host_selection(kind: String) -> void:
+	_local_kind = kind
+	var mode: String = GameSettings.GAME_SANDBOX if kind == KIND_SANDBOX \
+		else GameSettings.GAME_MINIGAMES
+	var scene: String = _scene_for_kind(kind)
+	var event_id: String = _event_for_kind(kind)
+	var target_id: String = ""
+	if kind == KIND_RACE:
+		target_id = Network.session_map_id \
+			if (Network.is_session_active() and Network.session_map_id != "") \
+			else GameSettings.selected_map
+	elif _is_party_kind(kind):
+		target_id = _ensure_arena_for_kind(kind)
+
+	GameSettings.set_multiplayer_mode(mode)
+	Network.configure_session(mode, GameSettings.bots_enabled,
+		GameSettings.effective_bot_count(),
+		target_id if kind == KIND_RACE else "", scene)
+	if _is_party_kind(kind) and target_id != "" and ("session_minigame" in Network):
+		Network.set("session_minigame", target_id)
+	if Network.has_method("set_host_event"):
+		if kind != KIND_SANDBOX or ("EVENT_SANDBOX" in Network):
+			Network.call("set_host_event", event_id, target_id)
+
+
 func _on_game_mode(kind: String) -> void:
-	## MODE strip: SANDBOX / RACING / DELIVER. Both minigames keep
-	## GameSettings.multiplayer_mode == MINIGAMES; the exact scene goes through
-	## the replicated session config, so a client can never load a race when
-	## the host picked DELIVER.
 	if not Network.is_host:
 		_refresh_config()
 		return
-	var mode: String = GameSettings.GAME_SANDBOX if kind == KIND_SANDBOX \
-		else GameSettings.GAME_MINIGAMES
-	var scene: String = Network.GAME_SCENE
-	if kind == KIND_RACE:
-		scene = Network.RACE_SCENE
-	elif kind == KIND_DELIVER:
-		scene = Network.CARGO_SCENE
-	GameSettings.set_multiplayer_mode(mode)
-	Network.configure_session(mode, GameSettings.bots_enabled,
-		GameSettings.effective_bot_count(), "", scene)
+	_apply_host_selection(kind)
 	_refresh_config()
 	_refresh_teams()
 
 
 func _on_bots_option(value: Variant) -> void:
-	## Tile strip in the HOST panel. The selected tile is the value, so the
-	## strip already shows it; only the settings and the room copy move.
 	_apply_bot_total(int(value))
 
 
-func _on_bots_slider_value(value: float) -> void:
-	## In-room BOTS slider. Same write contract, still one control per host.
-	_apply_bot_total(clampi(int(round(value)), 0, 5))
-
-
 func _apply_bot_total(total: int) -> void:
-	## Same contract the old BOTS pill used: GameSettings.set_bot_total() is the
-	## field Network.host_game() reads, and a live host also re-broadcasts the
-	## session config so clients see the new count. A client cannot edit the
-	## host's count, so a click on the read-only slider snaps straight back.
 	if _state != "idle" and not Network.is_host:
 		_refresh_config()
 		return
@@ -1527,19 +1836,23 @@ func _apply_bot_total(total: int) -> void:
 	if Network.is_host and Network.is_session_active():
 		Network.configure_session(Network.session_mode,
 			GameSettings.bots_enabled, GameSettings.effective_bot_count())
-	_refresh_summary()
 
 
 func _set_bots_views(total: int) -> void:
-	## Keep the idle host strip and the in-room slider on the same value
-	## without re-emitting either change signal.
 	var clean: int = clampi(total, 0, 5)
-	if _bots_strip != null:
-		_bots_strip.call("set_index", clean)
-	if _room_bots_slider != null:
-		_room_bots_slider.set_value_no_signal(float(clean))
-	if _room_bots_value_label != null:
-		_room_bots_value_label.text = _bots_text(clean)
+	if _room_bots_pill != null:
+		_room_bots_pill.call("set_index", clean)
+
+
+func _on_open_all_modes() -> void:
+	## Opens Page 1 (SELECT MODE) of MinigamesMenu so the host sees all 5 modes
+	## and can pick any mode & map visually with screenshots.
+	if Network.is_session_active() and not Network.is_host:
+		_set_status("Only the host can change the mode or map.")
+		return
+	GameSettings.vehicle_return_scene = LOBBY_SCENE
+	MinigamesMenu.open_for_mode("")
+	SceneLoader.go_to(MINIGAMES_SCENE, "SELECT MODE", "Choose mode & map for the room")
 
 
 func _on_choose_map() -> void:
@@ -1548,36 +1861,40 @@ func _on_choose_map() -> void:
 		return
 	var kind: String = _current_kind()
 	if kind == KIND_SANDBOX:
-		_set_status("Switch MODE to RACING or DELIVER first.")
+		_on_open_all_modes()
 		return
 	GameSettings.vehicle_return_scene = LOBBY_SCENE
-	SceneLoader.go_to(MINIGAMES_SCENE, "CHOOSE A MAP" if kind == KIND_RACE
-		else "CHOOSE AN ARENA", "PICK A MAP" if kind == KIND_RACE else "PICK AN ARENA")
+	var target_page: String = "racing"
+	if kind == KIND_DELIVER:
+		target_page = "cargo_rush"
+	elif kind == KIND_KNOCKOUT:
+		target_page = "knockout"
+	elif kind == KIND_BOMB_TAG:
+		target_page = "bomb_tag"
+	MinigamesMenu.open_for_mode(target_page)
+	SceneLoader.go_to(MINIGAMES_SCENE,
+		"SELECT TRACK" if kind == KIND_RACE else "SELECT MAP",
+		"Choose a map for the room")
 
 
 func _on_change_vehicle() -> void:
+	var kind: String = _current_kind()
+	if _state == "client" and kind != KIND_SANDBOX:
+		return
 	GameSettings.vehicle_return_scene = LOBBY_SCENE
 	GameSettings.vehicle_return_title = "MULTIPLAYER"
-	GameSettings.vehicle_edit_minigame = _current_kind() != KIND_SANDBOX
-	SceneLoader.go_to(VEHICLE_SCENE, "VEHICLE", "Choose your ride")
+	GameSettings.vehicle_edit_minigame = _is_party_kind(kind)
+	VehicleSelect.set_racing_intent(kind == KIND_RACE)
+	SceneLoader.go_to(VEHICLE_SCENE, "GARAGE", "Choose your ride")
 
 
 func _on_start_pressed() -> void:
-	## START always pushes the room's visible game (mode + exact scene) before
-	## loading it, so the replicated config and the scene cannot disagree.
 	if not Network.is_host:
 		return
 	var kind: String = _current_kind()
 	var mode: String = GameSettings.GAME_SANDBOX if kind == KIND_SANDBOX \
 		else GameSettings.GAME_MINIGAMES
-	var scene: String = Network.GAME_SCENE
-	if kind == KIND_RACE:
-		scene = Network.RACE_SCENE
-	elif kind == KIND_DELIVER:
-		scene = Network.CARGO_SCENE
-	GameSettings.set_multiplayer_mode(mode)
-	Network.configure_session(mode, GameSettings.bots_enabled,
-		GameSettings.effective_bot_count(), "", scene)
+	_apply_host_selection(kind)
 	Network.start_game("", mode)
 
 
@@ -1588,11 +1905,6 @@ func _on_start_pressed() -> void:
 func _on_peers_changed() -> void:
 	_refresh_players()
 	_refresh_teams()
-	# A joining client has no session config yet. Rebroadcast the host's
-	# current setup (including teams) on every peer change so the read-only
-	# client summary and team columns are accurate instead of falling back to
-	# local defaults. Network.refresh_session_config() never re-derives the
-	# mode from this machine's saved menu pick.
 	if Network.is_host and Network.is_session_active() and Network.is_connected_to_server():
 		Network.refresh_session_config()
 
@@ -1610,50 +1922,69 @@ func _refresh_players() -> void:
 			ids.append(peer_id)
 		ids.sort()
 	_players_header.text = "PLAYERS   %d / %d" % [ids.size(), MAX_SLOTS]
-	for slot in MAX_SLOTS:
+	for peer_id: int in ids:
+		var is_local: bool = peer_id == multiplayer.get_unique_id()
+		var row_panel := PanelContainer.new()
+		var row_style := StyleBoxFlat.new()
+		row_style.bg_color = Color(UiPalette.CYAN, 0.18) if is_local \
+			else Color(1.0, 1.0, 1.0, 0.55)
+		row_style.set_corner_radius_all(10)
+		row_style.content_margin_left = 10.0
+		row_style.content_margin_right = 10.0
+		row_style.content_margin_top = 4.0
+		row_style.content_margin_bottom = 4.0
+		row_style.anti_aliasing = true
+		row_panel.add_theme_stylebox_override("panel", row_style)
+
 		var row := HBoxContainer.new()
-		row.add_theme_constant_override("separation", 7)
-		row.custom_minimum_size = Vector2(0, 19)
+		row.add_theme_constant_override("separation", 8)
+		row.custom_minimum_size = Vector2(0, 24)
+		row_panel.add_child(row)
+
 		var dot := ColorRect.new()
-		dot.custom_minimum_size = Vector2(11, 11)
+		dot.custom_minimum_size = Vector2(12, 12)
 		dot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		dot.color = Network.color_of(peer_id) if Network.player_colors.has(peer_id) \
+			else UiPalette.YELLOW
 		row.add_child(dot)
+
 		var name_label := Label.new()
 		name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		name_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 		name_label.clip_text = true
 		name_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-		name_label.add_theme_font_size_override("font_size", 14)
+		name_label.add_theme_font_size_override("font_size", 15)
 		name_label.add_theme_color_override("font_color", UiPalette.INK)
+		var label_text: String = Network.name_of(peer_id)
+		if is_local:
+			label_text += "  (YOU)"
+		if peer_id == 1:
+			label_text = "HOST · " + label_text
+		name_label.text = label_text
 		row.add_child(name_label)
-		if slot < ids.size():
-			var peer_id: int = ids[slot]
-			dot.color = Network.color_of(peer_id) if Network.player_colors.has(peer_id) \
-				else UiPalette.YELLOW
-			var label_text: String = Network.name_of(peer_id)
-			if peer_id == multiplayer.get_unique_id():
-				label_text += "  (YOU)"
-			if peer_id == 1:
-				label_text = "[HOST]  " + label_text
-			name_label.text = label_text
-			if Network.is_session_active() and Network.is_connected_to_server():
-				var ms: int = int(Network.ping_table.get(peer_id, 0))
-				if ms <= 0 and not Network.is_host and peer_id == multiplayer.get_unique_id():
-					ms = maxi(Network.latency_ms, 0)
-				if ms <= 0 and Network.is_host and peer_id == 1:
-					ms = maxi(Network.host_ping_ms, 0)
+
+		if Network.is_session_active() and Network.is_connected_to_server():
+			var ms: int = int(Network.ping_table.get(peer_id, 0))
+			if ms <= 0 and not Network.is_host and is_local:
+				ms = maxi(Network.latency_ms, 0)
+			if ms <= 0 and Network.is_host and peer_id == 1:
+				ms = maxi(Network.host_ping_ms, 0)
+			if ms > 0:
 				var ping_label := Label.new()
 				ping_label.text = "%d ms" % ms
 				ping_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-				ping_label.add_theme_font_size_override("font_size", 11)
+				ping_label.add_theme_font_size_override("font_size", 12)
 				ping_label.add_theme_color_override("font_color", UiPalette.BLUE_DARK)
 				row.add_child(ping_label)
-		else:
-			dot.color = Color(UiPalette.INK, 0.10)
-			name_label.text = "OPEN SLOT"
-			name_label.add_theme_font_size_override("font_size", 12)
-			name_label.add_theme_color_override("font_color", UiPalette.MUTED)
-		_players_box.add_child(row)
+		_players_box.add_child(row_panel)
+
+	var open_slots: int = maxi(MAX_SLOTS - ids.size(), 0)
+	if open_slots > 0:
+		var open_label := Label.new()
+		open_label.text = "%d OPEN SLOT%s" % [open_slots, "" if open_slots == 1 else "S"]
+		open_label.add_theme_font_size_override("font_size", 12)
+		open_label.add_theme_color_override("font_color", UiPalette.MUTED)
+		_players_box.add_child(open_label)
 
 
 func _on_leave_pressed() -> void:
@@ -1661,8 +1992,9 @@ func _on_leave_pressed() -> void:
 		_leave_armed = true
 		_leave_ticket += 1
 		var ticket: int = _leave_ticket
-		_leave_button.text = "CLICK AGAIN TO LEAVE"
+		_leave_button.text = "CONFIRM LEAVE"
 		_leave_button.set("fill_color", UiPalette.RED_DARK)
+		_leave_button.fit_text()
 		_set_status(LEAVE_WARNING)
 		await get_tree().create_timer(3.0).timeout
 		if is_inside_tree() and _leave_armed and ticket == _leave_ticket:
@@ -1671,8 +2003,6 @@ func _on_leave_pressed() -> void:
 	_leave_ticket += 1
 	_reset_leave_button()
 	Network.leave()
-	# host_game() can still be awaiting a relay registration and owns the
-	# full-screen SceneLoader task. Leaving must dismiss it immediately.
 	SceneLoader.end_task()
 	_set_state("idle")
 	_set_status("")
@@ -1684,13 +2014,12 @@ func _reset_leave_button() -> void:
 	if _leave_button != null:
 		_leave_button.text = "LEAVE ROOM"
 		_leave_button.set("fill_color", UiPalette.RED)
+		_leave_button.fit_text()
 	if _status != null and _status.text == LEAVE_WARNING:
 		_set_status("")
 
 
 func _on_back_pressed() -> void:
-	# A host closing the room drops every client. Route BACK through the same
-	# click-twice confirmation as LEAVE ROOM instead of bypassing it.
 	if _state == "host" and Network.is_session_active() and not _leave_armed:
 		_on_leave_pressed()
 		return

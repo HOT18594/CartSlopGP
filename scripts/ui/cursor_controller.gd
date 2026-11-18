@@ -30,7 +30,7 @@ var _cursor_settled: bool = false
 
 
 func _ready() -> void:
-	layer = 128
+	layer = 250
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	_sprite.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_sprite.texture = normal_texture

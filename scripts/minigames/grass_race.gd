@@ -28,6 +28,7 @@ const ART_BACKDROP := preload("res://scripts/ui/art_backdrop.gd")
 const VisualGrade := preload("res://scripts/systems/visual_grade.gd")
 const Backdrop := preload("res://scripts/systems/backdrop.gd")
 const OUTLINE_SHADER := preload("res://assets/materials/toon_outline.gdshader")
+const UI_THEME := preload("res://assets/ui/theme.tres")
 
 const RACE_SCENE: String = "res://scenes/minigames/grass_race.tscn"
 const LOBBY_SCENE: String = "res://scenes/minigames/meadow_lobby.tscn"
@@ -146,6 +147,8 @@ const BOT_COLORS: Array[Color] = [
 enum Phase { COUNTDOWN, RACING, FINISHED }
 
 var _spline: RefCounted
+var _use_grid: bool = false
+var _road_half: float = ROAD_HALF
 var _preset: Dictionary = {}
 var _preset_id: String = TrackDefs.DEFAULT_ID
 var _cart: CartPlayer
@@ -250,6 +253,7 @@ var _server_official: Dictionary = {}
 var _server_finished_reported: bool = false
 var _bot_sync_timer: float = 0.0
 var _horn_stamp: Dictionary = {}
+var _race_relay_ms: Dictionary = {}
 ## Host-authoritative race props: the host simulates cones and broadcasts
 ## snapshots; clients freeze their copy and ask the host to apply pushes.
 var _props: Array[RigidBody3D] = []
@@ -264,6 +268,12 @@ const PROP_SYNC_INTERVAL: float = 0.10
 
 var _canvas: CanvasLayer
 var _countdown_label: Label
+var _callout_label: Label
+var _callout_timer: float = 0.0
+var _wrong_way_label: Label
+var _wrong_way_timer: float = 0.0
+var _wrong_way_active: bool = false
+var _wrong_way_flash: float = 0.0
 var _toast_label: Label
 var _offtrack_label: Label
 var _impact_label: Label
@@ -333,8 +343,12 @@ func _ready() -> void:
 		if height_rows.size() > 0:
 			theme_dict["heights"] = height_rows
 		_spline = KenneyTiles.build(self, grid_rows, theme_dict)
+		_use_grid = _spline != null
+		_road_half = KenneyTiles.ROAD_HALF if _use_grid else ROAD_HALF
 	else:
 		_spline = TrackSpline.new(_preset)
+		_use_grid = false
+		_road_half = ROAD_HALF
 	_track_points = _spline.points
 	_track_cumulative = _spline.cumulative
 	_track_total = maxf(_spline.total_length, 1.0)
@@ -353,15 +367,17 @@ func _ready() -> void:
 		_cart.surface_grip = _surface_grip_for(START_DISTANCE)
 
 	_build_ground()
-	_build_track()
-	_build_barriers()
-	_build_start_line()
-	_build_gates()
+	if not _use_grid:
+		_build_track()
+		_build_barriers()
+		_build_start_line()
+		_build_gates()
 	_build_start_lights()
 	_build_marshal()
 	_build_boost_pads()
-	_build_ramps()
-	_build_trackside_props()
+	if not _use_grid:
+		_build_ramps()
+		_build_trackside_props()
 	# The meadow forest, horizon, grandstands and signs are map theme content
 	# now. The hook does nothing when this map has no theme yet.
 	_build_theme()
@@ -448,7 +464,8 @@ func _update_surface_grip(player_s: float) -> void:
 
 func _track_transform(distance: float, lateral: float = 0.0, height: float = 0.2) -> Transform3D:
 	var frame: Dictionary = _spline.sample(distance)
-	var position: Vector3 = frame["position"] + frame["right"] * lateral + Vector3.UP * height
+	var base_y: float = KenneyTiles.ROAD_SURFACE if _use_grid else 0.0
+	var position: Vector3 = frame["position"] + frame["right"] * lateral + Vector3.UP * (base_y + height)
 	return Transform3D(Basis(Vector3.UP, _spline.yaw_at(distance)), position)
 
 
@@ -457,15 +474,16 @@ func _track_transform(distance: float, lateral: float = 0.0, height: float = 0.2
 
 
 func _build_ground() -> void:
-	var plane := PlaneMesh.new()
-	plane.size = Vector2(GROUND_X, GROUND_Z)
-	var mesh_instance := MeshInstance3D.new()
-	mesh_instance.name = "MeadowGround"
-	mesh_instance.mesh = plane
-	mesh_instance.material_override = _pbr_material(
-		"grass_diff", "grass_nor", "grass_rough", GROUND_X / 10.0,
-		Color(0.72, 0.88, 0.65), 0.10, 0.05)
-	add_child(mesh_instance)
+	if not _use_grid:
+		var plane := PlaneMesh.new()
+		plane.size = Vector2(GROUND_X, GROUND_Z)
+		var mesh_instance := MeshInstance3D.new()
+		mesh_instance.name = "MeadowGround"
+		mesh_instance.mesh = plane
+		mesh_instance.material_override = _pbr_material(
+			"grass_diff", "grass_nor", "grass_rough", GROUND_X / 10.0,
+			Color(0.72, 0.88, 0.65), 0.10, 0.05)
+		add_child(mesh_instance)
 
 	var body := StaticBody3D.new()
 	body.name = "GroundCollision"
@@ -796,19 +814,20 @@ func _build_start_lights() -> void:
 	rig.name = "StartLights"
 	rig.transform = _track_transform(distance, 0.0, 0.0)
 	add_child(rig)
+	var post_offset: float = (_road_half + 2.65) if _use_grid else (ROAD_HALF + 0.8)
 	for side in [-1.0, 1.0]:
 		var post := MeshInstance3D.new()
 		var box := BoxMesh.new()
 		box.size = Vector3(0.28, 5.8, 0.28)
 		post.mesh = box
-		post.position = Vector3(side * (ROAD_HALF + 0.8), 2.9, 0.0)
+		post.position = Vector3(side * post_offset, 2.9, 0.0)
 		var dark := StandardMaterial3D.new()
 		dark.albedo_color = UiPalette.OUTLINE
 		post.material_override = dark
 		rig.add_child(post)
 	var bar := MeshInstance3D.new()
 	var bar_box := BoxMesh.new()
-	bar_box.size = Vector3(ROAD_HALF * 2.0 + 1.9, 1.05, 0.3)
+	bar_box.size = Vector3(post_offset * 2.0 + 0.3, 1.05, 0.3)
 	bar.mesh = bar_box
 	bar.position = Vector3(0.0, 5.48, 0.0)
 	var bar_mat := StandardMaterial3D.new()
@@ -856,7 +875,7 @@ func _build_marshal() -> void:
 	# 7.4 m out sits between the race's invisible barrier (6 m) and the theme's
 	# catch fence (~7.9 m), so the figure never clips a hoarding.
 	root.transform = _track_transform(START_DISTANCE + 6.0,
-		-(ROAD_HALF + 1.9), 0.0)
+		-(_road_half + 1.9), 0.0)
 	add_child(root)
 
 	var vest := StandardMaterial3D.new()
@@ -1151,6 +1170,15 @@ func _build_boost_pads() -> void:
 	var holder := Node3D.new()
 	holder.name = "BoostPads"
 	add_child(holder)
+	var laterals: Array[float] = [-2.2, 2.2, 0.0, -1.6]
+	if _use_grid:
+		var distances: PackedFloat32Array = _grid_boost_distances(4)
+		for i in distances.size():
+			var pad: Node3D = packed.instantiate() as Node3D
+			pad.transform = _track_transform(distances[i],
+				laterals[i % laterals.size()], 0.02)
+			holder.add_child(pad)
+		return
 	for i in 4:
 		var distance: float = _spline.total_length * (0.13 + float(i) * 0.245)
 		var lateral: float = [-2.4, 2.4, 0.0, -1.6][i]
@@ -1159,6 +1187,70 @@ func _build_boost_pads() -> void:
 		# under the dirt. Sit it just above the surface so the glow reads.
 		pad.transform = _track_transform(distance, lateral, 0.075)
 		holder.add_child(pad)
+
+
+func _grid_boost_distances(target_count: int) -> PackedFloat32Array:
+	## Pick evenly spaced flat straight cells on a Kenney grid so boost pads
+	## always sit flush at spline_pt.y + KenneyTiles.ROAD_SURFACE + 0.02 and
+	## never hover over a jump ramp, bump or sloped segment.
+	var picked := PackedFloat32Array()
+	var candidates: PackedFloat32Array = PackedFloat32Array()
+	var total: float = maxf(_spline.total_length, 1.0)
+	var raw_tiles: Variant = _spline.get("tiles")
+	if raw_tiles is Array:
+		for entry: Variant in raw_tiles as Array:
+			if not (entry is Dictionary):
+				continue
+			var tile: Dictionary = entry as Dictionary
+			var kind: String = str(tile.get("tile", ""))
+			if kind != "S" and kind != "P" and kind != "E" and kind != "G":
+				continue
+			if bool(tile.get("start", false)):
+				continue
+			var h_in: float = float(tile.get("height_in", 0.0))
+			var h_out: float = float(tile.get("height_out", 0.0))
+			if absf(h_out - h_in) > 0.01:
+				continue
+			var mid: float = (float(tile.get("from", 0.0)) + float(tile.get("to", 0.0))) * 0.5
+			var rel: float = fposmod(mid - START_DISTANCE, total)
+			if rel < 26.0 or rel > total - 20.0:
+				continue
+			candidates.append(mid)
+	if candidates.is_empty():
+		var steps: int = 32
+		for idx in steps:
+			var s: float = total * (0.12 + 0.80 * float(idx) / float(steps))
+			if absf(_spline.curvature_at(s, 4.0)) > 0.012:
+				continue
+			var y_a: float = (_spline.sample(s - 3.0)["position"] as Vector3).y
+			var y_b: float = (_spline.sample(s + 3.0)["position"] as Vector3).y
+			if absf(y_b - y_a) > 0.02:
+				continue
+			candidates.append(s)
+	if candidates.is_empty():
+		return picked
+	var count: int = mini(target_count, candidates.size())
+	var min_gap: float = maxf(total / float(count + 1) * 0.55, 24.0)
+	for slot in count:
+		var ideal: float = total * (0.16 + 0.72 * float(slot) / float(maxi(count - 1, 1)))
+		var best_s: float = -1.0
+		var best_err: float = INF
+		for cand: float in candidates:
+			var too_close: bool = false
+			for chosen_s: float in picked:
+				var diff: float = absf(fposmod(cand - chosen_s + total * 0.5, total) - total * 0.5)
+				if diff < min_gap:
+					too_close = true
+					break
+			if too_close:
+				continue
+			var err: float = absf(fposmod(cand - ideal + total * 0.5, total) - total * 0.5)
+			if err < best_err:
+				best_err = err
+				best_s = cand
+		if best_s >= 0.0:
+			picked.append(best_s)
+	return picked
 
 
 func _build_ramps() -> void:
@@ -1951,7 +2043,7 @@ func _build_rivals() -> void:
 		var line_style: int = (i + line_offset) % RaceAI.LINE_COUNT
 		var driver: RaceAI = null
 		if authority:
-			driver = RaceAI.new(_spline, ROAD_HALF)
+			driver = RaceAI.new(_spline, _road_half, _preset)
 			driver.configure(skill, lane * 0.25, boost_bias, rival.max_speed,
 				line_style, phase, aggression, lookahead)
 			driver.set_obstacles(_trackside_solids)
@@ -2132,7 +2224,7 @@ func _tick_rivals(delta: float) -> void:
 			rival["stuck"] = float(rival["stuck"]) + delta
 		else:
 			rival["stuck"] = maxf(float(rival["stuck"]) - delta * 2.0, 0.0)
-		if float(track_distance) > ROAD_HALF + 5.0 or node.global_position.y < -3.0:
+		if float(track_distance) > _road_half + 5.0 or node.global_position.y < -3.0:
 			rival["off_time"] = float(rival["off_time"]) + delta
 		else:
 			rival["off_time"] = 0.0
@@ -2196,24 +2288,35 @@ func _build_overlay() -> void:
 	var root := Control.new()
 	root.set_anchors_preset(Control.PRESET_FULL_RECT)
 	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	root.theme = load(THEME)
+	root.theme = UI_THEME
 	_canvas.add_child(root)
 
 	_countdown_label = _make_label(root, 112, UiPalette.YELLOW,
 		Vector2(-260.0, -110.0), Vector2(260.0, 110.0), 0.5, 0.0)
 	_countdown_label.text = "3"
 
-	_toast_label = _make_label(root, 26, Color("ffffff"),
-		Vector2(-360.0, 118.0), Vector2(360.0, 168.0), 0.5, 0.0)
+	# Upper-center arcade banner zone (y = 92..190) so callouts and warnings
+	# sit cleanly below the top HUD bar without ever covering the player's kart.
+	_callout_label = _make_label(root, 30, UiPalette.YELLOW,
+		Vector2(-380.0, 92.0), Vector2(380.0, 124.0), 0.0, 0.0)
+	_callout_label.visible = false
+
+	_wrong_way_label = _make_label(root, 28, UiPalette.RED,
+		Vector2(-360.0, 92.0), Vector2(360.0, 124.0), 0.0, 0.0)
+	_wrong_way_label.text = "WRONG WAY!  ·  TURN AROUND"
+	_wrong_way_label.visible = false
+
+	_toast_label = _make_label(root, 24, Color("ffffff"),
+		Vector2(-380.0, 124.0), Vector2(380.0, 152.0), 0.0, 0.0)
 	_toast_label.visible = false
 
-	_offtrack_label = _make_label(root, 22, UiPalette.RED,
-		Vector2(-300.0, 176.0), Vector2(300.0, 212.0), 0.5, 0.0)
+	_offtrack_label = _make_label(root, 20, UiPalette.RED,
+		Vector2(-300.0, 152.0), Vector2(300.0, 171.0), 0.0, 0.0)
 	_offtrack_label.text = "OFF TRACK  ·  EASE BACK IN"
 	_offtrack_label.visible = false
 
-	_impact_label = _make_label(root, 22, UiPalette.YELLOW,
-		Vector2(-300.0, 220.0), Vector2(300.0, 256.0), 0.5, 0.0)
+	_impact_label = _make_label(root, 20, UiPalette.YELLOW,
+		Vector2(-300.0, 171.0), Vector2(300.0, 190.0), 0.0, 0.0)
 	_impact_label.text = "BARRIER!  ·  EASE OFF"
 	_impact_label.visible = false
 
@@ -2482,6 +2585,8 @@ func _make_label(parent: Control, font_size: int, color: Color,
 	label.offset_right = bottom_right.x
 	label.offset_top = top_left.y + y_offset
 	label.offset_bottom = bottom_right.y + y_offset
+	label.pivot_offset = Vector2((bottom_right.x - top_left.x) * 0.5,
+		(bottom_right.y - top_left.y) * 0.5)
 	label.grow_horizontal = Control.GROW_DIRECTION_BOTH
 	label.grow_vertical = Control.GROW_DIRECTION_BOTH
 	label.theme_type_variation = &"TitleLabel"
@@ -2901,6 +3006,34 @@ func _toast(text: String, duration: float) -> void:
 	_toast_timer = duration
 
 
+func _callout(text: String, color: Color = UiPalette.YELLOW,
+		duration: float = 2.2) -> void:
+	if _callout_label == null:
+		return
+	_callout_label.text = text
+	_callout_label.add_theme_color_override("font_color", color)
+	_callout_label.visible = true
+	_callout_timer = duration
+	_pop_label(_callout_label)
+
+
+func _set_wrong_way(active: bool) -> void:
+	if _wrong_way_active == active:
+		return
+	_wrong_way_active = active
+	if not active:
+		_wrong_way_timer = 0.0
+		_wrong_way_flash = 0.0
+	if _hud != null and _hud.has_method("set_wrong_way"):
+		_hud.call("set_wrong_way", active)
+		if _wrong_way_label != null:
+			_wrong_way_label.visible = false
+	elif _wrong_way_label != null:
+		_wrong_way_label.visible = active
+		if active:
+			_pop_label(_wrong_way_label)
+
+
 func _pop_label(label: Label) -> void:
 	label.scale = Vector2.ONE * 1.25
 	var tween := create_tween()
@@ -2979,6 +3112,7 @@ func _on_net_peer_disconnected(peer_id: int) -> void:
 	_remote_progress.erase(peer_id)
 	_remote_progress_ms.erase(peer_id)
 	_remote_finish_time.erase(peer_id)
+	_race_relay_ms.erase(peer_id)
 
 
 func _spawn_remote(peer_id: int) -> void:
@@ -2991,7 +3125,7 @@ func _spawn_remote(peer_id: int) -> void:
 	# 0.05 sits the ghost ON the dirt road (top at 0.04): ghosts run no physics,
 	# so anything higher leaves them hovering in the air until the first sync.
 	var spawn: Transform3D = _track_transform(START_DISTANCE - float(row) * 4.5,
-		-2.6 + float(column) * 5.2, 0.05)
+		-2.6 + float(column) * 5.2, 0.02 if _use_grid else 0.05)
 	var cart: CartPlayer = CART_SCENE.instantiate() as CartPlayer
 	# Transform before add_child: otherwise the body starts at the world origin
 	# for one physics tick and shoves every cart already near it.
@@ -3042,6 +3176,8 @@ func _broadcast_race_state(peer_id: int, position: Vector3, yaw: float,
 	if sent_ms <= 0:
 		sent_ms = Time.get_ticks_msec()
 	for target: int in multiplayer.get_peers():
+		if target == peer_id:
+			continue
 		if Network.is_scene_ready(target):
 			rpc_id(target, "_net_race_cart_state", peer_id, position, yaw, progress, sent_ms, velocity)
 
@@ -3204,8 +3340,11 @@ func _net_race_cart_state(peer_id: int, position: Vector3, yaw: float,
 		_accept_remote_race_state(peer_id, cart, position, yaw, progress,
 			sent_ms, velocity, newest)
 	if _is_host and sender != 1:
-		_broadcast_race_state(peer_id, position, yaw,
-			float(_remote_progress.get(peer_id, progress)), sent_ms, velocity)
+		var now_ms: int = Time.get_ticks_msec()
+		if now_ms - int(_race_relay_ms.get(peer_id, -10000)) >= 20:
+			_race_relay_ms[peer_id] = now_ms
+			_broadcast_race_state(peer_id, position, yaw,
+				float(_remote_progress.get(peer_id, progress)), sent_ms, velocity)
 
 
 func _accept_remote_race_state(peer_id: int, cart: CartPlayer, position: Vector3,
@@ -3302,14 +3441,16 @@ func _broadcast_props() -> void:
 	if _props.is_empty():
 		return
 	var positions := PackedVector3Array()
-	var rotations := PackedVector3Array()
+	var rotations := PackedVector4Array()
 	for prop: RigidBody3D in _props:
 		if not is_instance_valid(prop):
 			positions.append(Vector3.ZERO)
-			rotations.append(Vector3.ZERO)
+			rotations.append(Vector4(0.0, 0.0, 0.0, 1.0))
 			continue
 		positions.append(prop.global_position)
-		rotations.append(prop.global_rotation)
+		var basis: Basis = prop.global_transform.basis.orthonormalized()
+		var turn: Quaternion = basis.get_rotation_quaternion().normalized()
+		rotations.append(Vector4(turn.x, turn.y, turn.z, turn.w))
 	for target: int in multiplayer.get_peers():
 		if Network.is_scene_ready(target):
 			rpc_id(target, "_net_props", positions, rotations)
@@ -3329,18 +3470,24 @@ func _apply_prop_targets(delta: float) -> void:
 			continue
 		var data: Array = _prop_targets[index]
 		prop.global_position = prop.global_position.lerp(data[0] as Vector3, blend)
-		var target_rotation: Vector3 = data[1] as Vector3
-		prop.global_rotation = Vector3(
-			lerp_angle(prop.global_rotation.x, target_rotation.x, blend),
-			lerp_angle(prop.global_rotation.y, target_rotation.y, blend),
-			lerp_angle(prop.global_rotation.z, target_rotation.z, blend))
+		var packed: Vector4 = data[1] as Vector4
+		var target_turn := Quaternion(packed.x, packed.y, packed.z, packed.w)
+		if target_turn.length_squared() < 0.5:
+			continue
+		var current: Quaternion = prop.global_transform.basis \
+			.get_rotation_quaternion()
+		var turn: Quaternion = current.slerp(target_turn.normalized(), blend)
+		var xform: Transform3D = prop.global_transform
+		xform.basis = Basis(turn)
+		prop.global_transform = xform
 
 
 @rpc("authority", "unreliable")
-func _net_props(positions: PackedVector3Array, rotations: PackedVector3Array) -> void:
+func _net_props(positions: PackedVector3Array,
+		rotations: PackedVector4Array) -> void:
 	if _is_host or not _multiplayer:
 		return
-	if positions.size() != _props.size() or rotations.size() != _props.size():
+	if positions.size() > _props.size() or rotations.size() < positions.size():
 		return
 	for index in positions.size():
 		if not positions[index].is_finite() or not rotations[index].is_finite():
@@ -3455,6 +3602,15 @@ func _process(delta: float) -> void:
 		_impact_timer -= delta
 		if _impact_timer <= 0.0 and _impact_label != null:
 			_impact_label.visible = false
+	if _callout_timer > 0.0:
+		_callout_timer -= delta
+		if _callout_timer <= 0.0 and _callout_label != null:
+			_callout_label.visible = false
+	if _wrong_way_active and _wrong_way_label != null and _wrong_way_label.visible:
+		_wrong_way_flash += delta
+		var flash_on: bool = fmod(_wrong_way_flash, 0.42) < 0.28
+		_wrong_way_label.add_theme_color_override("font_color",
+			UiPalette.RED if flash_on else UiPalette.YELLOW)
 	if _waiting_for_peers:
 		_wait_elapsed += delta
 		if _is_host:
@@ -3558,6 +3714,11 @@ func _reset_race_progress(force: bool = false) -> void:
 	_toast_timer = 0.0
 	if _toast_label != null:
 		_toast_label.visible = false
+	_callout_timer = 0.0
+	if _callout_label != null:
+		_callout_label.visible = false
+	_wrong_way_timer = 0.0
+	_set_wrong_way(false)
 	_set_start_lights(0, false)
 	if _result_root != null:
 		_result_root.visible = false
@@ -3831,6 +3992,8 @@ func _tick_race(delta: float) -> void:
 		_last_forward_speed = 0.0
 		_air_time = 0.0
 		_fall_speed = 0.0
+		_wrong_way_timer = 0.0
+		_set_wrong_way(false)
 	_last_cart_pos = _cart.global_position
 
 	if _skip_progress:
@@ -3866,12 +4029,32 @@ func _tick_race(delta: float) -> void:
 	# the kart is still fully on the road.
 	var frame: Dictionary = _spline.sample(s)
 	var right: Vector3 = frame["right"] as Vector3
+	var spline_fwd: Vector3 = frame["forward"] as Vector3
+	var tangent := Vector3(spline_fwd.x, 0.0, spline_fwd.z)
+	if tangent.length_squared() > 0.0001:
+		tangent = tangent.normalized()
+	var cart_fwd := Vector3(-_cart.global_transform.basis.z.x, 0.0,
+		-_cart.global_transform.basis.z.z)
+	if cart_fwd.length_squared() > 0.0001:
+		cart_fwd = cart_fwd.normalized()
+	var planar_speed: float = Vector2(_cart.velocity.x, _cart.velocity.z).length()
+	var heading_dot: float = cart_fwd.dot(tangent)
+	if heading_dot < -0.45 and planar_speed > 3.0:
+		_wrong_way_timer += delta
+		if _wrong_way_timer > 1.0:
+			_set_wrong_way(true)
+	elif heading_dot >= -0.15:
+		_wrong_way_timer = 0.0
+		_set_wrong_way(false)
+	elif not _wrong_way_active:
+		_wrong_way_timer = maxf(_wrong_way_timer - delta * 2.0, 0.0)
+
 	var lateral: float = absf((_cart.global_position - closest_point).dot(right))
-	# Hysteresis: leave the road at the curb, come back only once clearly
-	# inside it, so a scrape cannot flip the warning and the slowdown on and
-	# off every frame.
-	var off_limit: float = ROAD_HALF + 1.1
-	var back_on: float = ROAD_HALF + 0.5
+	# Hysteresis: leave the road at the curb (or past the grid run-off apron),
+	# come back only once clearly inside it, so a scrape cannot flip the warning
+	# and the slowdown on and off every frame.
+	var off_limit: float = (_road_half + 2.1) if _use_grid else (ROAD_HALF + 1.1)
+	var back_on: float = (_road_half + 1.4) if _use_grid else (ROAD_HALF + 0.5)
 	var was_off: bool = _was_off_track
 	var off: bool = lateral > (back_on if _was_off_track else off_limit)
 	_was_off_track = off
@@ -3901,7 +4084,8 @@ func _tick_race(delta: float) -> void:
 	var forward_speed: float = _cart.velocity.dot(forward)
 	var lost: float = _last_forward_speed - forward_speed
 	_last_forward_speed = forward_speed
-	if lost > BARRIER_HIT_SPEED_LOSS and lateral > ROAD_HALF - 1.4 \
+	var barrier_edge: float = (_road_half + 0.6) if _use_grid else (ROAD_HALF - 1.4)
+	if lost > BARRIER_HIT_SPEED_LOSS and lateral > barrier_edge \
 			and _barrier_cooldown <= 0.0:
 		_barrier_cooldown = 1.2
 		_impact_label.text = "BARRIER!  ·  EASE OFF"
@@ -4133,6 +4317,8 @@ func _respawn(s: float) -> void:
 	_air_time = 0.0
 	_fall_speed = 0.0
 	_last_forward_speed = 0.0
+	_wrong_way_timer = 0.0
+	_set_wrong_way(false)
 	_toast("BACK ON TRACK", 1.3)
 
 
@@ -4162,6 +4348,14 @@ func _complete_lap() -> void:
 	if previous_best < 0.0 or lap_time < previous_best:
 		parts.append("BEST")
 	_toast("   ·   ".join(parts), 2.4)
+	var is_new_best: bool = previous_best > 0.0 and lap_time < previous_best
+	var is_final_lap: bool = _lap == _total_laps
+	if is_final_lap and is_new_best:
+		_callout("FINAL LAP!  ·  NEW BEST LAP!", UiPalette.YELLOW, 2.5)
+	elif is_final_lap:
+		_callout("FINAL LAP!", UiPalette.YELLOW, 2.3)
+	elif is_new_best:
+		_callout("NEW BEST LAP!", UiPalette.CYAN, 2.2)
 	_flash_gate(0)
 	if _effects != null:
 		_effects.call("lap_burst")
@@ -4208,6 +4402,11 @@ func _finish() -> void:
 	_offtrack_label.visible = false
 	_impact_label.visible = false
 	_impact_timer = 0.0
+	if _callout_label != null:
+		_callout_label.visible = false
+	_callout_timer = 0.0
+	_wrong_way_timer = 0.0
+	_set_wrong_way(false)
 
 	var place: int = _place()
 	var suffix: String = _ordinal(place)

@@ -1,16 +1,5 @@
 extends Control
 ## Release history with one button per version and a separate detail view.
-##
-## Authoring format for CHANGELOG.md (anything starting with a single '#' is
-## ignored by the parser, so the guide at the bottom of the file is safe):
-##   ## [0.6.4] - 2026-11-07   -> one version button
-##   ### Section                -> gold section heading
-##   - Bullet                   -> player facing bullet
-##   > A longer note            -> quieter, detailed note paragraph
-##   ![Caption](res://...)      -> a centred photo with a caption
-##   Plain text                 -> a note paragraph
-## Continuation lines on the next row join the previous bullet / note / text.
-## '**bold**' works inline. Blank lines separate paragraphs.
 
 signal closed
 
@@ -27,8 +16,9 @@ const NOTE_INK: String = "#4b5c82"
 
 const PANEL_MAX_WIDTH: float = 860.0
 const PANEL_MAX_HEIGHT: float = 600.0
-const PANEL_MARGIN_X: float = 120.0
-const PANEL_MARGIN_Y: float = 96.0
+const PANEL_MARGIN_X: float = 64.0
+const PANEL_MARGIN_Y: float = 56.0
+const SCROLL_PAD_X: float = 20.0 ## 10 px left + 10 px right inside ScrollPad.
 const PHOTO_WIDTH: int = 380
 const PHOTO_HEIGHT: int = 214
 const PHOTO_ROOT: String = "res://assets/ui/art/changelog_"
@@ -39,6 +29,7 @@ const PHOTO_ROOT: String = "res://assets/ui/art/changelog_"
 @onready var _all_versions_button: Button = %AllVersionsButton
 @onready var _list_view: VBoxContainer = %ListView
 @onready var _detail_view: VBoxContainer = %DetailView
+@onready var _scroll: ScrollContainer = %Scroll
 @onready var _version_list: GridContainer = %VersionList
 @onready var _panel: PanelContainer = %Panel
 
@@ -52,17 +43,15 @@ func _ready() -> void:
 	hide()
 	_back_button.pressed.connect(close)
 	_all_versions_button.pressed.connect(_show_list)
-	## Footer and detail buttons share the candy look but must not push the
-	## card past the viewport, so they get tighter text boxes than big actions.
 	_compact_button(_back_button, float(UiKit.SPACING), float(UiKit.SPACING_TIGHT))
 	_compact_button(_all_versions_button, float(UiKit.SPACING), float(UiKit.SPACING_TIGHT))
+	_back_button.fit_text()
+	_all_versions_button.fit_text()
 	_current_label.text = "CURRENT  v" + UpdateChecker.read_version_file()
 	resized.connect(_fit_panel)
 	_fit_panel()
 
 
-## Keep the card centred with a real max width, so wide monitors do not stretch
-## the version buttons and narrow windows never push them off the screen.
 func _fit_panel() -> void:
 	var vp: Vector2 = get_viewport_rect().size
 	if vp.x < 1.0 or vp.y < 1.0:
@@ -95,16 +84,12 @@ func open() -> void:
 
 
 func request_close() -> void:
-	## Escape from MenuNav closes only this panel, never the screen behind it.
 	close()
 
 
 func _scroll_list_top() -> void:
-	## The version grid keeps its ScrollContainer between openings; without this
-	## a reopen could start halfway down the list.
-	var scroll := _version_list.get_parent() as ScrollContainer
-	if scroll != null:
-		scroll.scroll_vertical = 0
+	if _scroll != null:
+		_scroll.scroll_vertical = 0
 
 
 func _focus_list() -> void:
@@ -134,6 +119,15 @@ func _unhandled_input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 
 
+func _scrollbar_reserve() -> float:
+	if _scroll == null:
+		return 16.0
+	var bar: VScrollBar = _scroll.get_v_scroll_bar()
+	if bar == null:
+		return 16.0
+	return maxf(bar.get_combined_minimum_size().x, 14.0) + 4.0
+
+
 func _build_version_list() -> void:
 	for child: Node in _version_list.get_children():
 		_version_list.remove_child(child)
@@ -141,18 +135,17 @@ func _build_version_list() -> void:
 	_release_buttons.clear()
 	var vp_w: float = get_viewport_rect().size.x
 	var card_w: float = minf(PANEL_MAX_WIDTH, maxf(320.0, vp_w - PANEL_MARGIN_X))
-	var inner_w: float = maxf(240.0, card_w - _panel_content_margin() * 2.0)
-	# Two equal tiles per row is the intended shape, but a narrow browser tab
-	# gets one full-width column instead of two clipped tiles.
-	var stacked: bool = inner_w < 620.0
+	var inner_w: float = maxf(220.0,
+		card_w - _panel_content_margin() * 2.0 - SCROLL_PAD_X - _scrollbar_reserve())
+	var stacked: bool = inner_w < 580.0
 	_version_list.columns = 1 if stacked else 2
 	var button_w: float = inner_w if stacked else (inner_w - 16.0) * 0.5 - 2.0
-	var tile_font: int = 15 if button_w >= 330.0 else 13
+	var tile_font: int = 15 if button_w >= 310.0 else 13
 	for i in _releases.size():
 		var release: Dictionary = _releases[i]
 		var button := UiKit.tile("", UiPalette.BLUE if i % 2 == 0 else UiPalette.CYAN,
 			50.0, tile_font)
-		button.custom_minimum_size.x = maxf(160.0, button_w)
+		button.custom_minimum_size.x = maxf(150.0, button_w)
 		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		var date_text: String = str(release.get("date", "")).strip_edges()
 		if date_text == "":
@@ -161,6 +154,7 @@ func _build_version_list() -> void:
 		button.pressed.connect(_show_release.bind(i))
 		_version_list.add_child(button)
 		_compact_button(button, float(UiKit.SPACING), float(UiKit.SPACING_TIGHT))
+		button.fit_text(button_w)
 		_release_buttons.append(button)
 	if _releases.is_empty():
 		var empty := Label.new()
@@ -170,8 +164,6 @@ func _build_version_list() -> void:
 		_version_list.add_child(empty)
 
 
-## PanelContainer content margin comes from theme.tres; read it instead of
-## hard-coding so the tile width always matches the real inner width.
 func _panel_content_margin() -> float:
 	var style: StyleBox = _panel.get_theme_stylebox("panel")
 	if style == null:
@@ -179,9 +171,6 @@ func _panel_content_margin() -> float:
 	return style.get_margin(SIDE_LEFT)
 
 
-## The candy style is authored for big action buttons (26 px side padding).
-## Changelog controls keep its outline, fill and ring but trade that padding
-## for a compact text box, so footer and version rows stay inside the card.
 func _compact_button(button: Button, padding_x: float, padding_y: float) -> void:
 	for state: String in ["normal", "hover", "pressed", "disabled"]:
 		var box: StyleBox = button.get_theme_stylebox(state)
@@ -201,8 +190,6 @@ func _show_list() -> void:
 	_list_view.visible = true
 	_detail_view.visible = false
 	MenuNav.refresh()
-	## Returning from an entry puts the ring back on that entry instead of
-	## jumping to the newest release and losing the player's place.
 	_focus_list()
 
 
@@ -213,9 +200,6 @@ func _show_release(index: int) -> void:
 	_text.text = _build_bbcode(_releases[index])
 	_list_view.visible = false
 	_detail_view.visible = true
-	# Reset the scroll only once the detail view is visible: doing it while the
-	# RichTextLabel was hidden left the previous entry's offset in place, so a
-	# short release opened scrolled past its own end.
 	_text.scroll_to_line(0)
 	_text.get_v_scroll_bar().value = 0.0
 	UiAnim.fade_in(_detail_view, 0.18)
@@ -321,8 +305,6 @@ func _build_bbcode(release: Dictionary) -> String:
 
 
 func _append_photo(out: PackedStringArray, path: String, caption: String) -> void:
-	# Only bundled changelog art is allowed, so a bad note cannot load arbitrary
-	# resources or inject BBCode through the path.
 	if not path.begins_with(PHOTO_ROOT) or not path.ends_with(".png"):
 		return
 	if not ResourceLoader.exists(path):

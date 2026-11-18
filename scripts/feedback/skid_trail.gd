@@ -153,8 +153,7 @@ func _emit_samples() -> void:
 		# ray below still has to hit a surface, so a jump breaks the ribbon.
 		sliding = remote_sliding
 	else:
-		var handbrake_held: bool = cart.ai_handbrake if cart.ai_mode \
-			else Input.is_action_pressed("handbrake")
+		var handbrake_held: bool = cart.is_handbraking()
 		var velocity: Vector3 = cart.velocity
 		var planar_speed_sq: float = velocity.x * velocity.x + velocity.z * velocity.z
 		sliding = cart.is_on_floor() and planar_speed_sq > min_speed * min_speed \

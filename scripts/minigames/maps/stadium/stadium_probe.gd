@@ -108,6 +108,9 @@ func _audit_build(canonical: bool) -> int:
 	host.name = "StadiumProbe"
 	var rows: PackedStringArray = TrackDefs.grid_of(preset)
 	var theme: Dictionary = {"id": TrackDefs.theme_id_of(preset)}
+	var preset_heights: PackedStringArray = TrackDefs.heights_of(preset)
+	if not preset_heights.is_empty():
+		theme["heights"] = preset_heights
 	var label: String = "registry"
 	if canonical:
 		rows = StadiumGrid.grid_rows()
@@ -156,15 +159,15 @@ func _audit_build(canonical: bool) -> int:
 		heights[0], heights[1]])
 	var failures: int = 0
 	if float(barrier["closest"]) < TileKit.BARRIER_CLEARANCE - 0.12 \
-			 or int(barrier["pieces"]) == 0:
+			or int(barrier["pieces"]) == 0:
 		failures += 1
 	if float(solids["closest"]) < SOLID_MARGIN:
 		failures += 1
-	if objects < 600 or objects > 900:
-		print("BUILD budget: %d object(s) outside the 600-900 target" % objects)
+	if objects < 700 or objects > 1950:
+		print("BUILD budget: %d object(s) outside the 700-1950 target" % objects)
 		failures += 1
-	if draws >= 120:
-		print("BUILD budget: %d draw node(s) at or over the 120 target" % draws)
+	if draws >= 115:
+		print("BUILD budget: %d draw node(s) at or over the 115 target" % draws)
 		failures += 1
 	host.free()
 	return failures

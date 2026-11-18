@@ -1,9 +1,10 @@
 extends Control
 const UiAnim := preload("res://scripts/ui/ui_anim.gd")
-## Main menu: PLAY / SETTINGS / QUIT and the update badge.
+## Main menu: PLAY / SETTINGS / CHANGELOG / QUIT and top-right update stack.
 
 const PLAY_MENU_SCENE: String = "res://scenes/ui/play_menu.tscn"
 
+@onready var _column: VBoxContainer = $Center/Column
 @onready var _play_button: Button = %PlayButton
 @onready var _settings_button: Button = %SettingsButton
 @onready var _changelog_button: Button = %ChangelogButton
@@ -23,6 +24,8 @@ func _ready() -> void:
 	_version_label.text = "v" + UpdateChecker.read_version_file()
 	_update_button.visible = false
 	_status_label.text = ""
+	resized.connect(_fit_column)
+	_fit_column()
 
 	_play_button.pressed.connect(_on_play_pressed)
 	_settings_button.pressed.connect(_on_settings_pressed)
@@ -39,12 +42,24 @@ func _ready() -> void:
 	if UpdateChecker.has_update():
 		_on_update_available(UpdateChecker.latest_version)
 
-	pass
 	UpdateChecker.check_for_updates()
 	call_deferred("_enter")
 
 
+func _fit_column() -> void:
+	if _column == null:
+		return
+	var vp: Vector2 = size if size.x > 1.0 else get_viewport_rect().size
+	if vp.x < 1208.0 or vp.y < 620.0:
+		var ratio: float = clampf(minf((vp.x - 48.0) / 1160.0, (vp.y - 48.0) / 520.0), 0.68, 1.0)
+		_column.scale = Vector2.ONE * ratio
+		_column.pivot_offset = _column.size * 0.5
+	else:
+		_column.scale = Vector2.ONE
+
+
 func _enter() -> void:
+	_fit_column()
 	UiAnim.pop($Center/Column/Buttons)
 	MenuNav.refresh()
 	MenuNav.focus(_play_button)
@@ -78,9 +93,8 @@ func _on_update_available(version: String) -> void:
 	_update_button.text = "UPDATE AVAILABLE  v%s" % version
 	_update_button.tooltip_text = "Download and install v%s" % version
 	_update_button.visible = true
+	_update_button.fit_text()
 	_status_label.text = "New version %s is out" % version
-	# Surface the update automatically instead of waiting for the player to
-	# notice the badge. Only once per launch; LATER keeps it as a badge.
 	if not _update_auto_opened and not UpdateChecker.auto_prompted \
 			and not _update_panel.visible and not _modal_visible():
 		_update_auto_opened = true
@@ -89,9 +103,6 @@ func _on_update_available(version: String) -> void:
 
 
 func _modal_visible() -> bool:
-	## Settings/Changelog are full-screen Controls in this same scene. Opening
-	## the update dialog on top of one produced two overlapping modals (and the
-	## update panel is declared before Changelog, so it could open underneath).
 	return _settings_menu.visible or _changelog_panel.visible
 
 
@@ -99,8 +110,6 @@ func _open_update_soon() -> void:
 	await get_tree().create_timer(0.45).timeout
 	if not is_inside_tree() or _update_panel == null:
 		return
-	# The player may have opened Settings/Changelog during the prompt delay.
-	# Keep the badge; do not stack a second full-screen dialog.
 	if _modal_visible() or _update_panel.visible:
 		return
 	_update_panel.open()

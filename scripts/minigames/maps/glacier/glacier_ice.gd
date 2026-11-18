@@ -17,6 +17,7 @@ extends RefCounted
 
 const TileKit := preload("res://scripts/minigames/tile_kit.gd")
 const TileCatalog := preload("res://scripts/minigames/tiles/tile_catalog.gd")
+const KenneyTiles := preload("res://scripts/minigames/tiles/kenney_tiles.gd")
 const GlacierSurface := preload("res://scripts/minigames/maps/glacier/glacier_surface.gd")
 
 const NODE_NAME: String = "GlacierIceSheen"
@@ -127,21 +128,22 @@ static func _is_raised(spline: RefCounted, distance: float) -> bool:
 	return tile_char == "B" or tile_char == "J"
 
 
-## Height of the visible road top. A grid race measures its road piece; the
-## legacy ribbon has a fixed paint height.
+## Height of the visible road top. On any Kenney grid map (flat MultiMesh
+## `Road_*` OR elevated merged `Road` MeshInstance3D), the lane surface sits at
+## `KenneyTiles.ROAD_SURFACE`, and `LIFT = 0.012` places the sheen at
+## `ROAD_SURFACE + 0.012 m`.
 static func _road_top(race: Node3D) -> float:
 	if race != null and _has_grid_road(race):
-		var info: Dictionary = TileCatalog.model_info("roadStraight")
-		if bool(info.get("ok", false)):
-			var aabb: AABB = info["aabb"]
-			return aabb.size.y * TileCatalog.TILE_SIZE
-		return FALLBACK_GRID_TOP
+		return KenneyTiles.ROAD_SURFACE
 	return FALLBACK_ROAD_TOP
 
 
-## True when the race has the grid engine's batched road under it.
+## True when the race has the grid engine's road under it (either merged
+## elevated `Road` MeshInstance3D or flat `Road_*` MultiMeshInstance3D).
 static func _has_grid_road(node: Node) -> bool:
 	for child: Node in node.get_children():
+		if child is MeshInstance3D and str(child.name) == "Road":
+			return true
 		var instance := child as MultiMeshInstance3D
 		if instance != null and str(instance.name).begins_with("Road_"):
 			return true

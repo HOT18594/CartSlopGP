@@ -238,35 +238,46 @@ func check_for_updates(force: bool = false) -> void:
 
 func _configured_server_base() -> String:
 	# Environment override is useful for a managed/Pi install and for tests.
-	var raw: String = OS.get_environment("CARTSLOP_UPDATE_SERVER").strip_edges()
+	var env_override: String = OS.get_environment("CARTSLOP_UPDATE_SERVER").strip_edges()
+	var raw: String = env_override
 	if raw == "":
 		# Prefer the Cart Slop Pi mirror, then fall back to GitHub. This is the
 		# same server the multiplayer lobby uses; no address is shown in the UI.
 		var net: Node = get_node_or_null("/root/Network") if is_inside_tree() else null
 		if net != null and net.get_script() != null:
 			# A LAN Pi discovered by the lobby is a trusted (private) mirror.
-			# Prefer it over any configured relay when it is available.
+			# Only use a trusted mirror base automatically; probing a plain-HTTP
+			# WAN relay only wastes a round-trip because _trusted_mirror_base()
+			# rejects unencrypted public mirrors anyway.
 			var discovered: String = str(net.get("relay_base")).strip_edges()
 			if discovered != "" and _trusted_mirror_base(discovered):
 				raw = discovered
-			if raw == "":
-				var constants: Dictionary = net.get_script().get_script_constant_map()
-				raw = str(constants.get("DEFAULT_RELAY_SERVER", "")).strip_edges()
 	if raw == "":
 		return ""
 	var secure: bool = raw.to_lower().begins_with("https://")
 	var rest: String = raw.trim_prefix("https://").trim_prefix("http://").trim_suffix("/")
-	var host: String = rest.get_slice("/", 0)
-	if host == "":
+	var authority: String = rest.get_slice("/", 0)
+	if authority == "":
 		return ""
+	var host: String = authority
 	var port: int = 42777
-	if host.contains(":"):
-		var parts: PackedStringArray = host.split(":")
+	if authority.begins_with("["):
+		var close_idx: int = authority.find("]")
+		if close_idx <= 1:
+			return ""
+		host = authority.substr(0, close_idx + 1)
+		if close_idx + 1 < authority.length() and authority[close_idx + 1] == ":":
+			port = int(authority.substr(close_idx + 2))
+	elif authority.contains(":"):
+		var parts: PackedStringArray = authority.split(":")
 		host = parts[0]
 		port = int(parts[1]) if parts.size() > 1 else 42777
 	if host == "" or port <= 0 or port > 65535:
 		return ""
-	return ("https://" if secure else "http://") + host + ":" + str(port)
+	var built: String = ("https://" if secure else "http://") + host + ":" + str(port)
+	if env_override == "" and not _trusted_mirror_base(built):
+		return ""
+	return built
 
 
 func _trusted_mirror_base(base: String) -> bool:
@@ -280,9 +291,15 @@ func _trusted_mirror_base(base: String) -> bool:
 		return true
 	if not text.begins_with("http://"):
 		return false
-	var host: String = text.trim_prefix("http://").get_slice("/", 0)
-	if host.contains(":"):
-		host = host.get_slice(":", 0)
+	var authority: String = text.trim_prefix("http://").get_slice("/", 0)
+	var host: String = authority
+	if authority.begins_with("["):
+		var close_idx: int = authority.find("]")
+		if close_idx <= 1:
+			return false
+		host = authority.substr(1, close_idx - 1)
+	elif authority.contains(":"):
+		host = authority.get_slice(":", 0)
 	if host == "localhost" or host == "::1":
 		return true
 	if host == "":
@@ -1295,7 +1312,7 @@ func _write_installer(bat_path: String, game_dir: String, stage_dir: String,
 		"set \"ZIP=%s\"" % zip_path.replace("/", "\\"),
 		"set \"EXE_NAME=%s\"" % exe_name,
 		"set \"GAME_PID=%~1\"",
-		"set \"BACKUP=%TEMP%\\CartSlopGP_update_backup\"",
+		"set \"BACKUP=%TEMP%\\CartSlopGP_update_backup_%GAME_PID%\"",
 		"echo Waiting for Cart Slop GP to close...",
 		":wait",
 		"if \"%GAME_PID%\"==\"\" goto install",
@@ -1313,10 +1330,10 @@ func _write_installer(bat_path: String, game_dir: String, stage_dir: String,
 		"echo Installing update...",
 		"xcopy \"%STAGE%\\*\" \"%GAME_DIR%\\\" /E /I /Y /Q >nul",
 		"if errorlevel 1 goto failed",
+		"if not exist \"%GAME_DIR%\\%EXE_NAME%\" goto failed",
 		"start \"\" /D \"%GAME_DIR%\" \"%GAME_DIR%\\%EXE_NAME%\"",
-		"timeout /t 6 /nobreak >nul",
-		"tasklist /FI \"IMAGENAME eq %EXE_NAME%\" 2>nul | find /I \"%EXE_NAME%\" >nul",
 		"if errorlevel 1 goto failed",
+		"timeout /t 2 /nobreak >nul",
 		"rmdir /S /Q \"%BACKUP%\"",
 		"if not \"%STAGE_ROOT%\"==\"\" rmdir /S /Q \"%STAGE_ROOT%\"",
 		"if not \"%ZIP%\"==\"\" del /F /Q \"%ZIP%\" >nul 2>&1",
@@ -1325,7 +1342,6 @@ func _write_installer(bat_path: String, game_dir: String, stage_dir: String,
 		":failed",
 		"echo Update failed. Restoring your previous build...",
 		"cd /d \"%TEMP%\"",
-		"if exist \"%GAME_DIR%\" rmdir /S /Q \"%GAME_DIR%\"",
 		"xcopy \"%BACKUP%\\*\" \"%GAME_DIR%\\\" /E /I /Y /Q >nul",
 		"start \"\" /D \"%GAME_DIR%\" \"%GAME_DIR%\\%EXE_NAME%\"",
 		"timeout /t 2 /nobreak >nul",

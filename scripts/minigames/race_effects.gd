@@ -27,6 +27,8 @@ var _has_last_position: bool = false
 
 func setup(player_cart: CartPlayer) -> void:
 	cart = player_cart
+	if cart != null and not cart.drift_boost_fired.is_connected(_on_drift_boost_fired):
+		cart.drift_boost_fired.connect(_on_drift_boost_fired)
 	# Two emitters sit at the rear wheels so dust actually comes off the tyres.
 	for side in [-0.44, 0.44]:
 		var emitter: GPUParticles3D = _make_particles(CARD + "dust_puff.png", 40, 1.05, false)
@@ -184,7 +186,7 @@ func _process(delta: float) -> void:
 	var grounded: bool = cart.is_on_floor()
 	var ratio: float = clampf(speed / maxf(cart.max_speed, 1.0), 0.0, 1.0)
 	var density: float = 0.10 + ratio * 0.72
-	if cart.is_drifting:
+	if cart.is_drifting or cart.is_handbraking():
 		density += 0.45
 	if off_track:
 		density += 0.35
@@ -223,6 +225,14 @@ func _puff(particles: GPUParticles3D) -> void:
 	particles.global_position = cart.global_position + Vector3.UP * 0.3
 	particles.restart()
 	particles.emitting = true
+
+
+func _on_drift_boost_fired(_tier: int) -> void:
+	if cart == null or _boost_burst == null:
+		return
+	_puff(_boost_burst)
+	_boost_burst.global_position = cart.global_position + Vector3.UP * 0.55 \
+		+ cart.global_transform.basis.z * 1.0
 
 
 func lap_burst() -> void:

@@ -110,7 +110,10 @@ func _run_registry() -> int:
 	host._preset = preset
 	get_root().add_child(host)
 	var spline: RefCounted = KenneyTiles.build(host,
-		TrackDefs.grid_of(preset), {"id": "glacier"})
+		TrackDefs.grid_of(preset), {
+			"id": "glacier",
+			"heights": TrackDefs.heights_of(preset),
+		})
 	if spline == null:
 		print("GLACIER REGISTRY: FAIL (the registry grid did not build)")
 		return 1

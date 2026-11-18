@@ -1,16 +1,7 @@
 extends Control
 const UiAnim := preload("res://scripts/ui/ui_anim.gd")
-## Room browser popup. SEARCH opens it in merged mode: it scans LAN rooms and
-## public online rooms at the same time and shows one list, LAN rows first.
-## Every merged row is badged LAN or ONLINE so the player knows the source.
-##
-## The search field filters the fetched list locally (no extra network calls),
-## and picking a row hands the room back to the lobby. Rows are structured:
-## host name on the left, source badge, N/8 players and a chevron-equivalent
-## status badge on the right. Room codes are never shown here: public rooms
-## join in one click, private rooms stay out of the list and use the typed code
-## path. Loading, empty, no-match and server-error states each get their own
-## message and a recovery action instead of all looking like a blank list.
+## Room browser popup: merged LAN + online list with padded ScrollContainer so
+## focus rings never clip and zero repeated room-count/tutorial clutter.
 
 signal room_selected(room: Dictionary)
 signal closed
@@ -59,12 +50,22 @@ func _ready() -> void:
 	_search_field.set_meta("nav_default", true)
 	_title.text = _base_title()
 	_count_label.text = "0 ROOMS"
-	_close_button.tooltip_text = "Close the browser and go back to the lobby."
-	_refresh_button.tooltip_text = "Scan LAN and public online rooms again."
-	_search_field.tooltip_text = "Filter the merged list by host name. Rooms join with one click."
 	_style_scrollbar()
 	_apply_soft_disabled(_refresh_button)
 	_build_action_button()
+	resized.connect(_fit_panel)
+	_fit_panel()
+
+
+func _fit_panel() -> void:
+	if _panel == null:
+		return
+	var vp: Vector2 = size if size.x > 1.0 else get_viewport_rect().size
+	if vp.x < 1.0 or vp.y < 1.0:
+		return
+	_panel.custom_minimum_size = Vector2(
+		clampf(vp.x - 48.0, 640.0, 820.0),
+		clampf(vp.y - 48.0, 420.0, 540.0))
 
 
 func open(mode: String) -> void:
@@ -72,12 +73,11 @@ func open(mode: String) -> void:
 	_query = ""
 	_search_field.text = ""
 	_title.text = _base_title()
+	_fit_panel()
 	show()
 	UiAnim.pop(_panel)
 	MenuNav.refresh()
 	MenuNav.focus(_search_field)
-	# A scan from a previous open may still be awaiting. Invalidate it so its
-	# late result cannot repaint this fresh list.
 	_ticket += 1
 	_busy = false
 	_error = false
@@ -88,7 +88,6 @@ func open(mode: String) -> void:
 
 
 func request_close() -> void:
-	## MenuNav's Escape fallback calls this; only the browser itself closes.
 	close()
 
 
@@ -102,6 +101,7 @@ func close() -> void:
 	_panel.modulate = Color.WHITE
 	_refresh_button.disabled = false
 	_refresh_button.text = "REFRESH"
+	_refresh_button.fit_text()
 	MenuNav.refresh()
 	closed.emit()
 
@@ -137,16 +137,13 @@ func _refresh() -> void:
 	var ticket: int = _ticket
 	_refresh_button.disabled = true
 	_refresh_button.text = "REFRESHING"
+	_refresh_button.fit_text()
 	_clear_list()
-	# A refresh starts at the top of the list again, so a scan that returns
-	# fewer rooms can never leave the scroll past the new end.
 	_list_scroll.scroll_vertical = 0
 	_count_label.text = "SCANNING"
 	_set_state("loading", _loading_text() + "...", "", Callable())
 	_title.text = _base_title()
 	if _mode == "all":
-		# Both sources are asked at the same time. The list appears once both
-		# have answered so LAN and online rows never flicker into place.
 		_lan_rooms.clear()
 		_online_rooms.clear()
 		_lan_pending = true
@@ -165,6 +162,7 @@ func _refresh() -> void:
 	_busy = false
 	_refresh_button.disabled = false
 	_refresh_button.text = "REFRESH"
+	_refresh_button.fit_text()
 	_rooms.clear()
 	for entry: Variant in result:
 		if entry is Dictionary:
@@ -194,8 +192,6 @@ func _scan_online(ticket: int) -> void:
 
 
 func _tag_rooms(entries: Array, source: String) -> Array[Dictionary]:
-	## Copy every row and stamp its source, so join routing and the row badge
-	## cannot depend on whichever page happened to open the browser.
 	var tagged: Array[Dictionary] = []
 	for entry: Variant in entries:
 		if entry is Dictionary:
@@ -211,9 +207,8 @@ func _finish_merged(ticket: int) -> void:
 	_busy = false
 	_refresh_button.disabled = false
 	_refresh_button.text = "REFRESH"
+	_refresh_button.fit_text()
 	_rooms.clear()
-	# LAN first: local rooms need no internet and should be the first thing the
-	# player sees. Online rows follow in the same list.
 	for room: Dictionary in _lan_rooms:
 		_rooms.append(room)
 	for room: Dictionary in _online_rooms:
@@ -224,11 +219,10 @@ func _finish_merged(ticket: int) -> void:
 
 
 func _loading_text() -> String:
-	return "SEARCHING LAN AND ONLINE" if _mode == "all" else "LOOKING FOR ROOMS"
+	return "SEARCHING LAN & ONLINE" if _mode == "all" else "SEARCHING ROOMS"
 
 
 func set_rooms(rooms: Array) -> void:
-	## Used by dev shots/tests to populate the list without a live server.
 	_ticket += 1
 	_busy = false
 	_error = false
@@ -236,6 +230,8 @@ func set_rooms(rooms: Array) -> void:
 	_lan_pending = false
 	_online_pending = false
 	_refresh_button.disabled = false
+	_refresh_button.text = "REFRESH"
+	_refresh_button.fit_text()
 	_rooms.clear()
 	for entry: Variant in rooms:
 		if entry is Dictionary:
@@ -263,9 +259,8 @@ func _rebuild_list() -> void:
 	if shown > 0:
 		var note: String = ""
 		if _mode == "all" and _online_failed:
-			note = "  ·  ONLINE SEARCH UNAVAILABLE"
-		_set_state("idle", "%d ROOM%s%s  ·  TAB TO A ROOM, THEN PRESS ENTER" % [
-			shown, "" if shown == 1 else "S", note], "", Callable())
+			note = "ONLINE ROOMS UNAVAILABLE  ·  SHOWING LAN ONLY"
+		_set_state("idle", note, "", Callable())
 		_title.text = _base_title()
 		_count_label.text = "%d ROOM%s" % [shown, "" if shown == 1 else "S"]
 		MenuNav.refresh()
@@ -274,17 +269,17 @@ func _rebuild_list() -> void:
 	_title.text = _base_title()
 	_count_label.text = "0 FOUND" if _query != "" and not _rooms.is_empty() else "0 ROOMS"
 	if _error:
-		var error_text: String = "COULDN'T REACH THE ROOM SERVICE."
+		var error_text: String = "COULDN'T REACH THE ROOM SERVER."
 		if _mode == "all":
-			error_text = "COULDN'T REACH THE ROOM SERVICE, AND NO LAN ROOMS ANSWERED."
+			error_text = "ONLINE SERVER UNREACHABLE & NO LAN ROOMS FOUND."
 		_set_state("error", error_text, "RETRY", _refresh, UiPalette.YELLOW)
 	elif _rooms.is_empty():
 		if _mode == "all":
-			_set_state("empty", "NO LAN OR ONLINE ROOMS RIGHT NOW. ASK A FRIEND TO HOST.",
+			_set_state("empty", "NO ACTIVE ROOMS FOUND.",
 				"SEARCH AGAIN", _refresh, UiPalette.YELLOW)
 		else:
 			var action_text: String = "HOST LAN ROOM" if _mode == "lan" else "HOST ONLINE ROOM"
-			var empty_text: String = "NO LAN ROOMS FOUND. ASK A FRIEND TO HOST." \
+			var empty_text: String = "NO LAN ROOMS FOUND." \
 				if _mode == "lan" else "NO ONLINE ROOMS RIGHT NOW."
 			_set_state("empty", empty_text, action_text, _host_requested, UiPalette.YELLOW)
 	else:
@@ -294,10 +289,6 @@ func _rebuild_list() -> void:
 
 
 func _restore_row_focus() -> void:
-	## A refresh replaces every row, and the focused row that was freed left the
-	## keyboard ring on nothing: Enter did nothing until the nav timer noticed.
-	## Put the ring on the first open row straight away, unless the search field
-	## (or another live control) still owns it.
 	var focused: Control = get_viewport().gui_get_focus_owner()
 	if focused != null and is_instance_valid(focused) and focused.is_visible_in_tree():
 		return
@@ -315,24 +306,15 @@ func _room_row(room: Dictionary) -> Button:
 	var players: int = clampi(int(room.get("players", 1)), 0, MAX_PLAYERS)
 	var full: bool = players >= MAX_PLAYERS
 	var joinable: bool = (not is_lan or state == "lobby") and not full
-	# A room is a quiet tinted row, not a bordered pill: the gap between rows
-	# already separates them and the focus ring is the only outline.
 	var button := Button.new()
-	button.custom_minimum_size = Vector2(0, 56)
-	button.add_theme_stylebox_override("normal", _row_style(Color(UiPalette.CREAM, 0.60)))
+	button.set_meta("keep_align", true)
+	button.custom_minimum_size = Vector2(0, 54)
+	button.add_theme_stylebox_override("normal", _row_style(Color(UiPalette.CREAM, 0.65)))
 	button.add_theme_stylebox_override("hover", _row_style(Color(1, 1, 1, 0.95)))
 	button.add_theme_stylebox_override("pressed", _row_style(UiPalette.YELLOW))
 	button.add_theme_stylebox_override("disabled", _row_style(Color(0.84, 0.81, 0.89, 0.55)))
 	button.disabled = not joinable
 	UiKit.apply_focus_ring(button, UiKit.CORNER_RADIUS)
-	if full:
-		button.tooltip_text = "ROOM IS FULL"
-	elif not joinable:
-		button.tooltip_text = "ROOM IN PROGRESS"
-	elif _mode == "all":
-		button.tooltip_text = "JOIN THIS %s ROOM" % ("LAN" if is_lan else "ONLINE")
-	else:
-		button.tooltip_text = "JOIN ROOM"
 	button.pressed.connect(_on_room_pressed.bind(room))
 
 	var row := HBoxContainer.new()
@@ -349,29 +331,25 @@ func _room_row(room: Dictionary) -> Button:
 	name_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	name_label.clip_text = true
 	name_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	name_label.add_theme_font_size_override("font_size", 20)
+	name_label.add_theme_font_size_override("font_size", 19)
 	name_label.add_theme_color_override("font_color", UiPalette.INK)
 	name_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	row.add_child(name_label)
 
-	# Merged results must say where the room lives, because tapping it runs a
-	# different join path. Single-source lists already say it in the title.
 	if _mode == "all":
 		row.add_child(_row_badge("LAN" if is_lan else "ONLINE",
 			UiPalette.CYAN if is_lan else UiPalette.BLUE, 78))
 
 	var players_label := Label.new()
-	players_label.text = "%d/%d PLAYERS" % [players, MAX_PLAYERS]
-	players_label.custom_minimum_size = Vector2(112, 0)
+	players_label.text = "%d / %d" % [players, MAX_PLAYERS]
+	players_label.custom_minimum_size = Vector2(72, 0)
 	players_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	players_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	players_label.add_theme_font_size_override("font_size", 15)
+	players_label.add_theme_font_size_override("font_size", 16)
 	players_label.add_theme_color_override("font_color", UiPalette.BODY_BLUE)
 	players_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	row.add_child(players_label)
 
-	# Ping is optional: LAN discovery and the lobby listing do not carry it, so
-	# the label only appears when a room dictionary already knows its latency.
 	var ping: int = int(room.get("ping", 0))
 	if ping > 0:
 		var ping_label := Label.new()
@@ -384,8 +362,6 @@ func _room_row(room: Dictionary) -> Button:
 		ping_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		row.add_child(ping_label)
 
-	# Room codes are never shown in the browser. A dim badge appears only when
-	# a room cannot be joined, so a normal public row is just host + players.
 	if not joinable:
 		var badge_text: String = "FULL" if full else "IN GAME"
 		row.add_child(_row_badge(badge_text, UiPalette.TEXT_DIM))
@@ -410,7 +386,7 @@ func _row_badge(text: String, color: Color, min_width: float = 88.0) -> PanelCon
 	label.text = text
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	label.add_theme_font_size_override("font_size", 14)
+	label.add_theme_font_size_override("font_size", 13)
 	label.add_theme_color_override("font_color", UiPalette.INK)
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	badge.add_child(label)
@@ -433,8 +409,6 @@ func _room_state(room: Dictionary) -> String:
 
 
 func _matches(room: Dictionary) -> bool:
-	# The server only lists public rooms; this also hides a private row if a
-	# stale/offline fixture ever supplies one. LAN rows carry no public flag.
 	if _room_source(room) == SOURCE_ONLINE and room.has("public") \
 			and not bool(room.get("public")):
 		return false
@@ -484,8 +458,7 @@ func _set_state(kind: String, text: String, action_text: String = "",
 	_status_kind = kind
 	_status.text = text
 	_status.visible = text != ""
-	_status.add_theme_font_size_override("font_size",
-		16 if kind == "loading" else (17 if kind == "error" else 18))
+	_status.add_theme_font_size_override("font_size", 15)
 	var color: Color = UiPalette.BODY_BLUE
 	match kind:
 		"error":
@@ -503,6 +476,7 @@ func _set_state(kind: String, text: String, action_text: String = "",
 		_action_button.disabled = false
 		_action_button.text = action_text
 		_action_button.set("fill_color", action_color)
+		_action_button.fit_text()
 	if kind == "loading":
 		_loading_dots = 0
 		_status_timer = 0.0
@@ -530,15 +504,25 @@ func _style_scrollbar() -> void:
 
 
 func _apply_soft_disabled(button: Button) -> void:
-	## One quiet disabled tint. The old style stacked a 5 px outline and a
-	## drop shadow on top of the candy border, which read as a double border.
+	## Preserve the button's normal horizontal/vertical content margins so state
+	## changes never alter layout or fit_text() measurements.
+	if button == null:
+		return
 	var style := StyleBoxFlat.new()
 	style.bg_color = Color("d8d3e4")
 	style.set_corner_radius_all(UiKit.CORNER_RADIUS)
-	style.content_margin_left = UiKit.SPACING
-	style.content_margin_right = UiKit.SPACING
-	style.content_margin_top = UiKit.SPACING_TIGHT
-	style.content_margin_bottom = UiKit.SPACING_TIGHT
+	var normal: StyleBox = button.get_theme_stylebox("normal")
+	if normal != null:
+		style.content_margin_left = normal.get_margin(SIDE_LEFT)
+		style.content_margin_right = normal.get_margin(SIDE_RIGHT)
+		style.content_margin_top = normal.get_margin(SIDE_TOP)
+		style.content_margin_bottom = normal.get_margin(SIDE_BOTTOM)
+	else:
+		style.content_margin_left = 26.0
+		style.content_margin_right = 26.0
+		style.content_margin_top = 10.0
+		style.content_margin_bottom = 10.0
+	style.anti_aliasing = true
 	button.add_theme_stylebox_override("disabled", style)
 
 

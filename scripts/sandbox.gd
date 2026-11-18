@@ -14,7 +14,8 @@ const VisualGrade := preload("res://scripts/systems/visual_grade.gd")
 const SandboxBot := preload("res://scripts/ai/sandbox_bot.gd")
 const CollisionLayers := preload("res://scripts/systems/collision_layers.gd")
 const UiPalette := preload("res://scripts/ui/ui_palette.gd")
-const TITLE_FONT: String = "res://assets/ui/fonts/LuckiestGuy-Regular.ttf"
+const UI_THEME: Theme = preload("res://assets/ui/theme.tres")
+const TITLE_FONT: Font = preload("res://assets/ui/fonts/LuckiestGuy-Regular.ttf")
 const CART_SYNC_INTERVAL: float = 0.05
 const PROP_SYNC_INTERVAL: float = 0.10
 ## Painted paddock grid slots, row-major, mirrored from sandbox_park.gd. Slot 5
@@ -42,7 +43,7 @@ const GRID_OVERFLOW: Array[Vector3] = [
 ## a prop below the slab or past the fence has tunnelled or been thrown out and
 ## goes back to the pose it was authored with.
 const PROP_FLOOR: float = -0.6
-const PROP_BOUNDS: float = 64.0
+const PROP_BOUNDS: float = 74.0
 const PROP_RECOVER_INTERVAL: float = 0.5
 const PROP_KICK_MS: int = 400
 const PROP_KICK_RETRY_MS: int = 150
@@ -52,14 +53,15 @@ const PROP_SLEEP_SPIN: float = 0.60
 ## grandstand roof, where the single downward probe put it.
 const RESPAWN_ROOF_HEIGHT: float = 4.0
 const RESPAWN_PROBE_RADIUS: float = 0.95
-## Zone hint toast: the shared UI scale, nothing tighter. Margin 24 from the
-## screen edge, 16 around the block, 8 between title and body, radius 16.
+## Zone hint toast: compact top-center banner at y = 22 styled with theme.tres,
+## staying clear of BoostBox / Speedometer even at 960 x 540.
 const HINT_MARGIN: int = 24
-const HINT_GAP: int = 16
-const HINT_SMALL_GAP: int = 8
-const HINT_RADIUS: int = 16
-const HINT_WIDTH: float = 460.0
-const HINT_SECONDS: float = 5.5
+const HINT_TOP: int = 22
+const HINT_GAP: int = 12
+const HINT_SMALL_GAP: int = 4
+const HINT_RADIUS: int = 14
+const HINT_WIDTH: float = 380.0
+const HINT_SECONDS: float = 5.0
 const ZONE_PROBE_INTERVAL: float = 0.25
 
 var _local_cart: CartPlayer
@@ -236,7 +238,7 @@ func _setup_bots() -> void:
 		_bot_homes.append(node.global_transform)
 		var label := Label3D.new()
 		label.text = "BOT %d" % (i + 1)
-		label.font = load(TITLE_FONT)
+		label.font = TITLE_FONT
 		label.font_size = 48
 		label.pixel_size = 0.007
 		label.outline_size = 14
@@ -426,7 +428,7 @@ func _grid_slot_transform(index: int) -> Transform3D:
 func _add_name_label(cart: CartPlayer, peer_id: int) -> void:
 	var label := Label3D.new()
 	label.text = Network.name_of(peer_id)
-	label.font = load("res://assets/ui/fonts/LuckiestGuy-Regular.ttf")
+	label.font = TITLE_FONT
 	label.font_size = 64
 	label.pixel_size = 0.006
 	label.outline_size = 18
@@ -811,10 +813,8 @@ func _ground_height(at: Vector3) -> float:
 
 
 func _build_zone_hint() -> void:
-	## One quiet toast in the bottom centre, on the shared spacing scale: 24 px
-	## from the screen edge and around the block, 8 px between title and body,
-	## 16 px corners, no rules. 460 px of text column keeps it inside the HUD's
-	## left and right clusters at 1280 x 720.
+	## Compact top-center banner at y = 22 using theme.tres (LuckiestGuy title +
+	## Fredoka body) so it never collides with BoostBox or SpeedBox at 960x540.
 	if _hint_panel != null:
 		return
 	_hint_layer = CanvasLayer.new()
@@ -825,19 +825,20 @@ func _build_zone_hint() -> void:
 	anchor.name = "Anchor"
 	anchor.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	anchor.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	anchor.theme = UI_THEME
 	_hint_layer.add_child(anchor)
 	var margin := MarginContainer.new()
 	margin.name = "Margin"
 	margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	margin.add_theme_constant_override("margin_left", HINT_MARGIN)
-	margin.add_theme_constant_override("margin_top", HINT_MARGIN)
+	margin.add_theme_constant_override("margin_top", HINT_TOP)
 	margin.add_theme_constant_override("margin_right", HINT_MARGIN)
 	margin.add_theme_constant_override("margin_bottom", HINT_MARGIN)
 	anchor.add_child(margin)
 	var column := VBoxContainer.new()
 	column.name = "Column"
-	column.alignment = BoxContainer.ALIGNMENT_END
+	column.alignment = BoxContainer.ALIGNMENT_BEGIN
 	column.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	column.add_theme_constant_override("separation", HINT_GAP)
 	margin.add_child(column)
@@ -854,15 +855,19 @@ func _build_zone_hint() -> void:
 	_hint_panel.add_child(body)
 	_hint_title = Label.new()
 	_hint_title.name = "ZoneName"
-	_hint_title.add_theme_font_size_override("font_size", 20)
+	_hint_title.theme_type_variation = &"TitleLabel"
+	_hint_title.add_theme_font_size_override("font_size", 18)
 	_hint_title.add_theme_color_override("font_color", UiPalette.YELLOW)
-	_hint_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	_hint_title.add_theme_color_override("font_outline_color", UiPalette.OUTLINE)
+	_hint_title.add_theme_constant_override("outline_size", 5)
+	_hint_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	body.add_child(_hint_title)
 	_hint_body = Label.new()
 	_hint_body.name = "ZoneHint"
-	_hint_body.add_theme_font_size_override("font_size", 15)
+	_hint_body.add_theme_font_size_override("font_size", 14)
 	_hint_body.add_theme_color_override("font_color", UiPalette.CREAM)
 	_hint_body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_hint_body.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_hint_body.custom_minimum_size.x = HINT_WIDTH
 	body.add_child(_hint_body)
 	_hint_timer = Timer.new()
@@ -878,7 +883,7 @@ func _build_zone_hint() -> void:
 
 
 ## Debug-only layout proof: prints the toast rect against the design viewport,
-## so the 24 px edge margin and the 1280 x 720 fit are measured, not eyeballed.
+## so the top-center placement and 960x540 / 1280x720 fit are measured.
 func _measure_zone_hint() -> void:
 	await get_tree().process_frame
 	if _hint_panel == null or not _hint_panel.visible:
@@ -893,15 +898,20 @@ func _measure_zone_hint() -> void:
 		view, rect.position.x, rect.position.y, rect.size.x, rect.size.y,
 		left, right, top, bottom,
 		"INSIDE" if left >= HINT_MARGIN - 0.5 and right >= HINT_MARGIN - 0.5
-			and bottom >= HINT_MARGIN - 0.5 and top >= 0.0 else "CLIPPED"])
+			and bottom >= HINT_MARGIN - 0.5 and top >= float(HINT_TOP) - 0.5 else "CLIPPED"])
 
 
 func _hint_style() -> StyleBoxFlat:
 	var style := StyleBoxFlat.new()
-	style.bg_color = Color(UiPalette.INK, 0.94)
+	style.bg_color = Color(UiPalette.INK, 0.90)
+	style.border_color = UiPalette.OUTLINE
+	style.set_border_width_all(3)
 	style.set_corner_radius_all(HINT_RADIUS)
-	style.set_content_margin_all(float(HINT_MARGIN))
-	style.shadow_color = Color(0.02, 0.02, 0.06, 0.55)
+	style.content_margin_left = 18.0
+	style.content_margin_right = 18.0
+	style.content_margin_top = 10.0
+	style.content_margin_bottom = 10.0
+	style.shadow_color = Color(0.02, 0.02, 0.06, 0.45)
 	style.shadow_size = 4
 	style.shadow_offset = Vector2(0.0, 2.0)
 	style.anti_aliasing = true

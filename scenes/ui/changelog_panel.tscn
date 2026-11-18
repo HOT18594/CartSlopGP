@@ -38,7 +38,7 @@ grow_vertical = 2
 
 [node name="Body" type="VBoxContainer" parent="Panel"]
 layout_mode = 2
-theme_override_constants/separation = 16
+theme_override_constants/separation = 14
 
 [node name="Header" type="HBoxContainer" parent="Panel/Body"]
 layout_mode = 2
@@ -49,7 +49,7 @@ layout_mode = 2
 size_flags_horizontal = 3
 theme_type_variation = &"TitleLabel"
 theme_override_colors/font_color = Color(0.117647, 0.105882, 0.227451, 1)
-theme_override_font_sizes/font_size = 40
+theme_override_font_sizes/font_size = 38
 text = "CHANGELOG"
 
 [node name="CurrentVersion" type="Label" parent="Panel/Body/Header"]
@@ -58,34 +58,43 @@ layout_mode = 2
 size_flags_vertical = 4
 theme_override_colors/font_color = Color(0.109804, 0.427451, 0.580392, 1)
 theme_override_font_sizes/font_size = 18
-text = "CURRENT  v0.7.0"
+text = "CURRENT  v0.8.0"
 horizontal_alignment = 2
 
 [node name="ListView" type="VBoxContainer" parent="Panel/Body"]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_vertical = 3
-theme_override_constants/separation = 16
+theme_override_constants/separation = 12
 
 [node name="Prompt" type="Label" parent="Panel/Body/ListView"]
 layout_mode = 2
 theme_override_colors/font_color = Color(0.109804, 0.427451, 0.580392, 1)
-theme_override_font_sizes/font_size = 16
-text = "CHOOSE A VERSION"
+theme_override_font_sizes/font_size = 15
+text = "SELECT A RELEASE"
 horizontal_alignment = 1
 
 [node name="Scroll" type="ScrollContainer" parent="Panel/Body/ListView"]
+unique_name_in_owner = true
 layout_mode = 2
 size_flags_vertical = 3
 horizontal_scroll_mode = 0
 follow_focus = true
 
-[node name="VersionList" type="GridContainer" parent="Panel/Body/ListView/Scroll"]
+[node name="ScrollPad" type="MarginContainer" parent="Panel/Body/ListView/Scroll"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/margin_left = 10
+theme_override_constants/margin_top = 8
+theme_override_constants/margin_right = 10
+theme_override_constants/margin_bottom = 12
+
+[node name="VersionList" type="GridContainer" parent="Panel/Body/ListView/Scroll/ScrollPad"]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 theme_override_constants/h_separation = 16
-theme_override_constants/v_separation = 16
+theme_override_constants/v_separation = 14
 columns = 2
 
 [node name="DetailView" type="VBoxContainer" parent="Panel/Body"]
@@ -93,11 +102,11 @@ unique_name_in_owner = true
 visible = false
 layout_mode = 2
 size_flags_vertical = 3
-theme_override_constants/separation = 16
+theme_override_constants/separation = 14
 
 [node name="AllVersionsButton" type="Button" parent="Panel/Body/DetailView"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(156, 40)
+custom_minimum_size = Vector2(168, 42)
 layout_mode = 2
 size_flags_horizontal = 0
 theme_override_font_sizes/font_size = 15
@@ -109,7 +118,7 @@ shadow_offset = 4
 
 [node name="ChangelogText" type="RichTextLabel" parent="Panel/Body/DetailView"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(0, 240)
+custom_minimum_size = Vector2(0, 220)
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
@@ -132,7 +141,7 @@ size_flags_horizontal = 3
 
 [node name="BackButton" type="Button" parent="Panel/Body/Footer"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(112, 40)
+custom_minimum_size = Vector2(116, 42)
 layout_mode = 2
 theme_override_font_sizes/font_size = 15
 text = "BACK"

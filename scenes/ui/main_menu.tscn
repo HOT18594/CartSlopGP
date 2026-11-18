@@ -37,15 +37,15 @@ theme_override_constants/separation = 12
 alignment = 1
 
 [node name="TitleStack" type="Control" parent="Center/Column"]
-custom_minimum_size = Vector2(1180, 250)
+custom_minimum_size = Vector2(1160, 248)
 layout_mode = 2
 mouse_filter = 2
 
 [node name="Flag" type="Control" parent="Center/Column/TitleStack"]
 layout_mode = 1
-anchor_left = 0.76
-anchor_top = -0.02
-anchor_right = 1.04
+anchor_left = 0.74
+anchor_top = 0.02
+anchor_right = 0.97
 anchor_bottom = 0.46
 grow_horizontal = 2
 grow_vertical = 2
@@ -53,14 +53,14 @@ rotation = -0.12
 pivot_offset = Vector2(100.0, 80.0)
 mouse_filter = 2
 script = ExtResource("5")
-wave_amount = 9.0
+wave_amount = 8.0
 
 [node name="TitleRow" type="HBoxContainer" parent="Center/Column/TitleStack"]
 layout_mode = 1
 anchor_right = 1.0
 anchor_bottom = 1.0
-offset_left = -24.0
-offset_right = -24.0
+offset_left = -16.0
+offset_right = -16.0
 grow_horizontal = 2
 grow_vertical = 2
 theme_override_constants/separation = 12
@@ -113,7 +113,7 @@ theme_override_font_sizes/font_size = 132
 text = "GP"
 
 [node name="Buttons" type="VBoxContainer" parent="Center/Column"]
-custom_minimum_size = Vector2(520, 0)
+custom_minimum_size = Vector2(540, 0)
 layout_mode = 2
 size_flags_horizontal = 4
 theme_override_constants/separation = 16
@@ -171,10 +171,10 @@ layout_mode = 1
 anchors_preset = 2
 anchor_top = 1.0
 anchor_bottom = 1.0
-offset_left = 34.0
-offset_top = -60.0
-offset_right = 300.0
-offset_bottom = -30.0
+offset_left = 28.0
+offset_top = -54.0
+offset_right = 294.0
+offset_bottom = -24.0
 grow_vertical = 0
 theme_override_colors/font_color = Color(1, 1, 1, 1)
 theme_override_colors/font_outline_color = Color(0.117647, 0.105882, 0.227451, 1)
@@ -182,34 +182,35 @@ theme_override_constants/outline_size = 8
 theme_override_font_sizes/font_size = 20
 text = "v0.1.0"
 
-[node name="UpdateButton" type="Button" parent="."]
-unique_name_in_owner = true
-visible = false
+[node name="TopRight" type="VBoxContainer" parent="."]
 layout_mode = 1
 anchors_preset = 1
 anchor_left = 1.0
 anchor_right = 1.0
-offset_left = -360.0
-offset_top = 18.0
-offset_right = -28.0
-offset_bottom = 66.0
+offset_left = -410.0
+offset_top = 24.0
+offset_right = -24.0
+offset_bottom = 116.0
 grow_horizontal = 0
+mouse_filter = 2
+theme_override_constants/separation = 8
+
+[node name="UpdateButton" type="Button" parent="TopRight"]
+unique_name_in_owner = true
+visible = false
+custom_minimum_size = Vector2(316, 48)
+layout_mode = 2
+size_flags_horizontal = 8
 theme_override_font_sizes/font_size = 17
 text = "UPDATE AVAILABLE"
 script = ExtResource("7")
 corner_radius = 16
+shadow_offset = 6
 
-[node name="StatusLabel" type="Label" parent="."]
+[node name="StatusLabel" type="Label" parent="TopRight"]
 unique_name_in_owner = true
-layout_mode = 1
-anchors_preset = 1
-anchor_left = 1.0
-anchor_right = 1.0
-offset_left = -470.0
-offset_top = 72.0
-offset_right = -28.0
-offset_bottom = 96.0
-grow_horizontal = 0
+layout_mode = 2
+mouse_filter = 2
 theme_override_colors/font_color = Color(1, 1, 1, 1)
 theme_override_colors/font_outline_color = Color(0.117647, 0.105882, 0.227451, 1)
 theme_override_constants/outline_size = 8

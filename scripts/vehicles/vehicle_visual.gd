@@ -80,7 +80,9 @@ static func _force_visible_materials(node: Node) -> void:
 static func _apply_paint_tint(root: Node, entry: Dictionary) -> void:
 	## Racing cars keep their wheels and glass; only the paint surface named by
 	## the catalog entry is recoloured. Every peer renders the same tint because
-	## the caller passes the per-peer tag colour into the entry.
+	## the caller passes the per-peer tag colour into the entry. The Shopping Cart
+	## has no single body surface index, so its handle/accents and anodized frame
+	## are tinted selectively while keeping its dark caster wheels untouched.
 	var raw_tint: Variant = entry.get("tint_color", null)
 	if not (raw_tint is Color):
 		return
@@ -89,6 +91,7 @@ static func _apply_paint_tint(root: Node, entry: Dictionary) -> void:
 		return
 	var surface: int = int(entry.get("paint_surface", -1))
 	if surface < 0:
+		_apply_cart_tint(root, entry, tint)
 		return
 	var paint_node: String = str(entry.get("paint_node", ""))
 	var target: Node = _find_named(root, paint_node) if paint_node != "" else root
@@ -98,6 +101,56 @@ static func _apply_paint_tint(root: Node, entry: Dictionary) -> void:
 		# A model without the named part still gets a usable colour rather than
 		# silently keeping the Kenney livery.
 		_tint_surface_recursive(root, entry, surface, tint)
+
+
+static func _apply_cart_tint(node: Node, entry: Dictionary, tint: Color) -> void:
+	if node is MeshInstance3D:
+		var mesh_instance := node as MeshInstance3D
+		var lower_name: String = str(mesh_instance.name).to_lower()
+		var is_wheel: bool = lower_name.contains("wheel") \
+			or lower_name.contains("tire") \
+			or lower_name.contains("tyre") \
+			or lower_name.contains("caster")
+		if not is_wheel and mesh_instance.mesh != null:
+			var is_accent: bool = str(mesh_instance.name) == "Box055" \
+				or lower_name.contains("handle") \
+				or lower_name.contains("grip") \
+				or lower_name.contains("seat") \
+				or lower_name.contains("plastic") \
+				or lower_name.contains("bumper")
+			for surface in mesh_instance.mesh.get_surface_count():
+				var source: Material = mesh_instance.get_active_material(surface)
+				if source is BaseMaterial3D:
+					var base_mat := source as BaseMaterial3D
+					var base_col: Color = base_mat.albedo_color
+					if not is_accent and base_col.v < 0.26 and base_col.s < 0.22:
+						continue
+					var applied: Color = tint
+					if not is_accent and (base_col.s <= 0.22 or base_col.v < 0.20):
+						applied = base_col.lerp(tint, 0.72)
+					applied.a = 1.0
+					var cache_tag: String = "%s:%d" % [str(mesh_instance.name), surface]
+					mesh_instance.set_surface_override_material(surface,
+						_shared_named_paint(base_mat, entry, cache_tag, applied))
+	for child: Node in node.get_children():
+		_apply_cart_tint(child, entry, tint)
+
+
+static func _shared_named_paint(source: BaseMaterial3D, entry: Dictionary,
+		tag: String, tint: Color) -> BaseMaterial3D:
+	var key: String = "%s|%s|%s" % [str(entry.get("scene", "")), tag,
+		tint.to_html(false)]
+	if _paint_cache.has(key):
+		return _paint_cache[key] as BaseMaterial3D
+	var paint: BaseMaterial3D = source.duplicate() as BaseMaterial3D
+	paint.albedo_color = tint
+	paint.albedo_color.a = 1.0
+	paint.transparency = BaseMaterial3D.TRANSPARENCY_DISABLED
+	paint.cull_mode = BaseMaterial3D.CULL_DISABLED
+	paint.no_depth_test = false
+	paint.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_OPAQUE_ONLY
+	_paint_cache[key] = paint
+	return paint
 
 
 static func _tint_surface_recursive(node: Node, entry: Dictionary, surface: int,
