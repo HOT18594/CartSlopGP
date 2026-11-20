@@ -95,6 +95,20 @@ All headless tests exit with the number of failures, so `echo $?` (or
 | Dockyard | `res://scripts/minigames/maps/dockyard/dockyard_selftest.gd` | build, clearance, object/draw budget |
 | Dockyard (probe) | `res://scripts/minigames/maps/dockyard/dockyard_smoke.gd` | smoke boot |
 | Glacier | `res://scripts/minigames/maps/glacier/glacier_selftest.gd` | build, clearance, ice spans |
+| Vehicle roster | `res://scripts/tools/vehicle_roster_smoke.gd` | every racing chassis composes and renders |
+| Mode rules | scene `res://scripts/tools/mode_rules_smoke.tscn` | party-mode rules regressions |
+| Driving physics | scene `res://scripts/tools/driving_smoke.tscn` | real-physics handling checks for every vehicle |
+| Updater | `res://scripts/tools/update_smoke.gd` | 133 archive/hash/installer-staging checks |
+| Networking | scene `res://scripts/tools/net_mac_smoke.tscn` | address/broadcast helpers, IPv6 host syntax, TLS/DNS error mapping |
+
+The networking scene also runs two-process LAN end-to-end checks; run one copy
+with `CSGP_NET_MODE=host` and a second with `CSGP_NET_MODE=client` (both
+headless). Default mode is a fast unit run that needs no second process.
+
+Pi-side suites (run on a Python machine, from the workspace root):
+`python pi_setup\cartslop-server\tests_security.py`,
+`python pi_setup\cartslop-server\tests_race_api.py` and
+`python pi_setup\cartslop-tls\tests_tls_proxy.py`.
 
 `scripts/tools/preview_render.tscn` regenerates the menu preview PNGs and
 **must be run windowed** — under `--headless` it captures blank frames and

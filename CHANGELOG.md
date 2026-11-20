@@ -2,11 +2,59 @@
 
 Player-facing notes, newest first.
 
-## [0.8.2] - 2026-11-21
+## [0.8.2] - 2026-11-20
 
-### Multiplayer and platform fixes
+### macOS multiplayer, LAN discovery and relay
 
-- Under audit: macOS multiplayer connection fixes, Pi server hardening, build verification across all four platforms and a full bug sweep.
+- **macOS 14/15 now gets Local Network permission.** The exported app bundle
+  declares `NSLocalNetworkUsageDescription`, so macOS asks for local-network
+  access instead of silently blocking every LAN packet (LAN rooms never
+  appeared, LAN joins timed out). The room browser and join errors now also
+  explain how to allow it under System Settings → Privacy & Security → Local
+  Network, and first-run discovery retries through the permission prompt.
+- **LAN discovery was rebuilt for multi-homed machines.** Interface picking no
+  longer assumes Windows adapter names, so a Mac's `en0`/`utun`/`awdl`/`bridge`
+  interfaces are scored correctly; discovery broadcasts over every local
+  subnet, replies are ranked by the interface they arrive on, and a host
+  advertises the address on the joiner's subnet. Fixes "no rooms found" on
+  Macs with a VPN or both Wi-Fi and Ethernet active.
+- **Relay connections survive more situations.** IPv6-literal relay addresses
+  resolve correctly, a sleep/wake now re-syncs the server clock, drops stale
+  keep-alives and reconnects the tunnel, slow tunnel writes can no longer
+  corrupt the Pi's framed stream, and TLS/DNS failures are reported as such
+  instead of a blanket "server offline".
+
+### Pi server and hosted play
+
+- The HTTPS front end no longer freezes when a browser opens a speculative TCP
+  connection (the Safari/Chrome preconnect pattern): each handshake has a
+  deadline and its own worker.
+- Browsers arriving through the Cloudflare tunnel (all seen as loopback) no
+  longer share a tiny connection budget, so one player loading the 140 MB web
+  build can't lock everyone else out.
+- Every route answers `HEAD` again, percent-encoded room codes resolve, the
+  SD-card `install.sh` installs the web export to the right place (and
+  `tracks.json`), and TLS certificates are generated as proper leaf certs with
+  a `serverAuth` EKU and refreshed SANs for stricter macOS trust.
+- New regression coverage: 44 security cases, 91 race-API cases, 6 TLS-proxy
+  cases.
+
+### Builds and packaging
+
+- The release script now verifies the real artifacts instead of trusting the
+  exporter: macOS `Info.plist` must contain the Local Network key and the
+  universal/`arm64`+`x86_64` binary and sealed signature are inspected; the
+  embedded data pack is proven from its trailer/header; Linux exec bits, the
+  web file set and wasm magic are asserted; Windows gets a headless boot smoke
+  test; and `SHA256SUMS` is generated from the exact expected zip set.
+
+### Bug sweep
+
+- Re-ran the whole battery plus extra coverage (undocumented mode self-tests,
+  hostile-save/30-case settings probe, 13-case menu/HUD flow probe, end-to-end
+  one-lap race) and added the new cross-platform networking regression test.
+  No reproducible gameplay regressions were found; the defects fixed here are
+  the multiplayer/platform ones above.
 
 ## [0.8.1] - 2026-11-20
 

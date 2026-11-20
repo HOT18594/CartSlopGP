@@ -76,7 +76,32 @@ const TUNNEL_RETRY_MAX: float = 30.0
 const HTTP_POOL_MAX: int = 6
 const STATE_POST_TIMEOUT: float = 3.0
 const COLLISION_SOLVER_PATH: String = "res://scripts/systems/cart_collision.gd"
+## First-pass discovery window. A healthy LAN Pi or LAN room host answers in a
+## few milliseconds, so a short window keeps the lobby snappy.
 const DISCOVERY_TIMEOUT_MS: int = 1200
+## macOS 15+ Local Network privacy can DENY the first broadcast while the
+## system alert is still on screen (Apple TN3179 explicitly tells apps to add
+## retry logic because an operation may be refused before the user answers).
+## A single 1.2 s window therefore finds nothing on a freshly installed Mac.
+## Only macOS pays for the longer window: Windows/Linux keep the fast path.
+const DISCOVERY_TIMEOUT_MACOS_MS: int = 6000
+## How often the discovery broadcast is repeated while waiting. UDP is lossy
+## and the macOS permission alert needs more than one attempt to get through.
+const DISCOVERY_NUDGE_MS: int = 450
+## Same macOS permission race for a direct LAN ENet connect: ENet gives up on
+## the handshake long before a player has read the system alert.
+const JOIN_TIMEOUT_MS: int = 12000
+const JOIN_TIMEOUT_MACOS_MS: int = 30000
+## A public LAN room re-broadcasts its own advertisement (instead of waiting to
+## be asked) so macOS shows the Local Network prompt while the host is still in
+## the lobby, and clients find the room without a request round trip.
+const LAN_BEACON_INTERVAL: float = 1.5
+## How many one-shot warm-up discovery probes a LAN host sends at startup even
+## for a PRIVATE room: receiving an incoming broadcast also needs local network
+## access on macOS, so the host must trigger its own permission prompt or it
+## can never hear a joining client.
+const LAN_WARMUP_PROBES: int = 3
+const LAN_WARMUP_INTERVAL: float = 1.0
 const RELAY_HTTP_TIMEOUT: float = 4.0
 ## Built-in relay address, used for internet joins when LAN discovery finds
 ## nothing. It is never shown to the player and never typed into a field;
@@ -130,6 +155,15 @@ var is_client: bool = false
 var in_game: bool = false
 var join_code: String = ""
 var local_address: String = ""
+## Every usable LAN IPv4 address on this machine, best first (see
+## _lan_address_candidates()). A Mac can be on Wi-Fi, Ethernet and a VPN at the
+## same time; no single "the local IP" answer is reachable by every friend, so
+## discovery uses them all and the Pi registration uses the one on the relay's
+## subnet. Kept public-friendly for the lobby/debug output.
+var local_addresses: PackedStringArray = PackedStringArray()
+## "macos_local_network" when discovery found nothing on a Mac. The lobby/room
+## browser turns this into a System Settings hint instead of a dead-end.
+var discovery_hint: String = ""
 var public_address: String = ""
 var port: int = DEFAULT_PORT
 var latency_ms: int = 0
@@ -229,6 +263,26 @@ var _tunnel_retry_timer: float = -1.0
 var _tunnel_retry_attempt: int = 0
 var _collision_solver: Variant = null
 var _collision_solver_checked: bool = false
+## LAN host advertisement/permission warm-up state (see _lan_beacon_tick()).
+var _lan_beacon_timer: float = -1.0
+var _lan_warmup_left: int = 0
+var _lan_warmup_timer: float = 0.0
+## Bounded macOS LAN-join permission retry: the first ENet attempt can be
+## refused while the Local Network alert is on screen, so retry once after it
+## is likely answered instead of making the player rescan.
+var _lan_join_retry: int = 0
+var _lan_join_host: String = ""
+var _lan_join_port: int = 0
+## Sleep/wake detection: engine ticks can stall across a laptop lid close while
+## the wall clock (and the Pi's clock) keeps moving.
+var _last_tick_ms: int = 0
+var _last_wall_ms: int = 0
+var _suspend_count: int = 0
+## HTTPRequest.Result of the last relay call. 0 is RESULT_SUCCESS; a TLS
+## handshake failure and a timeout both leave the HTTP status at 0, so the
+## result is what lets the lobby say "secure connection failed" instead of
+## pretending the whole server is offline.
+var _relay_http_result: int = 0
 
 ## Host-chosen configuration, broadcast with _net_begin_game so every peer
 ## loads the same world with the same bots. Clients never write these locally.
@@ -316,16 +370,26 @@ func _ready() -> void:
 	# visibility change can never look like a new map/arena pick.
 	_last_pick_map = GameSettings.selected_map
 	_last_pick_theme = GameSettings.selected_minigame
+	# Baseline the suspend detector here (not in an initialiser) so a long
+	# editor pause before the first frame cannot look like a system sleep.
+	_last_tick_ms = Time.get_ticks_msec()
+	_last_wall_ms = int(Time.get_unix_time_from_system() * 1000.0)
 
 
 func _process(delta: float) -> void:
+	_check_suspend()
 	_poll_lan_listener()
+	_lan_beacon_tick(delta)
 	_relay_heartbeat_tick(delta)
 	_relay_tunnel_retry_tick(delta)
-	if join_pending and Time.get_ticks_msec() - _join_started_ms > 12000:
+	# macOS needs the longer join window because the first LAN connect can sit
+	# behind the Local Network permission alert (see DISCOVERY_TIMEOUT_MACOS_MS).
+	var join_timeout: int = JOIN_TIMEOUT_MACOS_MS if _is_macos() else JOIN_TIMEOUT_MS
+	if join_pending and Time.get_ticks_msec() - _join_started_ms > join_timeout:
 		join_pending = false
+		var was_lan: bool = connection_mode == "lan"
 		leave()
-		join_failed.emit("Connection timed out. The room may have closed, or the server is unreachable.")
+		join_failed.emit(_join_timeout_reason(was_lan))
 		return
 	if not is_session_active() or not is_connected_to_server():
 		return
@@ -1247,55 +1311,80 @@ func _discover_relay() -> bool:
 		relay_base = relay_server_url
 		relay_base_public = true
 		return true
-	var udp := PacketPeerUDP.new()
-	var lan_ip: String = _local_ip()
-	if udp.bind(0, lan_ip) != OK and udp.bind(0) != OK:
+	var probes: Array[Dictionary] = _open_probe_sockets()
+	if probes.is_empty():
+		# No usable LAN interface (or every bind was refused). Do not give up
+		# before the public fallback: a player behind a purely virtual adapter
+		# can still join a room by code.
+		if _use_default_public_relay():
+			var public_probe: Dictionary = await _relay_get("/api/status", 3.0)
+			if not public_probe.is_empty():
+				discovery_hint = ""
+				return true
+			_clear_default_public_relay()
 		return false
-	udp.set_broadcast_enabled(true)
-	var targets: PackedStringArray = ["255.255.255.255"]
-	if _valid_ip(lan_ip):
-		var parts: PackedStringArray = lan_ip.split(".")
-		if parts.size() == 4:
-			targets.append("%s.%s.%s.255" % [parts[0], parts[1], parts[2]])
-	for target: String in targets:
-		udp.set_dest_address(target, RELAY_DISCOVERY_PORT)
-		udp.put_packet("CARTSLOP_DISCOVER".to_utf8_buffer())
-	var deadline: int = Time.get_ticks_msec() + DISCOVERY_TIMEOUT_MS
-	var next_nudge: int = Time.get_ticks_msec() + 450
+	var request: PackedByteArray = "CARTSLOP_DISCOVER".to_utf8_buffer()
+	_broadcast_probes(probes, request, RELAY_DISCOVERY_PORT)
+	# macOS 15+ may deny the first broadcast while the Local Network permission
+	# alert is still on screen (Apple TN3179 tells apps to add retry logic), so
+	# the macOS window is longer. Every other platform keeps the short window,
+	# and a reply exits immediately on all platforms.
+	var timeout_ms: int = DISCOVERY_TIMEOUT_MACOS_MS if _is_macos() else DISCOVERY_TIMEOUT_MS
+	var deadline: int = Time.get_ticks_msec() + timeout_ms
+	var next_nudge: int = Time.get_ticks_msec() + DISCOVERY_NUDGE_MS
 	while Time.get_ticks_msec() < deadline:
-		while udp.get_available_packet_count() > 0:
-			var text: String = udp.get_packet().get_string_from_utf8()
-			var parsed: Variant = JSON.parse_string(text)
-			if parsed is Dictionary and str((parsed as Dictionary).get("service", "")) == "cartslop":
-				var reply_ip: String = str((parsed as Dictionary).get("lan_ip", ""))
-				var http_port: int = int((parsed as Dictionary).get("http_port", 42777))
-				# A discovery reply is only useful for a LAN Pi. Ignore a
-				# spoofed public/invalid address instead of sending the room
-				# registration there.
+		for probe: Dictionary in probes:
+			var socket: PacketPeerUDP = probe["socket"] as PacketPeerUDP
+			if socket == null:
+				continue
+			while socket.get_available_packet_count() > 0:
+				var text: String = socket.get_packet().get_string_from_utf8()
+				# Cheap gate: the discovery port also receives unrelated UDP on
+				# a busy LAN; only our service reply reaches JSON parsing.
+				if not text.contains("cartslop"):
+					continue
+				var parsed: Variant = JSON.parse_string(text)
+				if not (parsed is Dictionary):
+					continue
+				var reply: Dictionary = parsed as Dictionary
+				if str(reply.get("service", "")) != "cartslop":
+					continue
+				var reply_ip: String = _strip_host_brackets(
+					str(reply.get("lan_ip", "")))
+				# A reply is only useful for a LAN Pi. If the Pi did not name
+				# its lan_ip (or named an address we cannot trust), fall back to
+				# the packet source, which is by definition routed back to the Pi.
+				if not _is_lan_peer_address(reply_ip):
+					reply_ip = _strip_host_brackets(socket.get_packet_ip())
 				if not _is_private_ipv4(reply_ip):
 					continue
+				var http_port: int = int(reply.get("http_port", 42777))
 				if http_port <= 0 or http_port > 65535:
 					continue
 				relay_lan_ip = reply_ip
 				relay_base = "http://%s:%d" % [reply_ip, http_port]
 				relay_base_public = false
-				udp.close()
+				discovery_hint = ""
+				_close_probes(probes)
 				return true
 		var now: int = Time.get_ticks_msec()
 		if now >= next_nudge:
-			# UDP is lossy. One lost broadcast must not make the Pi look
-			# offline and push the player onto the public fallback.
-			next_nudge = now + 450
-			for target: String in targets:
-				udp.set_dest_address(target, RELAY_DISCOVERY_PORT)
-				udp.put_packet("CARTSLOP_DISCOVER".to_utf8_buffer())
+			# UDP is lossy, and on macOS the first attempts can be refused while
+			# the permission alert is unanswered. Keep nudging until the window
+			# closes; one lost broadcast must not push the player to the public
+			# fallback.
+			next_nudge = now + DISCOVERY_NUDGE_MS
+			_broadcast_probes(probes, request, RELAY_DISCOVERY_PORT)
 		await get_tree().process_frame
-	udp.close()
-	# No LAN answer. Try the built-in relay once; this is what lets a player on
-	# a restrictive network use a short room code through the online relay.
+	_close_probes(probes)
+	# No LAN answer. Tell the lobby why on macOS, then try the built-in relay
+	# once; this is what lets a player on a restrictive network use a short
+	# room code through the online relay.
+	discovery_hint = "macos_local_network" if _is_macos() else ""
 	if _use_default_public_relay():
 		var probe: Dictionary = await _relay_get("/api/status", 3.0)
 		if not probe.is_empty():
+			discovery_hint = ""
 			return true
 		_clear_default_public_relay()
 	return false
@@ -1330,18 +1419,20 @@ func _use_default_public_relay() -> bool:
 		var close_idx: int = authority.find("]")
 		if close_idx <= 1:
 			return false
-		host = authority.substr(0, close_idx + 1)
+		# Sockets need the bare IPv6 literal; brackets are URL syntax only.
+		host = _strip_host_brackets(authority.substr(0, close_idx + 1))
 		if close_idx + 1 < authority.length() and authority[close_idx + 1] == ":":
 			port = int(authority.substr(close_idx + 2))
 	elif authority.contains(":"):
 		var parts: PackedStringArray = authority.split(":")
-		host = parts[0]
+		host = _strip_host_brackets(parts[0])
 		port = int(parts[1]) if parts.size() > 1 else (443 if secure else 42777)
 	if host == "" or port <= 0 or port > 65535:
 		return false
-	relay_server_host = host
+	relay_server_host = _strip_host_brackets(host)
 	relay_server_http_port = port
-	relay_server_url = ("https://" if secure else "http://") + host + ":" + str(port)
+	relay_server_url = ("https://" if secure else "http://") \
+		+ _url_host(relay_server_host) + ":" + str(port)
 	relay_base = relay_server_url
 	relay_base_public = true
 	return true
@@ -1374,12 +1465,74 @@ func _start_lan_listener() -> void:
 		return
 	udp.set_broadcast_enabled(true)
 	_lan_listener = udp
+	# Trigger our own macOS Local Network permission prompt NOW, while the host
+	# is still in the lobby, instead of leaving it until a client is waiting.
+	_lan_warmup_left = LAN_WARMUP_PROBES
+	_lan_warmup_timer = 0.0
+	_lan_beacon_timer = LAN_BEACON_INTERVAL if room_public else -1.0
+
+
+func _lan_beacon_tick(delta: float) -> void:
+	## LAN host advertisement. A PUBLIC room beacons every LAN_BEACON_INTERVAL
+	## (clients find it without a request round trip, and the first beacon makes
+	## macOS show the Local Network alert while the host is in the lobby). Every
+	## room also sends a few one-shot warm-up probes: receiving an incoming
+	## broadcast is itself a local-network operation on macOS, so a host that
+	## never sends anything can never prompt itself and can never hear clients.
+	if _lan_listener == null or not is_host or connection_mode != "lan":
+		return
+	if _lan_warmup_left > 0:
+		_lan_warmup_timer -= delta
+		if _lan_warmup_timer <= 0.0:
+			_lan_warmup_left -= 1
+			_lan_warmup_timer = LAN_WARMUP_INTERVAL
+			_send_discovery_probe(JSON.stringify({
+				"service": "cartslop-lan",
+				"want": "rooms",
+			}).to_utf8_buffer(), LAN_ROOM_PORT)
+	if _lan_beacon_timer < 0.0:
+		return
+	_lan_beacon_timer -= delta
+	if _lan_beacon_timer > 0.0:
+		return
+	_lan_beacon_timer = LAN_BEACON_INTERVAL
+	var beacon: Dictionary = _lan_room_record()
+	beacon["beacon"] = true
+	_send_discovery_probe(JSON.stringify(beacon).to_utf8_buffer(), LAN_ROOM_PORT)
+
+
+func _lan_room_record() -> Dictionary:
+	## One shared room description for discovery replies and beacons.
+	return {
+		"service": "cartslop-lan",
+		"name": GameSettings.player_name,
+		"host": local_address if _valid_ip(local_address) else _local_ip(),
+		"port": port,
+		"players": peer_count(),
+		"mode": session_mode,
+		"event": session_event,
+		"state": room_state,
+		"map": _advertised_room_map(),
+		"version": str(ProjectSettings.get_setting("application/config/version", "")),
+	}
+
+
+func _lan_reply_host(sender: String) -> String:
+	## The client must connect back to THIS host on the interface the request
+	## actually arrived from. A multi-homed Mac that answers with its VPN/utun
+	## address (the old local_address behaviour) is unreachable.
+	var best: String = _lan_address_for(sender)
+	if best != "" and best != "127.0.0.1":
+		return best
+	return local_address if _valid_ip(local_address) else _local_ip()
 
 
 func _stop_lan_listener() -> void:
 	if _lan_listener != null:
 		_lan_listener.close()
 		_lan_listener = null
+	_lan_beacon_timer = -1.0
+	_lan_warmup_left = 0
 
 
 func _advertised_room_map() -> String:
@@ -1396,7 +1549,10 @@ func _poll_lan_listener() -> void:
 		var packet: PackedByteArray = _lan_listener.get_packet()
 		var sender: String = _lan_listener.get_packet_ip()
 		var sender_port: int = _lan_listener.get_packet_port()
-		var parsed: Variant = JSON.parse_string(packet.get_string_from_utf8())
+		var packet_text: String = packet.get_string_from_utf8()
+		if not packet_text.contains("cartslop-lan"):
+			continue
+		var parsed: Variant = JSON.parse_string(packet_text)
 		if not (parsed is Dictionary):
 			continue
 		var request: Dictionary = parsed as Dictionary
@@ -1407,95 +1563,88 @@ func _poll_lan_listener() -> void:
 			continue
 		# Only answer a real LAN peer. Replying to a spoofed public source
 		# would turn the discovery socket into a small UDP reflector.
-		if not _is_private_ipv4(sender):
+		if not _is_lan_peer_address(sender):
 			continue
 		# Private LAN rooms do not answer discovery at all. The host flips the
 		# ROOM setting to PUBLIC when friends are ready to join.
 		if not room_public:
 			continue
-		var reply: Dictionary = {
-			"service": "cartslop-lan",
-			"name": GameSettings.player_name,
-			# The joining client must connect back to THIS host, not to itself.
-			"host": local_address if _valid_ip(local_address) else _local_ip(),
-			"port": port,
-			"players": peer_count(),
-			"mode": session_mode,
-			"event": session_event,
-			"state": room_state,
-			"map": _advertised_room_map(),
-			"version": str(ProjectSettings.get_setting("application/config/version", "")),
-		}
+		var reply: Dictionary = _lan_room_record()
+		reply["host"] = _lan_reply_host(sender)
 		_lan_listener.set_dest_address(sender, sender_port)
 		_lan_listener.put_packet(JSON.stringify(reply).to_utf8_buffer())
 
 
 func scan_lan_rooms(timeout: float = 1.4) -> Array:
-	## Broadcast a request and collect host replies. Returns rooms discovered
-	## on the local network. Nothing here is typed by the player.
-	var udp := PacketPeerUDP.new()
-	if udp.bind(0) != OK:
+	## Broadcast a request and collect host replies/beacons. Returns rooms
+	## discovered on the local network. Nothing here is typed by the player.
+	## Replies are collected per interface socket: a reply that came back on an
+	## interface-bound socket is preferred over one that came back over the
+	## default route (which may be a VPN on a Mac), so the room row carries an
+	## address the friend's Wi-Fi can actually reach.
+	var probes: Array[Dictionary] = _open_probe_sockets()
+	if probes.is_empty():
 		return []
-	udp.set_broadcast_enabled(true)
-	var targets: PackedStringArray = ["255.255.255.255"]
-	var lan_ip: String = _local_ip()
-	if _valid_ip(lan_ip):
-		var parts: PackedStringArray = lan_ip.split(".")
-		if parts.size() == 4:
-			targets.append("%s.%s.%s.255" % [parts[0], parts[1], parts[2]])
 	var request: PackedByteArray = JSON.stringify({
 		"service": "cartslop-lan",
 		"want": "rooms",
 	}).to_utf8_buffer()
-	for target: String in targets:
-		udp.set_dest_address(target, LAN_ROOM_PORT)
-		udp.put_packet(request)
+	_broadcast_probes(probes, request, LAN_ROOM_PORT)
 	var found: Dictionary = {}
-	var deadline: int = Time.get_ticks_msec() + int(maxf(timeout, 0.4) * 1000.0)
-	var next_nudge: int = 0
+	var started: int = Time.get_ticks_msec()
+	var window_ms: int = int(maxf(timeout, 0.4) * 1000.0)
+	var short_deadline: int = started + window_ms
+	var deadline: int = short_deadline
+	if _is_macos():
+		# A Mac's first scan can sit behind the Local Network permission alert;
+		# keep retrying past the normal window instead of telling the player
+		# "no rooms" before they have answered it. Still exits as soon as a room
+		# answers, so a healthy LAN is just as fast as before.
+		deadline = started + maxi(window_ms, DISCOVERY_TIMEOUT_MACOS_MS)
+	var next_nudge: int = started + DISCOVERY_NUDGE_MS
 	while Time.get_ticks_msec() < deadline:
-		while udp.get_available_packet_count() > 0:
-			var packet: PackedByteArray = udp.get_packet()
-			var parsed: Variant = JSON.parse_string(packet.get_string_from_utf8())
-			if not (parsed is Dictionary):
+		for probe: Dictionary in probes:
+			var socket: PacketPeerUDP = probe["socket"] as PacketPeerUDP
+			if socket == null:
 				continue
-			var room: Dictionary = parsed as Dictionary
-			if str(room.get("service", "")) != "cartslop-lan":
-				continue
-			var host: String = str(room.get("host", ""))
-			var open_port: int = int(room.get("port", 0))
-			if not _is_private_ipv4(host) or open_port <= 0:
-				continue
-			var raw_mode: String = str(room.get("mode", GameSettings.GAME_SANDBOX)).strip_edges().to_lower()
-			var clean_mode: String = GameSettings.GAME_MINIGAMES \
-				if raw_mode == GameSettings.GAME_MINIGAMES else GameSettings.GAME_SANDBOX
-			var raw_event: String = str(room.get("event", EVENT_RACE)).strip_edges().to_lower()
-			var clean_event: String = raw_event \
-				if (raw_event == EVENT_RACE or raw_event in MINIGAME_EVENTS) \
-				else (EVENT_RACE if clean_mode == GameSettings.GAME_MINIGAMES else "")
-			var raw_state: String = str(room.get("state", "lobby")).strip_edges().to_lower()
-			var clean_state: String = raw_state if raw_state in ["lobby", "playing", "finished"] else "lobby"
-			var raw_map: String = str(room.get("map", "")).strip_edges().to_lower()
-			found["%s:%d" % [host, open_port]] = {
-				"name": GameSettings.sanitize_name(str(room.get("name", "HOST"))),
-				"host": host,
-				"port": open_port,
-				"players": clampi(int(room.get("players", 1)), 1, MAX_PLAYERS),
-				"mode": clean_mode,
-				"event": clean_event,
-				"state": clean_state,
-				"map": raw_map if TrackDefs.has_theme_id(raw_map) \
-					else GameSettings.sanitize_map_id(raw_map),
-			}
+			var arrival_rank: int = int(probe["rank"])
+			while socket.get_available_packet_count() > 0:
+				var packet: PackedByteArray = socket.get_packet()
+				var sender_ip: String = socket.get_packet_ip()
+				var room: Dictionary = _parse_lan_room_reply(
+					packet.get_string_from_utf8(), sender_ip)
+				if room.is_empty():
+					continue
+				room["_rank"] = arrival_rank
+				var key: String = "%s:%d" % [str(room["host"]), int(room["port"])]
+				if not found.has(key) or int((found[key] as Dictionary)["_rank"]) < arrival_rank:
+					found[key] = room
+		if not found.is_empty() and Time.get_ticks_msec() >= short_deadline:
+			# A room answered inside the normal window: do not make the lobby
+			# wait out the macOS grace period just to collect stragglers.
+			break
 		var now: int = Time.get_ticks_msec()
 		if now >= next_nudge:
-			next_nudge = now + 450
-			for target: String in targets:
-				udp.set_dest_address(target, LAN_ROOM_PORT)
-				udp.put_packet(request)
+			next_nudge = now + DISCOVERY_NUDGE_MS
+			_broadcast_probes(probes, request, LAN_ROOM_PORT)
 		await get_tree().process_frame
-	udp.close()
-	return found.values()
+	_close_probes(probes)
+	if found.is_empty():
+		discovery_hint = "macos_local_network" if _is_macos() else ""
+		return []
+	# Best interface first. The internal rank key is stripped before the list
+	# reaches the room browser, which knows nothing about discovery plumbing.
+	var ranked: Array[Dictionary] = []
+	for entry: Variant in found.values():
+		ranked.append(entry as Dictionary)
+	ranked.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		return int(a.get("_rank", 0)) > int(b.get("_rank", 0)))
+	var rooms: Array = []
+	for room: Dictionary in ranked:
+		var clean: Dictionary = room.duplicate()
+		clean.erase("_rank")
+		rooms.append(clean)
+	return rooms
 
 
 func join_lan_room(room: Dictionary) -> void:
@@ -1504,14 +1653,16 @@ func join_lan_room(room: Dictionary) -> void:
 		# (or a click while this machine is hosting) must not tear that live
 		# session down; every other join path already refuses the same way.
 		return
-	var host: String = str(room.get("host", "")).strip_edges()
+	var host: String = _strip_host_brackets(str(room.get("host", "")).strip_edges())
 	var open_port: int = int(room.get("port", 0))
-	if not _is_private_ipv4(host) or open_port <= 0:
+	if not _is_lan_peer_address(host) or open_port <= 0:
 		join_failed.emit("That LAN room is no longer available. Scan again.")
 		return
 	if str(room.get("state", "lobby")) != "lobby":
 		join_failed.emit("That LAN room has already started.")
 		return
+	# A fresh user action re-arms the one-shot macOS permission retry.
+	_lan_join_retry = 0
 	join_status_changed.emit("Joining the LAN room...")
 	_connect_to(host, open_port, "lan")
 
@@ -1545,49 +1696,86 @@ func _relay_post(path: String, payload: Dictionary,
 		timeout: float = 6.0) -> Dictionary:
 	## One JSON POST, parsed into a Dictionary. The request object comes from
 	## the shared pool so fire-and-forget callers do not allocate per packet.
+	## POSTs are not retried here: register/heartbeat own their retry policy and
+	## a duplicated state-changing request could create two rooms. The transport
+	## result is recorded so a TLS/DNS failure is distinguishable from an HTTP
+	## error by the lobby/updater.
 	if relay_base == "":
 		_relay_http_status = 0
+		_relay_http_result = HTTPRequest.RESULT_SUCCESS
 		return {}
+	var base: String = relay_base
 	var http: HTTPRequest = _acquire_http(timeout)
 	var headers: PackedStringArray = ["Content-Type: application/json"]
-	var error: Error = http.request(relay_base + path, headers,
+	var error: Error = http.request(base + path, headers,
 		HTTPClient.METHOD_POST, JSON.stringify(payload))
 	if error != OK:
 		_relay_http_status = -1
+		_relay_http_result = HTTPRequest.RESULT_REQUEST_FAILED
 		_release_http(http)
 		return {}
 	var response: Array = await http.request_completed
-	var status: int = int(response[1])
-	_relay_http_status = status
 	_release_http(http)
-	if status != 200:
+	_relay_http_result = int(response[0])
+	_relay_http_status = int(response[1])
+	if relay_base == "" or relay_base != base:
+		# A leave() during the request cleared/changed the route; the answer
+		# belongs to a session that no longer exists.
 		return {}
-	var parsed: Variant = JSON.parse_string((response[3] as PackedByteArray).get_string_from_utf8())
-	if parsed is Dictionary:
-		return parsed as Dictionary
-	return {}
+	return _relay_parse_response(response)
 
 
 func _relay_get(path: String, timeout: float = RELAY_HTTP_TIMEOUT) -> Dictionary:
+	## GET with ONE transport retry. A macOS sleep/wake, a VPN switch or a stale
+	## pooled keep-alive connection can fail the first request while the network
+	## is actually fine; retrying a GET is safe (idempotent). A TLS handshake
+	## failure is deliberately not retried: the certificate store will not heal
+	## in 150 ms, and the caller reports it instead of calling the server offline.
 	if relay_base == "":
 		_relay_http_status = 0
+		_relay_http_result = HTTPRequest.RESULT_SUCCESS
 		return {}
-	var http: HTTPRequest = _acquire_http(timeout)
-	var error: Error = http.request(relay_base + path, [], HTTPClient.METHOD_GET)
-	if error != OK:
-		_relay_http_status = -1
+	var base: String = relay_base
+	for attempt in 2:
+		var http: HTTPRequest = _acquire_http(timeout)
+		var error: Error = http.request(base + path, [], HTTPClient.METHOD_GET)
+		if error != OK:
+			_relay_http_status = -1
+			_relay_http_result = HTTPRequest.RESULT_REQUEST_FAILED
+			_release_http(http)
+			return {}
+		var response: Array = await http.request_completed
 		_release_http(http)
-		return {}
-	var response: Array = await http.request_completed
+		_relay_http_result = int(response[0])
+		_relay_http_status = int(response[1])
+		if relay_base == "" or relay_base != base:
+			return {}
+		if int(response[0]) == HTTPRequest.RESULT_SUCCESS:
+			return _relay_parse_response(response)
+		if attempt == 0 and _relay_result_retryable(int(response[0])):
+			await get_tree().create_timer(0.15).timeout
+			continue
+		break
+	return {}
+
+
+func _relay_parse_response(response: Array) -> Dictionary:
 	var status: int = int(response[1])
-	_relay_http_status = status
-	_release_http(http)
 	if status != 200:
 		return {}
-	var parsed: Variant = JSON.parse_string((response[3] as PackedByteArray).get_string_from_utf8())
-	if parsed is Dictionary:
-		return parsed as Dictionary
-	return {}
+	var parsed: Variant = JSON.parse_string(
+		(response[3] as PackedByteArray).get_string_from_utf8())
+	return parsed as Dictionary if parsed is Dictionary else {}
+
+
+func _relay_result_retryable(result: int) -> bool:
+	## Transport-only failures worth one retry: a stale keep-alive connection,
+	## a wake race, or a transient DNS/VPN switch. TLS is excluded on purpose.
+	match result:
+		HTTPRequest.RESULT_CANT_CONNECT, HTTPRequest.RESULT_CONNECTION_ERROR, \
+		HTTPRequest.RESULT_TIMEOUT, HTTPRequest.RESULT_NO_RESPONSE:
+			return true
+	return false
 
 
 func _remember_server_version(status: Dictionary) -> void:
@@ -1936,10 +2124,18 @@ func _register_relay(local_port: int) -> bool:
 	## room alive and let the real one expire), so the host ticket is captured
 	## before the await and re-checked after it.
 	var ticket: int = _host_ticket
+	# Advertise the address on the relay's own subnet. A Mac that is wired to
+	# Ethernet while Wi-Fi is the Pi's network used to register the Ethernet
+	# address, so every remote client got a lan_host it could not reach.
+	var advertised_ip: String = local_address
+	if _is_lan_peer_address(relay_lan_ip):
+		advertised_ip = _lan_address_for(relay_lan_ip)
+	elif advertised_ip == "" or not _valid_ip(advertised_ip):
+		advertised_ip = _local_ip()
 	var response: Dictionary = await _relay_post("/api/register", {
 		"name": GameSettings.player_name,
 		"local_port": local_port,
-		"local_ip": local_address,
+		"local_ip": advertised_ip,
 		"tunnel": true,
 		"public": room_public,
 		"mode": session_mode,
@@ -1970,13 +2166,16 @@ func _register_relay(local_port: int) -> bool:
 func _start_relay_tunnel() -> void:
 	if _relay_tunnel != null:
 		return
-	var host: String = relay_lan_host
+	# Sockets need bare IPv6 literals; a "[fd00::1]" host from a URL would make
+	# StreamPeerTCP/DNS fail. _is_local_subnet() replaces the old _same_subnet_24
+	# against the single _local_ip(), which a multi-homed Mac got wrong.
+	var host: String = _strip_host_brackets(relay_lan_host)
 	if host == "" and relay_base_public:
-		host = relay_server_host
-	if relay_base_public and relay_lan_host != "" and not _same_subnet_24(relay_lan_host, _local_ip()):
-		host = relay_server_host
+		host = _strip_host_brackets(relay_server_host)
+	if relay_base_public and host != "" and not _is_local_subnet(host):
+		host = _strip_host_brackets(relay_server_host)
 	if host == "":
-		host = relay_lan_ip
+		host = _strip_host_brackets(relay_lan_ip)
 	if host == "":
 		return
 	_relay_tunnel = RelayTunnel.new()
@@ -2037,8 +2236,12 @@ func _relay_heartbeat_tick(delta: float) -> void:
 		return
 	_relay_heartbeat = 0.0
 	_relay_busy = true
+	# Capture the session identity: leave()/host_game() during the await must
+	# not let a late reply clear the NEW session's busy flag or end its room.
+	var ticket: int = _host_ticket
+	var token: String = relay_token
 	var response: Dictionary = await _relay_post("/api/heartbeat", {
-		"token": relay_token,
+		"token": token,
 		"state": room_state,
 		"players": peer_count(),
 		"public": room_public,
@@ -2047,6 +2250,8 @@ func _relay_heartbeat_tick(delta: float) -> void:
 		"map": _advertised_room_map(),
 	}, HEARTBEAT_TIMEOUT)
 	var status: int = _relay_http_status
+	if ticket != _host_ticket or token != relay_token:
+		return
 	_relay_busy = false
 	if not is_host or not relay_active:
 		return
@@ -2055,6 +2260,11 @@ func _relay_heartbeat_tick(delta: float) -> void:
 		# Only a definite 404/410/ok:false (or a long run of timeouts) ends the
 		# lobby; a timed-out Pi keeps its room until the grace period expires.
 		_heartbeat_failures += 1
+		var detail: String = _relay_result_detail()
+		if detail != "" and last_error == "":
+			# Surface a TLS/DNS problem instead of reporting a healthy Pi as
+			# "offline" when the real cause is the trust store or resolution.
+			last_error = detail
 		var definite: bool = not response.is_empty() \
 			or status == 404 or status == 410
 		if (definite and _heartbeat_failures >= 2) \
@@ -2092,6 +2302,11 @@ func set_room_public(value: bool) -> void:
 	if relay_active:
 		_relay_heartbeat = RELAY_HEARTBEAT_INTERVAL
 		_push_room_state()
+	if _lan_listener != null and is_host and connection_mode == "lan":
+		# A room switched to PUBLIC starts advertising immediately instead of
+		# waiting for the next host restart; switching to PRIVATE stops the
+		# beacons at once (the request/reply path checks room_public anyway).
+		_lan_beacon_timer = LAN_BEACON_INTERVAL if value else -1.0
 	# Clients show the room's PUBLIC/PRIVATE state; without this the lobby was
 	# reading each client's own saved setting and could label the room wrong.
 	_push_session_config()
@@ -2146,41 +2361,448 @@ func _open_server() -> int:
 	return 0
 
 
-func _local_ip() -> String:
-	## Pick the most likely physical LAN adapter. VPNs, Hyper-V, WSL, Docker and
-	## VirtualBox adapters often sort first, and their address is not reachable
-	## from the player's friend.
-	var best: String = ""
-	var best_score: int = -1000
-	var interfaces: Array = IP.get_local_interfaces()
-	for iface: Dictionary in interfaces:
-		var label: String = (str(iface.get("name", "")) + " " + str(iface.get("friendly", ""))).to_lower()
-		var score: int = 0
-		if label.contains("wi-fi") or label.contains("wifi") or label.contains("wireless") or label.contains("wlan"):
-			score += 30
-		elif label.contains("ethernet") or label.contains("eth"):
-			score += 20
-		for bad: String in ["virtual", "vmware", "vbox", "hyper-v", "vethernet", "wsl",
-				"docker", "tailscale", "zerotier", "vpn", "warp", "cloudflare",
-				"loopback", "bluetooth"]:
-			if label.contains(bad):
-				score -= 100
-				break
-		for value: Variant in iface.get("addresses", []) as Array:
-			var address: String = str(value)
-			if not _valid_ip(address) or address.begins_with("127.") or address.begins_with("169.254."):
-				continue
-			if score > best_score:
-				best = address
-				best_score = score
-	if best != "":
-		return best
-	for address: String in IP.get_local_addresses():
-		if address.begins_with("127.") or address.contains(":"):
+static func _is_macos() -> bool:
+	## Code-signing / Local Network privacy behaviour only exists on macOS; the
+	## platform branch is centralised here so tests can reason about it.
+	return OS.has_feature("macos") or OS.get_name() == "macOS"
+
+
+func local_network_hint() -> String:
+	## UI helper: an actionable explanation when LAN discovery finds nothing on
+	## macOS 15+. Empty elsewhere so Windows/Linux never show a Mac-only note.
+	if not _is_macos():
+		return ""
+	return "MACOS: ENABLE LOCAL NETWORK FOR CART SLOP GP IN SYSTEM SETTINGS."
+
+
+static func _interface_score(iface: Dictionary) -> int:
+	## Physical-LAN score for one interface. Windows exposes friendly names
+	## ("Wi-Fi", "Ethernet 2"); macOS exposes only BSD names (en0, en1, utun0,
+	## bridge0, awdl0, llw0, anpi0) with an empty `friendly`, so scoring only
+	## Windows words silently treats every Mac adapter as equal and lets a
+	## VPN/Thunderbolt-bridge address win. Positive = likely physical LAN.
+	var label: String = (str(iface.get("name", "")) + " "
+		+ str(iface.get("friendly", ""))).strip_edges().to_lower()
+	if label == "":
+		return 0
+	for bad: String in ["virtual", "vmware", "vbox", "hyper-v", "vethernet",
+			"wsl", "docker", "tailscale", "zerotier", "vpn", "warp",
+			"cloudflare", "loopback", "bluetooth",
+			# macOS/BSD tunnel + virtual link names (friendly name is empty).
+			"utun", "tun", "tap", "bridge", "awdl", "llw", "anpi", "gif",
+			"stf", "ppp", "ipsec", "lo0", "lo1", "ham"]:
+		if label.contains(bad):
+			return -200
+	for good: String in ["wi-fi", "wifi", "wireless", "wlan", "ethernet",
+			"eth", "en0", "en1", "en2", "en3", "en4", "en5", "en6", "en7",
+			"en8", "en9"]:
+		if label.contains(good):
+			return 30
+	return 0
+
+
+func _lan_address_candidates() -> PackedStringArray:
+	## Every usable IPv4 LAN address on this machine, best first. A multi-homed
+	## Mac needs more than one answer: the Wi-Fi address is right for a Wi-Fi
+	## friend, Ethernet for a wired one, and a VPN/utun address for neither.
+	var scored: Array[Dictionary] = []
+	for iface_value: Variant in IP.get_local_interfaces():
+		if not (iface_value is Dictionary):
 			continue
-		if address.begins_with("192.168.") or address.begins_with("10.") or address.begins_with("172."):
-			return address
+		var iface: Dictionary = iface_value as Dictionary
+		var rank: int = _interface_score(iface)
+		if rank <= -200:
+			continue
+		for address_value: Variant in (iface.get("addresses", []) as Array):
+			var address: String = str(address_value)
+			if not _valid_ip(address):
+				continue
+			# Loopback, "this network" and IPv4 link-local are never reachable
+			# room addresses; multicast/broadcast/reserved ranges are not either.
+			if address.begins_with("0.") or address.begins_with("127.") \
+					or address.begins_with("169.254."):
+				continue
+			if int(address.split(".")[0]) >= 224:
+				continue
+			var score: int = rank
+			if _is_private_ipv4(address):
+				score += 40
+			elif _is_cgnat_ipv4(address):
+				# Tailscale-style 100.64/10 overlay: usable but never the LAN
+				# address to advertise to a friend or the Pi.
+				score -= 25
+			else:
+				# Public IPv4 on a physical adapter can still be a real LAN
+				# (campus/corporate Wi-Fi), just a weaker preference.
+				score += 5
+			scored.append({"address": address, "score": score})
+	scored.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		return int(a["score"]) > int(b["score"]))
+	var out: PackedStringArray = PackedStringArray()
+	for entry: Dictionary in scored:
+		var address: String = str(entry["address"])
+		if not out.has(address):
+			out.append(address)
+	if out.is_empty():
+		# A driver or a tiny platform may hide the interface list; fall back to
+		# the flat list rather than reporting only loopback.
+		for value: Variant in IP.get_local_addresses():
+			var address: String = str(value)
+			if _valid_ip(address) and _is_private_ipv4(address) \
+					and not address.begins_with("127."):
+				if not out.has(address):
+					out.append(address)
+	return out
+
+
+func _local_ip() -> String:
+	## Best single "this machine's LAN address" answer, used for the LAN
+	## discovery advertisement and as the Pi registration fallback. Every
+	## candidate is kept in local_addresses[] because no single address is
+	## reachable from every peer.
+	var candidates: PackedStringArray = _lan_address_candidates()
+	local_addresses = candidates
+	if not candidates.is_empty():
+		return candidates[0]
 	return "127.0.0.1"
+
+
+static func _broadcast_targets_for(address: String) -> PackedStringArray:
+	## Directed-broadcast candidates for one LAN IPv4 address. Godot 4.7.2's
+	## IP.get_local_interfaces() has no netmask, so cover the common private
+	## prefix lengths. An extra packet sent to a non-broadcast private address
+	## is harmless (the router drops it) and this beats the old single
+	## hard-coded /24, which missed /8 and /16 LANs entirely.
+	var out: PackedStringArray = PackedStringArray()
+	var parts: PackedStringArray = address.split(".")
+	if parts.size() != 4:
+		return out
+	var first: int = int(parts[0])
+	var second: int = int(parts[1])
+	out.append("%d.%d.%d.255" % [first, second, int(parts[2])])
+	if first == 10:
+		out.append("10.255.255.255")
+	elif first == 172 and second >= 16 and second <= 31:
+		out.append("172.31.255.255")
+	elif first == 192 and second == 168:
+		out.append("192.168.255.255")
+	return out
+
+
+func _discovery_targets() -> PackedStringArray:
+	## Limited broadcast plus every candidate subnet's directed broadcast.
+	## macOS routes the limited broadcast only out the default interface, so a
+	## Mac with Ethernet as the default route never probes its Wi-Fi subnet
+	## without the directed targets below.
+	var out: PackedStringArray = PackedStringArray(["255.255.255.255"])
+	for address: String in _lan_address_candidates():
+		for target: String in _broadcast_targets_for(address):
+			if not out.has(target):
+				out.append(target)
+	return out
+
+
+func _send_discovery_probe(request: PackedByteArray, dest_port: int,
+		socket: PacketPeerUDP = null) -> void:
+	## Send the probe from the shared receive socket AND from one socket bound
+	## to each interface address. On BSD/macOS a limited broadcast follows the
+	## default route, so a Mac whose default route is a VPN/utun would never
+	## probe the real Wi-Fi/Ethernet subnet otherwise.
+	var targets: PackedStringArray = _discovery_targets()
+	if socket != null:
+		for target: String in targets:
+			socket.set_dest_address(target, dest_port)
+			socket.put_packet(request)
+	for address: String in _lan_address_candidates():
+		var sender := PacketPeerUDP.new()
+		if sender.bind(0, address) != OK:
+			# Windows refuses some adapter-bound sends; the wildcard socket
+			# above already covered the common case.
+			continue
+		sender.set_broadcast_enabled(true)
+		for target: String in targets:
+			sender.set_dest_address(target, dest_port)
+			sender.put_packet(request)
+		sender.close()
+
+
+func _open_probe_sockets() -> Array[Dictionary]:
+	## Discovery I/O must be per interface. A Mac with a VPN default route sends
+	## the limited broadcast out the VPN, so a single wildcard socket makes the
+	## peer answer a VPN source address; the player then tries to join an address
+	## that only exists on the VPN. One socket bound to each physical LAN address
+	## keeps both directions of the exchange on that interface; the wildcard
+	## socket stays as a fallback for platforms that refuse adapter-bound sends.
+	## Returned entries: {"socket": PacketPeerUDP, "rank": int, "bound": String}.
+	var probes: Array[Dictionary] = []
+	for address: String in _lan_address_candidates():
+		var udp := PacketPeerUDP.new()
+		if udp.bind(0, address) != OK:
+			continue
+		udp.set_broadcast_enabled(true)
+		probes.append({"socket": udp, "rank": 2, "bound": address})
+	var wildcard := PacketPeerUDP.new()
+	if wildcard.bind(0) == OK:
+		wildcard.set_broadcast_enabled(true)
+		probes.append({"socket": wildcard, "rank": 1, "bound": ""})
+	return probes
+
+
+func _broadcast_probes(probes: Array[Dictionary], request: PackedByteArray,
+		dest_port: int) -> void:
+	var targets: PackedStringArray = _discovery_targets()
+	for probe: Dictionary in probes:
+		var udp: PacketPeerUDP = probe["socket"] as PacketPeerUDP
+		if udp == null:
+			continue
+		for target: String in targets:
+			udp.set_dest_address(target, dest_port)
+			udp.put_packet(request)
+
+
+func _close_probes(probes: Array[Dictionary]) -> void:
+	for probe: Dictionary in probes:
+		var udp: PacketPeerUDP = probe["socket"] as PacketPeerUDP
+		if udp != null:
+			udp.close()
+
+
+func _lan_address_for(remote_ip: String) -> String:
+	## Our address that the given remote can reach: the one on the remote's
+	## subnet first, then the best physical address. Discovery replies and the
+	## local_ip advertised to the Pi both use this, so a Mac on Ethernet with a
+	## Wi-Fi friend does not advertise the unreachable wired address.
+	var target: String = _strip_host_brackets(remote_ip)
+	var candidates: PackedStringArray = _lan_address_candidates()
+	if _valid_ip(target):
+		for address: String in candidates:
+			if _same_subnet_24(address, target):
+				return address
+	if not candidates.is_empty():
+		return candidates[0]
+	return local_address if _valid_ip(local_address) else "127.0.0.1"
+
+
+func _is_local_subnet(address: String) -> bool:
+	## True when the address belongs to a subnet this machine is attached to.
+	## Used to decide whether the relay's LAN hint is actually local, and to
+	## accept LAN peers on public/campus IPv4 networks (a public IPv4 LAN is
+	## still a LAN; rejecting it used to make campus Macs invisible).
+	if not _valid_ip(_strip_host_brackets(address)):
+		return false
+	for local: String in _lan_address_candidates():
+		if _same_subnet_24(local, _strip_host_brackets(address)):
+			return true
+	return false
+
+
+func _is_lan_peer_address(address: String) -> bool:
+	## A plausible directly-attached peer: private IPv4 or on one of our own
+	## subnets. Loopback/link-local/"this network" are never valid room peers.
+	var text: String = _strip_host_brackets(address)
+	if not _valid_ip(text):
+		return false
+	if text.begins_with("0.") or text.begins_with("127.") \
+			or text.begins_with("169.254."):
+		return false
+	return _is_private_ipv4(text) or _is_local_subnet(text)
+
+
+static func _strip_host_brackets(host: String) -> String:
+	## URL/IPv6 details: "http://[fd00::1]:42777" keeps its square brackets in
+	## the authority, but StreamPeerTCP/ENet need the bare literal. Strip them
+	## for socket use; _url_host() re-adds them when composing an HTTP URL.
+	var text: String = host.strip_edges()
+	if text.begins_with("[") and text.ends_with("]"):
+		return text.substr(1, text.length() - 2)
+	return text
+
+
+static func _url_host(host: String) -> String:
+	## Bracket an IPv6 literal again so relay_base stays a valid URL.
+	var text: String = _strip_host_brackets(host)
+	return "[" + text + "]" if text.contains(":") else text
+
+
+static func _is_ipv6_literal(text: String) -> bool:
+	## Loose "is this already an address" test. ENet/StreamPeerTCP accept the
+	## bare IPv6 form Godot prints (e.g. "fd00:0:0:0:0:0:0:1"), so a literal
+	## must never be handed to the DNS resolver (macOS would fail it).
+	var clean: String = _strip_host_brackets(text)
+	if clean.contains("%"):
+		clean = clean.get_slice("%", 0)
+	if not clean.contains(":"):
+		return false
+	for character: String in clean:
+		if not "0123456789abcdefABCDEF:.".contains(character):
+			return false
+	return clean.count(":") >= 2
+
+
+func _is_ip_literal(text: String) -> bool:
+	var clean: String = _strip_host_brackets(text)
+	return _valid_ip(clean) or _is_ipv6_literal(clean)
+
+
+func _resolve_host_async(host: String, timeout_ms: int) -> String:
+	## Bounded, non-blocking hostname resolution. IP.resolve_hostname() blocks
+	## the main loop, and on macOS a ".local"/Bonjour name or a dead VPN
+	## resolver can stall for seconds (the whole game freezes). The resolver
+	## queue is polled from the main loop instead; TYPE_IPV4 avoids the macOS
+	## "localhost resolves to ::1 first, server only listens on IPv4" trap.
+	var clean: String = _strip_host_brackets(host)
+	if _is_ip_literal(clean):
+		return clean
+	var queue_id: int = IP.resolve_hostname_queue_item(clean, IP.TYPE_IPV4)
+	if queue_id == -1:
+		# Queue unavailable (very old/small platforms): accept the blocking
+		# call as a last resort so behaviour does not regress.
+		return _strip_host_brackets(IP.resolve_hostname(clean, IP.TYPE_IPV4))
+	var deadline: int = Time.get_ticks_msec() + maxi(timeout_ms, 250)
+	while true:
+		var status: int = IP.get_resolve_item_status(queue_id)
+		if status == IP.RESOLVER_STATUS_DONE:
+			var address: String = _strip_host_brackets(IP.get_resolve_item_address(queue_id))
+			IP.erase_resolve_item(queue_id)
+			return address
+		if status == IP.RESOLVER_STATUS_ERROR:
+			IP.erase_resolve_item(queue_id)
+			return ""
+		if Time.get_ticks_msec() >= deadline:
+			IP.erase_resolve_item(queue_id)
+			return ""
+		await get_tree().process_frame
+	return ""
+
+
+func _check_suspend() -> void:
+	## macOS laptops sleep on lid close. Engine ticks can stop advancing while
+	## wall time (and the Pi's clock) keeps moving, so the measured relay clock
+	## offset, pooled HTTP keep-alive sockets and the relay tunnel all go stale.
+	## A wall-vs-tick gap is the portable signal for "we were suspended".
+	var ticks: int = Time.get_ticks_msec()
+	var wall: int = int(Time.get_unix_time_from_system() * 1000.0)
+	if _last_tick_ms == 0:
+		_last_tick_ms = ticks
+		_last_wall_ms = wall
+		return
+	var tick_delta: int = ticks - _last_tick_ms
+	var wall_delta: int = wall - _last_wall_ms
+	_last_tick_ms = ticks
+	_last_wall_ms = wall
+	if wall_delta <= 0:
+		# Wall clock stepped backwards (NTP correction); rebaseline only.
+		return
+	if wall_delta - tick_delta < 3000:
+		return
+	_on_system_resumed()
+
+
+func _on_system_resumed() -> void:
+	## Repair session state after a sleep/wake or a long main-thread stall.
+	_suspend_count += 1
+	_drop_http_pool()
+	# The relay clock offset belongs to the pre-sleep path; re-measure before
+	# the next server race so countdowns/lap times cannot shift by the sleep.
+	server_clock_ready = false
+	server_clock_offset_ms = 0
+	_relay_probe_pending = false
+	_host_ping_pending = false
+	_race_state_busy = false
+	if _relay_tunnel != null and _relay_tunnel.has_method("reconnect"):
+		# A half-open TCP tunnel can look CONNECTED forever after wake; force a
+		# fresh handshake instead of waiting for the next write to fail.
+		_relay_tunnel.call("reconnect")
+		relay_tunnel_active = false
+	if is_host and relay_active:
+		_relay_heartbeat = RELAY_HEARTBEAT_INTERVAL
+		_heartbeat_failures = 0
+
+
+func _drop_http_pool() -> void:
+	## Free keep-alive HTTPRequest objects: after sleep/wake (or a VPN switch)
+	## their pooled TCP/TLS connections point at a network path that is gone,
+	## and the first request on each would fail with RESULT_CONNECTION_ERROR.
+	for http: HTTPRequest in _http_idle:
+		if is_instance_valid(http):
+			http.cancel_request()
+			http.queue_free()
+	_http_idle.clear()
+
+
+func _relay_result_detail() -> String:
+	## Machine-readable transport failure for the lobby/updater. HTTP status 0
+	## means "no HTTP answer at all", which used to be reported as "server
+	## offline" even when the real cause was a TLS handshake failure.
+	match _relay_http_result:
+		HTTPRequest.RESULT_TLS_HANDSHAKE_ERROR:
+			return "tls_error"
+		HTTPRequest.RESULT_CANT_RESOLVE:
+			return "dns_error"
+		HTTPRequest.RESULT_TIMEOUT, HTTPRequest.RESULT_NO_RESPONSE:
+			return "timeout"
+		HTTPRequest.RESULT_CANT_CONNECT, HTTPRequest.RESULT_CONNECTION_ERROR:
+			return "unreachable"
+	return ""
+
+
+func _join_timeout_reason(was_lan: bool) -> String:
+	var reason: String = "Connection timed out. The room may have closed, or the server is unreachable."
+	if was_lan and _is_macos():
+		reason += " On macOS, allow Cart Slop GP under System Settings > Privacy & Security > Local Network."
+	return reason
+
+
+func _parse_lan_room_reply(packet_text: String, sender_ip: String) -> Dictionary:
+	## Parse a LAN discovery answer/beacon. The packet SOURCE address wins over
+	## the advertised "host" field: the reply is guaranteed routable back to the
+	## sender, while the advertised address comes from whichever adapter the
+	## host picked for itself (a multi-homed Mac can pick a VPN/utun address).
+	## This also makes an old host with a wrong local_address joinable.
+	## Cheap prefix gate first: port 42779 also receives unrelated UDP noise on
+	## a busy LAN, and handing every packet to JSON.parse_string() prints engine
+	## parse errors for each one.
+	if not packet_text.contains("cartslop-lan"):
+		return {}
+	var parsed: Variant = JSON.parse_string(packet_text)
+	if not (parsed is Dictionary):
+		return {}
+	var room: Dictionary = parsed as Dictionary
+	if str(room.get("service", "")) != "cartslop-lan":
+		return {}
+	var open_port: int = int(room.get("port", 0))
+	if open_port <= 0 or open_port > 65535:
+		return {}
+	var advertised: String = _strip_host_brackets(str(room.get("host", "")))
+	var source: String = _strip_host_brackets(sender_ip)
+	var host: String = ""
+	if _is_lan_peer_address(source):
+		host = source
+	elif _is_lan_peer_address(advertised):
+		host = advertised
+	if host == "":
+		return {}
+	var raw_mode: String = str(room.get("mode", GameSettings.GAME_SANDBOX)).strip_edges().to_lower()
+	var clean_mode: String = GameSettings.GAME_MINIGAMES \
+		if raw_mode == GameSettings.GAME_MINIGAMES else GameSettings.GAME_SANDBOX
+	var raw_event: String = str(room.get("event", EVENT_RACE)).strip_edges().to_lower()
+	var clean_event: String = raw_event \
+		if (raw_event == EVENT_RACE or raw_event in MINIGAME_EVENTS) \
+		else (EVENT_RACE if clean_mode == GameSettings.GAME_MINIGAMES else "")
+	var raw_state: String = str(room.get("state", "lobby")).strip_edges().to_lower()
+	var clean_state: String = raw_state if raw_state in ["lobby", "playing", "finished"] else "lobby"
+	var raw_map: String = str(room.get("map", "")).strip_edges().to_lower()
+	return {
+		"name": GameSettings.sanitize_name(str(room.get("name", "HOST"))),
+		"host": host,
+		"port": open_port,
+		"players": clampi(int(room.get("players", 1)), 1, MAX_PLAYERS),
+		"mode": clean_mode,
+		"event": clean_event,
+		"state": clean_state,
+		"map": raw_map if TrackDefs.has_theme_id(raw_map) \
+			else GameSettings.sanitize_map_id(raw_map),
+	}
 
 
 func _is_public_ipv4(text: String) -> bool:
@@ -2242,19 +2864,21 @@ func set_relay_server(raw: String) -> void:
 		var close_idx: int = authority.find("]")
 		if close_idx <= 1:
 			return
-		host = authority.substr(0, close_idx + 1)
+		# Store the bare IPv6 literal: sockets (ENet/StreamPeerTCP) reject the
+		# URL bracket syntax. _url_host() re-adds brackets for the HTTP base.
+		host = _strip_host_brackets(authority.substr(0, close_idx + 1))
 		if close_idx + 1 < authority.length() and authority[close_idx + 1] == ":":
 			http_port = int(authority.substr(close_idx + 2))
 	elif authority.contains(":"):
 		var parts: PackedStringArray = authority.split(":")
-		host = parts[0]
+		host = _strip_host_brackets(parts[0])
 		http_port = int(parts[1]) if parts.size() > 1 else default_port
 	if host == "" or http_port <= 0 or http_port > 65535:
 		return
-	relay_server_host = host
+	relay_server_host = _strip_host_brackets(host)
 	relay_server_http_port = http_port
-	relay_server_url = ("https://" if secure else "http://") + relay_server_host \
-		+ ":" + str(relay_server_http_port)
+	relay_server_url = ("https://" if secure else "http://") \
+		+ _url_host(relay_server_host) + ":" + str(relay_server_http_port)
 	relay_base = relay_server_url
 	relay_base_public = true
 
@@ -2291,6 +2915,10 @@ func join_public_room(room: Dictionary) -> void:
 	var ticket: int = _join_ticket
 	join_pending = true
 	_join_started_ms = Time.get_ticks_msec()
+	# A fresh public/online join owns no LAN permission retry.
+	_lan_join_retry = 0
+	_lan_join_host = ""
+	_lan_join_port = 0
 	if str(room.get("state", "lobby")).strip_edges().to_lower() != "lobby":
 		join_pending = false
 		join_failed.emit("That room has already started.")
@@ -2344,6 +2972,10 @@ func join_game(raw_code: String) -> void:
 	var ticket: int = _join_ticket
 	join_pending = true
 	_join_started_ms = Time.get_ticks_msec()
+	# A fresh code join owns no LAN permission retry.
+	_lan_join_retry = 0
+	_lan_join_host = ""
+	_lan_join_port = 0
 	var text: String = raw_code.strip_edges().to_upper().replace(" ", "").replace("-", "")
 	if not _valid_room_code(text):
 		join_pending = false
@@ -2401,13 +3033,26 @@ func _connect_to(connect_ip: String, connect_port: int, mode: String) -> void:
 	# leave() clears the route so a failed/replaced session cannot leak it.
 	var keep_relay: String = relay_base if mode != "lan" else ""
 	var keep_public: bool = relay_base_public if mode != "lan" else false
+	var intended_lan: bool = mode == "lan"
 	leave()
+	var ticket: int = _join_ticket
 	if keep_relay != "":
 		relay_base = keep_relay
 		relay_base_public = keep_public
-	if not _valid_ip(connect_ip):
-		connect_ip = IP.resolve_hostname(connect_ip)
-		if connect_ip == "":
+	# _connect_to owns the join lifecycle from here: keep join_pending set
+	# across the async DNS step so a second click cannot start a competing join.
+	join_pending = true
+	_join_started_ms = Time.get_ticks_msec()
+	var host: String = _strip_host_brackets(connect_ip)
+	if not _is_ip_literal(host):
+		# Never block the main loop on DNS: a macOS ".local"/VPN resolver can
+		# stall for seconds and freeze the game. The resolver queue is polled
+		# with a deadline instead, and an IPv6 literal is never resolved.
+		join_status_changed.emit("Looking up the room address...")
+		host = await _resolve_host_async(host, 3000)
+		if ticket != _join_ticket or not join_pending:
+			return
+		if host == "":
 			join_pending = false
 			join_failed.emit("Could not find that room.")
 			return
@@ -2415,21 +3060,24 @@ func _connect_to(connect_ip: String, connect_port: int, mode: String) -> void:
 		join_pending = false
 		join_failed.emit("That room is not accepting players yet.")
 		return
+	# Remember the LAN destination: macOS may refuse the first connect while
+	# the Local Network alert is up, and _on_connection_failed() retries once.
+	if intended_lan:
+		_lan_join_host = host
+		_lan_join_port = connect_port
 	join_status_changed.emit("Connecting to the room...")
 	var peer := ENetMultiplayerPeer.new()
-	var error: Error = peer.create_client(connect_ip, connect_port)
+	var error: Error = peer.create_client(host, connect_port)
 	if error != OK:
 		join_pending = false
 		join_failed.emit("Could not start the connection. Try again.")
 		return
 	_peer = peer
 	multiplayer.multiplayer_peer = peer
-	connection_mode = "lan" if mode == "lan" else "pi"
+	connection_mode = "lan" if intended_lan else "pi"
 	is_client = true
 	in_game = false
 	room_state = "lobby"
-	join_pending = true
-	_join_started_ms = Time.get_ticks_msec()
 	player_names.clear()
 
 
@@ -2487,6 +3135,10 @@ func leave() -> void:
 	_relay_probe_timer = 0.0
 	_relay_probe_pending = false
 	_relay_http_status = 0
+	_relay_http_result = 0
+	# The next session starts with a clean discovery state; a stale macOS hint
+	# from the previous scan must not leak onto a fresh lobby.
+	discovery_hint = ""
 	# The clock offset belongs to the relay this session measured. Reusing it
 	# after a relay restart would put the countdown and the race timer on the
 	# old server's clock, so force the next race to measure again.
@@ -3006,6 +3658,10 @@ func _on_peer_disconnected(id: int) -> void:
 func _on_connected_to_server() -> void:
 	is_client = true
 	join_pending = false
+	# The connection answered, so the macOS permission retry budget resets.
+	_lan_join_retry = 0
+	_lan_join_host = ""
+	_lan_join_port = 0
 	clear_scene_ready()
 	rpc("_net_set_name", multiplayer.get_unique_id(), GameSettings.player_name)
 	rpc("_net_set_tag_color", multiplayer.get_unique_id(), GameSettings.player_tag_color)
@@ -3015,9 +3671,36 @@ func _on_connected_to_server() -> void:
 
 
 func _on_connection_failed() -> void:
-	var reason: String = "Could not reach that host. Check the code and that the host is online."
+	## macOS 15+ can refuse the first direct LAN connect while the Local
+	## Network permission alert is on screen. Retry once, after the player has
+	## had a moment to answer, instead of dumping them back to the menu with a
+	## misleading "could not reach that host" error.
+	var was_lan: bool = connection_mode == "lan"
+	var retry_host: String = _lan_join_host
+	var retry_port: int = _lan_join_port
+	var retry: bool = was_lan and _is_macos() and _lan_join_retry < 1 \
+		and retry_host != "" and retry_port > 0
 	leave()
-	join_failed.emit(reason)
+	if retry:
+		_lan_join_retry += 1
+		join_status_changed.emit("Waiting for macOS Local Network permission...")
+		_retry_lan_join_deferred(retry_host, retry_port)
+		return
+	join_failed.emit(_join_failure_reason(was_lan))
+
+
+func _retry_lan_join_deferred(host: String, open_port: int) -> void:
+	await get_tree().create_timer(1.5).timeout
+	if not is_inside_tree() or join_pending or is_session_active():
+		return
+	_connect_to(host, open_port, "lan")
+
+
+func _join_failure_reason(was_lan: bool) -> String:
+	var reason: String = "Could not reach that host. Check the code and that the host is online."
+	if was_lan and _is_macos():
+		reason += " On macOS, allow Cart Slop GP under System Settings > Privacy & Security > Local Network."
+	return reason
 
 
 func _on_server_disconnected() -> void:
@@ -3256,6 +3939,13 @@ func probe_server() -> bool:
 		_remember_server_version(status)
 	server_detail = "online" if server_online else "offline"
 	if not server_online:
+		# A TLS/DNS transport failure is not the same as an HTTP failure. Keep
+		# the detail so the lobby can explain a trust-store/VPN problem instead
+		# of pretending the game server is offline.
+		var detail: String = _relay_result_detail()
+		if detail != "":
+			server_detail = detail
+			last_error = detail
 		# Force the next attempt to rediscover instead of reusing a dead route.
 		# A user-forced server is kept; only the resolved route is cleared.
 		_invalidate_relay_route()

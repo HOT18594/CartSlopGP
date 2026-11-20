@@ -268,24 +268,36 @@ func _rebuild_list() -> void:
 		return
 	_title.text = _base_title()
 	_count_label.text = "0 FOUND" if _query != "" and not _rooms.is_empty() else "0 ROOMS"
+	# macOS 15+ can block LAN traffic until the player allows the app under
+	# System Settings > Privacy & Security > Local Network. Without this line a
+	# Mac user just sees "NO LAN ROOMS FOUND" with no way to fix it.
+	var mac_hint: String = Network.local_network_hint() if _mode != "online" else ""
 	if _error:
 		var error_text: String = "COULDN'T REACH THE ROOM SERVER."
 		if _mode == "all":
 			error_text = "ONLINE SERVER UNREACHABLE & NO LAN ROOMS FOUND."
-		_set_state("error", error_text, "RETRY", _refresh, UiPalette.YELLOW)
+		_set_state("error", _with_hint(error_text, mac_hint), "RETRY", _refresh, UiPalette.YELLOW)
 	elif _rooms.is_empty():
 		if _mode == "all":
-			_set_state("empty", "NO ACTIVE ROOMS FOUND.",
+			_set_state("empty", _with_hint("NO ACTIVE ROOMS FOUND.", mac_hint),
 				"SEARCH AGAIN", _refresh, UiPalette.YELLOW)
 		else:
 			var action_text: String = "HOST LAN ROOM" if _mode == "lan" else "HOST ONLINE ROOM"
 			var empty_text: String = "NO LAN ROOMS FOUND." \
 				if _mode == "lan" else "NO ONLINE ROOMS RIGHT NOW."
-			_set_state("empty", empty_text, action_text, _host_requested, UiPalette.YELLOW)
+			_set_state("empty", _with_hint(empty_text, mac_hint), action_text,
+				_host_requested, UiPalette.YELLOW)
 	else:
 		_set_state("nomatch", "NO ROOMS MATCH \"%s\"." % _query, "CLEAR SEARCH",
 			_clear_search, UiPalette.BLUE)
 	MenuNav.refresh()
+
+
+func _with_hint(text: String, hint: String) -> String:
+	## Keep the Mac-only permission note out of Windows/Linux builds.
+	if hint == "":
+		return text
+	return text + "\n" + hint
 
 
 func _restore_row_focus() -> void:
