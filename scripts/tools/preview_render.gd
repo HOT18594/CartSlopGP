@@ -91,31 +91,31 @@ const ENVIRONMENTS: Dictionary = {
 		"sky_top": Color("d96b38"), "sky_horizon": Color("ffd296"),
 		"sun_color": Color("ffd494"), "sun_energy": 1.28,
 		"sun_rot": Vector3(-38.0, -54.0, 0.0),
-		"fog_color": Color("f6c28b"), "fog_density": 0.00055,
+		"fog_color": Color("f6c28b"), "fog_density": 0.00082,
 	},
 	"dockyard": {
 		"sky_top": Color("3a82b8"), "sky_horizon": Color("cde1eb"),
 		"sun_color": Color("fff5e8"), "sun_energy": 1.18,
 		"sun_rot": Vector3(-50.0, -28.0, 0.0),
-		"fog_color": Color("c2d7e2"), "fog_density": 0.00048,
+		"fog_color": Color("c2d7e2"), "fog_density": 0.00072,
 	},
 	"glacier": {
 		"sky_top": Color("4592cf"), "sky_horizon": Color("e5f3fc"),
 		"sun_color": Color("f2f8ff"), "sun_energy": 1.16,
 		"sun_rot": Vector3(-49.0, -36.0, 0.0),
-		"fog_color": Color("dbeaf4"), "fog_density": 0.00058,
-	},
-	"sandbox": {
-		"sky_top": Color("3596da"), "sky_horizon": Color("d8f2ec"),
-		"sun_color": Color("fff6e2"), "sun_energy": 1.22,
-		"sun_rot": Vector3(-48.0, -36.0, 0.0),
-		"fog_color": Color("d2ece2"), "fog_density": 0.00040,
+		"fog_color": Color("dbeaf4"), "fog_density": 0.00095,
 	},
 	"cargo_rush": {
 		"sky_top": Color("2f85c4"), "sky_horizon": Color("d2ebf7"),
 		"sun_color": Color("fff6e6"), "sun_energy": 1.20,
 		"sun_rot": Vector3(-50.0, -32.0, 0.0),
 		"fog_color": Color("cce4f0"), "fog_density": 0.00038,
+	},
+	"sandbox": {
+		"sky_top": Color("3596da"), "sky_horizon": Color("d8f2ec"),
+		"sun_color": Color("fff6e2"), "sun_energy": 1.34, "ambient": 0.40,
+		"sun_rot": Vector3(-48.0, -36.0, 0.0),
+		"fog_color": Color("d2ece2"), "fog_density": 0.00030,
 	},
 	"harbour": {
 		"sky_top": Color("2b80bf"), "sky_horizon": Color("cfe8f5"),
@@ -148,10 +148,11 @@ const ENVIRONMENTS: Dictionary = {
 		"fog_color": Color("eac8b5"), "fog_density": 0.00035,
 	},
 	"ko_foundry": {
-		"sky_top": Color("4a2824"), "sky_horizon": Color("e87838"),
-		"sun_color": Color("ffc285"), "sun_energy": 1.55, "ambient": 0.58,
-		"sun_rot": Vector3(-44.0, -36.0, 0.0),
-		"fog_color": Color("d97a46"), "fog_density": 0.00030,
+		"sky_top": Color("3d2b33"), "sky_horizon": Color("c65d2f"),
+		"sun_color": Color("fff0dc"), "sun_energy": 1.62, "ambient": 0.70,
+		"ambient_color": Color("7d89a8"),
+		"sun_rot": Vector3(-52.0, -36.0, 0.0), "shadows": false,
+		"fog_color": Color("b65432"), "fog_density": 0.00030,
 	},
 	"ko_iceberg": {
 		"sky_top": Color("2f7ec0"), "sky_horizon": Color("dff2fc"),
@@ -189,16 +190,17 @@ const MAP_VIEWS: Dictionary = {
 	"stadium": {"pad": 13.0, "pitch_deg": 33.0},
 	"meadow": {"pad": 14.0, "pitch_deg": 34.0, "start_fraction": 0.28},
 	"canyon": {"pad": 15.0, "pitch_deg": 34.0},
-	"dockyard": {"pad": 15.0, "pitch_deg": 33.0},
+	"dockyard": {"pad": 15.0, "pitch_deg": 33.0, "view_side": -1.0},
 	"glacier": {"pad": 16.0, "pitch_deg": 34.0},
-	"sandbox": {"pad": 8.0, "pitch_deg": 33.0, "yaw_deg": 38.0},
+	"sandbox": {"pad": 10.0, "pitch_deg": 30.0, "yaw_deg": 40.0},
 	"cargo_rush": {"pad": 6.0, "pitch_deg": 34.0, "yaw_deg": 32.0},
 	"harbour": {"pad": 6.0, "pitch_deg": 33.0, "yaw_deg": 34.0},
 	"farmyard": {"pad": 6.0, "pitch_deg": 34.0, "yaw_deg": 40.0},
 	"snowfield": {"pad": 6.0, "pitch_deg": 34.0, "yaw_deg": 28.0},
 	"knockout": {"pad": 6.0, "pitch_deg": 33.0, "yaw_deg": 36.0},
 	"ko_rooftop": {"pad": 6.0, "pitch_deg": 27.0, "yaw_deg": 35.0},
-	"ko_foundry": {"pad": 8.0, "pitch_deg": 19.0, "yaw_deg": 33.0},
+	"ko_foundry": {"pad": 3.0, "pitch_deg": 34.0, "yaw_deg": 30.0,
+		"distance_scale": 0.74},
 	"ko_iceberg": {"pad": 6.0, "pitch_deg": 24.0, "yaw_deg": 40.0},
 	"bomb_tag": {"pad": 6.0, "pitch_deg": 34.0, "yaw_deg": 35.0},
 	"bt_plaza": {"pad": 6.0, "pitch_deg": 34.0, "yaw_deg": 35.0},
@@ -507,7 +509,17 @@ func _build_sandbox_preview(stage: Node3D) -> Dictionary:
 			stage.add_child(inst)
 			_hide_overlays(inst)
 			if _count_geometry(inst) > 4:
-				return {"spawns": _default_arena_spawns("sandbox"), "has_scene_karts": true}
+				# Park the scene's own kart so the staged hero roster is the only
+				# thing in the shot, then hand the staging pass the start grid.
+				for node: Node in _nodes_of_type(stage, "CharacterBody3D"):
+					if node is Node3D:
+						(node as Node3D).visible = false
+				var grid: Array[Transform3D] = []
+				for slot: Vector3 in [Vector3(-9.0, 0.0, 5.0),
+						Vector3(0.0, 0.0, 13.0), Vector3(9.0, 0.0, 5.0),
+						Vector3(-9.0, 0.0, 13.0)]:
+					grid.append(Transform3D(Basis(Vector3.UP, PI), slot))
+				return {"spawns": grid}
 			inst.queue_free()
 	return _build_bespoke_fallback_arena(stage, "sandbox", "sandbox")
 
@@ -815,7 +827,7 @@ func _install_lighting(stage: Node3D, preset: Dictionary) -> void:
 	sun.rotation_degrees = sun_rot
 	sun.light_color = sun_col
 	sun.light_energy = sun_energy * 0.88
-	sun.shadow_enabled = true
+	sun.shadow_enabled = bool(env_spec.get("shadows", true))
 	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS
 	sun.directional_shadow_max_distance = 520.0
 	stage.add_child(sun)
@@ -837,7 +849,8 @@ func _install_lighting(stage: Node3D, preset: Dictionary) -> void:
 	environment.background_mode = Environment.BG_SKY
 	environment.sky = sky
 	environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	environment.ambient_light_color = haze.lightened(0.05)
+	environment.ambient_light_color = env_spec.get("ambient_color",
+		haze.lightened(0.05)) as Color
 	environment.ambient_light_energy = float(env_spec.get("ambient", 0.30))
 	environment.tonemap_mode = Environment.TONE_MAPPER_FILMIC
 	environment.tonemap_exposure = 0.90
@@ -913,8 +926,8 @@ func _framing_for(target_kind: String, preset: Dictionary, stage: Node3D,
 		var right: Vector3 = forward.cross(Vector3.UP).normalized()
 		framing["start"] = start
 		framing["forward"] = forward
-		framing["right"] = right
-		framing["eye"] = start - forward * 17.0 + right * 11.0 + Vector3.UP * 9.0
+		framing["right"] = right * float(view_spec.get("view_side", 1.0))
+		framing["eye"] = start - forward * 17.0 + framing["right"] * 11.0 + Vector3.UP * 9.0
 		framing["target"] = start + forward * 18.0 + Vector3.UP * 1.6
 	return framing
 
@@ -962,7 +975,10 @@ func _install_camera(stage: Node3D, framing: Dictionary) -> Camera3D:
 		var fixed_dir := Vector3(sin(fixed_yaw) * cos(pitch), sin(pitch),
 			cos(fixed_yaw) * cos(pitch))
 		var map_id: String = str(stage.name).trim_prefix("Map_")
-		var distance_scale: float = 0.86 if map_id == "knockout" or map_id.begins_with("ko_") else 0.76
+		var view: Dictionary = MAP_VIEWS.get(map_id, {}) as Dictionary
+		var distance_scale: float = float(view.get("distance_scale", 0.0))
+		if distance_scale <= 0.0:
+			distance_scale = 0.86 if map_id == "knockout" or map_id.begins_with("ko_") else 0.76
 		var fixed_dist: float = _fit_distance(centre, points, fixed_dir) * distance_scale
 		camera.look_at_from_position(centre + fixed_dir * fixed_dist, centre,
 			Vector3.UP)

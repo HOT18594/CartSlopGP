@@ -127,7 +127,7 @@ static func _build_desert_ground_and_oasis(holder: Node3D, spline: RefCounted,
 		var r0: Vector3 = f0["right"]
 		var r1: Vector3 = f1["right"]
 		for side: float in [-1.0, 1.0]:
-			var reach: float = 31.0 if side < 0.0 else 17.5
+			var reach: float = 25.0 if side < 0.0 else 16.0
 			var in0: Vector3 = p0 + r0 * (8.4 * side)
 			var in1: Vector3 = p1 + r1 * (8.4 * side)
 			var out0: Vector3 = p0 + r0 * (reach * side)
@@ -137,17 +137,26 @@ static func _build_desert_ground_and_oasis(holder: Node3D, spline: RefCounted,
 			out0.y = p0.y - 0.04 if side < 0.0 else maxf(p0.y * 0.52, gy)
 			out1.y = p1.y - 0.04 if side < 0.0 else maxf(p1.y * 0.52, gy)
 			_quad(verts, normals, colors, in0, in1, out1, out0, mesa_shelf)
+			# Three lit strata instead of one flat wall: each band steps in a
+			# little and alternates sandstone tone, which makes the 12 m rim read
+			# as carved rock rather than a slab leaning over the road.
 			var mid0_y: float = lerpf(gy, out0.y, 0.55)
 			var mid1_y: float = lerpf(gy, out1.y, 0.55)
-			_quad(verts, normals, colors,
-				out0, out1,
+			var lum0 := Color("cf6a3a")
+			var lum1 := Color("8f3520")
+			var lum2 := Color("d98a52")
+			_quad(verts, normals, colors, out0, out1,
 				Vector3(out1.x, mid1_y, out1.z),
-				Vector3(out0.x, mid0_y, out0.z), mesa_band)
+				Vector3(out0.x, mid0_y, out0.z), lum0)
 			_quad(verts, normals, colors,
 				Vector3(out0.x, mid0_y, out0.z),
 				Vector3(out1.x, mid1_y, out1.z),
 				Vector3(out1.x, gy, out1.z),
-				Vector3(out0.x, gy, out0.z), mesa_wall)
+				Vector3(out0.x, gy, out0.z), lum1)
+			# Sun-facing rim lip catches the warm key light.
+			_quad(verts, normals, colors,
+				in0 + Vector3.UP * 0.12, in1 + Vector3.UP * 0.12,
+				out1 + Vector3.UP * 0.06, out0 + Vector3.UP * 0.06, lum2)
 
 	# Dusty red-earth canyon trail overlays on the two "dirt" sectors
 	var road_y: float = KenneyTiles.ROAD_SURFACE + 0.011

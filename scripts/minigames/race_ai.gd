@@ -91,12 +91,24 @@ const LOOKAHEAD_PER_SPEED: float = 0.55
 const STUCK_SPEED: float = 1.2
 ## Seconds of applied throttle under STUCK_SPEED before reversing out.
 const STUCK_TRIGGER: float = 0.9
+## Touching a wall at crawl speed counts as stuck much sooner; a bot pinned on
+## a guardrail has no reason to keep the throttle planted for a full second.
+const WALL_STUCK_SPEED: float = 2.6
+const WALL_STUCK_TRIGGER: float = 0.45
 ## Longest reverse manoeuvre (seconds).
-const REVERSE_TIME: float = 1.2
+const REVERSE_TIME: float = 1.35
 ## Seconds after a reverse before another recovery may start.
-const RECOVERY_COOLDOWN: float = 0.8
+const RECOVERY_COOLDOWN: float = 0.55
 ## Space kept behind the cart before reversing (metres).
 const REVERSE_CLEARANCE: float = 4.0
+## If the rear is not clear, wait this many times the normal trigger before
+## reversing anyway: traffic bumps are cheap, a bot parked on a barrier forever
+## is a broken race.
+const REVERSE_BLOCKED_MULTIPLIER: float = 2.4
+## After reversing out, the bot re-aligns toward the line at reduced throttle so
+## it does not immediately drive back into the same wall.
+const REALIGN_TIME: float = 0.55
+const REALIGN_THROTTLE: float = 0.78
 
 ## Rivals and the player are avoided inside this distance ahead (metres).
 const CART_AVOID_RANGE: float = 6.5
@@ -178,6 +190,11 @@ var _stuck_time: float = 0.0
 var _reverse_time: float = 0.0
 var _reverse_steer: float = 0.0
 var _recovery_cooldown: float = 0.0
+## Alternates the reverse lock each attempt so a bot that re-wedges against the
+## same wall cannot repeat the exact same escape forever.
+var _recover_attempt: int = 0
+## Counts down after a reverse; the bot re-aligns gently instead of flooring it.
+var _realign_time: float = 0.0
 var _avoid_speed_cap: float = INF
 var _last_throttle: float = 0.0
 var _last_steer: float = 0.0
@@ -263,6 +280,8 @@ func reset() -> void:
 	_reverse_time = 0.0
 	_reverse_steer = 0.0
 	_recovery_cooldown = 0.0
+	_recover_attempt = 0
+	_realign_time = 0.0
 	_last_steer = 0.0
 	_last_throttle = 0.0
 	_overtake_timer = 0.0
@@ -295,6 +314,7 @@ func update(delta: float, node: CartPlayer, progress: float,
 	var speed: float = maxf(node.velocity.dot(forward), 0.0)
 	var max_speed: float = maxf(node.max_speed, 1.0)
 	_recovery_cooldown = maxf(_recovery_cooldown - delta, 0.0)
+	_realign_time = maxf(_realign_time - delta, 0.0)
 
 	# ---- stuck recovery: reverse out with opposite lock, never into traffic ----
 	if _reverse_time > 0.0:
@@ -302,6 +322,7 @@ func update(delta: float, node: CartPlayer, progress: float,
 		_stuck_time = 0.0
 		if _reverse_time <= 0.0:
 			_recovery_cooldown = RECOVERY_COOLDOWN
+			_realign_time = REALIGN_TIME
 			_last_steer = 0.0
 			_last_throttle = 0.0
 			return
@@ -311,17 +332,25 @@ func update(delta: float, node: CartPlayer, progress: float,
 		_last_throttle = 0.0
 		return
 	var planar_speed: float = Vector2(node.velocity.x, node.velocity.z).length()
-	if planar_speed < STUCK_SPEED and node.is_on_floor():
+	var on_wall: bool = node.is_on_wall()
+	var stuck_speed: float = WALL_STUCK_SPEED if on_wall else STUCK_SPEED
+	var stuck_trigger: float = WALL_STUCK_TRIGGER if on_wall else STUCK_TRIGGER
+	if planar_speed < stuck_speed and node.is_on_floor():
 		_stuck_time += delta
 	else:
 		_stuck_time = maxf(_stuck_time - delta * 2.0, 0.0)
-	if _stuck_time > STUCK_TRIGGER and _recovery_cooldown <= 0.0 \
-			and _behind_clear(node, forward, right, others):
+	var rear_clear: bool = _behind_clear(node, forward, right, others)
+	if _stuck_time > stuck_trigger and _recovery_cooldown <= 0.0 \
+			and (rear_clear or _stuck_time > stuck_trigger * REVERSE_BLOCKED_MULTIPLIER):
 		_reverse_time = REVERSE_TIME
 		_stuck_time = 0.0
+		_recover_attempt += 1
 		var direction: float = -_last_steer
 		if absf(direction) < 0.25:
 			direction = -1.0 if _last_steer >= 0.0 else 1.0
+		if _recover_attempt % 2 == 0:
+			# Second and later attempts peel out the other way.
+			direction = -direction
 		_reverse_steer = clampf(direction, -1.0, 1.0)
 		brake = 1.0
 		steer = _reverse_steer
@@ -361,6 +390,10 @@ func update(delta: float, node: CartPlayer, progress: float,
 	var target_speed: float = profile_speed
 	var avoid: float = _avoidance(node, forward, right, others, line_offset, speed)
 	target_speed = minf(profile_speed, _avoid_speed_cap)
+	# Ran wide or got shoved off the line: shed a little speed so the pursuit
+	# controller can pull back on without spearing the outside barrier.
+	target_speed *= clampf(1.0 - absf(line_error) / maxf(_usable, 1.0) * 0.25,
+		0.72, 1.0)
 
 	# ---- dynamic line: pass a slower cart, cover a faster one, widen off-line ----
 	_time += delta
@@ -441,6 +474,14 @@ func update(delta: float, node: CartPlayer, progress: float,
 	if _mistake_time > 0.0:
 		# A mistake costs drive as well as line discipline.
 		throttle *= 0.62
+	if _realign_time > 0.0:
+		# Just reversed out of a wall: ease back onto the line instead of
+		# launching straight back into the same corner.
+		throttle = minf(throttle, REALIGN_THROTTLE)
+	if _stuck_time > 0.18:
+		# Already crawling into a wall: stop feeding it full power while the
+		# reverse timer counts up.
+		throttle = minf(throttle, 0.35)
 	var rate: float = _reaction * (1.0 + 0.4 * clampf(speed / max_speed, 0.0, 1.0))
 	steer = move_toward(_last_steer, clampf(desired_steer, -1.0, 1.0), rate * delta)
 

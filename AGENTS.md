@@ -41,7 +41,7 @@ $G --headless --path godot_project --script res://scripts/minigames/maps/dockyar
 $G --headless --path godot_project --script res://scripts/minigames/maps/glacier/glacier_selftest.gd
 
 # build a release (PowerShell, from the repo root)
-powershell -ExecutionPolicy Bypass -File pi_setup\build_0_8_0.ps1
+powershell -ExecutionPolicy Bypass -File pi_setup\build_0_8_1.ps1
 ```
 
 `preview_render.tscn` must run **windowed**; it refuses `--headless`.

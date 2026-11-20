@@ -106,7 +106,7 @@ const FALL_RESET_HEIGHT: float = -4.0
 @export var reverse_speed: float = 7.0 ## Fastest reverse speed (m/s).
 @export var acceleration: float = 16.0 ## Base speed gain per second (m/s^2), tapers near top speed.
 @export var brake_power: float = 34.0 ## Speed removed per second while braking (m/s^2).
-@export var brake_lateral_grip: float = 14.0 ## Sideways bite while braking, so a stop also kills a slide.
+@export var brake_lateral_grip: float = 16.0 ## Sideways bite while braking, so a stop also kills a slide.
 @export var friction: float = 6.0 ## Speed lost per second when coasting (m/s^2).
 @export var min_turn_speed: float = 2.2 ## Speed (m/s) at which steering reaches full authority.
 
@@ -125,10 +125,10 @@ const FALL_RESET_HEIGHT: float = -4.0
 
 @export_group("Steering & Air")
 @export var steering_speed: float = 2.9 ## Max yaw rate (radians/second).
-@export var high_speed_steering_scale: float = 0.82 ## Steering multiplier at top speed (0-1).
+@export var high_speed_steering_scale: float = 0.86 ## Steering multiplier at top speed (0-1).
 @export_group("Steering Feel")
 @export var steer_attack: float = 18.0 ## How fast digital/keyboard steering reaches lock.
-@export var steer_release: float = 18.0 ## How fast it returns to centre.
+@export var steer_release: float = 21.0 ## How fast it returns to centre.
 @export var steer_curve: float = 1.15 ## >1 gives finer control near centre, full lock at the edge.
 @export var weight_transfer_steering: float = 0.14 ## Turn-in gain under braking (no throttle understeer penalty).
 @export var air_control_strength: float = 0.65 ## Responsive yaw steering authority while airborne (0-1).

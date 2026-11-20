@@ -46,10 +46,12 @@ const OUTCROP_MODELS: Array[String] = [
 
 ## Distant ridges: rings of oversized blocks. They are outside the playable
 ## snowfield, but they still carry a collider so a kart can never clip a ridge.
+## Pushed well beyond the first fog band so they read as hazy alpine peaks
+## instead of two giant cuboids hanging in the sky behind the circuit.
 const RIDGE_RINGS: Array[Dictionary] = [
-	{"radius": 168.0, "count": 5, "height": 26.0},
-	{"radius": 238.0, "count": 6, "height": 38.0},
-	{"radius": 318.0, "count": 7, "height": 54.0},
+	{"radius": 248.0, "count": 5, "height": 22.0},
+	{"radius": 340.0, "count": 6, "height": 32.0},
+	{"radius": 440.0, "count": 7, "height": 46.0},
 ]
 const RIDGE_MODELS: Array[String] = [
 	"cliff_large_stone", "cliff_blockSlope_stone", "cliff_block_stone",

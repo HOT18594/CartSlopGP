@@ -179,9 +179,9 @@ const SOLID_SKIP: Array[String] = [
 const CONE_SCALE: float = TILE * 0.45
 
 # Cartoon palette. Flat vertex colours only: no scans, no normal maps.
-const GRASS_A := Color("7bd34f")
-const GRASS_B := Color("6cc143")
-const OUTFIELD := Color("58ab3f")
+const GRASS_A := Color("71c847")
+const GRASS_B := Color("62b53c")
+const OUTFIELD := Color("4e9d38")
 const APRON := Color("f4ead2")
 const PIT_PAD_TINT := Color("d9d2c0")
 const CONCRETE := Color("c9d3d8")

@@ -145,7 +145,7 @@ static func build_arena(host: Node3D, arena_id: String) -> Dictionary:
 	match clean_id:
 		"ko_foundry":
 			ambient = {"style": "foundry", "floor_y": -3.5,
-				"radius_in": 52.0, "radius_out": 80.0}
+				"radius_in": 78.0, "radius_out": 112.0}
 		"ko_iceberg":
 			ambient = {"style": "iceberg", "floor_y": -3.0,
 				"radius_in": 50.0, "radius_out": 78.0}
@@ -438,10 +438,10 @@ static func _build_foundry(host: Node3D) -> Dictionary:
 	var core_body: StaticBody3D = _solid_body(root, "FoundryCoreBody")
 	var core_batch := PropBatch.new()
 
-	var steel_dark := Color("46424a")
-	var steel_deck := Color("5d5761")
-	var iron_rib := Color("353039")
-	var slag_trim := Color("81503a")
+	var steel_dark := Color("5b5660")
+	var steel_deck := Color("736c78")
+	var iron_rib := Color("454049")
+	var slag_trim := Color("9a6040")
 	var hazard_amber := Color("ff9e2c")
 	var magma_bright := Color("ff5e1a")
 	var magma_gold := Color("ffbe2e")
@@ -455,7 +455,7 @@ static func _build_foundry(host: Node3D) -> Dictionary:
 	lava.position = Vector3(0.0, -3.5, 0.0)
 	var lava_mat := StandardMaterial3D.new()
 	lava_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	lava_mat.albedo_color = Color("d8491b")
+	lava_mat.albedo_color = Color("a8340f")
 	lava.material_override = lava_mat
 	lava.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	root.add_child(lava)
@@ -615,23 +615,24 @@ static func _build_foundry_scenery(root: Node3D) -> void:
 	var molten_core := Color("ffd438")
 
 	for side_z: float in [-1.0, 1.0]:
-		# Overhead crane gantry spanning above the chasm ends at z = +-38 m.
-		var gz: float = side_z * 38.0
+		# Overhead crane gantries sit well outside the play arena so they frame
+		# the islands instead of cutting across the camera view.
+		var gz: float = side_z * 78.0
 		for sx: float in [-1.0, 1.0]:
-			near_batch.add_box(Transform3D(Basis.IDENTITY, Vector3(sx * 24.0, 6.5, gz)),
-				Vector3(3.2, 20.0, 3.2), dark_iron)
-		near_batch.add_box(Transform3D(Basis.IDENTITY, Vector3(0.0, 15.8, gz)),
-			Vector3(52.0, 2.6, 3.6), rust_steel)
+			near_batch.add_box(Transform3D(Basis.IDENTITY, Vector3(sx * 30.0, 4.0, gz)),
+				Vector3(2.4, 12.0, 2.4), dark_iron)
+		near_batch.add_box(Transform3D(Basis.IDENTITY, Vector3(0.0, 10.2, gz)),
+			Vector3(42.0, 1.8, 2.8), rust_steel)
 		# Suspended pouring crucible over the central lava chasm!
-		near_batch.add_cylinder(Transform3D(Basis.IDENTITY, Vector3(0.0, 10.5, gz)),
-			3.4, 4.8, 12, dark_iron)
-		near_batch.add_cylinder(Transform3D(Basis.IDENTITY, Vector3(0.0, 12.6, gz)),
-			2.9, 0.8, 12, molten_core)
+		near_batch.add_cylinder(Transform3D(Basis.IDENTITY, Vector3(0.0, 9.2, gz)),
+			2.8, 4.0, 12, dark_iron)
+		near_batch.add_cylinder(Transform3D(Basis.IDENTITY, Vector3(0.0, 11.0, gz)),
+			2.4, 0.7, 12, molten_core)
 		# Glowing molten stream pouring straight down into the magma sea!
-		near_batch.add_cylinder(Transform3D(Basis.IDENTITY, Vector3(0.0, 2.8, gz * 0.94)),
-			0.85, 12.6, 10, molten_orange)
-		near_batch.add_cylinder(Transform3D(Basis.IDENTITY, Vector3(0.0, -3.35, gz * 0.94)),
-			3.8, 0.25, 12, molten_core)
+		near_batch.add_cylinder(Transform3D(Basis.IDENTITY, Vector3(0.0, 2.4, gz * 0.96)),
+			0.7, 10.0, 10, molten_orange)
+		near_batch.add_cylinder(Transform3D(Basis.IDENTITY, Vector3(0.0, -3.35, gz * 0.96)),
+			3.2, 0.25, 12, molten_core)
 	_emit_batch_mesh(root, near_batch, "FoundryCrucibles", false)
 
 	var light_xforms: Array = []
@@ -647,22 +648,24 @@ static func _build_foundry_scenery(root: Node3D) -> void:
 	_batch_model(root, "lightPostLarge", light_xforms, "FoundryLights", false, false)
 	_batch_model(root, "pylon", pylon_xforms, "FoundryPylons", false, false)
 
-	# Distant smelter walls, giant pipes & blast furnaces (> 260 m span).
+	# Distant smelter walls, giant pipes & blast furnaces (> 260 m span) pushed
+	# back so the low preview camera reads them as a hazy industrial skyline
+	# rather than a ring of giant pillars.
 	var far_batch := PropBatch.new()
-	var cavern_rock := Color("331e1b")
-	var pipe_grey := Color("474046")
+	var cavern_rock := Color("3a221e")
+	var pipe_grey := Color("554a50")
 	for i: int in 20:
 		var ang: float = TAU * float(i) / 20.0
-		var dist: float = 128.0 + float((i * 3) % 4) * 14.0
+		var dist: float = 200.0 + float((i * 3) % 4) * 22.0
 		var px: float = cos(ang) * dist
 		var pz: float = sin(ang) * dist
-		var h: float = 34.0 + float((i * 7) % 5) * 8.0
+		var h: float = 24.0 + float((i * 7) % 5) * 5.0
 		far_batch.add_cylinder(Transform3D(Basis.IDENTITY,
 			Vector3(px, h * 0.5 - 4.0, pz)),
-			9.5, h, 8, pipe_grey if i % 2 == 0 else cavern_rock)
+			8.0, h, 8, pipe_grey if i % 2 == 0 else cavern_rock)
 		if i % 2 == 0:
 			far_batch.add_cylinder(Transform3D(Basis.IDENTITY,
-				Vector3(px, h - 3.6, pz)), 10.2, 1.4, 8, molten_orange)
+				Vector3(px, h - 3.6, pz)), 8.6, 1.2, 8, molten_orange)
 	_emit_batch_mesh(root, far_batch, "FoundryCavernHorizon", false)
 
 

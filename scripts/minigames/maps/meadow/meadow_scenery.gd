@@ -18,14 +18,16 @@ const FLOWER_MIN_CLEARANCE: float = 12.2
 const SEED: int = 20260801
 
 const REDWOOD_SPECIES: Array[Dictionary] = [
-	{"model": "tree_tall", "h_min": 18.0, "h_max": 31.0, "w": 5},
-	{"model": "tree_tall_dark", "h_min": 19.0, "h_max": 33.0, "w": 4},
-	{"model": "tree_pineTallA", "h_min": 14.0, "h_max": 25.0, "w": 4},
-	{"model": "tree_pineTallB", "h_min": 15.0, "h_max": 26.0, "w": 4},
-	{"model": "tree_oak", "h_min": 10.0, "h_max": 17.0, "w": 3},
-	{"model": "tree_oak_fall", "h_min": 10.0, "h_max": 17.0, "w": 3},
-	{"model": "tree_tall_fall", "h_min": 15.0, "h_max": 24.0, "w": 2},
-	{"model": "tree_default_fall", "h_min": 9.0, "h_max": 15.0, "w": 2},
+	## Kept deliberately modest: 18-33 m "redwoods" used to form a wall of
+	## flat-shaded spires that hid the valley, river and the circuit beyond.
+	{"model": "tree_tall", "h_min": 11.0, "h_max": 18.0, "w": 2},
+	{"model": "tree_tall_dark", "h_min": 12.0, "h_max": 19.0, "w": 2},
+	{"model": "tree_pineTallA", "h_min": 11.0, "h_max": 20.0, "w": 5},
+	{"model": "tree_pineTallB", "h_min": 11.0, "h_max": 21.0, "w": 5},
+	{"model": "tree_oak", "h_min": 9.0, "h_max": 15.0, "w": 4},
+	{"model": "tree_oak_fall", "h_min": 9.0, "h_max": 15.0, "w": 4},
+	{"model": "tree_tall_fall", "h_min": 10.0, "h_max": 16.0, "w": 2},
+	{"model": "tree_default_fall", "h_min": 8.0, "h_max": 14.0, "w": 3},
 ]
 
 const FLORA_SPECIES: Array[Dictionary] = [

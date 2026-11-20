@@ -2,6 +2,72 @@
 
 Player-facing notes, newest first.
 
+## [0.8.1] - 2026-11-20
+
+### Maps
+
+![The enhanced Sandbox Stunt Park](assets/ui/art/bg_parking.png)
+
+- **The Sandbox park actually has ground again.** Its custom ground, painted
+  zones and raised terrace were wound backwards, so the whole layer was
+  back-face culled and the park floated on the sky. Grass, tarmac, the paddock
+  apron, the drift bowl and the dirt strip all render now, with proper shadows.
+- The stunt park got a visual pass: richer grass and paint tones, staged
+  vehicles for its menu card, and a new low-angle hero render used behind the
+  main menu.
+- **Every party arena's ring of scenery is now built for the arena it decorates**
+  instead of assuming flat ground at zero: the Skytop Helipad gets a city
+  skyline beneath its pad, the Molten Foundry's stacks stand on the lava sea,
+  the Fractured Iceberg's pines grow on ice floes, and the Twin Ferries ring is
+  cargo barges floating in the harbour. Rings are spaced so they no longer
+  interpenetrate, and stadium-bench rings no longer merge into a solid wall.
+- Molten Foundry's steel reads blue-grey against the lava instead of dissolving
+  into an orange wash; Skytop's clouds are white again instead of muddy islands.
+- Circuit presentation fixes: Redwood Valley's oversized teal "redwood" wall is
+  a natural mixed forest that no longer hides the valley, Sunset Canyon's mesa
+  shelf has lit rock strata instead of a flat slab, Glacier Pass's giant cuboid
+  ridges sit back in the fog, and the dockyard preview no longer looks at the
+  blank backs of billboards across a flooded quay.
+- Regenerated all 18 menu previews from the live scenes, plus new
+  `bg_parking.png` / `bg_arena.png` promotional renders.
+
+### Vehicles and driving
+
+![Knockout: Skytop Helipad](assets/ui/art/preview_ko_rooftop.png)
+
+- **Removed per-player vehicle paint tinting.** Every cart, van and truck now
+  keeps its factory livery in every mode and every peer; the Garage keeps its
+  twelve-point stat tuning. Driver identity is carried by name tags instead.
+- Crisper high-speed cornering (steering authority raised at top speed), a
+  smoother counter-steer return and stronger braking bite that kills a slide.
+
+### Bots
+
+![Blast Tag: Twin Ferries](assets/ui/art/preview_bt_ferries.png)
+
+- Racing bots now notice a wall at crawl speed and reverse out much sooner,
+  alternate the side they peel out on when the same wall re-wedges them, reverse
+  even when traffic is close rather than staying pinned forever, and ease back
+  onto the racing line after a recovery instead of launching into the same
+  corner. They also shed a little speed when they run wide so the pursuit
+  controller can pull them back without spearing the barrier.
+
+### Interface and artwork
+
+![Sunset Canyon](assets/ui/art/preview_canyon.png)
+
+- Changelog entries now carry scene images, and the in-game changelog panel
+  renders them.
+- Loading and menu artwork is stable while the main-menu slideshow crossfades
+  between the new sandbox and helipad renders.
+
+### Verification
+
+- Full headless battery green: map/tile audit, HUD smoke, all map self-tests,
+  real-physics driving, vehicle roster, mode rules and the 133-check updater
+  suite. All 18 previews pass the preview audit; Windows, macOS, Linux and Web
+  exports are rebuilt from this tree.
+
 ## [0.8.0] - 2026-11-20
 
 ### Driving, vehicles and circuits
