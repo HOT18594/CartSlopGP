@@ -25,6 +25,7 @@ extends RefCounted
 const CollisionLayers := preload("res://scripts/systems/collision_layers.gd")
 const SceneryKit := preload("res://scripts/minigames/scenery/scenery_kit.gd")
 const PropBatch := preload("res://scripts/minigames/scenery/prop_batch.gd")
+const AmbientWorld := preload("res://scripts/minigames/scenery/ambient_world.gd")
 const BOOST_PAD_SCENE: PackedScene = preload("res://scenes/track/boost_pad.tscn")
 
 const RACING_ROOT: String = "res://assets/models/kenney_racing_kit/Models/GLTF format/"
@@ -141,6 +142,21 @@ static func build_arena(host: Node3D, arena_id: String) -> Dictionary:
 			fall_y = -2.8
 			_build_plaza(root, spawns, boost_spots, pillars, ramps)
 
+	# Party arenas ring themselves differently: the ferries sit in a harbour at
+	# y = -3.0 m and must get barges in the water, not containers standing in it.
+	var ambient: Dictionary = {
+		"style": "stadium",
+		"radius_in": bounds_half + 16.0,
+		"radius_out": bounds_half + 40.0,
+	}
+	match resolved:
+		"bt_labyrinth":
+			ambient = {"style": "canyon",
+				"radius_in": bounds_half + 16.0, "radius_out": bounds_half + 40.0}
+		"bt_ferries":
+			ambient = {"style": "dockyard", "floor_y": -3.0,
+				"radius_in": 46.0, "radius_out": 74.0}
+	AmbientWorld.build_arena(root, resolved, bounds_half, ambient)
 	meta["id"] = resolved
 	meta["spawns"] = spawns
 	meta["fall_y"] = fall_y

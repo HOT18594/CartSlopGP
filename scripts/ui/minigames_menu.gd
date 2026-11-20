@@ -28,22 +28,21 @@ const GAME_RACING: String = "racing"
 const GAME_MINIGAME: String = "minigame"
 const GAME_SANDBOX: String = "sandbox"
 
-const MODE_CARD_WIDTH: float = 300.0
+const MODE_CARD_WIDTH: float = 296.0
 const MODE_CARD_HEIGHT: float = 222.0
-const MODE_PREVIEW_HEIGHT: float = 120.0
+const MODE_PREVIEW_HEIGHT: float = 138.0
 
-const MAP_CARD_WIDTH: float = 284.0
-const MAP_CARD_HEIGHT: float = 292.0
-const MAP_PREVIEW_HEIGHT: float = 148.0
+const MAP_CARD_WIDTH: float = 288.0
+const MAP_CARD_HEIGHT: float = 218.0
+const MAP_PREVIEW_HEIGHT: float = 136.0
 const CARD_PAD: int = 12
-const SCROLL_OUTER_PAD: int = 16
+const SCROLL_OUTER_PAD: int = 12
 const GRID_COLUMNS: int = 3
 const GRID_GAP: int = 16
-const CHIP_RADIUS: int = 8
 
-const GAMES_SCROLL_HEIGHT: float = 492.0
-const MAPS_SCROLL_HEIGHT: float = 352.0
-const MINIGAME_MAPS_SCROLL_HEIGHT: float = 336.0
+const GAMES_SCROLL_HEIGHT: float = 484.0
+const MAPS_SCROLL_HEIGHT: float = 476.0
+const MINIGAME_MAPS_SCROLL_HEIGHT: float = 248.0
 const MAP_GRID_WIDTH: float = MAP_CARD_WIDTH * 3.0 + float(GRID_GAP) * 2.0
 
 const BOT_LABELS: PackedStringArray = ["0", "1", "2", "3", "4", "5"]
@@ -122,15 +121,13 @@ var _selector_scroll: ScrollContainer
 var _selector_list: VBoxContainer
 var _arena_empty: Label
 
-var _map_grid: GridContainer
+var _map_grid: VBoxContainer
 var _map_cards: Array[Button] = []
-var _map_badges: Array[PanelContainer] = []
 var _map_indexes: Array[int] = []
 var _selected: int = 0
 
 var _arena_grid: GridContainer
 var _arena_cards: Array[Button] = []
-var _arena_badges: Array[PanelContainer] = []
 var _arena_entries: Array[Dictionary] = []
 var _selected_arena_index: int = 0
 var _selected_arena_by_mode: Dictionary = {}
@@ -202,11 +199,11 @@ func _fit_panel() -> void:
 	var vp: Vector2 = size if size.x > 1.0 else get_viewport_rect().size
 	if vp.x < 1.0:
 		return
-	_panel.custom_minimum_size.x = minf(1036.0, maxf(680.0, vp.x - 48.0))
-	if vp.x < 1056.0 or vp.y < 690.0:
+	_panel.custom_minimum_size.x = 1036.0
+	if vp.x < 1084.0 or vp.y < 690.0:
 		var rx: float = (vp.x - 32.0) / 1036.0
 		var ry: float = (vp.y - 32.0) / 650.0
-		var ratio: float = clampf(minf(rx, ry), 0.70, 1.0)
+		var ratio: float = clampf(minf(rx, ry), 0.66, 1.0)
 		_panel.scale = Vector2.ONE * ratio
 		_panel.pivot_offset = _panel.size * 0.5
 	else:
@@ -338,8 +335,10 @@ func _unhandled_input(event: InputEvent) -> void:
 
 
 func _build_ui() -> void:
-	var header := HBoxContainer.new()
-	header.add_theme_constant_override("separation", 12)
+	var header := Control.new()
+	header.custom_minimum_size = Vector2(0, 46)
+	header.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	header.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_body.add_child(header)
 
 	_title = Label.new()
@@ -347,37 +346,61 @@ func _build_ui() -> void:
 	_title.add_theme_font_size_override("font_size", 36)
 	_title.add_theme_color_override("font_color", UiPalette.INK)
 	_title.text = "SELECT MODE"
+	_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_title.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_title.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_title.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	header.add_child(_title)
 
 	_header_bots_box = HBoxContainer.new()
 	_header_bots_box.add_theme_constant_override("separation", 8)
-	_header_bots_box.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_header_bots_box.anchor_left = 0.0
+	_header_bots_box.anchor_top = 0.0
+	_header_bots_box.anchor_bottom = 1.0
+	_header_bots_box.alignment = BoxContainer.ALIGNMENT_BEGIN
 	header.add_child(_header_bots_box)
 
-	var bots_lbl := UiKit.label("BOTS", 14, UiPalette.MUTED)
+	var bots_lbl := Label.new()
+	bots_lbl.text = "BOTS"
+	bots_lbl.theme_type_variation = &"TitleLabel"
+	bots_lbl.add_theme_font_size_override("font_size", 15)
+	bots_lbl.add_theme_color_override("font_color", UiPalette.INK)
+	bots_lbl.add_theme_constant_override("shadow_offset_y", 0)
 	bots_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	bots_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_header_bots_box.add_child(bots_lbl)
 
 	_bots_pill = UiKit.segmented(BOT_LABELS, BOT_VALUES,
-		GameSettings.effective_bot_count(), 40.0, 42.0)
+		GameSettings.effective_bot_count(), 36.0, 42.0)
 	_bots_pill.name = "BotsPill"
+	_bots_pill.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	_bots_pill.tooltip_text = "AI opponents in solo matches."
 	_bots_pill.connect("option_changed", _on_bots_changed)
 	_header_bots_box.add_child(_bots_pill)
 
+	var right_box := HBoxContainer.new()
+	right_box.add_theme_constant_override("separation", 10)
+	right_box.anchor_left = 1.0
+	right_box.anchor_right = 1.0
+	right_box.anchor_top = 0.0
+	right_box.anchor_bottom = 1.0
+	right_box.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	right_box.alignment = BoxContainer.ALIGNMENT_END
+	header.add_child(right_box)
+
 	_header_garage_button = _button("GARAGE", Color("8ed8f6"), 44, 15)
 	_header_garage_button.name = "HeaderGarageButton"
-	UiKit.cap_button(_header_garage_button, 156.0)
+	UiKit.cap_button(_header_garage_button, 130.0)
+	_header_garage_button.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	_header_garage_button.pressed.connect(_on_header_garage)
-	header.add_child(_header_garage_button)
+	right_box.add_child(_header_garage_button)
 
 	_back_button = _button("BACK", UiPalette.RED, 44, 16)
 	_back_button.name = "BackButton"
-	UiKit.cap_button(_back_button, 114.0)
+	UiKit.cap_button(_back_button, 110.0)
+	_back_button.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	_back_button.pressed.connect(_on_back)
-	header.add_child(_back_button)
+	right_box.add_child(_back_button)
 
 	_build_games()
 	_build_games_page()
@@ -459,8 +482,6 @@ func _build_games() -> void:
 
 
 func _racing_entry() -> Dictionary:
-	var count: int = _map_indexes.size()
-	var badge_text: String = "%d CIRCUIT%s" % [count, "" if count == 1 else "S"]
 	var first_map: Dictionary = _preset_at_map_slot(0)
 	var current_map: Dictionary = _current_map()
 	var preview_tex: Texture2D = _preview_for_preset(
@@ -469,8 +490,7 @@ func _racing_entry() -> Dictionary:
 		"id": GAME_RACING,
 		"kind": GAME_RACING,
 		"name": "RACING",
-		"desc": "Race the pack across 3 laps with 3-tier drift boosts.",
-		"tag": badge_text,
+		"desc": "3-lap circuit racing with 3-tier drift boosts",
 		"accent": UiPalette.GRASS,
 		"preview": preview_tex,
 	}
@@ -480,31 +500,21 @@ func _minigame_entry(preset: Dictionary) -> Dictionary:
 	var id: String = str(preset.get("id", "minigame"))
 	var game_title: String = str(preset.get("game", preset.get("name", "PARTY MODE"))).to_upper()
 	var arenas: Array[Dictionary] = _extract_arenas(preset)
-	var map_count: int = maxi(arenas.size(), TrackDefs.theme_ids(preset).size())
-	var maps_suffix: String = "%d MAP%s" % [maxi(map_count, 1), "" if map_count == 1 else "S"]
 
-	var hook: String = str(preset.get("tagline", preset.get("desc", ""))).strip_edges()
-	var tag: String = maps_suffix
+	var hook: String = ""
 	var accent: Color = UiPalette.CYAN
 	match id:
 		"cargo_rush":
-			if hook == "":
-				hook = "Capture crates and bank points at your team's base."
-			tag = "2 TEAMS · %s" % maps_suffix
+			hook = "Capture crates and score at your team base"
 			accent = UiPalette.CYAN
 		"knockout":
-			if hook == "":
-				hook = "Smash rivals off collapsing stages — last cart wins!"
-			tag = "FFA BRAWL · %s" % maps_suffix
+			hook = "Smash rivals off collapsing stages"
 			accent = UiPalette.ORANGE
 		"bomb_tag":
-			if hook == "":
-				hook = "Pass the ticking Mega-Bomb before detonation!"
-			tag = "HOT POTATO · %s" % maps_suffix
+			hook = "Pass the ticking Mega-Bomb before it blows"
 			accent = UiPalette.PINK
 		_:
-			if hook == "":
-				hook = "Jump into fast-paced arcade arena mayhem."
+			hook = _trim_line(str(preset.get("tagline", preset.get("desc", "Fast-paced arcade arena mayhem"))))
 			accent = UiPalette.BLUE
 
 	var preview_tex: Texture2D = _mode_preview_for_minigame(preset, arenas)
@@ -513,7 +523,6 @@ func _minigame_entry(preset: Dictionary) -> Dictionary:
 		"kind": GAME_MINIGAME,
 		"name": game_title,
 		"desc": hook,
-		"tag": tag,
 		"accent": accent,
 		"preview": preview_tex,
 		"preset": preset,
@@ -524,15 +533,12 @@ func _sandbox_entry() -> Dictionary:
 	var tex: Texture2D = _first_existing_texture([
 		ART_PREVIEW_DIR + "preview_sandbox.png",
 		ART_PREVIEW_DIR + "bg_parking.png",
-		ART_PREVIEW_DIR + "scene_road.png",
-		ART_PREVIEW_DIR + "scene_arena.png",
 	])
 	return {
 		"id": GAME_SANDBOX,
 		"kind": GAME_SANDBOX,
 		"name": "SANDBOX",
-		"desc": "Free-roam stunt park — test rides, ramps & physics.",
-		"tag": "FREE ROAM",
+		"desc": "Free-roam stunt park with ramps & open play",
 		"accent": UiPalette.YELLOW,
 		"preview": tex,
 	}
@@ -552,7 +558,7 @@ func _mode_preview_for_minigame(preset: Dictionary, arenas: Array[Dictionary]) -
 		candidates.append(ART_PREVIEW_DIR + pfile)
 		candidates.append(PREVIEW_DIR + pfile)
 	if pid == "cargo_rush":
-		candidates.append(ART_PREVIEW_DIR + "scene_arena.png")
+		candidates.append(ART_PREVIEW_DIR + "bg_arena.png")
 	return _first_existing_texture(candidates)
 
 
@@ -614,8 +620,7 @@ func _build_selector_page() -> void:
 	_body.add_child(_selector_page)
 
 	_selector_caption = UiKit.label("", 14, UiPalette.MUTED)
-	_selector_caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_selector_caption.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_selector_caption.visible = false
 	_selector_page.add_child(_selector_caption)
 
 	_selector_scroll = ScrollContainer.new()
@@ -632,21 +637,25 @@ func _build_selector_page() -> void:
 	_selector_list.name = "SelectorList"
 	_selector_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_selector_list.add_theme_constant_override("separation", UiKit.SPACING)
-	_padded(_selector_scroll, "SelectorPad", 12).add_child(_selector_list)
+	_padded(_selector_scroll, "SelectorPad", 8).add_child(_selector_list)
 
-	# 2a: Racing circuits 3-column visual MapCard grid.
-	_map_grid = GridContainer.new()
+	# 2a: Racing circuits centered rows (3 on top, 2 centered below — zero scroll at 720p).
+	_map_grid = VBoxContainer.new()
 	_map_grid.name = "MapGrid"
 	_map_grid.custom_minimum_size = Vector2(MAP_GRID_WIDTH, 0)
-	_map_grid.columns = GRID_COLUMNS
-	_map_grid.add_theme_constant_override("h_separation", GRID_GAP)
-	_map_grid.add_theme_constant_override("v_separation", GRID_GAP)
+	_map_grid.add_theme_constant_override("separation", GRID_GAP)
 	_selector_list.add_child(_map_grid)
 	_map_cards.clear()
-	_map_badges.clear()
+	var current_map_row: HBoxContainer = null
 	for position in _map_indexes.size():
+		if position % GRID_COLUMNS == 0:
+			current_map_row = HBoxContainer.new()
+			current_map_row.alignment = BoxContainer.ALIGNMENT_CENTER
+			current_map_row.add_theme_constant_override("separation", GRID_GAP)
+			current_map_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			_map_grid.add_child(current_map_row)
 		var card: Button = _make_map_card(position, _preset_at_map_slot(position))
-		_map_grid.add_child(card)
+		current_map_row.add_child(card)
 		_map_cards.append(card)
 	_update_map_cards()
 
@@ -654,6 +663,7 @@ func _build_selector_page() -> void:
 	_arena_grid = GridContainer.new()
 	_arena_grid.name = "ArenaMapGrid"
 	_arena_grid.custom_minimum_size = Vector2(MAP_GRID_WIDTH, 0)
+	_arena_grid.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	_arena_grid.columns = GRID_COLUMNS
 	_arena_grid.add_theme_constant_override("h_separation", GRID_GAP)
 	_arena_grid.add_theme_constant_override("v_separation", GRID_GAP)
@@ -693,62 +703,15 @@ func _make_game_card(entry: Dictionary) -> Button:
 		card.disabled = true
 	card.pressed.connect(_on_game_pressed.bind(gid))
 
-	var pad := MarginContainer.new()
-	pad.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	pad.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	pad.add_theme_constant_override("margin_left", CARD_PAD)
-	pad.add_theme_constant_override("margin_right", CARD_PAD)
-	pad.add_theme_constant_override("margin_top", CARD_PAD)
-	pad.add_theme_constant_override("margin_bottom", CARD_PAD)
-	card.add_child(pad)
-
-	var col := VBoxContainer.new()
-	col.add_theme_constant_override("separation", 6)
-	col.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	pad.add_child(col)
-
-	var preview_panel: PanelContainer = _preview_frame(
+	_populate_clean_card(
+		card,
 		entry.get("preview", null) as Texture2D,
-		Vector2(0.0, MODE_PREVIEW_HEIGHT), UiPalette.OUTLINE, gid, accent)
-	var tag: String = str(entry.get("tag", ""))
-	if tag != "":
-		var overlay := Control.new()
-		overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		preview_panel.add_child(overlay)
-		var pill: PanelContainer = _chip(tag, UiPalette.YELLOW, UiPalette.INK, true)
-		pill.anchor_left = 1.0
-		pill.anchor_right = 1.0
-		pill.anchor_top = 0.0
-		pill.anchor_bottom = 0.0
-		pill.offset_right = -6.0
-		pill.offset_top = 6.0
-		pill.grow_horizontal = Control.GROW_DIRECTION_BEGIN
-		overlay.add_child(pill)
-	col.add_child(preview_panel)
-
-	var name_label := Label.new()
-	name_label.text = str(entry.get("name", "MODE"))
-	name_label.theme_type_variation = &"TitleLabel"
-	name_label.add_theme_font_size_override("font_size", 24)
-	name_label.add_theme_color_override("font_color", UiPalette.INK)
-	name_label.add_theme_constant_override("outline_size", 0)
-	name_label.clip_text = true
-	name_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	name_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	col.add_child(name_label)
-
-	var desc := Label.new()
-	desc.text = str(entry.get("desc", ""))
-	desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	desc.max_lines_visible = 2
-	desc.clip_text = true
-	desc.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	desc.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	desc.add_theme_font_size_override("font_size", 13)
-	desc.add_theme_color_override("font_color", UiPalette.INK.lightened(0.18))
-	desc.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	col.add_child(desc)
-
+		MODE_PREVIEW_HEIGHT,
+		gid,
+		accent,
+		str(entry.get("name", "MODE")),
+		str(entry.get("desc", ""))
+	)
 	return card
 
 
@@ -758,50 +721,45 @@ func _make_map_card(position: int, preset: Dictionary) -> Button:
 	var card: Button = _button("", accent.lightened(0.35), int(MAP_CARD_HEIGHT), 20)
 	card.name = "MapCard_%s" % map_id
 	card.custom_minimum_size = Vector2(MAP_CARD_WIDTH, MAP_CARD_HEIGHT)
-	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	card.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	card.pressed.connect(_on_map_pressed.bind(position))
 
-	var badge: PanelContainer = _populate_visual_map_card(
+	_populate_clean_card(
 		card,
 		_preview_for_preset(preset),
+		MAP_PREVIEW_HEIGHT,
 		map_id,
 		accent,
 		str(preset.get("name", "MAP")),
-		str(preset.get("tagline", preset.get("desc", ""))),
-		_lap_text(preset),
-		str(preset.get("difficulty", ""))
+		_concise_track_desc(preset)
 	)
-	_map_badges.append(badge)
 	return card
 
 
 func _make_arena_card(slot: int, arena: Dictionary, mode_accent: Color,
-		mode_name: String) -> Button:
+		_mode_name: String) -> Button:
 	var arena_id: String = str(arena.get("id", "arena_%d" % slot))
 	var card_accent: Color = arena.get("accent", mode_accent) as Color
 	var card: Button = _button("", card_accent.lightened(0.35), int(MAP_CARD_HEIGHT), 20)
 	card.name = "ArenaCard_%s" % arena_id
 	card.custom_minimum_size = Vector2(MAP_CARD_WIDTH, MAP_CARD_HEIGHT)
-	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	card.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	card.pressed.connect(_on_arena_pressed.bind(slot))
 
-	var badge: PanelContainer = _populate_visual_map_card(
+	_populate_clean_card(
 		card,
 		arena.get("texture", null) as Texture2D,
+		MAP_PREVIEW_HEIGHT,
 		arena_id,
 		card_accent,
 		str(arena.get("name", arena_id.to_upper())),
-		str(arena.get("desc", "")),
-		str(arena.get("meta", "")),
-		str(arena.get("chip", mode_name))
+		str(arena.get("desc", ""))
 	)
-	_arena_badges.append(badge)
 	return card
 
 
-func _populate_visual_map_card(card: Button, texture: Texture2D, art_id: String,
-		accent: Color, title_text: String, desc_text: String, left_meta: String,
-		right_chip: String) -> PanelContainer:
+func _populate_clean_card(card: Button, texture: Texture2D, preview_h: float,
+		art_id: String, accent: Color, title_text: String, desc_text: String) -> void:
 	var pad := MarginContainer.new()
 	pad.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	pad.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -812,34 +770,22 @@ func _populate_visual_map_card(card: Button, texture: Texture2D, art_id: String,
 	card.add_child(pad)
 
 	var column := VBoxContainer.new()
-	column.add_theme_constant_override("separation", 6)
+	column.add_theme_constant_override("separation", 5)
 	column.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	pad.add_child(column)
 
 	var preview_panel: PanelContainer = _preview_frame(texture,
-		Vector2(0.0, MAP_PREVIEW_HEIGHT), UiPalette.OUTLINE, art_id, accent)
-	var overlay := Control.new()
-	overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	preview_panel.add_child(overlay)
-	var badge: PanelContainer = _chip("✓ SELECTED", UiPalette.YELLOW, UiPalette.INK, true)
-	badge.name = "Selected"
-	badge.anchor_left = 1.0
-	badge.anchor_right = 1.0
-	badge.anchor_top = 0.0
-	badge.anchor_bottom = 0.0
-	badge.offset_right = -6.0
-	badge.offset_top = 6.0
-	badge.grow_horizontal = Control.GROW_DIRECTION_BEGIN
-	badge.visible = false
-	overlay.add_child(badge)
+		Vector2(0.0, preview_h), UiPalette.OUTLINE, art_id, accent)
 	column.add_child(preview_panel)
 
 	var name_label := Label.new()
 	name_label.text = title_text
 	name_label.theme_type_variation = &"TitleLabel"
-	name_label.add_theme_font_size_override("font_size", 21)
+	name_label.add_theme_font_size_override("font_size", 22)
 	name_label.add_theme_color_override("font_color", UiPalette.INK)
 	name_label.add_theme_constant_override("outline_size", 0)
+	name_label.add_theme_constant_override("shadow_offset_y", 0)
+	name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	name_label.clip_text = true
 	name_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -847,37 +793,46 @@ func _populate_visual_map_card(card: Button, texture: Texture2D, art_id: String,
 	column.add_child(name_label)
 
 	var tagline := Label.new()
-	tagline.text = desc_text
-	tagline.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	tagline.max_lines_visible = 2
+	tagline.text = _trim_line(desc_text)
+	tagline.autowrap_mode = TextServer.AUTOWRAP_OFF
+	tagline.max_lines_visible = 1
 	tagline.clip_text = true
 	tagline.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	tagline.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	tagline.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	tagline.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	tagline.add_theme_font_size_override("font_size", 13)
-	tagline.add_theme_color_override("font_color", UiPalette.MUTED)
+	tagline.add_theme_color_override("font_color", UiPalette.INK.lightened(0.16))
 	tagline.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	column.add_child(tagline)
 
-	var bottom := HBoxContainer.new()
-	bottom.add_theme_constant_override("separation", 8)
-	bottom.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	column.add_child(bottom)
-	var meta_lbl := Label.new()
-	meta_lbl.text = left_meta
-	meta_lbl.add_theme_font_size_override("font_size", 13)
-	meta_lbl.add_theme_color_override("font_color", UiPalette.BODY_BLUE)
-	meta_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	meta_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	meta_lbl.clip_text = true
-	meta_lbl.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	meta_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	bottom.add_child(meta_lbl)
-	if right_chip != "":
-		var chip: PanelContainer = _chip(right_chip, UiPalette.CREAM, UiPalette.INK, true)
-		chip.name = "Difficulty"
-		bottom.add_child(chip)
 
-	return badge
+func _trim_line(raw: String, max_chars: int = 48) -> String:
+	var clean: String = raw.strip_edges()
+	if clean.length() <= max_chars:
+		return clean
+	return clean.substr(0, max_chars - 1).strip_edges() + "…"
+
+
+func _concise_track_desc(preset: Dictionary) -> String:
+	var tid: String = str(preset.get("id", ""))
+	match tid:
+		"stadium":
+			return "857m · 9m sky-bridge & stadium bowl"
+		"meadow":
+			return "889m · 9m cliff overlook & forest dirt"
+		"canyon":
+			return "985m · 12m mesa skyway & stone arches"
+		"dockyard":
+			return "888m · 7.5m crane deck & wet seawall"
+		"glacier":
+			return "1049m · 13.5m summit jump & ice slides"
+	var lap_str: String = _lap_text(preset)
+	var tag_str: String = str(preset.get("tagline", preset.get("desc", ""))).strip_edges()
+	if lap_str != "" and tag_str != "":
+		return _trim_line("%s · %s" % [lap_str, tag_str])
+	if tag_str != "":
+		return _trim_line(tag_str)
+	return _trim_line(lap_str)
 
 
 func _lap_text(preset: Dictionary) -> String:
@@ -968,32 +923,6 @@ func _empty_state(parent: Control, text: String) -> Label:
 	return label
 
 
-func _chip(text: String, background: Color, foreground: Color,
-		bordered: bool = false) -> PanelContainer:
-	var chip := PanelContainer.new()
-	chip.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	chip.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var style := StyleBoxFlat.new()
-	style.bg_color = background
-	style.set_corner_radius_all(CHIP_RADIUS)
-	if bordered:
-		style.set_border_width_all(2)
-		style.border_color = UiPalette.OUTLINE
-	style.content_margin_left = 8.0
-	style.content_margin_right = 8.0
-	style.content_margin_top = 2.0
-	style.content_margin_bottom = 3.0
-	style.anti_aliasing = true
-	chip.add_theme_stylebox_override("panel", style)
-	var label := Label.new()
-	label.text = text
-	label.add_theme_font_size_override("font_size", 12)
-	label.add_theme_color_override("font_color", foreground)
-	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	chip.add_child(label)
-	return chip
-
-
 func _button(text: String, color: Color, height: int, font_size: int) -> Button:
 	return UiKit.tile(text, color, float(height), font_size)
 
@@ -1034,7 +963,6 @@ func _extract_arenas(preset: Dictionary) -> Array[Dictionary]:
 	var fallback_ids: PackedStringArray = TrackDefs.theme_ids(preset)
 	var fallback_names: PackedStringArray = TrackDefs.theme_names(preset)
 	var mode_id: String = str(preset.get("id", ""))
-	var mode_name: String = str(preset.get("game", preset.get("name", "ARENA"))).to_upper()
 
 	if raw_themes is Array and not (raw_themes as Array).is_empty():
 		var arr: Array = raw_themes as Array
@@ -1045,9 +973,7 @@ func _extract_arenas(preset: Dictionary) -> Array[Dictionary]:
 				var aid: String = str(d.get("id", fallback_ids[i] if i < fallback_ids.size() else ("map_%d" % i)))
 				var aname: String = str(d.get("name", d.get("label",
 					fallback_names[i] if i < fallback_names.size() else aid.to_upper())))
-				var adesc: String = str(d.get("desc", d.get("tagline", "")))
-				if adesc == "":
-					adesc = _fallback_arena_desc(aid)
+				var adesc: String = _concise_arena_desc(aid, str(d.get("desc", d.get("tagline", ""))))
 				var tex: Texture2D = _arena_screenshot(aid, str(d.get("preview", "")), preset)
 				result.append({
 					"id": aid,
@@ -1055,8 +981,6 @@ func _extract_arenas(preset: Dictionary) -> Array[Dictionary]:
 					"desc": adesc,
 					"texture": tex,
 					"accent": _arena_accent(aid, mode_id),
-					"meta": str(d.get("surface", _arena_meta(aid, mode_id))),
-					"chip": str(d.get("tag", mode_name)),
 				})
 	elif not fallback_ids.is_empty():
 		for i in fallback_ids.size():
@@ -1065,11 +989,9 @@ func _extract_arenas(preset: Dictionary) -> Array[Dictionary]:
 			result.append({
 				"id": aid,
 				"name": aname,
-				"desc": _fallback_arena_desc(aid),
+				"desc": _concise_arena_desc(aid, ""),
 				"texture": _arena_screenshot(aid, "", preset),
 				"accent": _arena_accent(aid, mode_id),
-				"meta": _arena_meta(aid, mode_id),
-				"chip": mode_name,
 			})
 	return result
 
@@ -1102,55 +1024,29 @@ func _arena_screenshot(arena_id: String, custom_file: String,
 	return null
 
 
-func _fallback_arena_desc(arena_id: String) -> String:
+func _concise_arena_desc(arena_id: String, raw_desc: String) -> String:
 	match arena_id:
 		"harbour":
-			return "Container lanes, crane crossways, and elevated dock overpass."
+			return "Steel bridge over water & container lanes"
 		"farmyard":
-			return "Open barn court, hay-bale chicanes, and muddy shortcuts."
+			return "Hilltop plateau with mud & timber ramps"
 		"snowfield":
-			return "Slick frozen rink with banked snowdrifts and fast slides."
+			return "Sunken slick-ice rink with 4 snow jumps"
 		"ko_rooftop":
-			return "Skyscraper helipad with collapsing outer perimeter rings."
+			return "Octagon rooftop pad with dropping outer ring"
 		"ko_foundry":
-			return "Molten forge platform with heavy bumper pillars and open drops."
+			return "Twin smelter islands over a central lava pit"
 		"ko_iceberg":
-			return "Low-grip glacier floe breaking apart into icy ocean water."
+			return "Arctic ice sheet with calving outer shelves"
 		"bt_plaza":
-			return "Multi-tier urban plaza with sightline pillars and jump ramps."
+			return "Three-tier plaza with ramps & juke tunnels"
 		"bt_labyrinth":
-			return "Tight interlocking corridors built for blind-corner ambushes."
+			return "Sandstone corridors & high mesa jump-bridge"
 		"bt_ferries":
-			return "Twin harbour decks linked by narrow crossover bridges."
-	return "Custom arena built for high-impact party matches."
-
-
-func _arena_meta(arena_id: String, mode_id: String) -> String:
-	match arena_id:
-		"harbour":
-			return "ASPHALT · RAMPS"
-		"farmyard":
-			return "DIRT · HAY BALES"
-		"snowfield", "ko_iceberg":
-			return "ICE · LOW GRIP"
-		"ko_rooftop":
-			return "HIGH DROP · RING"
-		"ko_foundry":
-			return "FORGE · HAZARDS"
-		"bt_plaza":
-			return "OPEN PLAZA"
-		"bt_labyrinth":
-			return "MAZE · CORNERS"
-		"bt_ferries":
-			return "TWIN DECKS"
-	match mode_id:
-		"cargo_rush":
-			return "2 TEAMS"
-		"knockout":
-			return "SURVIVAL"
-		"bomb_tag":
-			return "ELIMINATION"
-	return "ARENA"
+			return "Dual cargo barges linked by bridges & ramps"
+	if raw_desc.strip_edges() != "":
+		return _trim_line(raw_desc)
+	return "High-impact party arena"
 
 
 func _arena_accent(arena_id: String, mode_id: String) -> Color:
@@ -1246,12 +1142,13 @@ func _show_selector(game_id: String) -> void:
 		_arena_grid.visible = false
 		_arena_empty.visible = false
 		_title.text = "SELECT TRACK"
-		_selector_caption.text = "RACING  ·  3 LAPS  ·  PICK YOUR CIRCUIT"
+		_selector_caption.text = ""
+		_selector_caption.visible = false
 	else:
 		_show_minigame_page(entry)
-		var mode_title: String = str(entry.get("name", "PARTY MODE"))
 		_title.text = "SELECT MAP"
-		_selector_caption.text = "%s  ·  PICK YOUR MAP" % mode_title
+		_selector_caption.text = ""
+		_selector_caption.visible = false
 	_selector_scroll.scroll_vertical = 0
 	_fit_page_heights()
 	call_deferred("_fit_page_heights")
@@ -1273,7 +1170,6 @@ func _show_minigame_page(entry: Dictionary) -> void:
 		_arena_grid.remove_child(child)
 		child.queue_free()
 	_arena_cards.clear()
-	_arena_badges.clear()
 
 	_arena_entries = _extract_arenas(preset)
 	if _arena_entries.is_empty():
@@ -1414,8 +1310,6 @@ func _update_map_cards() -> void:
 			else _accent_for(preset).lightened(0.35)
 		_map_cards[index].set("fill_color", fill)
 		_outline_selected(_map_cards[index], selected)
-		if index < _map_badges.size() and _map_badges[index] != null:
-			_map_badges[index].visible = selected
 
 
 func _update_arena_cards(mode_accent: Color) -> void:
@@ -1427,8 +1321,6 @@ func _update_arena_cards(mode_accent: Color) -> void:
 		var fill: Color = UiPalette.YELLOW if selected else arena_col.lightened(0.35)
 		_arena_cards[index].set("fill_color", fill)
 		_outline_selected(_arena_cards[index], selected)
-		if index < _arena_badges.size() and _arena_badges[index] != null:
-			_arena_badges[index].visible = selected
 
 
 func _outline_selected(card: Button, selected: bool) -> void:

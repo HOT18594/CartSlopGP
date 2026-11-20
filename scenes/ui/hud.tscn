@@ -1,28 +1,15 @@
-[gd_scene load_steps=5 format=3]
+[gd_scene load_steps=6 format=3]
 
 [ext_resource type="Theme" path="res://assets/ui/theme.tres" id="1"]
 [ext_resource type="Script" path="res://scripts/hud.gd" id="2"]
 [ext_resource type="Script" path="res://scripts/ui/boost_meter.gd" id="4"]
+[ext_resource type="Font" path="res://assets/ui/fonts/Fredoka-Bold.ttf" id="5"]
 
-[sub_resource type="StyleBoxFlat" id="pill_navy"]
-content_margin_left = 18.0
+[sub_resource type="StyleBoxEmpty" id="empty_pill"]
+content_margin_left = 22.0
 content_margin_top = 8.0
-content_margin_right = 18.0
+content_margin_right = 22.0
 content_margin_bottom = 8.0
-bg_color = Color(0.06, 0.11, 0.20, 0.94)
-border_width_left = 2
-border_width_top = 2
-border_width_right = 2
-border_width_bottom = 2
-border_color = Color(0.45, 0.80, 1.0, 0.42)
-corner_radius_top_left = 16
-corner_radius_top_right = 16
-corner_radius_bottom_right = 16
-corner_radius_bottom_left = 16
-shadow_color = Color(0.02, 0.03, 0.09, 0.5)
-shadow_size = 6
-shadow_offset = Vector2(0, 3)
-anti_aliasing = true
 
 [node name="HUD" type="Control"]
 layout_mode = 3
@@ -33,6 +20,7 @@ grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 2
 theme = ExtResource("1")
+theme_override_fonts/font = ExtResource("5")
 script = ExtResource("2")
 
 [node name="StatePill" type="PanelContainer" parent="."]
@@ -41,20 +29,25 @@ layout_mode = 1
 anchors_preset = 5
 anchor_left = 0.5
 anchor_right = 0.5
-offset_left = -104.0
+offset_left = -108.0
 offset_top = 18.0
-offset_right = 104.0
-offset_bottom = 56.0
+offset_right = 108.0
+offset_bottom = 58.0
 grow_horizontal = 2
 mouse_filter = 2
-theme_override_styles/panel = SubResource("pill_navy")
+theme_override_styles/panel = SubResource("empty_pill")
 
 [node name="StateLabel" type="Label" parent="StatePill"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_type_variation = &"TitleLabel"
 theme_override_colors/font_color = Color(1, 0.964706, 0.890196, 1)
-theme_override_font_sizes/font_size = 18
+theme_override_colors/font_outline_color = Color(0.117647, 0.105882, 0.227451, 1)
+theme_override_colors/font_shadow_color = Color(0.08, 0.06, 0.16, 0.85)
+theme_override_constants/outline_size = 3
+theme_override_constants/shadow_offset_x = 1
+theme_override_constants/shadow_offset_y = 2
+theme_override_font_sizes/font_size = 20
 text = "DRIVING"
 horizontal_alignment = 1
 
@@ -64,12 +57,12 @@ anchors_preset = 2
 anchor_top = 1.0
 anchor_bottom = 1.0
 offset_left = 24.0
-offset_top = -82.0
-offset_right = 312.0
-offset_bottom = -24.0
+offset_top = -84.0
+offset_right = 316.0
+offset_bottom = -22.0
 grow_vertical = 0
 mouse_filter = 2
-theme_override_constants/separation = 5
+theme_override_constants/separation = 4
 
 [node name="BoostHeader" type="HBoxContainer" parent="BoostBox"]
 layout_mode = 2
@@ -81,25 +74,30 @@ unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 theme_type_variation = &"TitleLabel"
-theme_override_colors/font_color = Color(0.905882, 0.952941, 1, 1)
+theme_override_colors/font_color = Color(1, 0.964706, 0.890196, 1)
 theme_override_colors/font_outline_color = Color(0.117647, 0.105882, 0.227451, 1)
-theme_override_constants/outline_size = 4
-theme_override_font_sizes/font_size = 14
-text = "BOOST READY"
+theme_override_colors/font_shadow_color = Color(0.08, 0.06, 0.16, 0.85)
+theme_override_constants/outline_size = 2
+theme_override_constants/shadow_offset_x = 1
+theme_override_constants/shadow_offset_y = 2
+theme_override_font_sizes/font_size = 18
+text = "BOOST"
 
 [node name="BoostPercent" type="Label" parent="BoostBox/BoostHeader"]
 unique_name_in_owner = true
+visible = false
 layout_mode = 2
-theme_override_colors/font_color = Color(0.905882, 0.952941, 1, 1)
+theme_type_variation = &"TitleLabel"
+theme_override_colors/font_color = Color(1, 0.964706, 0.890196, 1)
 theme_override_colors/font_outline_color = Color(0.117647, 0.105882, 0.227451, 1)
-theme_override_constants/outline_size = 4
+theme_override_constants/outline_size = 2
 theme_override_font_sizes/font_size = 14
 text = "100%"
 horizontal_alignment = 2
 
 [node name="BoostMeter" type="Control" parent="BoostBox"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(288, 28)
+custom_minimum_size = Vector2(292, 32)
 layout_mode = 2
 mouse_filter = 2
 script = ExtResource("4")
@@ -128,18 +126,21 @@ anchor_left = 0.5
 anchor_top = 0.5
 anchor_right = 0.5
 anchor_bottom = 0.5
-offset_left = -84.0
-offset_top = -50.0
-offset_right = 84.0
-offset_bottom = 18.0
+offset_left = -96.0
+offset_top = -54.0
+offset_right = 96.0
+offset_bottom = 20.0
 grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 2
 theme_type_variation = &"TitleLabel"
-theme_override_colors/font_color = Color(0.972549, 0.992157, 1, 1)
+theme_override_colors/font_color = Color(1, 0.964706, 0.890196, 1)
 theme_override_colors/font_outline_color = Color(0.117647, 0.105882, 0.227451, 1)
-theme_override_constants/outline_size = 7
-theme_override_font_sizes/font_size = 58
+theme_override_colors/font_shadow_color = Color(0.08, 0.06, 0.16, 0.88)
+theme_override_constants/outline_size = 3
+theme_override_constants/shadow_offset_x = 1
+theme_override_constants/shadow_offset_y = 2
+theme_override_font_sizes/font_size = 64
 text = "0"
 horizontal_alignment = 1
 vertical_alignment = 1
@@ -152,17 +153,21 @@ anchor_left = 0.5
 anchor_top = 0.5
 anchor_right = 0.5
 anchor_bottom = 0.5
-offset_left = -60.0
-offset_top = 20.0
-offset_right = 60.0
+offset_left = -64.0
+offset_top = 16.0
+offset_right = 64.0
 offset_bottom = 40.0
 grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 2
-theme_override_colors/font_color = Color(0.66, 0.78, 0.88, 1)
+theme_type_variation = &"TitleLabel"
+theme_override_colors/font_color = Color(0.219608, 0.839216, 0.941176, 1)
 theme_override_colors/font_outline_color = Color(0.117647, 0.105882, 0.227451, 1)
-theme_override_constants/outline_size = 3
-theme_override_font_sizes/font_size = 12
+theme_override_colors/font_shadow_color = Color(0.08, 0.06, 0.16, 0.85)
+theme_override_constants/outline_size = 2
+theme_override_constants/shadow_offset_x = 1
+theme_override_constants/shadow_offset_y = 2
+theme_override_font_sizes/font_size = 16
 text = "KM/H"
 horizontal_alignment = 1
 
@@ -173,18 +178,22 @@ anchor_left = 0.5
 anchor_top = 1.0
 anchor_right = 0.5
 anchor_bottom = 1.0
-offset_left = -390.0
+offset_left = -220.0
 offset_top = -36.0
-offset_right = 390.0
+offset_right = 220.0
 offset_bottom = -10.0
 grow_horizontal = 2
 grow_vertical = 0
 mouse_filter = 2
-theme_override_colors/font_color = Color(1, 1, 1, 0.92)
+theme_type_variation = &"TitleLabel"
+theme_override_colors/font_color = Color(1, 0.964706, 0.890196, 0.96)
 theme_override_colors/font_outline_color = Color(0.117647, 0.105882, 0.227451, 1)
-theme_override_constants/outline_size = 5
-theme_override_font_sizes/font_size = 14
-text = "WASD DRIVE  ·  SPACE DRIFT  ·  SHIFT BOOST  ·  R RESET  ·  ESC PAUSE"
+theme_override_colors/font_shadow_color = Color(0.08, 0.06, 0.16, 0.85)
+theme_override_constants/outline_size = 2
+theme_override_constants/shadow_offset_x = 1
+theme_override_constants/shadow_offset_y = 2
+theme_override_font_sizes/font_size = 15
+text = "SPACE DRIFT  ·  SHIFT BOOST"
 horizontal_alignment = 1
 
 [node name="DebugLabel" type="Label" parent="."]
@@ -200,8 +209,12 @@ offset_right = 320.0
 offset_bottom = 212.0
 grow_horizontal = 2
 mouse_filter = 2
-theme_override_colors/font_color = Color(1, 1, 1, 0.9)
+theme_type_variation = &"TitleLabel"
+theme_override_colors/font_color = Color(1, 0.964706, 0.890196, 0.95)
 theme_override_colors/font_outline_color = Color(0.117647, 0.105882, 0.227451, 1)
-theme_override_constants/outline_size = 6
-theme_override_font_sizes/font_size = 13
+theme_override_colors/font_shadow_color = Color(0.08, 0.06, 0.16, 0.85)
+theme_override_constants/outline_size = 2
+theme_override_constants/shadow_offset_x = 1
+theme_override_constants/shadow_offset_y = 2
+theme_override_font_sizes/font_size = 14
 horizontal_alignment = 1

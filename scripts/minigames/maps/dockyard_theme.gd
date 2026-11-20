@@ -35,6 +35,7 @@ const DockyardGround := preload("res://scripts/minigames/maps/dockyard/dockyard_
 const DockyardYard := preload("res://scripts/minigames/maps/dockyard/dockyard_yard.gd")
 const DockyardCircuit := preload("res://scripts/minigames/maps/dockyard/dockyard_circuit.gd")
 const DockyardGreen := preload("res://scripts/minigames/maps/dockyard/dockyard_green.gd")
+const AmbientWorld := preload("res://scripts/minigames/scenery/ambient_world.gd")
 
 const HOLDER_NAME: String = "DockyardTheme"
 
@@ -83,6 +84,7 @@ static func build(race: Node3D, spline) -> void:
 	_merge(totals, DockyardYard.build(holder, spline, plan))
 	_merge(totals, DockyardCircuit.build(holder, spline, plan))
 	_merge(totals, DockyardGreen.build(holder, spline, plan))
+	AmbientWorld.build_track(holder, spline, "dockyard")
 	# The barrier ring is the owner-facing invariant. Assert it against every
 	# collider the theme just emitted, not just against the path that built it.
 	TileKit.assert_barrier_clearance(holder, spline, "dockyard quay")

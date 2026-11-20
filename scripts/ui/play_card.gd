@@ -19,9 +19,7 @@ const DISPLAY_FONT := "res://assets/ui/fonts/LuckiestGuy-Regular.ttf"
 
 var _hovered: bool = false
 var _held: bool = false
-var _time: float = 0.0
 var _scale_now: float = 1.0
-var _rotation_now: float = 0.0
 var _glow_now: float = 0.0
 var _display: Font
 var _inner_rim := StyleBoxFlat.new()
@@ -75,30 +73,33 @@ func _on_resized() -> void:
 	queue_redraw()
 
 
-func _is_reduce_motion() -> bool:
-	var gs: Node = get_node_or_null("/root/GameSettings")
-	return bool(gs.get("reduce_motion")) if gs != null else false
-
-
 func _process(delta: float) -> void:
 	if not is_visible_in_tree():
 		return
-	_time += delta
-	var active: bool = (_hovered or has_focus()) and not _held and not disabled
+	var focused: bool = has_focus()
+	var active: bool = (_hovered or focused) and not _held and not disabled
 	if disabled:
 		_held = false
-	var reduce: bool = _is_reduce_motion()
-	var target_scale: float = 0.97 if _held else ((1.015 if reduce else 1.035) if active else 1.0)
-	var target_rotation: float = (deg_to_rad(0.4) * sin(_time * 3.0)) if (active and not reduce) else 0.0
+	var target_scale: float = 1.0
+	if not disabled:
+		if _held:
+			target_scale = 0.96
+		elif _hovered:
+			target_scale = 1.03
+		elif focused:
+			target_scale = 1.015
 	var target_glow: float = 1.0 if active else 0.22
-	_scale_now = UiAnim.damp(_scale_now, target_scale, delta, 16.0)
-	_rotation_now = UiAnim.damp(_rotation_now, target_rotation, delta, 14.0)
+	_scale_now = UiAnim.damp(_scale_now, target_scale, delta, 18.0)
+	if absf(_scale_now - target_scale) < 0.0005:
+		_scale_now = target_scale
 	var next_glow: float = UiAnim.damp(_glow_now, target_glow, delta, 12.0)
-	if absf(next_glow - _glow_now) > 0.003:
+	if absf(next_glow - target_glow) < 0.001:
+		next_glow = target_glow
+	if not is_equal_approx(next_glow, _glow_now):
 		_glow_now = next_glow
 		queue_redraw()
 	scale = Vector2.ONE * _scale_now
-	rotation = _rotation_now
+	rotation = 0.0
 
 
 func _update_pivot() -> void:
@@ -154,7 +155,7 @@ func _draw_card_sheen() -> void:
 func _draw_radial_glow() -> void:
 	if _glow_now <= 0.01:
 		return
-	var center := Vector2(size.x * 0.5, size.y * 0.46)
+	var center := Vector2(size.x * 0.5, size.y * (0.42 if badge_text == "" else 0.46))
 	var base_r: float = minf(size.x, size.y) * (0.28 + 0.08 * _glow_now)
 	for ring in 4:
 		var frac: float = 1.0 - float(ring) * 0.22
@@ -181,7 +182,7 @@ func _draw_badge() -> void:
 
 func _draw_icon() -> void:
 	var area: Vector2 = size
-	var icon_bottom: float = area.y * 0.68
+	var icon_bottom: float = area.y * (0.62 if badge_text == "" else 0.68)
 	var center_x: float = area.x * 0.5
 	if two_carts:
 		var s: float = area.y / 460.0

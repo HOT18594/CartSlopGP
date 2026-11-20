@@ -13,7 +13,7 @@ const FOCUS_SLIDER: String = "res://scripts/ui/focus_slider.gd"
 const SECTIONS: Array[String] = ["AUDIO", "VIDEO", "GAMEPLAY", "ACCESSIBILITY", "UPDATES"]
 const LABEL_COLUMN: float = 210.0
 const VALUE_COLUMN: float = 54.0
-const IDLE_HINT: String = "Select a setting to see what it changes."
+const IDLE_HINT: String = ""
 
 var _panel: PanelContainer
 var _body: VBoxContainer
@@ -78,13 +78,13 @@ func open() -> void:
 	UiAnim.pop($Center/Panel)
 	MenuNav.refresh()
 	_check_button.disabled = false
-	_offline_note.visible = UpdateChecker.status == "offline"
+	_offline_note.visible = false
 	if UpdateChecker.status == "available":
 		_update_status.text = "v%s available" % UpdateChecker.latest_version
 	elif UpdateChecker.status == "up_to_date":
 		_update_status.text = "Up to date (v%s)" % UpdateChecker.local_version()
 	elif UpdateChecker.status == "offline":
-		_update_status.text = "Offline - check connection and try again."
+		_update_status.text = "Offline — check connection"
 	else:
 		_update_status.text = ""
 
@@ -163,7 +163,8 @@ func _build_ui() -> void:
 	_build_updates(_pages[4])
 
 	_desc_label = UiKit.caption("")
-	_desc_label.custom_minimum_size = Vector2(0, 34)
+	_desc_label.custom_minimum_size = Vector2(0, 26)
+	_desc_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_desc_label.text = IDLE_HINT
 	_content.add_child(_desc_label)
 
@@ -241,16 +242,18 @@ func _build_accessibility(page: VBoxContainer) -> void:
 
 
 func _build_updates(page: VBoxContainer) -> void:
-	_offline_note = _label("Offline - update check skipped.", 14, UiPalette.RED)
+	page.alignment = BoxContainer.ALIGNMENT_CENTER
+	_offline_note = _label("", 14, UiPalette.RED)
 	_offline_note.visible = false
 	page.add_child(_offline_note)
 	_check_button = _candy_button("CHECK FOR UPDATES", UiPalette.YELLOW, 48, 17)
 	_check_button.custom_minimum_size = Vector2(260, 48)
-	_check_button.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	_check_button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	_check_button.pressed.connect(_on_check_updates)
 	_describe(_check_button, _check_button, "Check whether a newer release is available.")
 	page.add_child(_check_button)
-	_update_status = _label("", 14, UiPalette.MUTED)
+	_update_status = _label("", 15, UiPalette.MUTED)
+	_update_status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	page.add_child(_update_status)
 
 
@@ -564,15 +567,15 @@ func _on_check_finished(available: bool) -> void:
 	if not visible:
 		return
 	_check_button.disabled = false
-	_offline_note.visible = UpdateChecker.status == "offline"
+	_offline_note.visible = false
 	if available:
-		_update_status.text = "v%s available - open it from the main menu" % UpdateChecker.latest_version
+		_update_status.text = "v%s available" % UpdateChecker.latest_version
 	elif UpdateChecker.status == "up_to_date":
 		_update_status.text = "Up to date (v%s)" % UpdateChecker.local_version()
 	elif UpdateChecker.status == "offline":
-		_update_status.text = "Offline - couldn't reach the update server"
+		_update_status.text = "Offline — check connection"
 	else:
-		_update_status.text = "Check failed - try again later"
+		_update_status.text = "Check failed"
 
 
 func _unhandled_input(event: InputEvent) -> void:

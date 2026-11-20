@@ -43,6 +43,7 @@ const GlacierIce := preload("res://scripts/minigames/maps/glacier/glacier_ice.gd
 const GlacierGround := preload("res://scripts/minigames/maps/glacier/glacier_ground.gd")
 const GlacierSurface := preload("res://scripts/minigames/maps/glacier/glacier_surface.gd")
 const GlacierCourse := preload("res://scripts/minigames/maps/glacier/glacier_course.gd")
+const AmbientWorld := preload("res://scripts/minigames/scenery/ambient_world.gd")
 
 const HOLDER_NAME: String = "GlacierDressing"
 const META_STATS: String = "glacier_stats"
@@ -74,6 +75,7 @@ static func build(race: Node3D, spline) -> void:
 	var terrain: Dictionary = GlacierTerrain.build(holder, spline)
 	var ice: Dictionary = GlacierIce.build(holder, race, spline, preset)
 	var ground: int = GlacierGround.build(race, preset)
+	AmbientWorld.build_track(holder, spline, "glacier")
 	_apply_climate(race, preset)
 	var measured: Dictionary = _measure(holder)
 	var stats: Dictionary = {

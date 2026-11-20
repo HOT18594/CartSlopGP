@@ -29,6 +29,7 @@ const TrackDefs := preload("res://scripts/minigames/track_defs.gd")
 const TileKit := preload("res://scripts/minigames/tile_kit.gd")
 const StadiumLayout := preload("res://scripts/minigames/maps/stadium/stadium_layout.gd")
 const StadiumGrid := preload("res://scripts/minigames/maps/stadium/stadium_grid.gd")
+const AmbientWorld := preload("res://scripts/minigames/scenery/ambient_world.gd")
 
 const THEME_ID: String = "stadium"
 const HOLDER_NAME: String = "StadiumDressing"
@@ -67,6 +68,7 @@ static func build(race: Node3D, spline) -> void:
 	holder.name = HOLDER_NAME
 	race.add_child(holder)
 	var stats: Dictionary = StadiumLayout.build(holder, track, rows)
+	AmbientWorld.build_track(holder, track, THEME_ID)
 	print("STADIUM CIRCUIT: %d objects, ~%d draw nodes, %d barrier pieces, %d stands, %d garages, %d tents, %d trees, %d lights, %d signs, %d flags, %d tyres, %d fences, %d marshals, %d cameras, %.0f m lap, %.1f m elevation" % [
 		int(stats.get("objects", 0)), int(stats.get("draws", 0)),
 		int(stats.get("barriers", 0)), int(stats.get("stands", 0)),

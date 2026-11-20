@@ -47,6 +47,7 @@ const PANEL_MAX_WIDTH: float = 1088.0
 
 const BOT_LABELS: PackedStringArray = ["0", "1", "2", "3", "4", "5"]
 const BOT_VALUES: Array[int] = [0, 1, 2, 3, 4, 5]
+const DIFFICULTY_LABELS: PackedStringArray = ["EASY", "NORMAL", "HARD"]
 
 const TAG_COLORS: Array[Dictionary] = [
 	{"name": "YELLOW", "hex": "ffd22e"},
@@ -127,6 +128,7 @@ var _change_mode_button: Button
 var _map_button: Button
 var _vehicle_button: Button
 var _room_bots_pill: Button
+var _difficulty_pill: Button
 var _visibility_pill: Button
 var _visibility_box: Control
 
@@ -327,30 +329,6 @@ func _card_panel(parent: Node, pad_h: int = 14, pad_v: int = 12,
 	return panel
 
 
-func _chip(text: String, bg: Color, fg: Color = UiPalette.INK) -> PanelContainer:
-	var chip := PanelContainer.new()
-	chip.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	chip.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var style := StyleBoxFlat.new()
-	style.bg_color = bg
-	style.set_corner_radius_all(8)
-	style.set_border_width_all(2)
-	style.border_color = UiPalette.OUTLINE
-	style.content_margin_left = 8.0
-	style.content_margin_right = 8.0
-	style.content_margin_top = 2.0
-	style.content_margin_bottom = 2.0
-	style.anti_aliasing = true
-	chip.add_theme_stylebox_override("panel", style)
-	var lbl := Label.new()
-	lbl.text = text
-	lbl.add_theme_font_size_override("font_size", 11)
-	lbl.add_theme_color_override("font_color", fg)
-	lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	chip.add_child(lbl)
-	return chip
-
-
 func _apply_soft_disabled(button: Button) -> void:
 	if button == null:
 		return
@@ -521,15 +499,17 @@ func _build_idle() -> void:
 	online_col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	online_panel.add_child(online_col)
 	online_col.add_child(_idle_art_banner(
-		_first_texture([ART_DIR + "scene_arena.png", ART_DIR + "preview_stadium.png"]),
-		"5-LETTER CODE", UiPalette.YELLOW))
+		_first_texture([ART_DIR + "bg_arena.png", ART_DIR + "preview_stadium.png"]),
+		UiPalette.YELLOW))
 	var online_title := Label.new()
 	online_title.text = "ONLINE ROOM"
 	online_title.theme_type_variation = &"TitleLabel"
+	online_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	online_title.add_theme_font_size_override("font_size", 24)
 	online_title.add_theme_color_override("font_color", UiPalette.INK)
 	online_col.add_child(online_title)
-	var online_desc := UiKit.caption("Host over the internet and share a 5-letter code with friends.")
+	var online_desc := UiKit.caption("Host online and share a 5-letter room code.")
+	online_desc.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	online_desc.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	online_col.add_child(online_desc)
 	_host_pi_button = _candy("CREATE ONLINE ROOM", UiPalette.YELLOW, 56, 17)
@@ -549,15 +529,17 @@ func _build_idle() -> void:
 	lan_col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	lan_panel.add_child(lan_col)
 	lan_col.add_child(_idle_art_banner(
-		_first_texture([ART_DIR + "bg_parking.png", ART_DIR + "scene_road.png"]),
-		"LOCAL WI-FI", UiPalette.BLUE))
+		_first_texture([ART_DIR + "bg_parking.png", ART_DIR + "preview_sandbox.png"]),
+		UiPalette.BLUE))
 	var lan_title := Label.new()
 	lan_title.text = "LAN ROOM"
 	lan_title.theme_type_variation = &"TitleLabel"
+	lan_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	lan_title.add_theme_font_size_override("font_size", 24)
 	lan_title.add_theme_color_override("font_color", UiPalette.INK)
 	lan_col.add_child(lan_title)
-	var lan_desc := UiKit.caption("Instant zero-lag local room for players on the same Wi-Fi.")
+	var lan_desc := UiKit.caption("Zero-lag local play on the same Wi-Fi.")
+	lan_desc.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	lan_desc.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	lan_col.add_child(lan_desc)
 	_lan_button = _candy("CREATE LAN ROOM", UiPalette.BLUE, 56, 17)
@@ -567,7 +549,7 @@ func _build_idle() -> void:
 	lan_col.add_child(_lan_button)
 	_lan_button.fit_text()
 
-	# 3. JOIN A ROOM card
+	# 3. JOIN ROOM card
 	var join_panel: PanelContainer = _card_panel(cards_row, 16, 14,
 		Color(0.94, 0.98, 1.0, 0.78))
 	var join_col := VBoxContainer.new()
@@ -575,20 +557,14 @@ func _build_idle() -> void:
 	join_col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	join_panel.add_child(join_col)
 
-	var join_head := HBoxContainer.new()
-	join_head.add_theme_constant_override("separation", 8)
-	join_col.add_child(join_head)
 	var join_title := Label.new()
-	join_title.text = "JOIN A ROOM"
+	join_title.text = "JOIN ROOM"
 	join_title.theme_type_variation = &"TitleLabel"
+	join_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	join_title.add_theme_font_size_override("font_size", 24)
 	join_title.add_theme_color_override("font_color", UiPalette.INK)
 	join_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	join_head.add_child(join_title)
-	join_head.add_child(_chip("CODE OR LIST", UiPalette.CYAN))
-
-	var join_sub := UiKit.caption("Enter a friend's 5-letter code or browse open rooms:")
-	join_col.add_child(join_sub)
+	join_col.add_child(join_title)
 
 	_join_input = LineEdit.new()
 	_join_input.placeholder_text = "5-LETTER CODE"
@@ -611,7 +587,7 @@ func _build_idle() -> void:
 	_apply_soft_disabled(_join_button)
 	_join_button.fit_text()
 
-	_browse_button = _candy("BROWSE PUBLIC & LAN ROOMS", UiPalette.CYAN, 52, 16)
+	_browse_button = _candy("BROWSE ROOMS", UiPalette.CYAN, 52, 17)
 	_browse_button.name = "BrowseRoomsButton"
 	_browse_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_browse_button.pressed.connect(_on_search)
@@ -628,8 +604,7 @@ func _build_idle() -> void:
 	join_col.add_child(_join_status)
 
 
-func _idle_art_banner(texture: Texture2D, badge_text: String,
-		accent: Color) -> PanelContainer:
+func _idle_art_banner(texture: Texture2D, accent: Color) -> PanelContainer:
 	var frame := PanelContainer.new()
 	frame.custom_minimum_size = Vector2(0.0, 128.0)
 	frame.clip_contents = true
@@ -654,16 +629,6 @@ func _idle_art_banner(texture: Texture2D, badge_text: String,
 		var fb := _LobbyArtFallback.new()
 		fb.accent = accent
 		frame.add_child(fb)
-	var overlay := Control.new()
-	overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	frame.add_child(overlay)
-	var pill := _chip(badge_text, accent)
-	pill.anchor_left = 1.0
-	pill.anchor_right = 1.0
-	pill.offset_right = -8.0
-	pill.offset_top = 8.0
-	pill.grow_horizontal = Control.GROW_DIRECTION_BEGIN
-	overlay.add_child(pill)
 	return frame
 
 
@@ -848,6 +813,18 @@ func _build_room() -> void:
 	_visibility_box = _visibility_pill
 	bottom_opts.add_child(_visibility_pill)
 
+	var difficulty_row := HBoxContainer.new()
+	difficulty_row.add_theme_constant_override("separation", 12)
+	left_col.add_child(difficulty_row)
+	var difficulty_label := _caption("BOT SKILL")
+	difficulty_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	difficulty_row.add_child(difficulty_label)
+	_difficulty_pill = _pill(DIFFICULTY_LABELS, [0, 1, 2],
+		Network.bot_difficulty(), 150.0, 38.0)
+	_difficulty_pill.name = "BotDifficulty"
+	_difficulty_pill.connect("option_changed", _on_difficulty_option)
+	difficulty_row.add_child(_difficulty_pill)
+
 	# --- RIGHT COLUMN: Room Code + Players / Teams ---
 	var right_col := VBoxContainer.new()
 	right_col.add_theme_constant_override("separation", 10)
@@ -955,6 +932,7 @@ func _build_teams(parent: VBoxContainer) -> void:
 		column.add_child(list)
 		_team_lists.append(list)
 	_teams_hint = _hint("")
+	_teams_hint.visible = false
 	teams_vbox.add_child(_teams_hint)
 	_teams_card.visible = false
 
@@ -1095,8 +1073,8 @@ func _refresh_teams() -> void:
 			UiPalette.YELLOW if Network.teams_locked else UiPalette.GRASS)
 		_teams_lock_button.fit_text()
 	if _teams_hint != null:
-		_teams_hint.visible = movable
-		_teams_hint.text = "CLICK A PLAYER TO SWITCH TEAMS" if movable else ""
+		_teams_hint.visible = false
+		_teams_hint.text = ""
 
 
 func _focus_team_row(row: Button) -> void:
@@ -1265,8 +1243,6 @@ func _lobby_display_for_kind(kind: String, active: bool) -> Dictionary:
 			"texture": _first_texture([
 				ART_DIR + "preview_sandbox.png",
 				ART_DIR + "bg_parking.png",
-				ART_DIR + "scene_road.png",
-				ART_DIR + "scene_arena.png",
 			]),
 		}
 	if kind == KIND_RACE:
@@ -1328,7 +1304,7 @@ func _lobby_display_for_kind(kind: String, active: bool) -> Dictionary:
 	var tex: Texture2D = _first_texture([
 		ART_DIR + "preview_" + arena_id + ".png",
 		ART_DIR + "preview_" + pid + ".png",
-		ART_DIR + "scene_arena.png" if kind == KIND_DELIVER else "",
+		ART_DIR + "bg_arena.png",
 	])
 	return {
 		"mode": mode_label,
@@ -1488,6 +1464,9 @@ func _refresh_config() -> void:
 	_set_bots_views(clampi(bots, 0, 5))
 	if _room_bots_pill != null:
 		_room_bots_pill.disabled = not host
+	if _difficulty_pill != null:
+		_difficulty_pill.call("set_index", Network.bot_difficulty())
+		_difficulty_pill.disabled = not host
 
 	# Update live 16:9 screenshot + mode badge + map title
 	var display: Dictionary = _lobby_display_for_kind(kind, active)
@@ -1669,14 +1648,7 @@ func _set_host_hint(text: String) -> void:
 
 
 func _refresh_visibility_hint() -> void:
-	if _host_hint == null or _state != "host":
-		return
-	if Network.room_public:
-		_set_host_hint("Listed in Room Browser.")
-	elif Network.is_lan():
-		_set_host_hint("Switch to PUBLIC so Wi-Fi players see your room.")
-	else:
-		_set_host_hint("Share this 5-letter code with friends.")
+	_set_host_hint("")
 
 
 func _on_host_failed(reason: String) -> void:
@@ -1745,7 +1717,7 @@ func _on_join_succeeded() -> void:
 		_code_caption.text = "CONNECTED"
 		_code_label.text = "ONLINE"
 		_copy_button.visible = false
-	_set_host_hint("Connected — host chooses the mode & map.")
+	_set_host_hint("")
 	_title.text = "ROOM LOBBY"
 	_refresh_config()
 	_refresh_players()
@@ -1824,6 +1796,17 @@ func _on_game_mode(kind: String) -> void:
 
 func _on_bots_option(value: Variant) -> void:
 	_apply_bot_total(int(value))
+
+
+func _on_difficulty_option(value: Variant) -> void:
+	if Network.is_session_active() and not Network.is_host:
+		_refresh_config()
+		return
+	GameSettings.set_ai_difficulty(int(value))
+	if Network.is_host and Network.is_session_active():
+		Network.configure_session(Network.session_mode, Network.session_bots,
+			Network.session_bot_count)
+	_refresh_config()
 
 
 func _apply_bot_total(total: int) -> void:

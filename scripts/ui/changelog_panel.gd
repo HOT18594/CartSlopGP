@@ -21,7 +21,7 @@ const PANEL_MARGIN_Y: float = 56.0
 const SCROLL_PAD_X: float = 20.0 ## 10 px left + 10 px right inside ScrollPad.
 const PHOTO_WIDTH: int = 380
 const PHOTO_HEIGHT: int = 214
-const PHOTO_ROOT: String = "res://assets/ui/art/changelog_"
+const PHOTO_ROOT: String = "res://assets/ui/art/"
 
 @onready var _current_label: Label = %CurrentVersion
 @onready var _text: RichTextLabel = %ChangelogText
@@ -305,9 +305,12 @@ func _build_bbcode(release: Dictionary) -> String:
 
 
 func _append_photo(out: PackedStringArray, path: String, caption: String) -> void:
-	if not path.begins_with(PHOTO_ROOT) or not path.ends_with(".png"):
+	var resolved: String = path.strip_edges()
+	if resolved.begins_with("assets/ui/art/"):
+		resolved = "res://" + resolved
+	if not resolved.begins_with(PHOTO_ROOT) or not resolved.ends_with(".png"):
 		return
-	if not ResourceLoader.exists(path):
+	if not ResourceLoader.exists(resolved):
 		return
 	var vp_w: float = get_viewport_rect().size.x
 	var card_w: float = minf(PANEL_MAX_WIDTH, maxf(320.0, vp_w - PANEL_MARGIN_X))
@@ -316,7 +319,7 @@ func _append_photo(out: PackedStringArray, path: String, caption: String) -> voi
 		/ float(PHOTO_WIDTH)))
 	out.append("")
 	out.append("[center][img=%dx%d]%s[/img][/center]" % [
-		photo_w, photo_h, path])
+		photo_w, photo_h, resolved])
 	if caption != "":
 		out.append("[center][font_size=13][color=%s][i]%s[/i][/color][/font_size][/center]" % [
 			MUTED, _escape(caption)])

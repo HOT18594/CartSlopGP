@@ -108,10 +108,10 @@ const FALL_RESET_HEIGHT: float = -4.0
 @export var brake_power: float = 34.0 ## Speed removed per second while braking (m/s^2).
 @export var brake_lateral_grip: float = 14.0 ## Sideways bite while braking, so a stop also kills a slide.
 @export var friction: float = 6.0 ## Speed lost per second when coasting (m/s^2).
-@export var min_turn_speed: float = 3.0 ## Speed (m/s) at which steering reaches full authority.
+@export var min_turn_speed: float = 2.2 ## Speed (m/s) at which steering reaches full authority.
 
 @export_group("Grip & Drift")
-@export var lateral_grip: float = 10.0 ## How fast sideways slip is cancelled (m/s^2).
+@export var lateral_grip: float = 13.5 ## How fast sideways slip is cancelled (m/s^2).
 @export var drift_grip: float = 2.5 ## Lateral grip while the handbrake is held (m/s^2).
 @export var slip_drag: float = 0.9 ## Forward speed lost per second per m/s of lateral slide.
 @export var drift_detection_threshold: float = 2.0 ## Sideways speed (m/s) that counts as drifting.
@@ -124,14 +124,14 @@ const FALL_RESET_HEIGHT: float = -4.0
 @export_range(0.05, 2.0, 0.01) var surface_grip: float = 1.0 ## Grip multiplier from the surface under the cart (1.0 = dry road).
 
 @export_group("Steering & Air")
-@export var steering_speed: float = 2.6 ## Max yaw rate (radians/second).
-@export var high_speed_steering_scale: float = 0.65 ## Steering multiplier at top speed (0-1).
+@export var steering_speed: float = 2.9 ## Max yaw rate (radians/second).
+@export var high_speed_steering_scale: float = 0.82 ## Steering multiplier at top speed (0-1).
 @export_group("Steering Feel")
-@export var steer_attack: float = 14.5 ## How fast digital/keyboard steering reaches lock.
+@export var steer_attack: float = 18.0 ## How fast digital/keyboard steering reaches lock.
 @export var steer_release: float = 18.0 ## How fast it returns to centre.
 @export var steer_curve: float = 1.15 ## >1 gives finer control near centre, full lock at the edge.
 @export var weight_transfer_steering: float = 0.14 ## Turn-in gain under braking (no throttle understeer penalty).
-@export var air_control_strength: float = 0.55 ## Responsive yaw steering authority while airborne (0-1).
+@export var air_control_strength: float = 0.65 ## Responsive yaw steering authority while airborne (0-1).
 @export var gravity: float = 22.0 ## Downward acceleration (m/s^2).
 @export var extra_fall_gravity: float = 1.6 ## Gravity multiplier while falling, for snappy landings.
 
@@ -254,7 +254,6 @@ var _base_stats: Dictionary = {} ## Pristine export values for vehicle re-applic
 ## The catalog id currently on the mesh, kept so a tag-colour change can rebuild
 ## only the paint without re-reading the selection.
 var _current_vehicle_id: String = ""
-var _applied_tint: Color = Color(0, 0, 0, 0)
 
 var _boost_regen_timer: float = 0.0
 var _pad_burst_timer: float = 0.0
@@ -391,10 +390,6 @@ func _ready() -> void:
 	_last_safe_position = global_position
 	_last_safe_yaw = rotation.y
 	_capture_base_stats()
-	# Remote paint follows the per-peer tag colour; rebuild only when it really
-	# changed, and never during the per-frame path.
-	if not Network.tag_colors_changed.is_connected(_on_tag_colors_changed):
-		Network.tag_colors_changed.connect(_on_tag_colors_changed)
 	var entry: Dictionary = _apply_vehicle_visual()
 	_apply_vehicle_stats(entry)
 	if _feedback != null:
@@ -938,15 +933,14 @@ func _apply_vehicle_visual() -> Dictionary:
 func _visual_entry(base: Dictionary) -> Dictionary:
 	## Turn a catalog chassis into the entry this cart actually renders. Racing
 	## choices (including the Shopping Cart inside a racing scene) are composed
-	## with the active stat build and custom paint tint; sandbox, cargo and
-	## minigame carts keep their untouched catalog entry.
+	## with the active stat build; sandbox, cargo and minigame carts keep their
+	## untouched catalog entry. Body paint is always the factory livery.
 	var vehicle_id: String = str(base.get("id", ""))
 	var compose_in_race: bool = VehicleCatalog.is_racing_id(vehicle_id) \
 		or (GameSettings.racing_scene_active() and VehicleCatalog.is_racing_choice(vehicle_id))
 	if not compose_in_race:
 		return base
-	return VehicleCatalog.compose_racing_entry(vehicle_id,
-		_racing_allocation(), _tint_for_cart())
+	return VehicleCatalog.compose_racing_entry(vehicle_id, _racing_allocation())
 
 
 func _racing_allocation() -> Dictionary:
@@ -959,38 +953,6 @@ func _racing_allocation() -> Dictionary:
 			and not Network.session_racing_allocation.is_empty():
 		return Network.session_racing_allocation
 	return GameSettings.racing_allocation()
-
-
-func _tint_for_cart() -> Color:
-	## Local players use their saved tag colour; remote players use the colour
-	## the host relayed for their peer id. Bots cycle a fixed field palette so a
-	## race never shows a grid of identical red cars.
-	if remote_mode:
-		if remote_peer_id >= BOT_PEER_BASE:
-			var bot_index: int = remote_peer_id - BOT_PEER_BASE
-			return BOT_TINTS[abs(bot_index) % BOT_TINTS.size()]
-		return Network.color_of(remote_peer_id)
-	if ai_mode:
-		return BOT_TINTS[abs(get_index()) % BOT_TINTS.size()]
-	return GameSettings.tag_color()
-
-
-func _on_tag_colors_changed() -> void:
-	## A peer picked a new colour. Only a racing choice can change paint, and
-	## only when the effective tint actually moved; every other cart is untouched.
-	if ai_mode or _current_vehicle_id == "":
-		return
-	var can_tint: bool = VehicleCatalog.is_racing_id(_current_vehicle_id) \
-		or (GameSettings.racing_scene_active() and VehicleCatalog.is_racing_choice(_current_vehicle_id))
-	if not can_tint:
-		return
-	var tint: Color = _tint_for_cart()
-	if tint == _applied_tint:
-		return
-	var base: Dictionary = VehicleCatalog.find(_current_vehicle_id)
-	if base.is_empty():
-		return
-	_apply_vehicle_visual_for(_visual_entry(base))
 
 
 func _apply_vehicle_stats(entry: Dictionary) -> void:
@@ -1022,7 +984,9 @@ func _apply_vehicle_stats(entry: Dictionary) -> void:
 	var weight_ratio: float = clampf(_profile_mass / REFERENCE_MASS, 0.05, 3.0)
 	lateral_grip *= float(entry.get("grip", 1.0))
 	drift_grip *= lerpf(1.0, float(entry.get("grip", 1.0)), 0.5)
-	steering_speed *= float(entry.get("steering", 1.0))
+	## Soften extreme catalog steering multipliers: trucks remain weighty without
+	## becoming unable to clear an ordinary corner at racing speed.
+	steering_speed *= sqrt(maxf(float(entry.get("steering", 1.0)), 0.25))
 	brake_power *= clampf(pow(weight_ratio, -0.15), 0.85, 1.10)
 	_profile_push_scale = float(entry.get("push_scale", 1.0))
 	_resize_collision(entry)
@@ -1088,11 +1052,6 @@ func _resize_collision(entry: Dictionary) -> void:
 func _apply_vehicle_visual_for(entry: Dictionary) -> void:
 	if _mesh_root == null or entry.is_empty():
 		return
-	var raw_tint: Variant = entry.get("tint_color", null)
-	if raw_tint is Color:
-		_applied_tint = raw_tint as Color
-	else:
-		_applied_tint = Color(0, 0, 0, 0)
 	var existing: Node = _mesh_root.get_node_or_null("KartModel")
 	if existing != null:
 		_mesh_root.remove_child(existing)
@@ -1244,8 +1203,11 @@ func _update_drive(delta: float, handbrake_held: bool, raw_steer: float) -> void
 	var forward_dir: Vector3 = -global_transform.basis.z
 	var right_dir: Vector3 = global_transform.basis.x
 	if grounded:
-		forward_dir = Vector3(forward_dir.x, 0.0, forward_dir.z).normalized()
-		right_dir = Vector3(right_dir.x, 0.0, right_dir.z).normalized()
+		## Keep the velocity tangent to the actual ramp. Rebuilding it on a
+		## horizontal plane here used to erase the upward component at the lip.
+		var flat_forward: Vector3 = Vector3(forward_dir.x, 0.0, forward_dir.z).normalized()
+		forward_dir = flat_forward.slide(normal).normalized()
+		right_dir = forward_dir.cross(normal).normalized()
 	var fwd_speed: float = velocity.dot(forward_dir)
 	var lat_speed: float = velocity.dot(right_dir)
 	var speed_mult: float = 1.0
@@ -1354,6 +1316,17 @@ func _update_drive(delta: float, handbrake_held: bool, raw_steer: float) -> void
 		elif grounded and _mini_boost_timer > 0.0:
 			# Crisp hook-up when rocketing out of an apex on a mini-turbo.
 			grip *= 1.45
+		if grounded and not handbrake_held:
+			var steering_bite: float = clampf(absf(fwd_speed) / maxf(max_speed, 1.0), 0.0, 1.0)
+			grip *= 1.0 + absf(raw_steer) * steering_bite * 0.30
+			# Tires must supply the centripetal force demanded by the current yaw
+			# rate. A flat grip cap made fast carts rotate in place while their
+			# velocity kept going straight, especially with heavy vehicles.
+			var speed_fraction: float = clampf(absf(fwd_speed) / maxf(max_speed, 0.001), 0.0, 1.0)
+			var steering_authority: float = lerpf(1.0, high_speed_steering_scale, speed_fraction)
+			var cornering_demand: float = absf(steer_smoothed * steering_speed
+				* steering_authority * fwd_speed)
+			grip = maxf(grip, cornering_demand * 0.94 * grip_scale)
 		if not grounded:
 			grip *= 0.25
 		else:
@@ -1521,11 +1494,6 @@ func _process_collisions() -> void:
 			solid_prop = _is_solid_prop(hit_node)
 			if not solid_prop:
 				continue
-		if hit is Object:
-			var hit_id: int = hit.get_instance_id()
-			if handled.has(hit_id):
-				continue
-			handled[hit_id] = true
 		var normal: Vector3 = collision.get_normal()
 		if not normal.is_finite():
 			continue
@@ -1567,6 +1535,10 @@ func _process_collisions() -> void:
 			# do not treat the other cart as drivable ground next frame.
 			_cart_roof_contact = true
 		if other_vehicle:
+			var hit_id: int = hit.get_instance_id()
+			if handled.has(hit_id):
+				continue
+			handled[hit_id] = true
 			# A chassis can present an upward contact when a cart climbs its bumper.
 			# Separate vehicles horizontally instead of treating that as a floor.
 			var planar_normal := Vector3(normal.x, 0.0, normal.z)
@@ -1627,7 +1599,7 @@ func _process_collisions() -> void:
 		if feedback_ready:
 			_give_impact_feedback(normal, impact_factor, other_vehicle, shake_scale)
 		# Keep scanning: a car bump must not hide a wall contact in the same
-		# frame. Duplicate compound-shape contacts are deduped above.
+		# frame. Only vehicle pairs are deduped; distinct world normals all count.
 		continue
 
 
@@ -2003,6 +1975,10 @@ func _process_landing_and_launch() -> void:
 		lat_speed *= 1.0 - landing_stability_strength
 		velocity = forward_dir * velocity.dot(forward_dir) + right_dir * lat_speed + Vector3.UP * velocity.y
 	elif just_launched and _prev_velocity.y > 1.0:
+		var launch_speed: float = Vector2(velocity.x, velocity.z).length()
+		## A modest lip kick makes a fast ramp readable and rewarding without
+		## turning low-speed bumps into uncontrolled launches.
+		velocity.y += clampf((launch_speed - 7.0) * 0.075, 0.0, 1.5)
 		_stretch_impulse = maxf(_stretch_impulse, clampf(_prev_velocity.y * 0.1, 0.2, 1.0))
 
 

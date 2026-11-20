@@ -205,15 +205,24 @@ const PAINT_DARK := Color("1e1b3a")
 ## about winding: it hands over points and gets a drivable slab back. All pieces
 ## for one surface share this buffer, which is why the whole ground and every
 ## painted zone cost one draw call each.
+##
+## "Face up" means the Godot front face, and Godot's front faces are CLOCKWISE
+## seen from the front. An up-facing triangle therefore has its right-hand cross
+## product pointing DOWN (-Y); the engine's own primitives agree (a PlaneMesh's
+## up faces have cross.y < 0). Winding them the other way passes the boot audits
+## but is back-face culled by every camera above the park, so the whole layer
+## silently disappears and the sky's ground colour shows through instead.
 class SurfaceBuf:
 	var verts: PackedVector3Array = PackedVector3Array()
 	var normals: PackedVector3Array = PackedVector3Array()
 	var colors: PackedColorArray = PackedColorArray()
 	var indices: PackedInt32Array = PackedInt32Array()
 
-	## Adds one up-facing triangle; swaps two points when the winding is down.
+	## Adds one up-facing triangle, re-winding it when the front face points
+	## down instead of up (Godot front faces are clockwise from the front, so
+	## an up-facing triangle's right-hand normal is -Y).
 	func tri(a: Vector3, b: Vector3, c: Vector3, color: Color) -> void:
-		if (b - a).cross(c - a).y < 0.0:
+		if (b - a).cross(c - a).y > 0.0:
 			var swap: Vector3 = b
 			b = c
 			c = swap
@@ -306,38 +315,45 @@ class SurfaceBuf:
 ## terrace, its ramp and the berm).
 ##
 ## Unlike SurfaceBuf this keeps real slopes: every triangle carries the normal
-## its vertices produce, and each quad is wound so its normal points along the
-## outward direction the builder names. That is what makes a berm read as a hill
-## instead of as flat paint.
+## its vertices produce, and each quad is wound so its Godot front face points
+## along the outward direction the builder names. That is what makes a berm read
+## as a hill instead of as flat paint.
+##
+## Same convention as SurfaceBuf: a Godot front face is clockwise seen from the
+## front, so its right-hand cross product points AWAY from the viewer, i.e. into
+## the solid. Lighting normals are therefore the negated cross product.
 class SolidBuf:
 	var verts: PackedVector3Array = PackedVector3Array()
 	var normals: PackedVector3Array = PackedVector3Array()
 	var colors: PackedColorArray = PackedColorArray()
 	var indices: PackedInt32Array = PackedInt32Array()
 
-	## Adds one quad, re-wound until its normal points along `outward`.
+	## Adds one quad, re-wound until its Godot front face points along `outward`.
 	func face(a: Vector3, b: Vector3, c: Vector3, d: Vector3, color: Color,
 			outward: Vector3) -> void:
 		var normal: Vector3 = (b - a).cross(c - a)
-		if normal.dot(outward) < 0.0:
+		if normal.dot(outward) > 0.0:
 			var swap: Vector3 = b
 			b = d
 			d = swap
 		_triangle(a, b, c, color)
 		_triangle(a, c, d, color)
 
-	## Adds one triangle facing along `outward`.
+	## Adds one triangle whose front face points along `outward`.
 	func tri_face(a: Vector3, b: Vector3, c: Vector3, color: Color,
 			outward: Vector3) -> void:
-		if (b - a).cross(c - a).dot(outward) < 0.0:
+		if (b - a).cross(c - a).dot(outward) > 0.0:
 			var swap: Vector3 = b
 			b = c
 			c = swap
 		_triangle(a, b, c, color)
 
-	## Appends a shaded triangle from its own geometric normal.
+	## Appends a shaded triangle from its own surface normal.
 	func _triangle(a: Vector3, b: Vector3, c: Vector3, color: Color) -> void:
-		var normal: Vector3 = (b - a).cross(c - a)
+		# The right-hand cross product points into the solid for a clockwise
+		# (Godot front-facing) winding, so the visible side's normal is its
+		# negation.
+		var normal: Vector3 = -(b - a).cross(c - a)
 		normal = normal.normalized() if normal.length_squared() > 0.0000001 \
 			else Vector3.UP
 		var base: int = verts.size()
@@ -459,6 +475,7 @@ func _ready() -> void:
 	_grip_zone()
 	_commit_layers()
 	_audit_facility()
+	preload("res://scripts/minigames/scenery/ambient_world.gd").build_arena(self, "sandbox", 112.0)
 	if OS.get_environment("CART_DEBUG_PARK") == "1":
 		_report_stats()
 		_bot_probe.call_deferred()

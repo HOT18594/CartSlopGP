@@ -236,13 +236,14 @@ var game_scene: String = GAME_SCENE
 var session_mode: String = GameSettings.GAME_SANDBOX
 var session_bots: bool = false
 var session_bot_count: int = 0
+var session_bot_difficulty: int = 1
 ## Event selection is separate from both the race map and Cargo arena theme.
 var session_event: String = EVENT_RACE ## EVENT_RACE or EVENT_CARGO when mode is MINIGAMES.
 ## The exact gameplay scene the host will load: GAME_SCENE, RACE_SCENE or
 ## CARGO_SCENE. Replicated in the session config so a join can never land on a
 ## race when the host chose DELIVER (or the reverse).
 var session_scene: String = GAME_SCENE
-var session_minigame: String = "meadow_loop"
+var session_minigame: String = ""
 ## Host-owned assignments survive individual departures and lobby returns.
 ## Only leave()/a brand-new session clears them; never derive teams from order.
 var _peer_teams: Dictionary = {} ## peer id -> 0 (ALPHA / blue) or 1 (BETA / red)
@@ -375,7 +376,13 @@ func is_session_active() -> bool:
 	return is_host or is_client
 
 
+func bot_difficulty() -> int:
+	return clampi(session_bot_difficulty if is_session_active() \
+		else GameSettings.minigame_difficulty, 0, 2)
+
+
 func clear_scene_ready() -> void:
+	input_locked = false
 	scene_ready_peers.clear()
 	_left_scene_peers.clear()
 	_scene_retry_counts.clear()
@@ -575,9 +582,9 @@ func _prune_separation_ms(now_ms: int) -> void:
 
 
 static func sanitize_racing_car_id(raw: String) -> String:
-	## Only a real racing-class chassis id leaves/enters the wire. Empty means
-	## the field was not supplied, which is the compatibility default.
-	return raw if VehicleCatalog.is_racing_id(raw) else ""
+	## Every curated racing choice, including road vehicles and the stock cart,
+	## may cross the wire. Unknown ids still fall back to the local save.
+	return raw if VehicleCatalog.is_racing_choice(raw) else ""
 
 
 static func sanitize_racing_allocation(raw: Dictionary) -> Dictionary:
@@ -964,12 +971,36 @@ func scene_for_event(event: String) -> String:
 	return GAME_SCENE
 
 
+static func _sanitize_minigame_theme(event: String, raw_theme: String) -> String:
+	## Guarantee that `session_minigame` always belongs to `event` (so a
+	## Knockout room never carries a stale Cargo Rush theme or vice versa).
+	var preset_id: String = ""
+	match event:
+		EVENT_CARGO:
+			preset_id = "cargo_rush"
+		EVENT_KNOCKOUT:
+			preset_id = "knockout"
+		EVENT_BOMB_TAG:
+			preset_id = "bomb_tag"
+		_:
+			return ""
+	var preset: Dictionary = TrackDefs.get_minigame(preset_id)
+	if preset.is_empty():
+		return ""
+	var clean: String = raw_theme.strip_edges().to_lower()
+	if TrackDefs.theme_ids(preset).has(clean):
+		return clean
+	return TrackDefs.default_theme(preset)
+
+
 func set_host_event(event: String, map_or_arena_id: String = "") -> void:
 	## Host helper used by the mode/map selector and lobby to set both the event
 	## and its map/arena in one atomic session update.
 	var clean_ev: String = event.strip_edges().to_lower()
 	if clean_ev == "cargo_rush" or clean_ev == "deliver":
 		clean_ev = EVENT_CARGO
+	elif clean_ev == "blast_tag":
+		clean_ev = EVENT_BOMB_TAG
 	if clean_ev == "" or clean_ev == "sandbox":
 		GameSettings.set_multiplayer_mode(GameSettings.GAME_SANDBOX)
 		if is_host:
@@ -987,8 +1018,11 @@ func set_host_event(event: String, map_or_arena_id: String = "") -> void:
 			_push_room_state()
 		return
 	if clean_ev in MINIGAME_EVENTS:
-		if map_or_arena_id != "":
-			GameSettings.set_selected_minigame(map_or_arena_id)
+		var target_theme: String = _sanitize_minigame_theme(
+			clean_ev,
+			map_or_arena_id if map_or_arena_id != "" else GameSettings.selected_minigame)
+		if target_theme != "":
+			GameSettings.set_selected_minigame(target_theme)
 		if is_host:
 			configure_session(GameSettings.GAME_MINIGAMES, GameSettings.bots_enabled,
 				GameSettings.effective_bot_count(), GameSettings.selected_map,
@@ -1123,12 +1157,13 @@ func host_game(mode: String = "pi") -> void:
 	session_mode = GameSettings.multiplayer_mode
 	session_bots = GameSettings.bots_enabled
 	session_bot_count = GameSettings.effective_bot_count()
+	session_bot_difficulty = clampi(GameSettings.minigame_difficulty, 0, 2)
 	# The room carries its event/scene from the very first host frame. A
 	# DELIVER room hosts CARGO RUSH; everything else keeps its race/sandbox
 	# scene, so no path downstream has to guess from the mode alone.
 	session_event = _infer_session_event(session_mode)
 	session_scene = scene_for_event(session_event)
-	session_minigame = GameSettings.selected_minigame \
+	session_minigame = _sanitize_minigame_theme(session_event, GameSettings.selected_minigame) \
 		if session_event in MINIGAME_EVENTS else ""
 	session_map_id = GameSettings.sanitize_map_id(GameSettings.selected_map)
 	# A fresh room starts with a clean, balanced team split.
@@ -1280,15 +1315,29 @@ func _use_default_public_relay() -> bool:
 		text = DEFAULT_RELAY_SERVER.strip_edges()
 	if text == "":
 		return false
-	var secure: bool = text.to_lower().begins_with("https://")
-	var rest: String = text.trim_prefix("https://").trim_prefix("http://").trim_suffix("/")
-	var host: String = rest.get_slice("/", 0)
+	var lower_text: String = text.to_lower()
+	var secure: bool = lower_text.begins_with("https://")
+	var rest: String = text
+	if secure:
+		rest = rest.substr(8)
+	elif lower_text.begins_with("http://"):
+		rest = rest.substr(7)
+	rest = rest.trim_suffix("/")
+	var authority: String = rest.get_slice("/", 0)
+	var host: String = authority
 	var port: int = 443 if secure else 42777
-	if host.contains(":"):
-		var parts: PackedStringArray = host.split(":")
+	if authority.begins_with("["):
+		var close_idx: int = authority.find("]")
+		if close_idx <= 1:
+			return false
+		host = authority.substr(0, close_idx + 1)
+		if close_idx + 1 < authority.length() and authority[close_idx + 1] == ":":
+			port = int(authority.substr(close_idx + 2))
+	elif authority.contains(":"):
+		var parts: PackedStringArray = authority.split(":")
 		host = parts[0]
-		port = int(parts[1]) if parts.size() > 1 else 42777
-	if host == "" or port <= 0:
+		port = int(parts[1]) if parts.size() > 1 else (443 if secure else 42777)
+	if host == "" or port <= 0 or port > 65535:
 		return false
 	relay_server_host = host
 	relay_server_http_port = port
@@ -1335,7 +1384,8 @@ func _stop_lan_listener() -> void:
 
 func _advertised_room_map() -> String:
 	if session_mode == GameSettings.GAME_MINIGAMES and session_event in MINIGAME_EVENTS:
-		return session_minigame if session_minigame != "" else session_map_id
+		var clean_theme: String = _sanitize_minigame_theme(session_event, session_minigame)
+		return clean_theme if clean_theme != "" else session_map_id
 	return session_map_id
 
 
@@ -1416,16 +1466,26 @@ func scan_lan_rooms(timeout: float = 1.4) -> Array:
 			var open_port: int = int(room.get("port", 0))
 			if not _is_private_ipv4(host) or open_port <= 0:
 				continue
+			var raw_mode: String = str(room.get("mode", GameSettings.GAME_SANDBOX)).strip_edges().to_lower()
+			var clean_mode: String = GameSettings.GAME_MINIGAMES \
+				if raw_mode == GameSettings.GAME_MINIGAMES else GameSettings.GAME_SANDBOX
+			var raw_event: String = str(room.get("event", EVENT_RACE)).strip_edges().to_lower()
+			var clean_event: String = raw_event \
+				if (raw_event == EVENT_RACE or raw_event in MINIGAME_EVENTS) \
+				else (EVENT_RACE if clean_mode == GameSettings.GAME_MINIGAMES else "")
+			var raw_state: String = str(room.get("state", "lobby")).strip_edges().to_lower()
+			var clean_state: String = raw_state if raw_state in ["lobby", "playing", "finished"] else "lobby"
+			var raw_map: String = str(room.get("map", "")).strip_edges().to_lower()
 			found["%s:%d" % [host, open_port]] = {
 				"name": GameSettings.sanitize_name(str(room.get("name", "HOST"))),
 				"host": host,
 				"port": open_port,
-				"players": maxi(int(room.get("players", 1)), 1),
-				"mode": str(room.get("mode", GameSettings.GAME_SANDBOX)),
-				"event": str(room.get("event", EVENT_RACE)),
-				"state": str(room.get("state", "lobby")),
-				"map": str(room.get("map", "")) if TrackDefs.has_theme_id(str(room.get("map", ""))) \
-					else GameSettings.sanitize_map_id(str(room.get("map", ""))),
+				"players": clampi(int(room.get("players", 1)), 1, MAX_PLAYERS),
+				"mode": clean_mode,
+				"event": clean_event,
+				"state": clean_state,
+				"map": raw_map if TrackDefs.has_theme_id(raw_map) \
+					else GameSettings.sanitize_map_id(raw_map),
 			}
 		var now: int = Time.get_ticks_msec()
 		if now >= next_nudge:
@@ -1587,22 +1647,31 @@ func sync_server_clock(samples: int = 5) -> bool:
 				break
 		return server_clock_ready
 	_clock_sync_pending = true
+	var sync_base: String = relay_base
+	var sync_ticket: int = _host_ticket + _join_ticket
 	var best_rtt: int = 1 << 30
 	var best_offset: int = 0
 	var got: bool = false
 	for i in maxi(samples, 1):
+		if relay_base == "" or relay_base != sync_base \
+				or sync_ticket != _host_ticket + _join_ticket:
+			break
 		var t0: int = Time.get_ticks_msec()
 		var data: Dictionary = await _relay_get("/api/ping?t=%d" % t0, 2.0)
-		if data.is_empty():
+		if data.is_empty() and relay_base == sync_base \
+				and sync_ticket == _host_ticket + _join_ticket:
 			data = await _relay_get("/api/time", 2.0)
 		var t1: int = Time.get_ticks_msec()
+		if relay_base == "" or relay_base != sync_base \
+				or sync_ticket != _host_ticket + _join_ticket:
+			break
 		if data.is_empty():
 			continue
 		var server_ms: int = int(data.get("s", data.get("time_ms", 0)))
 		if server_ms <= 0:
 			continue
 		var rtt: int = maxi(t1 - t0, 0)
-		var offset: int = server_ms - (t0 + t1) / 2
+		var offset: int = server_ms - ((t0 + t1) >> 1)
 		_note_relay_rtt(rtt)
 		if not got or rtt < best_rtt:
 			best_rtt = rtt
@@ -1610,7 +1679,8 @@ func sync_server_clock(samples: int = 5) -> bool:
 			got = true
 		await get_tree().process_frame
 	_clock_sync_pending = false
-	if not got:
+	if not got or relay_base == "" or relay_base != sync_base \
+			or sync_ticket != _host_ticket + _join_ticket:
 		return false
 	server_clock_offset_ms = best_offset
 	server_rtt_ms = best_rtt
@@ -2156,11 +2226,18 @@ func set_relay_server(raw: String) -> void:
 		if was_public:
 			relay_base = ""
 		return
-	var secure: bool = text.begins_with("https://")
-	var rest: String = text.trim_prefix("https://").trim_prefix("http://").trim_suffix("/")
+	var lower_text: String = text.to_lower()
+	var secure: bool = lower_text.begins_with("https://")
+	var rest: String = text
+	if secure:
+		rest = rest.substr(8)
+	elif lower_text.begins_with("http://"):
+		rest = rest.substr(7)
+	rest = rest.trim_suffix("/")
 	var authority: String = rest.get_slice("/", 0)
 	var host: String = authority
-	var http_port: int = 42777
+	var default_port: int = 443 if secure else 42777
+	var http_port: int = default_port
 	if authority.begins_with("["):
 		var close_idx: int = authority.find("]")
 		if close_idx <= 1:
@@ -2171,11 +2248,11 @@ func set_relay_server(raw: String) -> void:
 	elif authority.contains(":"):
 		var parts: PackedStringArray = authority.split(":")
 		host = parts[0]
-		http_port = int(parts[1]) if parts.size() > 1 else 42777
-	if host == "":
+		http_port = int(parts[1]) if parts.size() > 1 else default_port
+	if host == "" or http_port <= 0 or http_port > 65535:
 		return
 	relay_server_host = host
-	relay_server_http_port = http_port if http_port > 0 else 42777
+	relay_server_http_port = http_port
 	relay_server_url = ("https://" if secure else "http://") + relay_server_host \
 		+ ":" + str(relay_server_http_port)
 	relay_base = relay_server_url
@@ -2420,9 +2497,14 @@ func leave() -> void:
 	_tunnel_retry_attempt = 0
 	reset_race_state_stream()
 	last_error = ""
+	input_locked = false
 	player_names.clear()
 	player_colors.clear()
 	ping_table.clear()
+	_name_stamp.clear()
+	_ping_stamp.clear()
+	_color_stamp.clear()
+	_ping_request_stamp.clear()
 	race_standings.clear()
 	# A stale host build must not leak into the next session before its first
 	# config packet; player_cart.gd treats empty as "use the local save".
@@ -2455,7 +2537,8 @@ func configure_session(mode: String, bots: bool, count: int,
 		return
 	session_mode = mode
 	session_bots = bots
-	session_bot_count = count
+	session_bot_count = clampi(count, 0, MAX_BOT_COUNT)
+	session_bot_difficulty = clampi(GameSettings.minigame_difficulty, 0, 2)
 	# The map is sanitised before it leaves this machine. An empty override
 	# means "use the host's current pick", which is what older call sites do.
 	session_map_id = GameSettings.sanitize_map_id(
@@ -2472,7 +2555,7 @@ func configure_session(mode: String, bots: bool, count: int,
 	else:
 		session_event = _infer_session_event(mode)
 	session_scene = scene_for_event(session_event)
-	session_minigame = GameSettings.selected_minigame \
+	session_minigame = _sanitize_minigame_theme(session_event, GameSettings.selected_minigame) \
 		if session_event in MINIGAME_EVENTS else ""
 	# The racing build travels in the same reliable packet as the map id. It is
 	# sanitised before it leaves (the receiver sanitises again), and a peer
@@ -2550,7 +2633,7 @@ func _push_session_config() -> void:
 	rpc("_net_session_config", session_mode, session_bots, session_bot_count,
 		session_map_id, session_racing_car_id, session_racing_allocation,
 		session_event, session_scene, session_minigame, room_public,
-		_peer_teams.duplicate(), teams_locked)
+		_peer_teams.duplicate(), teams_locked, session_bot_difficulty)
 
 
 @rpc("authority", "call_local", "reliable")
@@ -2558,13 +2641,14 @@ func _net_session_config(mode: String, bots: bool, count: int,
 		map_id: String = "", racing_car_id: String = "",
 		racing_allocation: Dictionary = {}, event: String = "",
 		scene: String = "", theme_id: String = "", public_room: bool = false,
-		teams: Dictionary = {}, locked: bool = false) -> void:
+		teams: Dictionary = {}, locked: bool = false, difficulty: int = 1) -> void:
 	if mode != GameSettings.GAME_SANDBOX and mode != GameSettings.GAME_MINIGAMES:
 		return
 	count = clampi(count, 0, MAX_BOT_COUNT)
 	session_mode = mode
 	session_bots = bots
 	session_bot_count = count
+	session_bot_difficulty = clampi(difficulty, 0, 2)
 	# Only a real gameplay scene may become the room's scene. A peer cannot
 	# smuggle a path through the config RPC, and a mismatch between the
 	# event and the scene resolves to a safe sandbox/race scene.
@@ -2579,8 +2663,10 @@ func _net_session_config(mode: String, bots: bool, count: int,
 	# session map, so a peer cannot smuggle a scene path through the config RPC.
 	if map_id != "":
 		session_map_id = GameSettings.sanitize_map_id(map_id)
-	# The cargo arena theme is a registry theme id or nothing at all.
-	session_minigame = theme_id if TrackDefs.has_theme_id(theme_id) else ""
+	# The minigame arena theme is sanitised against the active event so a room
+	# can never hold another mode's arena id.
+	session_minigame = _sanitize_minigame_theme(session_event, theme_id) \
+		if session_event in MINIGAME_EVENTS else ""
 	room_public = public_room
 	# An absent racing field is the old-client default: keep the peer's local
 	# build rather than overwriting it with an empty one.
@@ -2662,8 +2748,9 @@ func start_game(scene_path: String = "", mode: String = "") -> void:
 	session_mode = chosen_mode
 	session_bots = GameSettings.bots_enabled
 	session_bot_count = GameSettings.effective_bot_count()
+	session_bot_difficulty = clampi(GameSettings.minigame_difficulty, 0, 2)
 	session_map_id = GameSettings.sanitize_map_id(GameSettings.selected_map)
-	session_minigame = GameSettings.selected_minigame \
+	session_minigame = _sanitize_minigame_theme(session_event, GameSettings.selected_minigame) \
 		if session_event in MINIGAME_EVENTS else ""
 	session_racing_car_id = sanitize_racing_car_id(
 		GameSettings.racing_vehicle_id())
@@ -2716,6 +2803,7 @@ func _net_begin_game(scene_path: String, mode: String, bots: bool, count: int,
 		# still be streaming; queueing it again would load the scene twice.
 		return
 	_scene_load_path = scene_path
+	input_locked = false
 	in_game = true
 	game_scene = scene_path
 	session_mode = mode
@@ -2781,6 +2869,7 @@ func _net_client_left_scene() -> void:
 
 @rpc("authority", "call_local", "reliable")
 func _net_return_lobby() -> void:
+	input_locked = false
 	in_game = false
 	SceneLoader.go_to(LOBBY_SCENE, "MULTIPLAYER")
 

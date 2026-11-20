@@ -22,6 +22,7 @@ const SceneryKit := preload("res://scripts/minigames/scenery/scenery_kit.gd")
 const PropBatch := preload("res://scripts/minigames/scenery/prop_batch.gd")
 const TileCatalog := preload("res://scripts/minigames/tiles/tile_catalog.gd")
 const UiPalette := preload("res://scripts/ui/ui_palette.gd")
+const AmbientWorld := preload("res://scripts/minigames/scenery/ambient_world.gd")
 
 const DEFAULT_ID: String = "ko_rooftop"
 const ARENA_IDS: PackedStringArray = ["ko_rooftop", "ko_foundry", "ko_iceberg"]
@@ -123,13 +124,33 @@ static func build_arena(host: Node3D, arena_id: String) -> Dictionary:
 			"safe_radius": 21.0,
 			"surface_zones": empty_zones,
 		}
+	var arena: Dictionary
 	match clean_id:
 		"ko_foundry":
-			return _build_foundry(host)
+			arena = _build_foundry(host)
 		"ko_iceberg":
-			return _build_iceberg(host)
+			arena = _build_iceberg(host)
 		_:
-			return _build_rooftop(host)
+			arena = _build_rooftop(host)
+	# AmbientWorld needs to know what the arena actually stands on: the rooftop
+	# pad floats over a city 64 m down, the foundry pad over a lava sea at -3.5 m
+	# and the iceberg over the arctic ocean at -3.0 m. Without this context the
+	# ring used to hang mid-air, overlap itself, or plant pines in the water.
+	var ambient: Dictionary = {
+		"style": "skyline",
+		"floor_y": -64.0,
+		"radius_in": 58.0,
+		"radius_out": 96.0,
+	}
+	match clean_id:
+		"ko_foundry":
+			ambient = {"style": "foundry", "floor_y": -3.5,
+				"radius_in": 52.0, "radius_out": 80.0}
+		"ko_iceberg":
+			ambient = {"style": "iceberg", "floor_y": -3.0,
+				"radius_in": 50.0, "radius_out": 78.0}
+	AmbientWorld.build_arena(host, clean_id, 36.0, ambient)
+	return arena
 
 
 static func is_point_safe(arena_data: Dictionary, point: Vector3,
@@ -185,11 +206,11 @@ static func _build_rooftop(host: Node3D) -> Dictionary:
 	var core_body: StaticBody3D = _solid_body(root, "HelipadCoreBody")
 	var core_batch := PropBatch.new()
 
-	var deck_slate := Color("3b4656")
-	var deck_mid := Color("495669")
-	var trim_steel := Color("28313d")
-	var tower_glass := Color("2c6294")
-	var tower_frame := Color("596778")
+	var deck_slate := Color("4d5a6e")
+	var deck_mid := Color("5b6a80")
+	var trim_steel := Color("384453")
+	var tower_glass := Color("3a7cb5")
+	var tower_frame := Color("6c7f94")
 	var yellow_mark := UiPalette.YELLOW
 	var white_mark := Color("f7fbff")
 	var red_accent := Color("e84848")
@@ -373,6 +394,9 @@ static func _build_rooftop_skyline(root: Node3D) -> void:
 				Vector3(tx, top_y + 4.5, tz)), 0.35, 7.8, 6, Color("d94848"))
 
 	# Fluffy cartoon cloud clusters drifting below the rooftop (-9 m .. -18 m).
+	# They live in their own unshaded batch: the sunset light turned the shared
+	# lit batch muddy brown, which read as floating islands instead of clouds.
+	var cloud_batch := PropBatch.new()
 	var cloud_white := Color("f2f9ff")
 	var cloud_shade := Color("d5eafa")
 	for c: int in 18:
@@ -380,12 +404,13 @@ static func _build_rooftop_skyline(root: Node3D) -> void:
 		var dist: float = 68.0 + float((c * 5) % 6) * 15.0
 		var cy: float = -10.5 - float(c % 4) * 2.4
 		var center := Vector3(cos(ang) * dist, cy, sin(ang) * dist)
-		horizon.add_cylinder(Transform3D(Basis.IDENTITY, center),
+		cloud_batch.add_cylinder(Transform3D(Basis.IDENTITY, center),
 			11.5, 2.8, 10, cloud_white)
-		horizon.add_cylinder(Transform3D(Basis.IDENTITY,
+		cloud_batch.add_cylinder(Transform3D(Basis.IDENTITY,
 			center + Vector3(6.5, 0.8, -3.0)), 8.2, 2.6, 9, cloud_white)
-		horizon.add_cylinder(Transform3D(Basis.IDENTITY,
+		cloud_batch.add_cylinder(Transform3D(Basis.IDENTITY,
 			center + Vector3(-6.0, -0.5, 3.5)), 8.8, 2.2, 9, cloud_shade)
+	_emit_batch_mesh(root, cloud_batch, "CloudDeck", false, true)
 
 	# Deep city floor haze plate far below (-66 m) so looking straight down reads cleanly.
 	var abyss := MeshInstance3D.new()
@@ -413,10 +438,10 @@ static func _build_foundry(host: Node3D) -> Dictionary:
 	var core_body: StaticBody3D = _solid_body(root, "FoundryCoreBody")
 	var core_batch := PropBatch.new()
 
-	var steel_dark := Color("363338")
-	var steel_deck := Color("4a454d")
-	var iron_rib := Color("262228")
-	var slag_trim := Color("6e3a24")
+	var steel_dark := Color("46424a")
+	var steel_deck := Color("5d5761")
+	var iron_rib := Color("353039")
+	var slag_trim := Color("81503a")
 	var hazard_amber := Color("ff9e2c")
 	var magma_bright := Color("ff5e1a")
 	var magma_gold := Color("ffbe2e")
@@ -430,7 +455,7 @@ static func _build_foundry(host: Node3D) -> Dictionary:
 	lava.position = Vector3(0.0, -3.5, 0.0)
 	var lava_mat := StandardMaterial3D.new()
 	lava_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	lava_mat.albedo_color = Color("eb4c14")
+	lava_mat.albedo_color = Color("d8491b")
 	lava.material_override = lava_mat
 	lava.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	root.add_child(lava)

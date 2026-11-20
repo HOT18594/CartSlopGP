@@ -559,8 +559,8 @@ class PropAudit extends Node:
 ## and the inside of a corner is mitred between the two neighbouring walls
 ## instead of being offset onto the racing surface. Each piece is a real wall
 ## section with its own oriented AABB collider on WORLD, laid along the path
-## chord, so the wall is continuous and never chords across a corner. Distances
-## snap to a quarter tile.
+## chord. Flat straights have regular scenic gaps; corners and elevated sections
+## retain continuous protection. Distances snap to a quarter tile.
 static func barrier_line(parent: Node3D, spline: RefCounted, from_dist: float,
 		to_dist: float, side: float, kind: String = "barrierRed") -> int:
 	if parent == null or spline == null:
@@ -612,6 +612,8 @@ static func barrier_line(parent: Node3D, spline: RefCounted, from_dist: float,
 		for piece in count:
 			var s0: float = segment_from + step_length * float(piece)
 			var s1: float = s0 + step_length
+			if piece % 3 == 2 and _is_flat_straight(path, s0, s1):
+				continue
 			var p0: Vector3 = _path_point(path, s0)
 			var p1: Vector3 = _path_point(path, s1)
 			var chord: Vector3 = p1 - p0
@@ -642,6 +644,19 @@ static func barrier_line(parent: Node3D, spline: RefCounted, from_dist: float,
 	_batch_model(body, model, transforms, "BarrierRun", true)
 	_assert_run_clearance(closest, start, span, direction)
 	return transforms.size()
+
+
+static func _is_flat_straight(path: Dictionary, from_position: float,
+		to_position: float) -> bool:
+	var p0: Vector3 = _path_point(path, from_position)
+	var p1: Vector3 = _path_point(path, to_position)
+	var before: Vector3 = p0 - _path_point(path, from_position - 2.0)
+	var after: Vector3 = _path_point(path, to_position + 2.0) - p1
+	before.y = 0.0
+	after.y = 0.0
+	return before.length_squared() > 0.01 and after.length_squared() > 0.01 \
+		and before.normalized().dot(after.normalized()) > 0.998 \
+		and absf(p1.y - p0.y) < 0.08
 
 
 ## Splits a path run at its sharp corners: [from, corner…, from + length].

@@ -1,206 +1,189 @@
+<div align="center">
+
+<img src="assets/ui/art/bg_parking.png" alt="Cart Slop GP — Arcade Racing & Party Kart Brawler" width="100%" />
+
 # Cart Slop GP
 
-An arcade racing & party kart brawler about shopping carts and street rides.
-Pick a cart (or a sedan, a sports car, a van, a box truck, a police cruiser...),
-hop-drift through five vertical racing circuits, or battle friends in three
-multiplayer party modes. Made with **Godot 4**.
+**High-energy comic-arcade kart racing & 8-player party mayhem built with Godot 4.**
+Hop-drift shopping carts and street rides across **5 vertical circuits**, brawl across **9 party arenas** in **Knockout**, **Blast Tag**, and **Deliver**, or tear up the **Stunt Park** — solo vs AI, on Wi-Fi LAN, or online with a 5-letter room code.
 
-![Stadium Circuit](assets/ui/art/preview_stadium.png)
+[![Latest Release](https://img.shields.io/github/v/release/HOT18594/CartSlopGP?label=Download&color=ffb800&style=for-the-badge)](https://github.com/HOT18594/CartSlopGP/releases/latest)
+[![Engine](https://img.shields.io/badge/Godot-4.7.2-478cbf?style=for-the-badge&logo=godotengine&logoColor=white)](https://godotengine.org/)
+[![Platforms](https://img.shields.io/badge/Platforms-Windows%20%7C%20macOS%20%7C%20Linux%20%7C%20Web-2dcb70?style=for-the-badge)](https://github.com/HOT18594/CartSlopGP/releases/latest)
+[![License](https://img.shields.io/badge/License-MIT-ff4f8b?style=for-the-badge)](LICENSE)
 
-## What's in the game
+[**Download latest release**](https://github.com/HOT18594/CartSlopGP/releases/latest) · [**Circuits**](#5-high-verticality-racing-circuits) · [**Party Modes**](#3-party-modes--9-unique-3d-arenas) · [**Controls**](#controls) · [**Multiplayer**](#multiplayer-online--lan) · [**Build from Source**](#build-from-source)
 
-- **7 vehicles**, all paintable and tuneable in the Racing Garage, each with its
-  own mass, top speed, 4-gear engine audio, smoke, rear-wheel drift sparks and
-  tyre marks: shopping cart, sedan, sports car, taxi, van, box truck and police
-  cruiser.
-- **5 high-verticality race circuits** (`857–1,050 m` laps, `7.5–13.5 m` climbs,
-  bridges, viaducts, and holographic Speed-Up Aurora boost zones):
-  **Stadium Circuit**, **Redwood Valley**, **Sunset Canyon**, **Dockyard Quay**,
-  and **Glacier Pass**.
-- **3 party minigames (2–8 players online/LAN + Solo vs AI)** with **3 unique 3D
-  maps each** (9 party arenas total):
-  - **Deliver (Cargo Rush)**: 2-team crate heist across *Harbour Overpass*,
-    *Windmill Hills*, and *Glacier Bowl*.
-  - **Knockout (Bumper Royale)**: Smash-style Knockback % (`0%–250%`),
-    Power-Slam Surge, and collapsing stages across *Skytop Helipad*, *Molten
-    Foundry*, and *Fractured Iceberg*.
-  - **Blast Tag (Hot-Potato Chase)**: Ticking Mega-Bomb with Carrier Panic
-    Overdrive, Ram-Pass immunity shields, Runner Juke Surges, and detonation
-    shockwaves across *Terrace Plaza*, *Canyon Labyrinth*, and *Twin Ferries*.
-- **Sandbox Stunt Park**: an expanded `144 x 144 m` free-roam park with a
-  Handling Loop, twin stunt kickers, a banked `16°` Drift Bowl, mesa climbs,
-  Speed-Up Aurora pads, cones, and crate pyramids.
-- **Arcade hop-drift & 3-tier mini-turbo**: tap handbrake to hop into a
-  committed drift and charge **SPARK**, **BLAZE**, and **ULTRA!** boosts.
-- **Multiplayer for up to 8 players** (plus bots): host on your local network or
-  create a 5-letter room code through the online relay. The host picks any of
-  the 5 modes and 15 maps right from the room lobby.
-- **Settings** for audio, fullscreen, quality, HUD size, camera shake, stick
-  deadzone, boost/drift toggles, reduced motion and frame rate. Gamepad and
-  keyboard both work.
-- **One-click updates** on Windows, macOS and Linux.
+</div>
 
-## Download and play
+---
 
-Get the latest build from the
-[**Releases page**](https://github.com/HOT18594/CartSlopGP/releases/latest).
+## Highlights in v0.8.0
 
-| Platform | File | Run |
-| --- | --- | --- |
-| Windows | `CartSlopGP_v<version>_windows.zip` | Unzip and run `CartSlopGP.exe`. One file — the game data is inside it. SmartScreen may warn because the build is unsigned: **More info > Run anyway**. |
-| macOS | `CartSlopGP_v<version>_macos.zip` | Unzip, then open `Cart Slop GP.app`. If Gatekeeper blocks it, right-click the app and choose **Open**. |
-| Linux | `CartSlopGP_v<version>_linux.zip` | Unzip and run `./CartSlopGP.x86_64`. One self-contained file; the executable bit is set. |
-| Browser | `CartSlopGP_v<version>_web.zip` | Serve the folder over HTTP — a `file://` URL cannot load the data pack. Single player only: Godot's web export has no UDP, so there is no online play in the browser. |
+- **Full Racing Roster & Retuned Handling** — Race any of the 11 vehicles (7 road vehicles plus 4 race-kit cars) with stronger high-speed grip, predictable heavy-vehicle steering, better ramp launches and improved air control. Every vehicle keeps its factory livery.
+- **Dense, Animated Circuits** — Five watertight `857–1,050 m` circuits now include themed perimeter detail, weather, animated landmarks and scenic guardrail openings.
+- **3 Party Modes × 3 Unique 3D Arenas Each** — **Knockout**, **Blast Tag**, and the slower-paced **Deliver**, with host-controlled Easy/Normal/Hard bots and genuine zero-bot sessions.
+- **Cleaner Modern HUDs & Multiplayer** — Simpler typography, flatter parallelogram plates, less clutter, clearer room controls and 18 freshly rendered scene previews.
+- **Verified One-Click Updates** — SHA-256 validation, safe archive handling and installer staging are covered by a 133-check updater smoke suite on Windows, macOS and Linux.
 
-There is no installer and no account. Settings and downloaded updates live in
-Godot's user data folder:
+---
 
-- Windows: `%APPDATA%/Godot/app_userdata/Cart Slop GP/`
-- macOS: `~/Library/Application Support/Godot/app_userdata/Cart Slop GP/`
-- Linux: `~/.local/share/godot/app_userdata/Cart Slop GP/`
+## 5 High-Verticality Racing Circuits
 
-The macOS build is ad-hoc signed, not notarized. If macOS says the app is
-damaged, run `xattr -dr com.apple.quarantine "/path/to/Cart Slop GP.app"` once
-or right-click **Open**. Do not disable Gatekeeper system-wide.
+Every circuit is a watertight closed 3D loop built from modular geometry with bridges, elevation climbs, surface grip zones, and AI racing lines.
+
+| **Stadium Circuit** (`857 m` · `9.0 m` climb) | **Redwood Valley** (`890 m` · `9.0 m` climb) |
+| :---: | :---: |
+| ![Stadium Circuit](assets/ui/art/preview_stadium.png) | ![Redwood Valley](assets/ui/art/preview_meadow.png) |
+| Grandstand bowl, viaduct crossover, and fast S-bends. | Twin ridge climbs, timber bridges, and forest sweepers. |
+
+| **Sunset Canyon** (`987 m` · `12.0 m` climb) | **Dockyard Quay** (`889 m` · `7.5 m` climb) | **Glacier Pass** (`1,050 m` · `13.5 m` climb) |
+| :---: | :---: | :---: |
+| ![Sunset Canyon](assets/ui/art/preview_canyon.png) | ![Dockyard Quay](assets/ui/art/preview_dockyard.png) | ![Glacier Pass](assets/ui/art/preview_glacier.png) |
+| Terraced red-rock mesas, sandstone arches, and a palm oasis. | Raised container wharf, crane gantries, and slick wet lanes. | High alpine switchbacks, low-grip ice sectors, and a summit drop. |
+
+---
+
+## 3 Party Modes · 9 Unique 3D Arenas
+
+<p align="center">
+  <img src="assets/ui/art/bg_arena.png" alt="Cart Slop GP Party Modes — Knockout, Blast Tag & Deliver" width="92%" />
+</p>
+
+### 1. Knockout — Bumper Royale
+Hits build Smash-style **Knockback % (`0%–250%`)** — the higher your percentage, the further each impact launches you! Trigger **Power-Slam Surge** (`E` / `F` / Right Mouse / Gamepad `B`) for shockwave knockbacks while outer stage sectors flash red and drop into the abyss.
+
+| **Skytop Helipad** | **Molten Foundry** | **Fractured Iceberg** |
+| :---: | :---: | :---: |
+| ![Skytop Helipad](assets/ui/art/preview_ko_rooftop.png) | ![Molten Foundry](assets/ui/art/preview_ko_foundry.png) | ![Fractured Iceberg](assets/ui/art/preview_ko_iceberg.png) |
+| Octagonal skyscraper helipad with 8 collapsing outer deck plates. | Crucible platform over molten lava with catwalks and collapsing grates. | Low-grip arctic floe surrounded by calving outer ice shelves. |
+
+### 2. Blast Tag — Hot-Potato Chase
+One cart spawns carrying a ticking **Mega-Bomb** overhead (`+18%` **Carrier Panic Overdrive** speed). Ram any rival to pass the bomb and earn a `1.8 s` **Cyan Immunity Shield**; runners fire **Juke Surge** smoke dodges to break ankles before `0.0 s` triggers a massive detonation shockwave!
+
+| **Terrace Plaza** | **Canyon Labyrinth** | **Twin Ferries** |
+| :---: | :---: | :---: |
+| ![Terrace Plaza](assets/ui/art/preview_bt_plaza.png) | ![Canyon Labyrinth](assets/ui/art/preview_bt_labyrinth.png) | ![Twin Ferries](assets/ui/art/preview_bt_ferries.png) |
+| Multi-tier urban plaza with central jump crown and corner ramps. | Sandstone ruins with sightline blockers and raised bridge cutoffs. | Two cargo decks separated by open water and 3 narrow jump gangways. |
+
+### 3. Deliver — 2-Team Cargo Rush
+Blue vs Red crate heist! Snatch golden supply crates (`0.45 s` quick-load) from contested high ground and race them back to your team's drop zone before the `120 s` horn sounds.
+
+| **Harbour Overpass** | **Windmill Hills** | **Glacier Bowl** |
+| :---: | :---: | :---: |
+| ![Harbour Overpass](assets/ui/art/preview_harbour.png) | ![Windmill Hills](assets/ui/art/preview_farmyard.png) | ![Glacier Bowl](assets/ui/art/preview_snowfield.png) |
+| `+2.2 m` central steel bridge spanning twin harbour water channels. | `+2.0 m` windmill plateau flanked by mud trenches and plank bridges. | Sunken slick-ice crater ringed by snow-berm jump kickers. |
+
+### Sandbox — SlopMart Stunt Park
+| **`144 × 144 m` Open Stunt Park** | **What's Inside** |
+| :---: | :--- |
+| ![Sandbox Stunt Park](assets/ui/art/preview_sandbox.png) | Free-roam playground featuring a paved **Handling Loop**, twin stunt kickers, a banked `16°` **Drift Bowl**, raised mesa overlooks, **Speed-Up Aurora** boost strips, traffic cones, and smashable crate pyramids. Swap between any of the 7 vehicles on the fly. |
+
+---
+
+## Download and Play
+
+Grab the latest self-contained release from the [**Releases page**](https://github.com/HOT18594/CartSlopGP/releases/latest) — no installer and no account required.
+
+| Platform | Package | How to Run |
+| :--- | :--- | :--- |
+| **Windows** (x64) | `CartSlopGP_v0.8.0_windows.zip` | Extract and run `CartSlopGP.exe` (single self-contained executable with embedded data pack). If SmartScreen warns on unsigned builds: **More info → Run anyway**. |
+| **macOS** (Universal) | `CartSlopGP_v0.8.0_macos.zip` | Extract and open `Cart Slop GP.app`. If Gatekeeper blocks the ad-hoc build, right-click **Open** or run `xattr -dr com.apple.quarantine "/path/to/Cart Slop GP.app"`. |
+| **Linux** (x86_64) | `CartSlopGP_v0.8.0_linux.zip` | Extract and run `./CartSlopGP.x86_64` (`0755` executable bit preserved in zip; data pack embedded). |
+| **Web** (HTML5) | `CartSlopGP_v0.8.0_web.zip` | Serve over HTTP (e.g. `python3 -m http.server 8000`) and open in a modern browser. Solo modes only (browsers lack raw UDP sockets). |
+
+### Automatic Updates & Save Data
+Desktop builds check for new releases automatically (or via **SETTINGS → CHECK FOR UPDATES**), verify the download's **SHA-256** digest, swap the binary in place, and relaunch with one click. Local settings and lap records are stored in:
+- **Windows:** `%APPDATA%/Godot/app_userdata/Cart Slop GP/`
+- **macOS:** `~/Library/Application Support/Godot/app_userdata/Cart Slop GP/`
+- **Linux:** `~/.local/share/godot/app_userdata/Cart Slop GP/`
+
+---
 
 ## Controls
 
-| Action | Keyboard | Gamepad |
-| --- | --- | --- |
-| Accelerate | W / Up | Right trigger |
-| Brake / reverse | S / Down | Left trigger |
-| Steer | A / D or Left / Right | Left stick |
-| Handbrake / drift | Space or `,` | A |
-| Boost | Shift, Left Mouse or `.` | X |
-| Action / Surge (Pickup, Power-Slam, Juke) | E / F or Right Mouse | B |
-| Horn | H | Right shoulder |
-| Reset cart | R or `/` | Y |
-| Player list (hold) | Tab | - |
-| Pause / menu | Esc | Start |
+Keyboard (WASD, one-hand Arrow cluster, or Mouse) and Gamepad work seamlessly across every mode and menu.
 
-The arrow keys plus `,` `.` `/` make a complete one-hand driving layout. Menus
-are mouse, touch or gamepad; there is no keyboard cursor. H is a short,
-rate-limited honk that everyone in the room hears.
+| Action | Keyboard / Mouse | Gamepad |
+| :--- | :--- | :--- |
+| **Accelerate** | `W` / `Up` | Right Trigger (`R2` / `RT`) |
+| **Brake / Reverse** | `S` / `Down` | Left Trigger (`L2` / `LT`) |
+| **Steer** | `A` / `D` or `Left` / `Right` | Left Stick |
+| **Hop + Drift** | `Space` or `,` (hold to charge `SPARK` → `BLAZE` → `ULTRA!`) | `A` / Cross |
+| **Boost** | `Shift`, `Left Mouse`, or `.` | `X` / Square |
+| **Action / Surge** *(Crate Load · Power-Slam · Juke)* | `E`, `F`, or `Right Mouse` | `B` / Circle |
+| **Horn** | `H` | Right Bumper (`R1` / `RB`) |
+| **Reset Cart** | `R` or `/` | `Y` / Triangle |
+| **Scoreboard / Ping** *(hold)* | `Tab` | Select / View |
+| **Pause / Menu** | `Esc` | Start / Menu |
 
-In single player, Esc pauses the world. In multiplayer, Esc opens the menu but
-the race keeps running. Hold Tab to see player names, tag colours and ping.
+---
 
-## Single player
+## Vehicles
 
-**PLAY** offers **SINGLE** and **MULTIPLAYER**.
+All **7 road vehicles** (plus the 4 race-kit cars on circuits) keep their factory livery. Racing Garage builds spend **12 upgrade points** across speed, acceleration, handling and weight before races:
 
-**SINGLE > SANDBOX** drops you into the arena with the vehicle of your choice.
-The picker compares all seven vehicles with bars instead of raw numbers, and
-remembers your last pick.
+| Vehicle | Mass | Base Top Speed | Driving Character |
+| :--- | :---: | :---: | :--- |
+| **Shopping Cart** | `45 kg` | `19 m/s` | Featherweight wire frame, instant launch, caster rattle, razor-sharp hop-drifts |
+| **Sedan** | `1.35 t` | `23 m/s` | Predictable, balanced all-rounder |
+| **Sports Car** | `1.15 t` | `27 m/s` | Highest top speed, planted grip, screaming 4-gear note |
+| **Taxi** | `1.45 t` | `22 m/s` | Nimble city cab with lively rear rotation |
+| **Van** | `2.05 t` | `20 m/s` | Heavy momentum carrier with wide skid tracks |
+| **Box Truck** | `3.20 t` | `18 m/s` | Juggernaut mass — shrugs off bumps and sends lighter carts flying |
+| **Police Cruiser** | `1.55 t` | `25 m/s` | Fast pursuit V8 with strong mid-range pull |
 
-| Vehicle | Weight | Top speed | Character |
-| --- | --- | --- | --- |
-| Shopping cart | 45 kg | 19 m/s | no engine, quick, rattles, thin skids |
-| Sedan | 1.35 t | 23 m/s | balanced all-rounder |
-| Sports car | 1.15 t | 27 m/s | fastest, best grip, loudest skids |
-| Taxi | 1.45 t | 22 m/s | rattly and slightly sluggish |
-| Van | 2.05 t | 20 m/s | heavy, more smoke, wider marks |
-| Box truck | 3.2 t | 18 m/s | slow to spin up, plows through props |
-| Police cruiser | 1.55 t | 25 m/s | quick V8 cruiser |
+---
 
-Mass matters: heavier vehicles accelerate slower, lose less speed on impact and
-push props further.
+## Multiplayer (Online & LAN)
 
-**SINGLE > RACING** picks a circuit and drops you into a three-lap race. Pick a
-vehicle, choose how many bots (0-5), and press **RACE**. The start gantry has
-five lamps: they light 1, 3 and 5 on the countdown, then all five go green on
-GO. The four circuits are Stadium Circuit (banked straights and a crossing),
-Dockyard (a raised wharf and a wet container lane), Glacier Pass (ice and a big
-crest jump) and Meadow Loop (the original forest lap).
+Open **PLAY → MULTIPLAYER**, customize your driver name and tag colour, and connect **up to 8 players** (plus optional AI bots):
 
-## Multiplayer
+1. **Online Room (5-Letter Code)** — Press **CREATE ONLINE ROOM** to open an outbound relay tunnel (zero port forwarding required) and share your 5-letter room code (e.g. `SLOPZ`), or toggle the room public so friends can join from **BROWSE ROOMS**.
+2. **Same Wi-Fi / LAN** — Press **CREATE LAN ROOM** for zero-internet local play; friends on the same network discover the room automatically under **BROWSE ROOMS**.
+3. **Full Mode & Arena Picker** — Inside the 2-column room lobby, the host can switch freely between **Racing**, **Knockout**, **Blast Tag**, **Deliver**, and **Sandbox**, preview all **15 maps** with live screenshots, configure bot count or team assignments, and launch straight into the match.
 
-**PLAY > MULTIPLAYER** opens the lobby. Set a name (up to 16 characters) and a
-tag colour, then choose how to play.
+---
 
-### Same network
+## Build from Source
 
-1. The host presses **HOST LAN ROOM**.
-2. Everyone else presses **FIND LAN ROOMS** and picks the room from the list.
-   No code, IP address or port is needed.
-3. On the host, set the **ROOM** pill to PUBLIC so it appears in the list;
-   private rooms stay hidden.
-
-### Room code
-
-1. The host presses **CREATE ONLINE ROOM**. When a relay is reachable, the
-   game returns a 5-letter code such as `ABCDE`.
-2. Friends press **BROWSE ONLINE ROOMS** to pick a public room, or type the
-   code into **5-LETTER CODE** and press **JOIN**.
-3. The host connects out to the relay, so no port forwarding is needed on the
-   host machine.
-
-Online rooms use the Cart Slop relay. LAN rooms always work without a relay, so
-a room of friends on the same Wi-Fi never depends on the internet.
-
-When the relay runs server 1.6.0 or newer, it owns the race clock, the official
-lap and finish times and the bot field for online races. With an older relay
-the game falls back to a host-run race, so both versions still work.
-
-### In the room
-
-- The host picks **SANDBOX**, **RACING** or **DELIVER**, the map, the vehicle
-  and the number of bots, then presses **START**.
-- In a race everyone drives the host's car; name tags tell players apart.
-  Sandbox keeps each player's own vehicle.
-- **COPY CODE** copies the room code. **LEAVE ROOM** returns to the lobby.
-- Joining a race that has already started is refused.
-- If the room does not load for everyone, the versions differ. The update check
-  runs when the menu opens; everyone in a room must be on the same release.
-
-## Settings and updates
-
-**SETTINGS** covers master, music and SFX volume, fullscreen, quality, HUD
-size, camera shake, stick deadzone, boost/drift assists, reduced motion, FPS
-and resetting to defaults. Everything saves locally.
-
-**CHANGELOG** shows the short player-facing notes for each release.
-
-The game checks GitHub Releases for updates when the menu opens, and
-**SETTINGS > CHECK FOR UPDATES** forces a check. The dialog shows the version,
-size and notes; **DOWNLOAD UPDATE** then **RESTART & UPDATE** swaps the files
-and reopens the game. Nothing is unzipped or copied by hand. If the install
-folder is read-only, the dialog offers the release page instead.
-
-## Build from source
-
-You need [Godot 4.7.2](https://godotengine.org/download/) (standard build, not
-.NET) with export templates for the platforms you want.
-
-1. `git clone https://github.com/HOT18594/CartSlopGP.git`
-2. In Godot choose **Import**, select `project.godot`, then **Import & Edit**.
-3. Press **F5** to run, or use **Project > Export** with the included presets.
-
-Headless boot check:
+Requires [**Godot Engine 4.7.2**](https://godotengine.org/download/) (standard GDScript build) with 4.7.2 export templates installed.
 
 ```bash
+git clone https://github.com/HOT18594/CartSlopGP.git
+cd CartSlopGP
+
+# Headless boot check
 godot --headless --path . --quit
+
+# Open in the Godot editor (or press F5 to play)
+godot --editor --path .
 ```
 
-Project layout:
+### Repository Structure
 
+```text
+scenes/
+  ui/          Centered comic-arcade menus, Garage, 2-column lobby & HUD
+  minigames/   Racing circuits, Knockout, Blast Tag & Deliver scenes
+  player/      Kart controller, chase camera & boost feedback rigs
+  track/       Holographic Speed-Up Aurora boost pad prefab
+scripts/
+  minigames/   Spline/grid circuit builder, 5 track themes & 3 party modes
+  vehicles/    7-vehicle catalog, procedural 4-gear audio & toon visuals
+  ui/          Slop-Slash custom-drawn HUD gauges, parallelogram bars & cards
+  net/         ENet LAN + UDP relay tunnel client & authoritative clock sync
+  systems/     Settings, scene loader & SHA-256 verified self-updater
+assets/        CC0/open models, PBR surfaces, shaders, audio, fonts & 18 map renders
 ```
-scenes/    menus, sandbox, the four circuits, player and HUD
-scripts/   gameplay, vehicles, UI, networking and systems
-assets/    models, textures, audio, fonts and UI art
-```
 
-## Credits and license
+---
 
-- **Engine:** Godot Engine 4.7.2 (MIT).
-- **Models:** Kenney Car Kit and Nature Kit (CC0), Poly Pizza go-kart and
-  shopping-cart models, Poly Haven CC0 textures and plants.
-- **Audio:** Kenney Impact, Digital Audio and Interface packs (CC0), CC0
-  engine loops and horn from OpenGameArt, plus synthesized engine, skid and UI
-  sounds.
-- **Fonts:** Fredoka (SIL OFL 1.1) and Luckiest Guy (Apache 2.0).
-- **UI:** Kenney Cursor Pack (CC0).
+## Credits & License
 
-The full attribution list is in [CREDITS.md](CREDITS.md). The game's source code
-is released under the [MIT License](LICENSE); third-party assets keep their own
-licenses as listed in CREDITS.md.
+- **Engine:** [Godot Engine 4.7.2](https://godotengine.org/) (MIT)
+- **3D Kits & Surfaces:** Kenney *Car Kit*, *Racing Kit*, and *Nature Kit* (CC0), Poly Pizza go-kart & shopping-cart models, and Poly Haven PBR textures & foliage (CC0)
+- **Audio:** Kenney *Impact*, *Digital Audio*, and *Interface* packs (CC0), OpenGameArt CC0 engine/horn samples, and procedural synth layers
+- **Typography & UI:** *Luckiest Guy* (Apache 2.0), *Fredoka* (SIL OFL 1.1), and Kenney *Cursor Pack* (CC0)
+
+Full asset attributions are listed in [CREDITS.md](CREDITS.md). Source code is licensed under the [MIT License](LICENSE); third-party assets retain their respective licenses as documented in [CREDITS.md](CREDITS.md).

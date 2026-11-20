@@ -15,7 +15,6 @@ signal closed
 var _install_ready: bool = false
 var _busy: bool = false
 var _secondary_opens_page: bool = false
-var _auto_started_version: String = ""
 var _heal_timer: float = 0.0
 
 
@@ -63,13 +62,13 @@ func _desktop_updates() -> bool:
 func open() -> void:
 	_busy = false
 	_secondary_opens_page = false
-	_version_label.text = "v%s  ->  v%s" % [UpdateChecker.local_version(), UpdateChecker.latest_version]
+	_version_label.text = "v%s  →  v%s" % [UpdateChecker.local_version(), UpdateChecker.latest_version]
 	_progress_bar.value = 0.0
 	_progress_bar.visible = false
 	_progress_label.visible = false
 	if UpdateChecker.is_downloading():
 		_busy = true
-		_notes_label.text = "The update is still downloading in the background."
+		_notes_label.text = "Downloading update..."
 		_primary_button.text = "DOWNLOADING..."
 		_primary_button.disabled = true
 		_secondary_button.text = "HIDE"
@@ -91,16 +90,13 @@ func open() -> void:
 		var size_text: String = ""
 		if UpdateChecker.latest_asset_size > 0:
 			size_text = " (%.0f MB)" % (float(UpdateChecker.latest_asset_size) / 1048576.0)
-		_notes_label.text = "Download the update%s, then press RESTART. No unzipping needed." % size_text
+		_notes_label.text = "Ready to download%s and install automatically." % size_text
 		_primary_button.text = "DOWNLOAD UPDATE"
 		_primary_button.disabled = false
 		_secondary_button.text = "LATER"
 	else:
-		if _desktop_updates():
-			_notes_label.text = "No build for this platform was found in the release. Open the release page to download it manually."
-		else:
-			_notes_label.text = "Browsers update themselves - open the release page to get the new build."
-		_primary_button.text = "OPEN DOWNLOAD PAGE"
+		_notes_label.text = "Open the release page to get the latest build."
+		_primary_button.text = "RELEASE PAGE"
 		_primary_button.disabled = false
 		_secondary_button.text = "LATER"
 	_fit_buttons()
@@ -118,7 +114,7 @@ func _show_install_state() -> void:
 	_install_ready = true
 	_busy = false
 	_secondary_opens_page = true
-	_notes_label.text = "Update downloaded. Press RESTART & UPDATE; the game will close, install it and reopen itself."
+	_notes_label.text = "Ready to install — restarts automatically."
 	_primary_button.text = "RESTART & UPDATE"
 	_primary_button.disabled = false
 	_secondary_button.text = "RELEASE NOTES"
@@ -126,7 +122,7 @@ func _show_install_state() -> void:
 	_progress_bar.visible = true
 	_progress_bar.value = 100.0
 	_progress_label.visible = true
-	_progress_label.text = "100% - ready to install"
+	_progress_label.text = "100% — ready to install"
 
 
 func _on_primary() -> void:

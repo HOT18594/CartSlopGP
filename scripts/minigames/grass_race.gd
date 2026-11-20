@@ -1983,7 +1983,7 @@ func _build_rivals() -> void:
 	var vehicle_id: String = GameSettings.minigame_vehicle
 	if VehicleCatalog.find(vehicle_id).is_empty():
 		vehicle_id = VehicleCatalog.DEFAULT_ID
-	var difficulty: int = clampi(GameSettings.minigame_difficulty, 0, 2)
+	var difficulty: int = Network.bot_difficulty()
 	var skill_lo: Array[float] = [0.62, 0.72, 0.86]
 	var skill_hi: Array[float] = [0.82, 1.00, 1.12]
 	var boost_lo: Array[float] = [0.15, 0.40, 0.65]
@@ -2339,8 +2339,8 @@ func _build_overlay() -> void:
 	# Finish-line artwork behind the card, matching the menu art set. The plain
 	# scrim on top keeps the card readable and still lets the art show through.
 	var art: Control = ART_BACKDROP.new()
-	art.set("texture_names", PackedStringArray(["scene_finish.png"]))
-	art.set("dim", 0.10)
+	art.set("texture_names", PackedStringArray(["preview_" + _preset_id + ".png", "bg_parking.png"]))
+	art.set("dim", 0.14)
 	_result_root.add_child(art)
 
 	var dim := ColorRect.new()

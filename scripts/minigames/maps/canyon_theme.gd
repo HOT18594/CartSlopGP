@@ -6,6 +6,7 @@ extends RefCounted
 
 const TileKit := preload("res://scripts/minigames/tile_kit.gd")
 const CanyonScenery := preload("res://scripts/minigames/maps/canyon/canyon_scenery.gd")
+const AmbientWorld := preload("res://scripts/minigames/scenery/ambient_world.gd")
 
 const THEME_ID: String = "canyon"
 const HOLDER_NAME: String = "CanyonDressing"
@@ -33,6 +34,7 @@ static func build(race: Node3D, spline) -> void:
 	holder.name = HOLDER_NAME
 	race.add_child(holder)
 	var stats: Dictionary = CanyonScenery.build(holder, track)
+	AmbientWorld.build_track(holder, track, THEME_ID)
 	race.set_meta(META_STATS, stats)
 	print("SUNSET CANYON: %d objects, %d draw nodes, %d barriers, %d mesas, %d arches, %d cliffs, %d palms, %d cacti" % [
 		int(stats.get("objects", 0)), int(stats.get("draws", 0)),

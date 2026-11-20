@@ -1,8 +1,9 @@
 extends Control
 const UiAnim := preload("res://scripts/ui/ui_anim.gd")
 ## Garage vehicle picker: 3D turntable flanked by < / > arrows, Q/E + PageUp/
-## PageDown + LB/RB cycling, 5 crisp arcade stat bars for Sandbox/Deliver, and
-## live stat-point allocation + paint swatches for Racing.
+## PageDown + LB/RB cycling, and a strictly symmetric 3-column stat bar grid
+## (118 px label | 256 px Parallelogram StatBar | 118 px rating / steppers) so
+## the stat bars sit pixel-for-pixel dead-center under the kart turntable.
 
 const StatBar := preload("res://scripts/ui/stat_bar.gd")
 const Catalog := preload("res://scripts/vehicles/vehicle_catalog.gd")
@@ -12,6 +13,11 @@ const UiPalette := preload("res://scripts/ui/ui_palette.gd")
 const DRIVE_SCENE: String = "res://scenes/sandbox/sandbox.tscn"
 const BACK_SCENE: String = "res://scenes/ui/play_menu.tscn"
 
+const SIDE_COL_WIDTH: float = 118.0
+const STAT_BAR_WIDTH: float = 256.0
+const STAT_BAR_HEIGHT: float = 22.0
+const STAT_ROW_GAP: int = 12
+
 static var _racing_intent: int = -1
 
 
@@ -20,29 +26,18 @@ static func set_racing_intent(enabled: bool) -> void:
 
 
 var STATS: Array[Dictionary] = [
-	{"key": "top_speed", "label": "TOP SPEED", "color": UiPalette.YELLOW},
+	{"key": "top_speed", "label": "SPEED", "color": UiPalette.YELLOW},
 	{"key": "accel", "label": "ACCEL", "color": UiPalette.RED},
 	{"key": "steering", "label": "HANDLING", "color": UiPalette.CYAN},
-	{"key": "grip", "label": "DRIFT GRIP", "color": UiPalette.GRASS},
+	{"key": "grip", "label": "DRIFT", "color": UiPalette.GRASS},
 	{"key": "weight", "label": "WEIGHT", "color": UiPalette.BLUE},
 ]
 
 const RACING_STATS: Array[Dictionary] = [
-	{"key": "top_speed", "label": "TOP SPEED"},
-	{"key": "accel", "label": "ACCELERATION"},
-	{"key": "grip", "label": "GRIP / HANDLING"},
-	{"key": "weight", "label": "WEIGHT"},
-]
-
-const RACE_COLORS: Array[Dictionary] = [
-	{"name": "YELLOW", "hex": "ffd22e"},
-	{"name": "CREAM", "hex": "fff6e3"},
-	{"name": "CYAN", "hex": "45b6f0"},
-	{"name": "GREEN", "hex": "4cd964"},
-	{"name": "PINK", "hex": "f26ca7"},
-	{"name": "RED", "hex": "ff4d4d"},
-	{"name": "ORANGE", "hex": "ff9f43"},
-	{"name": "PURPLE", "hex": "a06cff"},
+	{"key": "top_speed", "label": "SPEED", "color": UiPalette.YELLOW},
+	{"key": "accel", "label": "ACCEL", "color": UiPalette.RED},
+	{"key": "grip", "label": "HANDLING", "color": UiPalette.CYAN},
+	{"key": "weight", "label": "WEIGHT", "color": UiPalette.BLUE},
 ]
 
 @onready var _panel: PanelContainer = $Center/Panel
@@ -51,6 +46,7 @@ const RACE_COLORS: Array[Dictionary] = [
 @onready var _camera: Camera3D = %PreviewCamera
 @onready var _name_label: Label = %NameLabel
 @onready var _index_label: Label = %IndexLabel
+@onready var _stats_box: VBoxContainer = %StatsBox
 @onready var _prev_button: Button = %PrevButton
 @onready var _next_button: Button = %NextButton
 @onready var _drive_button: Button = %DriveButton
@@ -59,17 +55,15 @@ const RACE_COLORS: Array[Dictionary] = [
 var _entries: Array[Dictionary] = []
 var _current: int = 0
 var _holder: Node3D = null
-var _stats_list: VBoxContainer
 var _stat_bars: Dictionary = {}
+var _stat_ratings: Dictionary = {}
 var _ranges: Dictionary = {}
 var _time: float = 0.0
 var _racing: bool = false
 var _allocation: Dictionary = {}
 var _alloc_points: Dictionary = {}
-var _alloc_readouts: Dictionary = {}
 var _alloc_minus: Dictionary = {}
 var _alloc_plus: Dictionary = {}
-var _color_buttons: Dictionary = {}
 
 
 func _ready() -> void:
@@ -125,11 +119,11 @@ func _ready() -> void:
 		current_id = GameSettings.selected_vehicle
 	_current = _entry_index(current_id)
 	if _racing:
-		_viewport_container.custom_minimum_size = Vector2(440, 134)
-		_camera.look_at_from_position(Vector3(2.8, 1.8, -3.8),
-			Vector3(0.0, 0.45, 0.0), Vector3.UP)
-	else:
 		_viewport_container.custom_minimum_size = Vector2(440, 156)
+		_camera.look_at_from_position(Vector3(3.2, 2.1, -4.4),
+			Vector3(0.0, 0.65, 0.0), Vector3.UP)
+	else:
+		_viewport_container.custom_minimum_size = Vector2(440, 152)
 		_camera.look_at_from_position(Vector3(2.4, 1.6, -3.3),
 			Vector3(0.0, 0.55, 0.0), Vector3.UP)
 	_light_preview()
@@ -255,122 +249,111 @@ func _process(delta: float) -> void:
 		_holder.position.y = sin(_time * 1.7) * 0.018
 
 
+func _stat_title_label(text: String, width: float, align: HorizontalAlignment,
+		color: Color, font_size: int = 16) -> Label:
+	var label := Label.new()
+	label.text = text
+	label.theme_type_variation = &"TitleLabel"
+	label.custom_minimum_size = Vector2(width, 0)
+	label.size_flags_horizontal = 0
+	label.horizontal_alignment = align
+	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	label.add_theme_font_size_override("font_size", font_size)
+	label.add_theme_color_override("font_color", color)
+	label.add_theme_constant_override("outline_size", 0)
+	label.add_theme_constant_override("shadow_offset_y", 0)
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return label
+
+
+func _make_stat_bar(color: Color) -> StatBar:
+	var bar := StatBar.new()
+	bar.fill_color = color
+	bar.bar_height = 16.0
+	bar.custom_minimum_size = Vector2(STAT_BAR_WIDTH, STAT_BAR_HEIGHT)
+	bar.size_flags_horizontal = 0
+	bar.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	return bar
+
+
 func _build_stats() -> void:
-	var body: VBoxContainer = $Center/Panel/Body
-	_stats_list = VBoxContainer.new()
-	_stats_list.name = "StatsList"
-	_stats_list.add_theme_constant_override("separation", 6)
-	body.add_child(_stats_list)
-	body.move_child(_stats_list, _index_label.get_index() + 1)
+	_stats_box.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	_stats_box.add_theme_constant_override("separation", 6)
 
 	for stat: Dictionary in STATS:
-		var cell := HBoxContainer.new()
-		cell.add_theme_constant_override("separation", 12)
-		cell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		var label := Label.new()
-		label.text = str(stat["label"])
-		label.custom_minimum_size = Vector2(124, 0)
-		label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-		label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		label.add_theme_font_size_override("font_size", 15)
-		label.add_theme_color_override("font_color", UiPalette.INK)
-		cell.add_child(label)
-		var bar := StatBar.new()
-		bar.fill_color = stat["color"] as Color
-		bar.bar_height = 16.0
-		bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		cell.add_child(bar)
-		_stats_list.add_child(cell)
-		_stat_bars[str(stat["key"])] = bar
+		var key: String = str(stat["key"])
+		var row := HBoxContainer.new()
+		row.alignment = BoxContainer.ALIGNMENT_CENTER
+		row.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		row.add_theme_constant_override("separation", STAT_ROW_GAP)
+		_stats_box.add_child(row)
+
+		var label := _stat_title_label(str(stat["label"]), SIDE_COL_WIDTH,
+			HORIZONTAL_ALIGNMENT_RIGHT, UiPalette.INK, 16)
+		row.add_child(label)
+
+		var bar := _make_stat_bar(stat["color"] as Color)
+		row.add_child(bar)
+
+		var rating := _stat_title_label("5 / 10", SIDE_COL_WIDTH,
+			HORIZONTAL_ALIGNMENT_LEFT, UiPalette.BODY_BLUE, 16)
+		row.add_child(rating)
+
+		_stat_bars[key] = bar
+		_stat_ratings[key] = rating
 
 
 func _build_racing_stats() -> void:
-	var body: VBoxContainer = $Center/Panel/Body
-	var rows := VBoxContainer.new()
-	rows.name = "AllocationRows"
-	rows.add_theme_constant_override("separation", 6)
-	body.add_child(rows)
-	body.move_child(rows, _index_label.get_index() + 1)
+	_stats_box.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	_stats_box.add_theme_constant_override("separation", 6)
 
 	for stat: Dictionary in RACING_STATS:
 		var key: String = str(stat["key"])
 		var row := HBoxContainer.new()
-		row.add_theme_constant_override("separation", UiKit.SPACING_TIGHT)
-		rows.add_child(row)
+		row.alignment = BoxContainer.ALIGNMENT_CENTER
+		row.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		row.add_theme_constant_override("separation", STAT_ROW_GAP)
+		_stats_box.add_child(row)
 
-		var label := Label.new()
-		label.text = str(stat["label"])
-		label.custom_minimum_size = Vector2(120, 0)
-		label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-		label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		label.add_theme_font_size_override("font_size", 14)
-		label.add_theme_color_override("font_color", UiPalette.INK)
+		var label := _stat_title_label(str(stat["label"]), SIDE_COL_WIDTH,
+			HORIZONTAL_ALIGNMENT_RIGHT, UiPalette.INK, 16)
 		row.add_child(label)
+
+		var bar := _make_stat_bar(stat["color"] as Color)
+		row.add_child(bar)
+
+		var right_box := HBoxContainer.new()
+		right_box.custom_minimum_size = Vector2(SIDE_COL_WIDTH, 0)
+		right_box.size_flags_horizontal = 0
+		right_box.alignment = BoxContainer.ALIGNMENT_BEGIN
+		right_box.add_theme_constant_override("separation", 6)
+		row.add_child(right_box)
 
 		var minus := _stepper_button("−", "Take one point from " + label.text)
 		minus.pressed.connect(_adjust_stat.bind(key, -1))
-		row.add_child(minus)
+		right_box.add_child(minus)
 
-		var points := Label.new()
-		points.custom_minimum_size = Vector2(26, 0)
-		points.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		points.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		points.add_theme_font_size_override("font_size", 18)
-		points.add_theme_color_override("font_color", UiPalette.INK)
-		points.text = "0"
-		row.add_child(points)
+		var points := _stat_title_label("0", 34.0,
+			HORIZONTAL_ALIGNMENT_CENTER, UiPalette.INK, 18)
+		right_box.add_child(points)
 
 		var plus := _stepper_button("+", "Spend one point on " + label.text)
 		plus.pressed.connect(_adjust_stat.bind(key, 1))
-		row.add_child(plus)
-
-		var readout := Label.new()
-		readout.custom_minimum_size = Vector2(88, 0)
-		readout.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-		readout.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		readout.add_theme_font_size_override("font_size", 14)
-		readout.add_theme_color_override("font_color", UiPalette.BODY_BLUE)
-		readout.text = ""
-		row.add_child(readout)
-
-		var bar := StatBar.new()
-		bar.fill_color = UiPalette.YELLOW
-		bar.bar_height = 15.0
-		bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		row.add_child(bar)
+		right_box.add_child(plus)
 
 		_alloc_points[key] = points
-		_alloc_readouts[key] = readout
 		_alloc_minus[key] = minus
 		_alloc_plus[key] = plus
 		_stat_bars[key] = bar
 
-	var color_row := HBoxContainer.new()
-	color_row.name = "ColorRow"
-	color_row.alignment = BoxContainer.ALIGNMENT_CENTER
-	color_row.add_theme_constant_override("separation", 8)
-	body.add_child(color_row)
-	body.move_child(color_row, rows.get_index() + 1)
-	var color_caption := Label.new()
-	color_caption.text = "PAINT"
-	color_caption.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	color_caption.add_theme_font_size_override("font_size", 14)
-	color_caption.add_theme_color_override("font_color", UiPalette.INK)
-	color_row.add_child(color_caption)
-	for swatch: Dictionary in RACE_COLORS:
-		var hex: String = str(swatch["hex"])
-		var button := _color_swatch(hex, str(swatch["name"]))
-		button.pressed.connect(_on_color_picked.bind(hex))
-		color_row.add_child(button)
-		_color_buttons[hex] = button
-	_refresh_color_swatches()
-
 
 func _stepper_button(glyph: String, tooltip: String) -> Button:
 	var button := Button.new()
+	button.set_meta("skip_kit", true)
 	button.text = glyph
 	button.tooltip_text = tooltip
-	button.custom_minimum_size = Vector2(38, 28)
+	button.custom_minimum_size = Vector2(36, 28)
+	button.size_flags_horizontal = 0
 	button.add_theme_font_size_override("font_size", 19)
 	button.add_theme_color_override("font_color", UiPalette.INK)
 	button.add_theme_color_override("font_hover_color", UiPalette.INK)
@@ -389,7 +372,7 @@ func _stepper_button(glyph: String, tooltip: String) -> Button:
 func _stepper_style(fill: Color) -> StyleBoxFlat:
 	var style := StyleBoxFlat.new()
 	style.bg_color = fill
-	style.set_corner_radius_all(12)
+	style.set_corner_radius_all(10)
 	style.set_border_width_all(3)
 	style.border_color = UiPalette.INK
 	style.content_margin_left = 0.0
@@ -398,53 +381,6 @@ func _stepper_style(fill: Color) -> StyleBoxFlat:
 	style.content_margin_bottom = 0.0
 	style.anti_aliasing = true
 	return style
-
-
-func _color_swatch(hex: String, color_name: String) -> Button:
-	var button := Button.new()
-	button.set_meta("skip_kit", true)
-	button.custom_minimum_size = Vector2(36, 36)
-	button.tooltip_text = "%s PAINT" % color_name
-	var normal := StyleBoxFlat.new()
-	normal.bg_color = Color(hex)
-	normal.set_corner_radius_all(12)
-	normal.set_border_width_all(3)
-	normal.border_color = UiPalette.INK
-	normal.anti_aliasing = true
-	button.add_theme_stylebox_override("normal", normal)
-	var hover: StyleBoxFlat = normal.duplicate() as StyleBoxFlat
-	hover.bg_color = Color(hex).lightened(0.12)
-	button.add_theme_stylebox_override("hover", hover)
-	var pressed_style: StyleBoxFlat = normal.duplicate() as StyleBoxFlat
-	pressed_style.bg_color = Color(hex).darkened(0.08)
-	button.add_theme_stylebox_override("pressed", pressed_style)
-	button.resized.connect(func() -> void:
-		button.pivot_offset = button.size * 0.5)
-	return button
-
-
-func _refresh_color_swatches() -> void:
-	var selected: String = GameSettings.player_tag_color
-	for hex: String in _color_buttons:
-		var button: Button = _color_buttons[hex]
-		var chosen: bool = hex == selected
-		for state: String in ["normal", "hover", "pressed"]:
-			var style: StyleBoxFlat = button.get_theme_stylebox(state) as StyleBoxFlat
-			if style == null:
-				continue
-			style.set_border_width_all(6 if chosen else 3)
-			style.border_color = UiPalette.INK
-		button.scale = Vector2.ONE * (1.10 if chosen else 1.0)
-
-
-func _on_color_picked(hex: String) -> void:
-	if Network.is_session_active():
-		Network.set_local_tag_color(hex)
-	else:
-		GameSettings.set_player_tag_color(hex)
-	_refresh_color_swatches()
-	if _racing:
-		_swap_model(false)
 
 
 func _adjust_stat(key: String, direction: int) -> void:
@@ -490,38 +426,21 @@ func _composed_current() -> Dictionary:
 	var base: Dictionary = _entries[_current]
 	if not _racing:
 		return base
-	return Catalog.compose_racing_entry(str(base.get("id", "")), _allocation,
-		GameSettings.tag_color())
-
-
-func _racing_value(key: String, value: float) -> String:
-	match key:
-		"top_speed":
-			return "%d KM/H" % roundi(value)
-		"accel":
-			return "%.1f" % value
-		"grip":
-			return "%.2f" % value
-		"weight":
-			return "%d KG" % roundi(value)
-	return "%.2f" % value
+	## Factory livery only: the racing build changes stats, never the paint.
+	return Catalog.compose_racing_entry(str(base.get("id", "")), _allocation)
 
 
 func _fill_racing_stats(entry: Dictionary) -> void:
 	var total: int = Catalog.allocation_total(_allocation)
 	var left: int = maxi(Catalog.RACING_STAT_POINTS - total, 0)
-	_set_status("RACE TUNING  ·  %d / %d PTS LEFT" % [left,
-		Catalog.RACING_STAT_POINTS])
-	var values: Dictionary = Catalog.stats_for(entry)
+	_set_status("TUNING  ·  %d POINTS AVAILABLE" % left)
 	for stat: Dictionary in RACING_STATS:
 		var key: String = str(stat["key"])
 		var points: int = int(_allocation.get(key, 0))
 		var points_label: Label = _alloc_points[key] as Label
 		points_label.text = str(points)
-		var readout: Label = _alloc_readouts[key] as Label
-		readout.text = _racing_value(key, float(values.get(key, 0.0)))
 		var bar: StatBar = _stat_bars[key] as StatBar
-		bar.set_ratio(Catalog.stat_ratio(entry, key, _ranges) * 0.94 + 0.06)
+		bar.set_ratio(Catalog.stat_ratio(entry, key, _ranges) * 0.90 + 0.10)
 		var minus: Button = _alloc_minus[key] as Button
 		minus.disabled = points <= 0
 		var plus: Button = _alloc_plus[key] as Button
@@ -545,8 +464,13 @@ func _swap_model(animate: bool) -> void:
 		_model_root.remove_child(_holder)
 		_holder.queue_free()
 		_holder = null
-	_holder = VehicleVisual.build(_composed_current())
+	var entry: Dictionary = _composed_current()
+	_holder = VehicleVisual.build(entry)
 	_model_root.add_child(_holder)
+	var vehicle_height: float = float(entry.get("height", 1.5))
+	var distance: float = 4.1 + vehicle_height * 0.25
+	_camera.look_at_from_position(Vector3(distance * 0.68, 1.35 + vehicle_height * 0.35,
+		-distance), Vector3(0.0, vehicle_height * 0.43, 0.0), Vector3.UP)
 	if animate:
 		_holder.scale = Vector3.ONE * 0.86
 		var tween: Tween = _holder.create_tween()
@@ -568,8 +492,13 @@ func _fill_stats(entry: Dictionary) -> void:
 		weight_class = "MIDDLEWEIGHT"
 	_set_status("%s  ·  %d KG" % [weight_class, weight_kg])
 	for key: String in _stat_bars:
+		var ratio: float = Catalog.stat_ratio(entry, key, _ranges)
+		var rating: int = clampi(int(round(ratio * 9.0)) + 1, 1, 10)
 		var bar: StatBar = _stat_bars[key]
-		bar.set_ratio(Catalog.stat_ratio(entry, key, _ranges) * 0.94 + 0.06)
+		bar.set_ratio(clampf(ratio * 0.90 + 0.10, 0.10, 1.0))
+		if _stat_ratings.has(key):
+			var rating_lbl: Label = _stat_ratings[key] as Label
+			rating_lbl.text = "%d / 10" % rating
 
 
 func _set_status(detail: String) -> void:

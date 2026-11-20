@@ -40,6 +40,7 @@ const MAIN_MENU: String = "res://scenes/ui/main_menu.tscn"
 const MINIGAMES_MENU: String = "res://scenes/ui/minigames_menu.tscn"
 const UI_THEME: Theme = preload("res://assets/ui/theme.tres")
 const TITLE_FONT: Font = preload("res://assets/ui/fonts/LuckiestGuy-Regular.ttf")
+const BODY_FONT: Font = preload("res://assets/ui/fonts/Fredoka-Bold.ttf")
 
 const COUNTDOWN_BEEP: AudioStream = preload("res://assets/audio/sfx/race/countdown_beep.wav")
 const COUNTDOWN_GO: AudioStream = preload("res://assets/audio/sfx/race/countdown_go.wav")
@@ -98,13 +99,86 @@ const SNAPSHOT_SYNC_INTERVAL: float = 0.10 ## 10 Hz host bomb/score/shield snaps
 ## Compact UI geometry (verified zero-clip at both 960x540 and 1280x720).
 const CORNER_RADIUS: int = 14
 const TOP_BAR_TOP: float = 10.0
-const TOP_BAR_WIDTH: float = 468.0
+const TOP_BAR_WIDTH: float = 456.0
 const TOP_BAR_MAX_HEIGHT: float = 60.0
 const SCORE_LEFT: float = 18.0
 const SCORE_WIDTH: float = 192.0
-const CALLOUT_HEIGHT: float = 36.0
+const CALLOUT_HEIGHT: float = 38.0
+const BT_SHADOW_COLOR := Color(0.07, 0.05, 0.15, 0.88)
+const BT_TEXT_SHADOW := Color(0.08, 0.06, 0.16, 0.85)
 
 enum Phase { COUNTDOWN, PLAYING, FINISHED }
+
+
+class _BombSlashPlate extends Control:
+	var skew_px: float = 12.0
+	var fill_color: Color = Color("1e1b3a")
+	var border_color: Color = Color("1e1b3a")
+	var border_width: float = 3.5
+	var shadow_offset := Vector2(4.0, 5.0)
+	var accent_color := Color(0.0, 0.0, 0.0, 0.0)
+	var accent_width: float = 0.0
+	var draw_sheen: bool = true
+
+	func _init() -> void:
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	func _notification(what: int) -> void:
+		if what == NOTIFICATION_RESIZED:
+			queue_redraw()
+
+	func _draw() -> void:
+		var pad_l: float = 2.0
+		var pad_t: float = 2.0
+		var pad_r: float = maxf(shadow_offset.x + 2.0, 3.0)
+		var pad_b: float = maxf(shadow_offset.y + 2.0, 3.0)
+		var sk: float = minf(skew_px, maxf(size.x * 0.22, 4.0))
+		var w: float = size.x - pad_l - pad_r - sk
+		var h: float = size.y - pad_t - pad_b
+		if w <= 4.0 or h <= 4.0:
+			return
+		var pts := PackedVector2Array([
+			Vector2(pad_l + sk, pad_t),
+			Vector2(pad_l + sk + w, pad_t),
+			Vector2(pad_l + w, pad_t + h),
+			Vector2(pad_l, pad_t + h),
+		])
+		var sh := PackedVector2Array([
+			pts[0] + shadow_offset,
+			pts[1] + shadow_offset,
+			pts[2] + shadow_offset,
+			pts[3] + shadow_offset,
+		])
+		draw_colored_polygon(sh, BT_SHADOW_COLOR)
+		draw_colored_polygon(pts, fill_color)
+
+		if accent_width > 0.5 and accent_color.a > 0.01:
+			var aw: float = minf(accent_width, w * 0.45)
+			var wedge := PackedVector2Array([
+				Vector2(pad_l + sk, pad_t),
+				Vector2(pad_l + sk + aw, pad_t),
+				Vector2(pad_l + aw, pad_t + h),
+				Vector2(pad_l, pad_t + h),
+			])
+			draw_colored_polygon(wedge, accent_color)
+			draw_line(
+				Vector2(pad_l + sk + aw, pad_t),
+				Vector2(pad_l + aw, pad_t + h),
+				UiPalette.INK, 2.5, true)
+
+		if draw_sheen and h >= 12.0:
+			var sh_h: float = maxf(h * 0.26, 2.5)
+			var sheen := PackedVector2Array([
+				Vector2(pad_l + sk + 1.5, pad_t + 1.5),
+				Vector2(pad_l + sk + w - 1.5, pad_t + 1.5),
+				Vector2(pad_l + sk * 0.72 + w - 1.5, pad_t + 1.5 + sh_h),
+				Vector2(pad_l + sk * 0.72 + 1.5, pad_t + 1.5 + sh_h),
+			])
+			draw_colored_polygon(sheen, Color(1.0, 1.0, 1.0, 0.22))
+
+		var closed := pts.duplicate()
+		closed.append(pts[0])
+		draw_polyline(closed, border_color, border_width, true)
 
 
 ## Crisp vector-drawn cartoon Mega-Bomb icon for HUD pills (avoids missing emoji
@@ -178,10 +252,14 @@ var _ready_retry_timer: float = 0.0
 var _canvas: CanvasLayer
 var _hud_root: Control
 var _top_bar: PanelContainer
+var _top_bar_plate: _BombSlashPlate
 var _clock_label: Label
+var _fuse_slash_panel: PanelContainer
+var _fuse_slash_plate: _BombSlashPlate
 var _fuse_icon: _BombBadgeIcon
 var _fuse_label: Label
 var _status_pill: PanelContainer
+var _status_plate: _BombSlashPlate
 var _status_style: StyleBoxFlat
 var _status_label: Label
 var _arena_label: Label
@@ -435,11 +513,8 @@ func _bot_count() -> int:
 		var humans: int = maxi(Network.participants().size(), 1)
 		var max_bots: int = maxi(0, MAX_CONTESTANTS - humans)
 		var wanted: int = Network.session_bot_count if Network.session_bots else 0
-		if humans < 2 and wanted == 0:
-			wanted = GameSettings.effective_bot_count()
 		return clampi(wanted, 0, max_bots)
-	return clampi(maxi(GameSettings.effective_bot_count(), SOLO_MIN_BOTS),
-		SOLO_MIN_BOTS, MAX_CONTESTANTS - 1)
+	return clampi(GameSettings.effective_bot_count(), 0, MAX_CONTESTANTS - 1)
 
 
 func _capture_cart_base(cart: CartPlayer) -> void:
@@ -503,7 +578,7 @@ func _spawn_bot(index: int, ghost: bool, spawn_slot: int) -> void:
 		ai = SandboxBot.new()
 		var bot_rng := RandomNumberGenerator.new()
 		bot_rng.seed = 8801 + index * 173
-		ai.setup(cart, index, bot_rng, clampi(GameSettings.minigame_difficulty, 0, 2))
+		ai.setup(cart, index, bot_rng, Network.bot_difficulty())
 	var tint: Color = CartPlayer.BOT_TINTS[index % CartPlayer.BOT_TINTS.size()]
 	var label := Label3D.new()
 	label.name = "BotTag"
@@ -2379,8 +2454,34 @@ func _net_bomb_match_end(keys: PackedInt32Array, pts: PackedInt32Array,
 
 
 # ==========================================================================
-# SLEEK ARCADE HUD + MATCH RESULT CARD (ZERO CLIP @ 960x540 & 1280x720)
+# SLOP-SLASH COMIC-ARCADE HUD + MATCH RESULT CARD (ZERO CLIP @ 960x540 & 1280x720)
 # ==========================================================================
+
+
+func _empty_bt_box(pad_l: float = 0.0, pad_t: float = 0.0,
+		pad_r: float = 0.0, pad_b: float = 0.0) -> StyleBoxEmpty:
+	var st := StyleBoxEmpty.new()
+	st.content_margin_left = pad_l
+	st.content_margin_top = pad_t
+	st.content_margin_right = pad_r
+	st.content_margin_bottom = pad_b
+	return st
+
+
+func _attach_bt_slash(host: Control, skew: float, fill: Color,
+		border: Color = UiPalette.INK, border_w: float = 3.5,
+		shadow := Vector2(4.0, 5.0)) -> _BombSlashPlate:
+	var plate := _BombSlashPlate.new()
+	plate.name = "SlashPlate"
+	plate.skew_px = skew
+	plate.fill_color = fill
+	plate.border_color = border
+	plate.border_width = minf(border_w, 1.5)
+	plate.shadow_offset = shadow * 0.35
+	plate.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	host.add_child(plate)
+	host.move_child(plate, 0)
+	return plate
 
 
 func _build_hud() -> void:
@@ -2395,7 +2496,7 @@ func _build_hud() -> void:
 	_hud_root.theme = UI_THEME
 	_canvas.add_child(_hud_root)
 
-	# 1. Top-Center Compact Blast Tag HUD Bar (width 468 px, height <= 58 px).
+	# 1. Top-Center Skewed Comic Fuse Header Slash (width 456 px, height <= 54 px).
 	_top_bar = PanelContainer.new()
 	_top_bar.name = "BlastTagTopBar"
 	_top_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -2404,13 +2505,17 @@ func _build_hud() -> void:
 	_top_bar.offset_left = -TOP_BAR_WIDTH * 0.5
 	_top_bar.offset_right = TOP_BAR_WIDTH * 0.5
 	_top_bar.offset_top = TOP_BAR_TOP
-	_top_bar.offset_bottom = TOP_BAR_TOP + 56.0
-	_top_bar.add_theme_stylebox_override("panel", _bar_style(Color(0.11, 0.10, 0.22, 0.90), 14, 5))
+	_top_bar.offset_bottom = TOP_BAR_TOP + 52.0
+	_top_bar.add_theme_stylebox_override("panel", _empty_bt_box(16.0, 4.0, 18.0, 7.0))
+	_top_bar_plate = _attach_bt_slash(
+		_top_bar, 14.0, UiPalette.INK, UiPalette.CREAM, 3.5, Vector2(4.0, 5.0))
+	_top_bar_plate.accent_color = UiPalette.YELLOW
+	_top_bar_plate.accent_width = 10.0
 	_hud_root.add_child(_top_bar)
 
 	var col := VBoxContainer.new()
 	col.alignment = BoxContainer.ALIGNMENT_CENTER
-	col.add_theme_constant_override("separation", 1)
+	col.add_theme_constant_override("separation", 0)
 	col.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_top_bar.add_child(col)
 
@@ -2420,49 +2525,60 @@ func _build_hud() -> void:
 	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	col.add_child(row)
 
-	_clock_label = _make_label("2:00", 21, UiPalette.YELLOW, 6)
-	_clock_label.custom_minimum_size = Vector2(58.0, 0.0)
+	_clock_label = _make_label("2:00", 22, UiPalette.YELLOW, 6)
+	_clock_label.custom_minimum_size = Vector2(62.0, 0.0)
 	_clock_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	row.add_child(_clock_label)
 
-	row.add_child(_make_label("·", 16, Color(1.0, 1.0, 1.0, 0.45)))
+	# Active Mega-Bomb Fuse Angled Slash (bold yellow -> hot-pink/crimson urgency!)
+	_fuse_slash_panel = PanelContainer.new()
+	_fuse_slash_panel.custom_minimum_size = Vector2(126.0, 36.0)
+	_fuse_slash_panel.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_fuse_slash_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_fuse_slash_panel.add_theme_stylebox_override("panel", _empty_bt_box(14.0, 2.0, 16.0, 5.0))
+	_fuse_slash_plate = _attach_bt_slash(
+		_fuse_slash_panel, 11.0, UiPalette.YELLOW, UiPalette.INK, 3.5, Vector2(3.0, 4.0))
+	row.add_child(_fuse_slash_panel)
+
+	var fuse_row := HBoxContainer.new()
+	fuse_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	fuse_row.add_theme_constant_override("separation", 6)
+	fuse_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_fuse_slash_panel.add_child(fuse_row)
 
 	_fuse_icon = _BombBadgeIcon.new()
 	_fuse_icon.custom_minimum_size = Vector2(20.0, 20.0)
 	_fuse_icon.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	_fuse_icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	row.add_child(_fuse_icon)
+	fuse_row.add_child(_fuse_icon)
 
-	_fuse_label = _make_label("13.5s", 20, UiPalette.CREAM, 5)
-	_fuse_label.custom_minimum_size = Vector2(62.0, 0.0)
+	_fuse_label = _make_label("13.5S", 20, UiPalette.INK, 0, false)
+	_fuse_label.custom_minimum_size = Vector2(64.0, 0.0)
 	_fuse_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
-	row.add_child(_fuse_label)
+	fuse_row.add_child(_fuse_label)
 
-	row.add_child(_make_label("·", 16, Color(1.0, 1.0, 1.0, 0.45)))
-
+	# Skewed Status / Juke Callout Slash
 	_status_pill = PanelContainer.new()
+	_status_pill.custom_minimum_size = Vector2(178.0, 34.0)
+	_status_pill.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	_status_pill.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_status_style = StyleBoxFlat.new()
-	_status_style.bg_color = Color("196b52")
-	_status_style.border_color = UiPalette.OUTLINE
-	_status_style.set_border_width_all(2)
-	_status_style.set_corner_radius_all(10)
-	_status_style.content_margin_left = 10.0
-	_status_style.content_margin_right = 10.0
-	_status_style.content_margin_top = 2.0
-	_status_style.content_margin_bottom = 2.0
-	_status_pill.add_theme_stylebox_override("panel", _status_style)
+	_status_pill.add_theme_stylebox_override("panel", _empty_bt_box(14.0, 2.0, 16.0, 5.0))
+	_status_plate = _attach_bt_slash(
+		_status_pill, 10.0, UiPalette.CYAN, UiPalette.INK, 3.2, Vector2(3.0, 4.0))
 	row.add_child(_status_pill)
 
-	_status_label = _make_label("SAFE · JUKE [E]", 13, Color.WHITE, 4)
+	_status_label = _make_label("JUKE [E]", 13, UiPalette.INK, 0, false)
 	_status_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_status_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_status_label.clip_text = true
 	_status_pill.add_child(_status_label)
 
-	_arena_label = _make_label("BLAST TAG  ·  " + _arena_name, 11, Color(1.0, 1.0, 1.0, 0.72))
-	_arena_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	# Preserved hidden arena label reference so text updates never overflow top_bar.
+	_arena_label = _make_label("BLAST TAG · " + _arena_name, 10, UiPalette.CREAM, 4)
+	_arena_label.visible = false
 	col.add_child(_arena_label)
 
-	# 2. Top-Left Compact Live Score Pills (x: 18..210 -> clear of TopBar even at 960x540!).
+	# 2. Top-Left Skewed Parallelogram Score Slashes (StyleBoxEmpty outer container!).
 	_score_panel = PanelContainer.new()
 	_score_panel.name = "LiveScorePanel"
 	_score_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -2471,7 +2587,7 @@ func _build_hud() -> void:
 	_score_panel.offset_right = SCORE_LEFT + SCORE_WIDTH
 	_score_panel.offset_top = score_top
 	_score_panel.offset_bottom = score_top + 40.0
-	_score_panel.add_theme_stylebox_override("panel", _bar_style(Color(0.09, 0.11, 0.21, 0.84), 8, 6))
+	_score_panel.add_theme_stylebox_override("panel", _empty_bt_box())
 	_hud_root.add_child(_score_panel)
 
 	_score_rows_box = VBoxContainer.new()
@@ -2480,49 +2596,56 @@ func _build_hud() -> void:
 	_score_panel.add_child(_score_rows_box)
 
 	for r_idx in MAX_CONTESTANTS:
+		var r_panel := PanelContainer.new()
+		r_panel.custom_minimum_size = Vector2(0.0, 23.0)
+		r_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		r_panel.visible = false
+		r_panel.add_theme_stylebox_override("panel", _empty_bt_box(14.0, 1.0, 12.0, 3.0))
+		var r_plate := _attach_bt_slash(
+			r_panel, 10.0, Color(0.118, 0.106, 0.227, 0.88), UiPalette.INK, 2.5, Vector2(2.5, 3.0))
+		r_plate.draw_sheen = false
+
 		var r_hbox := HBoxContainer.new()
 		r_hbox.add_theme_constant_override("separation", 5)
 		r_hbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		r_hbox.visible = false
-		var dot := ColorRect.new()
-		dot.custom_minimum_size = Vector2(8.0, 8.0)
-		dot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		r_hbox.add_child(dot)
-		var nm := _make_label("PLAYER", 12, UiPalette.CREAM, 3)
+		r_panel.add_child(r_hbox)
+
+		var nm := _make_label("PLAYER", 11, UiPalette.CREAM, 4, false)
 		nm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		nm.clip_text = true
 		nm.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 		r_hbox.add_child(nm)
-		var badge := _make_label("", 11, UiPalette.RED, 3)
+
+		var badge := _make_label("", 10, UiPalette.YELLOW, 4, false)
 		r_hbox.add_child(badge)
-		var pts_lbl := _make_label("0", 13, UiPalette.YELLOW, 4)
+
+		var pts_lbl := _make_label("0", 12, UiPalette.YELLOW, 4, false)
 		pts_lbl.custom_minimum_size = Vector2(26.0, 0.0)
 		pts_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 		r_hbox.add_child(pts_lbl)
-		_score_rows_box.add_child(r_hbox)
+
+		_score_rows_box.add_child(r_panel)
 		_score_row_pool.append({
-			"row": r_hbox,
-			"dot": dot,
+			"row": r_panel,
+			"plate": r_plate,
 			"name": nm,
 			"badge": badge,
 			"pts": pts_lbl,
 		})
 
-	# 3. Upper-Center Callout Banner & Center Countdown Label.
-	_callout_label = _make_label("", 22, Color.WHITE, 9)
+	# 3. Upper-Center Floating LuckiestGuy Callout & Center Countdown Label.
+	_callout_label = _make_label("", 24, UiPalette.YELLOW, 8)
 	_callout_label.anchor_left = 0.5
 	_callout_label.anchor_right = 0.5
-	_callout_label.offset_left = -230.0
-	_callout_label.offset_right = 230.0
-	_callout_label.offset_top = TOP_BAR_TOP + 64.0
-	_callout_label.offset_bottom = TOP_BAR_TOP + 64.0 + CALLOUT_HEIGHT
+	_callout_label.offset_left = -260.0
+	_callout_label.offset_right = 260.0
+	_callout_label.offset_top = TOP_BAR_TOP + 60.0
+	_callout_label.offset_bottom = TOP_BAR_TOP + 60.0 + CALLOUT_HEIGHT
 	_callout_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_callout_label.visible = false
 	_hud_root.add_child(_callout_label)
 
 	_countdown_label = _make_label("3", 104, UiPalette.YELLOW, 14)
-	_countdown_label.theme_type_variation = &"TitleLabel"
 	_countdown_label.anchor_left = 0.5
 	_countdown_label.anchor_right = 0.5
 	_countdown_label.anchor_top = 0.5
@@ -2543,7 +2666,7 @@ func _layout_hud() -> void:
 	if _top_bar != null:
 		var tmin: Vector2 = _top_bar.get_combined_minimum_size()
 		var tw: float = clampf(maxf(TOP_BAR_WIDTH, tmin.x + 8.0), TOP_BAR_WIDTH, 500.0)
-		var th: float = clampf(maxf(tmin.y, 50.0), 50.0, TOP_BAR_MAX_HEIGHT)
+		var th: float = clampf(maxf(tmin.y, 48.0), 48.0, TOP_BAR_MAX_HEIGHT)
 		_top_bar.offset_left = -tw * 0.5
 		_top_bar.offset_right = tw * 0.5
 		_top_bar.offset_top = TOP_BAR_TOP
@@ -2609,7 +2732,7 @@ func _refresh_hud() -> void:
 	var whole: int = maxi(int(ceil(_remaining)), 0)
 	_clock_label.text = "%d:%02d" % [whole / 60, whole % 60]
 	_clock_label.add_theme_color_override("font_color",
-		UiPalette.RED if (whole <= 15 and whole % 2 == 1) else UiPalette.YELLOW)
+		UiPalette.PINK if (whole <= 15 and whole % 2 == 1) else UiPalette.YELLOW)
 
 	_arena_label.text = ("BLAST TAG  ·  %s  ·  %s" % [_arena_name, _arena_blurb]) \
 		if _arena_blurb != "" else ("BLAST TAG  ·  %s" % _arena_name)
@@ -2620,15 +2743,24 @@ func _refresh_hud() -> void:
 	var flash: bool = sin(_visual_time * 14.0) > 0.0
 
 	if min_fuse >= 0.0:
-		_fuse_label.text = "%.1fs" % min_fuse
-		if min_fuse < 4.0:
-			_fuse_label.add_theme_color_override("font_color",
-				Color("ff4747") if flash else Color.WHITE)
-		else:
-			_fuse_label.add_theme_color_override("font_color", UiPalette.CREAM)
+		_fuse_label.text = "%.1fS" % min_fuse
+		var urgent_fuse: bool = min_fuse < 4.5 or my_fuse >= 0.0
+		if _fuse_slash_plate != null:
+			if urgent_fuse:
+				_fuse_slash_plate.fill_color = Color("ff3b3f") if flash else UiPalette.PINK
+			else:
+				_fuse_slash_plate.fill_color = UiPalette.YELLOW
+			_fuse_slash_plate.queue_redraw()
+		_fuse_label.add_theme_constant_override("outline_size", 6 if urgent_fuse else 0)
+		_fuse_label.add_theme_color_override("font_color",
+			UiPalette.CREAM if urgent_fuse else UiPalette.INK)
 	else:
-		_fuse_label.text = "+%.1fs" % maxf(_wave_breather, 0.0)
-		_fuse_label.add_theme_color_override("font_color", UiPalette.CYAN)
+		_fuse_label.text = "+%.1fS" % maxf(_wave_breather, 0.0)
+		if _fuse_slash_plate != null:
+			_fuse_slash_plate.fill_color = UiPalette.CYAN
+			_fuse_slash_plate.queue_redraw()
+		_fuse_label.add_theme_constant_override("outline_size", 0)
+		_fuse_label.add_theme_color_override("font_color", UiPalette.INK)
 
 	var my_data: Dictionary = _contestants.get(my_key, {}) as Dictionary
 	var shield_t: float = float(my_data.get("shield_timer", 0.0))
@@ -2636,51 +2768,88 @@ func _refresh_hud() -> void:
 
 	if my_fuse >= 0.0:
 		_status_label.text = "PASS THE BOMB!"
-		_status_style.bg_color = Color("d92b38") if flash else Color("e07a16")
-		_status_label.add_theme_color_override("font_color", Color.WHITE)
-	elif shield_t > 0.0:
-		_status_label.text = "SHIELD %.1fs" % shield_t
-		_status_style.bg_color = Color("168aad")
-		_status_label.add_theme_color_override("font_color", Color("e0fbfc"))
-	elif juke_cd > 0.05:
-		_status_label.text = "SAFE · JUKE %.1fs" % juke_cd
-		_status_style.bg_color = Color("24596e")
+		_status_label.add_theme_constant_override("outline_size", 5)
 		_status_label.add_theme_color_override("font_color", UiPalette.CREAM)
+		if _status_plate != null:
+			_status_plate.fill_color = Color("ff3b3f") if flash else UiPalette.PINK
+			_status_plate.queue_redraw()
+	elif shield_t > 0.0:
+		_status_label.text = "SHIELD %.1fS" % shield_t
+		_status_label.add_theme_constant_override("outline_size", 0)
+		_status_label.add_theme_color_override("font_color", UiPalette.INK)
+		if _status_plate != null:
+			_status_plate.fill_color = UiPalette.CYAN
+			_status_plate.queue_redraw()
+	elif juke_cd > 0.05:
+		_status_label.text = "JUKE %.1fS" % juke_cd
+		_status_label.add_theme_constant_override("outline_size", 5)
+		_status_label.add_theme_color_override("font_color", UiPalette.CYAN)
+		if _status_plate != null:
+			_status_plate.fill_color = Color(0.16, 0.14, 0.30, 0.96)
+			_status_plate.queue_redraw()
 	else:
 		_status_label.text = "SAFE · JUKE [%s]" % _juke_key_name()
-		_status_style.bg_color = Color("1e7a57")
-		_status_label.add_theme_color_override("font_color", Color("d8ffee"))
+		_status_label.add_theme_constant_override("outline_size", 0)
+		_status_label.add_theme_color_override("font_color", UiPalette.INK)
+		if _status_plate != null:
+			_status_plate.fill_color = UiPalette.GRASS
+			_status_plate.queue_redraw()
 
-	# Refresh sorted Live Score Pills.
+	# Refresh sorted Skewed Comic Live Score Slashes.
 	var sorted: Array[Dictionary] = _sorted_standings()
 	for i in _score_row_pool.size():
 		var slot: Dictionary = _score_row_pool[i]
-		var r_hbox: HBoxContainer = slot["row"] as HBoxContainer
+		var r_panel: Control = slot["row"] as Control
 		if i >= sorted.size():
-			r_hbox.visible = false
+			r_panel.visible = false
 			continue
-		r_hbox.visible = true
+		r_panel.visible = true
 		var entry: Dictionary = sorted[i]
 		var k: int = int(entry["key"])
+		var is_me: bool = k == my_key
 		var bombed: bool = _is_bombed(k)
 		var shielded: bool = float(entry.get("shield_timer", 0.0)) > 0.0
-		(slot["dot"] as ColorRect).color = UiPalette.RED if bombed \
-			else (entry["color"] as Color)
+		var tint: Color = entry["color"] as Color
+
+		var r_plate: _BombSlashPlate = slot["plate"] as _BombSlashPlate
+		if bombed:
+			r_plate.fill_color = Color("ff3b3f") if flash else UiPalette.PINK
+			r_plate.accent_color = UiPalette.YELLOW
+			r_plate.accent_width = 10.0
+		elif is_me:
+			r_plate.fill_color = UiPalette.YELLOW
+			r_plate.accent_color = UiPalette.CYAN if shielded else UiPalette.PINK
+			r_plate.accent_width = 10.0
+		else:
+			r_plate.fill_color = Color(0.118, 0.106, 0.227, 0.88)
+			r_plate.accent_color = UiPalette.CYAN if shielded else tint
+			r_plate.accent_width = 10.0
+		r_plate.queue_redraw()
+
+		var dark_text: bool = is_me and not bombed
 		var nm_lbl: Label = slot["name"] as Label
 		nm_lbl.text = "%d. %s" % [i + 1, str(entry["name"])]
+		nm_lbl.add_theme_constant_override("outline_size", 0 if dark_text else 4)
 		nm_lbl.add_theme_color_override("font_color",
-			UiPalette.YELLOW if k == my_key else UiPalette.CREAM)
+			UiPalette.INK if dark_text else UiPalette.CREAM)
+
 		var b_lbl: Label = slot["badge"] as Label
+		b_lbl.add_theme_constant_override("outline_size", 0 if dark_text else 4)
 		if bombed:
-			b_lbl.text = "BOMB"
-			b_lbl.add_theme_color_override("font_color",
-				Color("ff4d4d") if flash else UiPalette.YELLOW)
+			b_lbl.text = "BOMB!"
+			b_lbl.add_theme_color_override("font_color", UiPalette.YELLOW)
 		elif shielded:
 			b_lbl.text = "SHLD"
-			b_lbl.add_theme_color_override("font_color", UiPalette.CYAN)
+			b_lbl.add_theme_color_override("font_color",
+				UiPalette.INK if dark_text else UiPalette.CYAN)
 		else:
 			b_lbl.text = ""
-		(slot["pts"] as Label).text = str(int(entry["points"]))
+
+		var pts_lbl: Label = slot["pts"] as Label
+		pts_lbl.text = str(int(entry["points"]))
+		pts_lbl.add_theme_constant_override("outline_size", 0 if dark_text else 4)
+		pts_lbl.add_theme_color_override("font_color",
+			UiPalette.INK if dark_text else UiPalette.YELLOW)
 
 
 func _sorted_standings() -> Array[Dictionary]:
@@ -2945,15 +3114,28 @@ func _bar_style(bg: Color, pad_x: int, pad_y: int) -> StyleBoxFlat:
 
 
 func _make_label(text: String, font_size: int, color: Color,
-		outline: int = 0) -> Label:
+		outline: int = 0, hard_shadow: Variant = null) -> Label:
 	var lbl := Label.new()
 	lbl.text = text
 	lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	lbl.theme_type_variation = &"TitleLabel"
+	lbl.add_theme_font_override("font", BODY_FONT)
 	lbl.add_theme_font_size_override("font_size", font_size)
 	lbl.add_theme_color_override("font_color", color)
 	if outline > 0:
-		lbl.add_theme_color_override("font_outline_color", UiPalette.OUTLINE)
-		lbl.add_theme_constant_override("outline_size", outline)
+		lbl.add_theme_color_override("font_outline_color", UiPalette.INK)
+		lbl.add_theme_constant_override("outline_size", mini(outline, 3))
+	else:
+		lbl.add_theme_constant_override("outline_size", 0)
+	var use_shadow: bool = (outline >= 5) if hard_shadow == null else bool(hard_shadow)
+	if use_shadow:
+		lbl.add_theme_color_override("font_shadow_color", BT_TEXT_SHADOW)
+		lbl.add_theme_constant_override("shadow_offset_x", 1)
+		lbl.add_theme_constant_override("shadow_offset_y", 2)
+	else:
+		lbl.add_theme_color_override("font_shadow_color", Color(0.0, 0.0, 0.0, 0.0))
+		lbl.add_theme_constant_override("shadow_offset_x", 0)
+		lbl.add_theme_constant_override("shadow_offset_y", 0)
 	return lbl
 
 

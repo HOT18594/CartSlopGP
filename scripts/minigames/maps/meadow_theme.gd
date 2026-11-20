@@ -6,6 +6,7 @@ extends RefCounted
 
 const TileKit := preload("res://scripts/minigames/tile_kit.gd")
 const MeadowScenery := preload("res://scripts/minigames/maps/meadow/meadow_scenery.gd")
+const AmbientWorld := preload("res://scripts/minigames/scenery/ambient_world.gd")
 
 const THEME_ID: String = "meadow"
 const HOLDER_NAME: String = "MeadowDressing"
@@ -33,6 +34,7 @@ static func build(race: Node3D, spline) -> void:
 	holder.name = HOLDER_NAME
 	race.add_child(holder)
 	var stats: Dictionary = MeadowScenery.build(holder, track)
+	AmbientWorld.build_track(holder, track, THEME_ID)
 	race.set_meta(META_STATS, stats)
 	print("REDWOOD VALLEY: %d objects, %d draw nodes, %d barriers, %d trees, %d flora, %d props, %d bluffs" % [
 		int(stats.get("objects", 0)), int(stats.get("draws", 0)),

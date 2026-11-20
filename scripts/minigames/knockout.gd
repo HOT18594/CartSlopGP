@@ -30,6 +30,7 @@ const MAIN_MENU: String = "res://scenes/ui/main_menu.tscn"
 const UI_THEME: Theme = preload("res://assets/ui/theme.tres")
 const CANDY_BUTTON := preload("res://scripts/ui/candy_button.gd")
 const TITLE_FONT: Font = preload("res://assets/ui/fonts/LuckiestGuy-Regular.ttf")
+const BODY_FONT: Font = preload("res://assets/ui/fonts/Fredoka-Bold.ttf")
 
 const COUNTDOWN_BEEP: AudioStream = preload("res://assets/audio/sfx/race/countdown_beep.wav")
 const COUNTDOWN_GO: AudioStream = preload("res://assets/audio/sfx/race/countdown_go.wav")
@@ -98,16 +99,227 @@ const CLOCK_SYNC_INTERVAL: float = 0.25 ## 4 Hz round clock keepalive.
 
 ## HUD layout constants (designed to fit 960x540 and 1280x720 with zero clipping).
 const TOP_BAR_TOP: float = 10.0
-const TOP_BAR_WIDTH: float = 404.0
-const TOP_BAR_HEIGHT: float = 56.0
+const TOP_BAR_WIDTH: float = 392.0
+const TOP_BAR_HEIGHT: float = 54.0
 const LEADERBOARD_LEFT: float = 16.0
 const LEADERBOARD_TOP: float = 10.0
-const LEADERBOARD_WIDTH: float = 196.0
-const TOAST_WIDTH: float = 396.0
-const TOAST_HEIGHT: float = 36.0
+const LEADERBOARD_WIDTH: float = 186.0
+const TOAST_WIDTH: float = 392.0
+const TOAST_HEIGHT: float = 40.0
 const SLAM_BAR_INNER_WIDTH: float = 108.0
+const KO_SHADOW_COLOR := Color(0.07, 0.05, 0.15, 0.88)
+const KO_TEXT_SHADOW := Color(0.08, 0.06, 0.16, 0.85)
 
 enum Phase { COUNTDOWN, BRAWL, INTERMISSION, FINISHED }
+
+
+class _KoSlashPlate extends Control:
+	var skew_px: float = 12.0
+	var fill_color: Color = Color("1e1b3a")
+	var border_color: Color = Color("1e1b3a")
+	var border_width: float = 3.5
+	var shadow_offset := Vector2(4.0, 5.0)
+	var accent_color := Color(0.0, 0.0, 0.0, 0.0)
+	var accent_width: float = 0.0
+	var draw_sheen: bool = true
+
+	func _init() -> void:
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	func _notification(what: int) -> void:
+		if what == NOTIFICATION_RESIZED:
+			queue_redraw()
+
+	func _draw() -> void:
+		var pad_l: float = 2.0
+		var pad_t: float = 2.0
+		var pad_r: float = maxf(shadow_offset.x + 2.0, 3.0)
+		var pad_b: float = maxf(shadow_offset.y + 2.0, 3.0)
+		var sk: float = minf(skew_px, maxf(size.x * 0.22, 4.0))
+		var w: float = size.x - pad_l - pad_r - sk
+		var h: float = size.y - pad_t - pad_b
+		if w <= 4.0 or h <= 4.0:
+			return
+		var pts := PackedVector2Array([
+			Vector2(pad_l + sk, pad_t),
+			Vector2(pad_l + sk + w, pad_t),
+			Vector2(pad_l + w, pad_t + h),
+			Vector2(pad_l, pad_t + h),
+		])
+		var sh := PackedVector2Array([
+			pts[0] + shadow_offset,
+			pts[1] + shadow_offset,
+			pts[2] + shadow_offset,
+			pts[3] + shadow_offset,
+		])
+		draw_colored_polygon(sh, KO_SHADOW_COLOR)
+		draw_colored_polygon(pts, fill_color)
+
+		if accent_width > 0.5 and accent_color.a > 0.01:
+			var aw: float = minf(accent_width, w * 0.45)
+			var wedge := PackedVector2Array([
+				Vector2(pad_l + sk, pad_t),
+				Vector2(pad_l + sk + aw, pad_t),
+				Vector2(pad_l + aw, pad_t + h),
+				Vector2(pad_l, pad_t + h),
+			])
+			draw_colored_polygon(wedge, accent_color)
+			draw_line(
+				Vector2(pad_l + sk + aw, pad_t),
+				Vector2(pad_l + aw, pad_t + h),
+				UiPalette.INK, 2.5, true)
+
+		if draw_sheen and h >= 12.0:
+			var sh_h: float = maxf(h * 0.26, 2.5)
+			var sheen := PackedVector2Array([
+				Vector2(pad_l + sk + 1.5, pad_t + 1.5),
+				Vector2(pad_l + sk + w - 1.5, pad_t + 1.5),
+				Vector2(pad_l + sk * 0.72 + w - 1.5, pad_t + 1.5 + sh_h),
+				Vector2(pad_l + sk * 0.72 + 1.5, pad_t + 1.5 + sh_h),
+			])
+			draw_colored_polygon(sheen, Color(1.0, 1.0, 1.0, 0.20))
+
+		var closed := pts.duplicate()
+		closed.append(pts[0])
+		draw_polyline(closed, border_color, border_width, true)
+
+
+class _KoSlamSlashBar extends Control:
+	var ratio: float = 1.0
+	var ready_col: Color = Color("ffd22e")
+	var charge_col: Color = Color("38d6f0")
+
+	func _init() -> void:
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	func _notification(what: int) -> void:
+		if what == NOTIFICATION_RESIZED:
+			queue_redraw()
+
+	func _draw() -> void:
+		var sk: float = 7.0
+		var w: float = size.x - sk - 5.0
+		var h: float = size.y - 5.0
+		if w <= 6.0 or h <= 3.0:
+			return
+		var pts := PackedVector2Array([
+			Vector2(1.5 + sk, 1.5),
+			Vector2(1.5 + sk + w, 1.5),
+			Vector2(1.5 + w, 1.5 + h),
+			Vector2(1.5, 1.5 + h),
+		])
+		var sh := PackedVector2Array([
+			pts[0] + Vector2(2.5, 3.0),
+			pts[1] + Vector2(2.5, 3.0),
+			pts[2] + Vector2(2.5, 3.0),
+			pts[3] + Vector2(2.5, 3.0),
+		])
+		draw_colored_polygon(sh, KO_SHADOW_COLOR)
+		draw_colored_polygon(pts, Color(0.118, 0.106, 0.227, 0.92))
+		var r: float = clampf(ratio, 0.0, 1.0)
+		if r > 0.01:
+			var fw: float = w * r
+			var fill_pts := PackedVector2Array([
+				Vector2(1.5 + sk, 1.5),
+				Vector2(1.5 + sk + fw, 1.5),
+				Vector2(1.5 + fw, 1.5 + h),
+				Vector2(1.5, 1.5 + h),
+			])
+			draw_colored_polygon(fill_pts, ready_col if r >= 0.999 else charge_col)
+		var closed := pts.duplicate()
+		closed.append(pts[0])
+		draw_polyline(closed, UiPalette.INK, 2.5, true)
+
+
+class _SmashFighterPlate extends Control:
+	var accent_color: Color = Color("ffd22e")
+	var is_local: bool = false
+	var alive: bool = true
+
+	func _init() -> void:
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	func _notification(what: int) -> void:
+		if what == NOTIFICATION_RESIZED:
+			queue_redraw()
+
+	func _draw() -> void:
+		var sk: float = 12.0
+		var pad_l: float = 2.0
+		var pad_t: float = 2.0
+		var pad_r: float = 6.0
+		var pad_b: float = 7.0
+		var w: float = size.x - pad_l - pad_r - sk
+		var h: float = size.y - pad_t - pad_b
+		if w <= 12.0 or h <= 12.0:
+			return
+		var pts := PackedVector2Array([
+			Vector2(pad_l + sk, pad_t),
+			Vector2(pad_l + sk + w, pad_t),
+			Vector2(pad_l + w, pad_t + h),
+			Vector2(pad_l, pad_t + h),
+		])
+		var sh := PackedVector2Array([
+			pts[0] + Vector2(4.0, 5.0),
+			pts[1] + Vector2(4.0, 5.0),
+			pts[2] + Vector2(4.0, 5.0),
+			pts[3] + Vector2(4.0, 5.0),
+		])
+		draw_colored_polygon(sh, KO_SHADOW_COLOR)
+
+		var body_col := Color(0.118, 0.106, 0.227, 0.96)
+		if is_local and alive:
+			body_col = Color("241f46")
+		elif not alive:
+			body_col = Color(0.09, 0.08, 0.16, 0.88)
+		draw_colored_polygon(pts, body_col)
+
+		# Vibrant Smash-style left colour wedge + bottom colour stripe!
+		var wedge_col: Color = accent_color if alive else Color(0.42, 0.40, 0.50, 0.75)
+		var ww: float = minf(16.0, w * 0.22)
+		var wedge := PackedVector2Array([
+			Vector2(pad_l + sk, pad_t),
+			Vector2(pad_l + sk + ww, pad_t),
+			Vector2(pad_l + ww, pad_t + h),
+			Vector2(pad_l, pad_t + h),
+		])
+		draw_colored_polygon(wedge, wedge_col)
+
+		var stripe_h: float = 5.0
+		var b_stripe := PackedVector2Array([
+			Vector2(pad_l + sk * (stripe_h / h), pad_t + h - stripe_h),
+			Vector2(pad_l + w + sk * (stripe_h / h), pad_t + h - stripe_h),
+			Vector2(pad_l + w, pad_t + h),
+			Vector2(pad_l, pad_t + h),
+		])
+		draw_colored_polygon(b_stripe, UiPalette.YELLOW if (is_local and alive) else wedge_col)
+
+		draw_line(
+			Vector2(pad_l + sk + ww, pad_t),
+			Vector2(pad_l + ww, pad_t + h),
+			UiPalette.INK, 3.0, true)
+
+		# Top comic specular sheen.
+		if alive:
+			var sheen_h: float = maxf(h * 0.22, 3.0)
+			var sheen := PackedVector2Array([
+				Vector2(pad_l + sk + ww + 2.0, pad_t + 2.0),
+				Vector2(pad_l + sk + w - 2.0, pad_t + 2.0),
+				Vector2(pad_l + sk * 0.78 + w - 2.0, pad_t + 2.0 + sheen_h),
+				Vector2(pad_l + sk * 0.78 + ww + 2.0, pad_t + 2.0 + sheen_h),
+			])
+			draw_colored_polygon(sheen, Color(1.0, 1.0, 1.0, 0.14))
+		else:
+			draw_line(
+				Vector2(pad_l + sk + ww + 6.0, pad_t + 6.0),
+				Vector2(pad_l + w - 6.0, pad_t + h - 6.0),
+				Color(0.95, 0.33, 0.36, 0.55), 3.0, true)
+
+		var closed := pts.duplicate()
+		closed.append(pts[0])
+		if is_local and alive:
+			draw_polyline(closed, UiPalette.YELLOW, 5.5, true)
+		draw_polyline(closed, UiPalette.INK, 4.0, true)
 
 var _saved_vehicle: String = ""
 var _selftest: bool = false
@@ -160,30 +372,41 @@ var _bot_sync_timer: float = 0.0
 var _damage_sync_timer: float = 0.0
 var _clock_sync_timer: float = 0.0
 
-## Knockout Arcade HUD nodes.
+## Knockout Slop-Slash HUD nodes.
 var _canvas: CanvasLayer
 var _hud_root: Control
 var _top_bar: PanelContainer
+var _top_bar_plate: _KoSlashPlate
 var _round_label: Label
+var _alive_hud_label: Label
+var _clock_hud_label: Label
+var _clock_hud_plate: _KoSlashPlate
 var _arena_label: Label
 var _damage_badge: PanelContainer
 var _damage_style: StyleBoxFlat
 var _damage_caption: Label
 var _damage_value_label: Label
 var _slam_status_label: Label
+var _slam_slash_bar: _KoSlamSlashBar
 var _slam_bar_fill: ColorRect
 var _slam_bar_bg: PanelContainer
 var _leaderboard_panel: PanelContainer
 var _leaderboard_rows: VBoxContainer
 var _leaderboard_cache: Array[Dictionary] = []
+var _fighter_bar: HBoxContainer
+var _fighter_cards_cache: Array[Dictionary] = []
+var _local_fighter_card: Control
 var _toast_panel: PanelContainer
+var _toast_plate: _KoSlashPlate
 var _toast_style: StyleBoxFlat
 var _toast_label: Label
 var _toast_timer: float = 0.0
 var _spectator_pill: PanelContainer
+var _spectator_plate: _KoSlashPlate
 var _spectator_label: Label
 var _countdown_label: Label
 var _intermission_panel: PanelContainer
+var _intermission_plate: _KoSlashPlate
 var _intermission_title: Label
 var _intermission_sub: Label
 
@@ -564,12 +787,9 @@ func _desired_bot_count() -> int:
 	if _multiplayer:
 		if not Network.session_bots:
 			return 0
-		var humans: int = maxi(multiplayer.get_peers().size() + 1, 1)
-		var wanted: int = Network.session_bot_count if Network.session_bot_count > 0 \
-			else GameSettings.effective_bot_count()
-		return clampi(wanted, 0, maxi(MAX_CONTESTANTS - humans, 0))
-	return clampi(maxi(GameSettings.effective_bot_count(), SOLO_MIN_BOTS),
-		SOLO_MIN_BOTS, MAX_CONTESTANTS - 1)
+		var humans: int = maxi(Network.participants().size(), 1)
+		return clampi(Network.session_bot_count, 0, maxi(MAX_CONTESTANTS - humans, 0))
+	return clampi(GameSettings.effective_bot_count(), 0, MAX_CONTESTANTS - 1)
 
 
 func _setup_local_contestant() -> void:
@@ -1510,7 +1730,7 @@ func _finish_match() -> void:
 func _tick_ai_bots(delta: float) -> void:
 	var w1_danger: bool = _wave1_warning or _wave1_dropped
 	var w2_danger: bool = _wave2_warning or _wave2_dropped
-	var diff: int = clampi(GameSettings.minigame_difficulty, 0, 2)
+	var diff: int = Network.bot_difficulty()
 	var chasm_half: float = float(_arena_data.get("chasm_half_x", 0.0))
 
 	for bot_key: int in _bot_keys:
@@ -1857,8 +2077,34 @@ func _play_one_shot(stream: AudioStream, volume_db: float, pitch: float) -> void
 
 
 # ==========================================================================
-# Sleek Arcade In-Game HUD & Match Result Card
+# Slop-Slash Comic-Arcade HUD, Smash Fighter Damage Plates & Result Card
 # ==========================================================================
+
+func _empty_box(pad_l: float = 0.0, pad_t: float = 0.0,
+		pad_r: float = 0.0, pad_b: float = 0.0) -> StyleBoxEmpty:
+	var st := StyleBoxEmpty.new()
+	st.content_margin_left = pad_l
+	st.content_margin_top = pad_t
+	st.content_margin_right = pad_r
+	st.content_margin_bottom = pad_b
+	return st
+
+
+func _attach_ko_slash(host: Control, skew: float, fill: Color,
+		border: Color = UiPalette.INK, border_w: float = 3.5,
+		shadow := Vector2(4.0, 5.0)) -> _KoSlashPlate:
+	var plate := _KoSlashPlate.new()
+	plate.name = "SlashPlate"
+	plate.skew_px = skew
+	plate.fill_color = fill
+	plate.border_color = border
+	plate.border_width = minf(border_w, 1.5)
+	plate.shadow_offset = shadow * 0.35
+	plate.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	host.add_child(plate)
+	host.move_child(plate, 0)
+	return plate
+
 
 func _build_hud() -> void:
 	_canvas = CanvasLayer.new()
@@ -1872,7 +2118,7 @@ func _build_hud() -> void:
 	_hud_root.theme = UI_THEME
 	_canvas.add_child(_hud_root)
 
-	# 1. Top-Center Compact Knockout HUD Bar (ROUND + CLOCK | YOUR DAMAGE % | SLAM BAR)
+	# 1. Top-Center Skewed Comic Arcade Header Slash (ROUND + 00:55 + ALIVE + SLAM!)
 	_top_bar = PanelContainer.new()
 	_top_bar.name = "KnockoutTopBar"
 	_top_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -1882,12 +2128,11 @@ func _build_hud() -> void:
 	_top_bar.offset_right = TOP_BAR_WIDTH * 0.5
 	_top_bar.offset_top = TOP_BAR_TOP
 	_top_bar.offset_bottom = TOP_BAR_TOP + TOP_BAR_HEIGHT
-	var top_style := _card_style(Color(0.09, 0.09, 0.20, 0.90), UiPalette.OUTLINE, 3, 14)
-	top_style.content_margin_left = 10.0
-	top_style.content_margin_right = 10.0
-	top_style.content_margin_top = 4.0
-	top_style.content_margin_bottom = 4.0
-	_top_bar.add_theme_stylebox_override("panel", top_style)
+	_top_bar.add_theme_stylebox_override("panel", _empty_box(18.0, 4.0, 20.0, 8.0))
+	_top_bar_plate = _attach_ko_slash(
+		_top_bar, 14.0, UiPalette.INK, UiPalette.CREAM, 3.5, Vector2(4.0, 5.0))
+	_top_bar_plate.accent_color = UiPalette.YELLOW
+	_top_bar_plate.accent_width = 10.0
 	_hud_root.add_child(_top_bar)
 
 	var top_row := HBoxContainer.new()
@@ -1896,89 +2141,67 @@ func _build_hud() -> void:
 	top_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_top_bar.add_child(top_row)
 
-	# Left cluster: Round & Clock + Arena Name
+	# Left cluster: ROUND 1/3 + ALIVE count (all LuckiestGuy + thick ink outline)
 	var round_col := VBoxContainer.new()
 	round_col.alignment = BoxContainer.ALIGNMENT_CENTER
 	round_col.add_theme_constant_override("separation", 0)
-	round_col.custom_minimum_size = Vector2(124.0, 0.0)
+	round_col.custom_minimum_size = Vector2(106.0, 0.0)
 	round_col.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	top_row.add_child(round_col)
 
-	_round_label = _ui_label("ROUND 1/3 · 0:55", 15, UiPalette.CREAM, 4)
-	_round_label.theme_type_variation = &"TitleLabel"
+	_round_label = _ui_label("ROUND 1/3", 15, UiPalette.YELLOW, 6)
+	_round_label.clip_text = true
 	round_col.add_child(_round_label)
 
-	_arena_label = _ui_label(str(_arena_data.get("name", "SKYTOP HELIPAD")),
-		11, Color(1.0, 1.0, 1.0, 0.68), 2)
-	_arena_label.clip_text = true
-	_arena_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	_alive_hud_label = _ui_label("4 ALIVE", 12, UiPalette.CYAN, 5)
+	_alive_hud_label.clip_text = true
+	round_col.add_child(_alive_hud_label)
+
+	# Hidden arena label preserved for _load_arena() contract safety.
+	_arena_label = _ui_label(str(_arena_data.get("name", "SKYTOP HELIPAD")), 10, UiPalette.CREAM, 4)
+	_arena_label.visible = false
 	round_col.add_child(_arena_label)
 
-	# Center prominent YOUR DAMAGE % badge
+	# Center skewed #ffd22e yellow clock tag ("00:55" in #1e1b3a LuckiestGuy)
+	var clock_panel := PanelContainer.new()
+	clock_panel.custom_minimum_size = Vector2(96.0, 38.0)
+	clock_panel.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	clock_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	clock_panel.add_theme_stylebox_override("panel", _empty_box(12.0, 2.0, 14.0, 5.0))
+	_clock_hud_plate = _attach_ko_slash(
+		clock_panel, 10.0, UiPalette.YELLOW, UiPalette.INK, 3.5, Vector2(3.0, 4.0))
+	top_row.add_child(clock_panel)
+
+	_clock_hud_label = _ui_label("00:55", 22, UiPalette.INK, 0, false)
+	_clock_hud_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_clock_hud_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	clock_panel.add_child(_clock_hud_label)
+
+	# Hidden fallback damage refs (live % counters now shine on Smash Fighter Plates!)
 	_damage_badge = PanelContainer.new()
-	_damage_badge.custom_minimum_size = Vector2(114.0, 40.0)
-	_damage_badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_damage_style = _card_style(Color(0.16, 0.14, 0.30, 0.95), UiPalette.YELLOW, 2, 10)
-	_damage_style.content_margin_left = 7.0
-	_damage_style.content_margin_right = 7.0
-	_damage_style.content_margin_top = 2.0
-	_damage_style.content_margin_bottom = 2.0
-	_damage_badge.add_theme_stylebox_override("panel", _damage_style)
+	_damage_badge.visible = false
+	_damage_value_label = _ui_label("0%", 20, Color.WHITE, 6)
+	_damage_badge.add_child(_damage_value_label)
 	top_row.add_child(_damage_badge)
 
-	var dmg_row := HBoxContainer.new()
-	dmg_row.alignment = BoxContainer.ALIGNMENT_CENTER
-	dmg_row.add_theme_constant_override("separation", 5)
-	dmg_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_damage_badge.add_child(dmg_row)
-
-	_damage_caption = _ui_label("DMG", 11, Color(1.0, 1.0, 1.0, 0.72), 2)
-	_damage_caption.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	dmg_row.add_child(_damage_caption)
-
-	_damage_value_label = _ui_label("0%", 23, Color.WHITE, 5)
-	_damage_value_label.theme_type_variation = &"TitleLabel"
-	_damage_value_label.custom_minimum_size = Vector2(62.0, 0.0)
-	_damage_value_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	dmg_row.add_child(_damage_value_label)
-
-	# Right cluster: SLAM READY / Cooldown bar
+	# Right cluster: Skewed SLAM! charge slash
 	var slam_col := VBoxContainer.new()
 	slam_col.alignment = BoxContainer.ALIGNMENT_CENTER
-	slam_col.add_theme_constant_override("separation", 3)
-	slam_col.custom_minimum_size = Vector2(118.0, 0.0)
+	slam_col.add_theme_constant_override("separation", 2)
+	slam_col.custom_minimum_size = Vector2(114.0, 0.0)
 	slam_col.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	top_row.add_child(slam_col)
 
-	_slam_status_label = _ui_label("[E / RMB] SLAM", 11, UiPalette.YELLOW, 3)
-	_slam_status_label.theme_type_variation = &"TitleLabel"
+	_slam_status_label = _ui_label("SLAM [E]", 12, UiPalette.YELLOW, 5)
 	_slam_status_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_slam_status_label.clip_text = true
 	slam_col.add_child(_slam_status_label)
 
-	_slam_bar_bg = PanelContainer.new()
-	_slam_bar_bg.custom_minimum_size = Vector2(SLAM_BAR_INNER_WIDTH + 4.0, 12.0)
-	_slam_bar_bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var bar_bg_style := _card_style(Color(0.05, 0.06, 0.12, 0.92), UiPalette.OUTLINE, 2, 6)
-	bar_bg_style.content_margin_left = 2.0
-	bar_bg_style.content_margin_right = 2.0
-	bar_bg_style.content_margin_top = 2.0
-	bar_bg_style.content_margin_bottom = 2.0
-	_slam_bar_bg.add_theme_stylebox_override("panel", bar_bg_style)
-	slam_col.add_child(_slam_bar_bg)
+	_slam_slash_bar = _KoSlamSlashBar.new()
+	_slam_slash_bar.custom_minimum_size = Vector2(SLAM_BAR_INNER_WIDTH, 14.0)
+	slam_col.add_child(_slam_slash_bar)
 
-	var bar_holder := Control.new()
-	bar_holder.custom_minimum_size = Vector2(SLAM_BAR_INNER_WIDTH, 8.0)
-	bar_holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_slam_bar_bg.add_child(bar_holder)
-
-	_slam_bar_fill = ColorRect.new()
-	_slam_bar_fill.color = Color("ffa62b")
-	_slam_bar_fill.position = Vector2.ZERO
-	_slam_bar_fill.size = Vector2(SLAM_BAR_INNER_WIDTH, 8.0)
-	_slam_bar_fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	bar_holder.add_child(_slam_bar_fill)
-
-	# 2. Top-Left Compact Live Leaderboard Pills
+	# 2. Top-Left Skewed Comic Score Slashes (zero outer box, preserves fits_960!)
 	_leaderboard_panel = PanelContainer.new()
 	_leaderboard_panel.name = "LeaderboardPanel"
 	_leaderboard_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -1986,12 +2209,7 @@ func _build_hud() -> void:
 	_leaderboard_panel.offset_top = LEADERBOARD_TOP
 	_leaderboard_panel.offset_right = LEADERBOARD_LEFT + LEADERBOARD_WIDTH
 	_leaderboard_panel.offset_bottom = LEADERBOARD_TOP + 48.0
-	var lb_style := _card_style(Color(0.07, 0.09, 0.18, 0.86), UiPalette.OUTLINE, 2, 12)
-	lb_style.content_margin_left = 8.0
-	lb_style.content_margin_right = 8.0
-	lb_style.content_margin_top = 6.0
-	lb_style.content_margin_bottom = 6.0
-	_leaderboard_panel.add_theme_stylebox_override("panel", lb_style)
+	_leaderboard_panel.add_theme_stylebox_override("panel", _empty_box())
 	_hud_root.add_child(_leaderboard_panel)
 
 	_leaderboard_rows = VBoxContainer.new()
@@ -1999,7 +2217,23 @@ func _build_hud() -> void:
 	_leaderboard_rows.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_leaderboard_panel.add_child(_leaderboard_rows)
 
-	# 3. Upper-Center KO & Hazard Warning Toast
+	# 3. Bottom Smash Bros. / Hi-Fi Rush Skewed Parallelogram Fighter Damage Plates!
+	_fighter_bar = HBoxContainer.new()
+	_fighter_bar.name = "SmashFighterBar"
+	_fighter_bar.alignment = BoxContainer.ALIGNMENT_CENTER
+	_fighter_bar.add_theme_constant_override("separation", 8)
+	_fighter_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_fighter_bar.anchor_left = 0.0
+	_fighter_bar.anchor_right = 0.0
+	_fighter_bar.anchor_top = 1.0
+	_fighter_bar.anchor_bottom = 1.0
+	_fighter_bar.offset_left = 324.0
+	_fighter_bar.offset_right = 960.0
+	_fighter_bar.offset_top = -84.0
+	_fighter_bar.offset_bottom = -10.0
+	_hud_root.add_child(_fighter_bar)
+
+	# 4. Upper-Center Skewed KO & Hazard Warning Slash
 	_toast_panel = PanelContainer.new()
 	_toast_panel.name = "KoToastPanel"
 	_toast_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -2009,24 +2243,22 @@ func _build_hud() -> void:
 	_toast_panel.offset_right = TOAST_WIDTH * 0.5
 	_toast_panel.offset_top = TOP_BAR_TOP + TOP_BAR_HEIGHT + 8.0
 	_toast_panel.offset_bottom = TOP_BAR_TOP + TOP_BAR_HEIGHT + 8.0 + TOAST_HEIGHT
-	_toast_style = _card_style(Color(0.11, 0.10, 0.22, 0.92), UiPalette.YELLOW, 2, 12)
-	_toast_style.content_margin_left = 14.0
-	_toast_style.content_margin_right = 14.0
-	_toast_style.content_margin_top = 4.0
-	_toast_style.content_margin_bottom = 4.0
-	_toast_panel.add_theme_stylebox_override("panel", _toast_style)
+	_toast_panel.add_theme_stylebox_override("panel", _empty_box(18.0, 4.0, 20.0, 8.0))
+	_toast_plate = _attach_ko_slash(
+		_toast_panel, 12.0, UiPalette.INK, UiPalette.YELLOW, 3.5, Vector2(4.0, 5.0))
+	_toast_plate.accent_color = UiPalette.YELLOW
+	_toast_plate.accent_width = 14.0
 	_toast_panel.visible = false
 	_hud_root.add_child(_toast_panel)
 
-	_toast_label = _ui_label("", 16, UiPalette.YELLOW, 4)
-	_toast_label.theme_type_variation = &"TitleLabel"
+	_toast_label = _ui_label("", 17, UiPalette.YELLOW, 6)
 	_toast_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_toast_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	_toast_label.clip_text = true
 	_toast_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	_toast_panel.add_child(_toast_label)
 
-	# 4. Spectator Status Pill (bottom-center when local kart is eliminated)
+	# 5. Spectator Status Slash (sits cleanly above the Smash Fighter Bar)
 	_spectator_pill = PanelContainer.new()
 	_spectator_pill.name = "SpectatorPill"
 	_spectator_pill.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -2034,35 +2266,33 @@ func _build_hud() -> void:
 	_spectator_pill.anchor_right = 0.5
 	_spectator_pill.anchor_top = 1.0
 	_spectator_pill.anchor_bottom = 1.0
-	_spectator_pill.offset_left = -152.0
-	_spectator_pill.offset_right = 152.0
-	_spectator_pill.offset_top = -54.0
-	_spectator_pill.offset_bottom = -18.0
-	var spec_style := _card_style(Color(0.12, 0.10, 0.24, 0.90), UiPalette.CYAN, 2, 12)
-	spec_style.content_margin_left = 12.0
-	spec_style.content_margin_right = 12.0
-	spec_style.content_margin_top = 4.0
-	spec_style.content_margin_bottom = 4.0
-	_spectator_pill.add_theme_stylebox_override("panel", spec_style)
+	_spectator_pill.offset_left = -168.0
+	_spectator_pill.offset_right = 168.0
+	_spectator_pill.offset_top = -126.0
+	_spectator_pill.offset_bottom = -88.0
+	_spectator_pill.add_theme_stylebox_override("panel", _empty_box(18.0, 4.0, 20.0, 7.0))
+	_spectator_plate = _attach_ko_slash(
+		_spectator_pill, 12.0, UiPalette.INK, UiPalette.CYAN, 3.5, Vector2(4.0, 5.0))
+	_spectator_plate.accent_color = UiPalette.CYAN
+	_spectator_plate.accent_width = 12.0
 	_spectator_pill.visible = false
 	_hud_root.add_child(_spectator_pill)
 
-	_spectator_label = _ui_label("ELIMINATED  ·  SPECTATING", 14, UiPalette.CYAN, 3)
-	_spectator_label.theme_type_variation = &"TitleLabel"
+	_spectator_label = _ui_label("ELIMINATED · SPECTATING", 14, UiPalette.CYAN, 6)
 	_spectator_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_spectator_label.clip_text = true
 	_spectator_pill.add_child(_spectator_label)
 
-	# 5. Center Countdown Label & Round Intermission Banner
-	_countdown_label = _ui_label("3", 96, UiPalette.YELLOW, 12)
-	_countdown_label.theme_type_variation = &"TitleLabel"
+	# 6. Center Countdown Label & Skewed Round Intermission Banner
+	_countdown_label = _ui_label("3", 104, UiPalette.YELLOW, 12)
 	_countdown_label.anchor_left = 0.5
 	_countdown_label.anchor_right = 0.5
 	_countdown_label.anchor_top = 0.5
 	_countdown_label.anchor_bottom = 0.5
 	_countdown_label.offset_left = -220.0
 	_countdown_label.offset_right = 220.0
-	_countdown_label.offset_top = -62.0
-	_countdown_label.offset_bottom = 62.0
+	_countdown_label.offset_top = -64.0
+	_countdown_label.offset_bottom = 64.0
 	_countdown_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_countdown_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	_hud_root.add_child(_countdown_label)
@@ -2074,16 +2304,15 @@ func _build_hud() -> void:
 	_intermission_panel.anchor_right = 0.5
 	_intermission_panel.anchor_top = 0.5
 	_intermission_panel.anchor_bottom = 0.5
-	_intermission_panel.offset_left = -220.0
-	_intermission_panel.offset_right = 220.0
-	_intermission_panel.offset_top = -68.0
-	_intermission_panel.offset_bottom = 68.0
-	var inter_style := _card_style(Color(0.10, 0.10, 0.22, 0.95), UiPalette.YELLOW, 4, 16)
-	inter_style.content_margin_left = 18.0
-	inter_style.content_margin_right = 18.0
-	inter_style.content_margin_top = 12.0
-	inter_style.content_margin_bottom = 12.0
-	_intermission_panel.add_theme_stylebox_override("panel", inter_style)
+	_intermission_panel.offset_left = -236.0
+	_intermission_panel.offset_right = 236.0
+	_intermission_panel.offset_top = -74.0
+	_intermission_panel.offset_bottom = 74.0
+	_intermission_panel.add_theme_stylebox_override("panel", _empty_box(24.0, 14.0, 26.0, 18.0))
+	_intermission_plate = _attach_ko_slash(
+		_intermission_panel, 14.0, UiPalette.INK, UiPalette.YELLOW, 4.0, Vector2(5.0, 6.0))
+	_intermission_plate.accent_color = UiPalette.YELLOW
+	_intermission_plate.accent_width = 16.0
 	_intermission_panel.visible = false
 	_hud_root.add_child(_intermission_panel)
 
@@ -2093,12 +2322,12 @@ func _build_hud() -> void:
 	inter_col.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_intermission_panel.add_child(inter_col)
 
-	_intermission_title = _ui_label("ROUND 1 COMPLETE", 24, UiPalette.YELLOW, 5)
-	_intermission_title.theme_type_variation = &"TitleLabel"
+	_intermission_title = _ui_label("ROUND 1 COMPLETE", 24, UiPalette.YELLOW, 7)
 	_intermission_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_intermission_title.clip_text = true
 	inter_col.add_child(_intermission_title)
 
-	_intermission_sub = _ui_label("", 13, UiPalette.CREAM, 3)
+	_intermission_sub = _ui_label("", 13, UiPalette.CREAM, 5)
 	_intermission_sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_intermission_sub.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	inter_col.add_child(_intermission_sub)
@@ -2295,35 +2524,45 @@ func _refresh_hud_frame() -> void:
 	if _round_label == null:
 		return
 	var whole_s: int = maxi(int(ceil(_round_remaining)), 0)
-	_round_label.text = "ROUND %d/%d · %d:%02d" % [
-		_round_index, _total_rounds, whole_s / 60, whole_s % 60]
+	_round_label.text = "ROUND %d/%d" % [_round_index, _total_rounds]
+	if _clock_hud_label != null:
+		_clock_hud_label.text = "%02d:%02d" % [whole_s / 60, whole_s % 60]
+		var urgent: bool = whole_s <= 10 and (whole_s % 2 == 1)
+		if _clock_hud_plate != null:
+			_clock_hud_plate.fill_color = UiPalette.PINK if urgent else UiPalette.YELLOW
+			_clock_hud_plate.queue_redraw()
+		_clock_hud_label.add_theme_constant_override("outline_size", 5 if urgent else 0)
+		_clock_hud_label.add_theme_color_override("font_color",
+			UiPalette.CREAM if urgent else UiPalette.INK)
+	if _alive_hud_label != null:
+		_alive_hud_label.text = "%d ALIVE" % _alive_contestant_keys().size()
 
 	var local: Dictionary = _contestants.get(_local_key(), {}) as Dictionary
 	var pct: float = float(local.get("damage_pct", 0.0))
 	var alive: bool = bool(local.get("alive", true))
 	var col: Color = _damage_color(pct)
-	_damage_value_label.text = "%d%%" % int(round(pct)) if alive else "OUT"
-	_damage_value_label.add_theme_color_override("font_color", col if alive else UiPalette.RED)
-	if _damage_style != null:
-		_damage_style.border_color = col if alive else UiPalette.RED
+	if _damage_value_label != null:
+		_damage_value_label.text = "%d%%" % int(round(pct)) if alive else "OUT"
+		_damage_value_label.add_theme_color_override("font_color", col if alive else UiPalette.RED)
 
 	var slam_cd: float = float(local.get("slam_cooldown", 0.0))
 	var ready_ratio: float = clampf(1.0 - slam_cd / SLAM_COOLDOWN, 0.0, 1.0)
-	if _slam_bar_fill != null:
-		_slam_bar_fill.size.x = SLAM_BAR_INNER_WIDTH * ready_ratio
-		_slam_bar_fill.color = Color("ffc838") if ready_ratio >= 0.999 else Color("45b6f0")
+	if _slam_slash_bar != null:
+		_slam_slash_bar.ratio = ready_ratio
+		_slam_slash_bar.queue_redraw()
 	if _slam_status_label != null:
 		if not alive:
 			_slam_status_label.text = "SPECTATING"
 			_slam_status_label.add_theme_color_override("font_color", UiPalette.TEXT_DIM)
 		elif ready_ratio >= 0.999:
-			_slam_status_label.text = "[E / RMB] SLAM!"
+			_slam_status_label.text = "SLAM! [E]"
 			_slam_status_label.add_theme_color_override("font_color", UiPalette.YELLOW)
 		else:
-			_slam_status_label.text = "SLAM  %.1fs" % slam_cd
-			_slam_status_label.add_theme_color_override("font_color", UiPalette.CREAM)
+			_slam_status_label.text = "SLAM %.1fS" % slam_cd
+			_slam_status_label.add_theme_color_override("font_color", UiPalette.CYAN)
 
 	_refresh_leaderboard_pills()
+	_refresh_smash_fighter_plates()
 	_layout_hud()
 
 
@@ -2339,44 +2578,31 @@ func _refresh_leaderboard_pills() -> void:
 	while _leaderboard_cache.size() < count:
 		var pill := PanelContainer.new()
 		pill.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		pill.custom_minimum_size = Vector2(0.0, 21.0)
-		var st := _card_style(Color(1.0, 1.0, 1.0, 0.06), Color.TRANSPARENT, 0, 6)
-		st.content_margin_left = 6.0
-		st.content_margin_right = 6.0
-		st.content_margin_top = 1.0
-		st.content_margin_bottom = 1.0
-		pill.add_theme_stylebox_override("panel", st)
+		pill.custom_minimum_size = Vector2(0.0, 22.0)
+		pill.add_theme_stylebox_override("panel", _empty_box(14.0, 1.0, 12.0, 3.0))
+		var plate := _attach_ko_slash(
+			pill, 9.0, Color(0.118, 0.106, 0.227, 0.88), UiPalette.INK, 2.5, Vector2(2.5, 3.0))
+		plate.draw_sheen = false
+
 		var hbox := HBoxContainer.new()
 		hbox.add_theme_constant_override("separation", 5)
 		hbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		pill.add_child(hbox)
 
-		var dot := ColorRect.new()
-		dot.custom_minimum_size = Vector2(7.0, 7.0)
-		dot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		hbox.add_child(dot)
-
-		var nm := _ui_label("PLAYER", 12, UiPalette.CREAM, 2)
+		var nm := _ui_label("PLAYER", 11, UiPalette.CREAM, 4, false)
 		nm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		nm.clip_text = true
 		nm.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 		hbox.add_child(nm)
 
-		var dm := _ui_label("0%", 11, Color.WHITE, 2)
-		dm.custom_minimum_size = Vector2(36.0, 0.0)
-		dm.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-		hbox.add_child(dm)
-
-		var pt := _ui_label("0P", 12, UiPalette.YELLOW, 2)
-		pt.theme_type_variation = &"TitleLabel"
-		pt.custom_minimum_size = Vector2(28.0, 0.0)
+		var pt := _ui_label("0P", 11, UiPalette.YELLOW, 4, false)
+		pt.custom_minimum_size = Vector2(30.0, 0.0)
 		pt.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 		hbox.add_child(pt)
 
 		_leaderboard_rows.add_child(pill)
 		_leaderboard_cache.append({
-			"pill": pill, "style": st, "dot": dot, "name": nm, "dmg": dm, "pts": pt,
+			"pill": pill, "plate": plate, "name": nm, "pts": pt,
 		})
 
 	for idx: int in _leaderboard_cache.size():
@@ -2389,21 +2615,144 @@ func _refresh_leaderboard_pills() -> void:
 		var c: Dictionary = ranked[idx]
 		var alive: bool = bool(c.get("alive", true))
 		var is_me: bool = int(c.get("key", 0)) == _local_key()
-		var pct: float = float(c.get("damage_pct", 0.0))
-		var st: StyleBoxFlat = slot["style"] as StyleBoxFlat
-		st.bg_color = Color(1.0, 0.84, 0.22, 0.22) if is_me else Color(1.0, 1.0, 1.0, 0.05)
-		(slot["dot"] as ColorRect).color = (c.get("color", UiPalette.YELLOW) as Color) \
-			if alive else Color(0.45, 0.45, 0.52, 0.65)
+		var fighter_col: Color = (c.get("color", UiPalette.YELLOW) as Color)
+		var plate: _KoSlashPlate = slot["plate"] as _KoSlashPlate
+		plate.fill_color = UiPalette.YELLOW if is_me else Color(0.118, 0.106, 0.227, 0.88)
+		plate.accent_color = UiPalette.PINK if is_me else (fighter_col if alive else UiPalette.MUTED)
+		plate.accent_width = 10.0
+		plate.queue_redraw()
+
 		var nm: Label = slot["name"] as Label
-		nm.text = str(c.get("name", "PLAYER"))
+		nm.text = "%d. %s" % [idx + 1, str(c.get("name", "PLAYER"))]
+		nm.add_theme_constant_override("outline_size", 0 if is_me else 4)
 		nm.add_theme_color_override("font_color",
-			UiPalette.YELLOW if is_me else (UiPalette.CREAM if alive else Color(0.65, 0.65, 0.72)))
-		var dm: Label = slot["dmg"] as Label
-		dm.text = "%d%%" % int(round(pct)) if alive else "KO"
-		dm.add_theme_color_override("font_color",
-			_damage_color(pct) if alive else UiPalette.RED)
+			UiPalette.INK if is_me else (UiPalette.CREAM if alive else UiPalette.TEXT_DIM))
+
 		var pt: Label = slot["pts"] as Label
 		pt.text = "%dP" % int(c.get("score", 0))
+		pt.add_theme_constant_override("outline_size", 0 if is_me else 4)
+		pt.add_theme_color_override("font_color",
+			UiPalette.INK if is_me else UiPalette.YELLOW)
+
+
+func _fighter_display_list(max_cards: int) -> Array[Dictionary]:
+	## Local fighter always anchors card 0, followed by alive/top-ranked rivals.
+	var out: Array[Dictionary] = []
+	var my_k: int = _local_key()
+	if _contestants.has(my_k):
+		out.append(_contestants[my_k] as Dictionary)
+	for entry: Dictionary in _ranked_contestants():
+		if out.size() >= max_cards:
+			break
+		if int(entry.get("key", 0)) == my_k:
+			continue
+		out.append(entry)
+	return out
+
+
+func _refresh_smash_fighter_plates() -> void:
+	if _fighter_bar == null:
+		return
+	var view: Vector2 = get_viewport().get_visible_rect().size
+	if view.x <= 1.0:
+		view = Vector2(1280.0, 720.0)
+	var lane_w: float = maxf((view.x - 246.0) - 324.0, 320.0)
+	var max_cards: int = 3 if lane_w < 480.0 else (4 if lane_w < 680.0 else 5)
+	var shown: Array[Dictionary] = _fighter_display_list(max_cards)
+	var count: int = shown.size()
+	var gap: float = 8.0
+	var card_w: float = clampf(
+		floor((lane_w - gap * float(maxi(count - 1, 0))) / float(maxi(count, 1))),
+		92.0, 160.0)
+	var pct_font: int = 34 if card_w < 138.0 else 37
+
+	while _fighter_cards_cache.size() < count:
+		var card := PanelContainer.new()
+		card.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		card.custom_minimum_size = Vector2(card_w, 72.0)
+		card.add_theme_stylebox_override("panel", _empty_box(18.0, 3.0, 12.0, 6.0))
+
+		var plate := _SmashFighterPlate.new()
+		plate.name = "SmashPlate"
+		plate.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		card.add_child(plate)
+		card.move_child(plate, 0)
+
+		var col := VBoxContainer.new()
+		col.add_theme_constant_override("separation", 0)
+		col.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		card.add_child(col)
+
+		var head := HBoxContainer.new()
+		head.add_theme_constant_override("separation", 4)
+		head.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		col.add_child(head)
+
+		var nm := _ui_label("FIGHTER", 13, UiPalette.CREAM, 5, false)
+		nm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		nm.clip_text = true
+		nm.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		head.add_child(nm)
+
+		var tag := _ui_label("YOU", 11, UiPalette.YELLOW, 4, false)
+		head.add_child(tag)
+
+		var pct_lbl := _ui_label("0%", pct_font, UiPalette.CREAM, 8, true)
+		pct_lbl.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		pct_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		pct_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		pct_lbl.clip_text = true
+		col.add_child(pct_lbl)
+
+		_fighter_bar.add_child(card)
+		_fighter_cards_cache.append({
+			"card": card, "plate": plate, "name": nm, "tag": tag, "pct": pct_lbl,
+		})
+
+	_local_fighter_card = null
+	var my_key: int = _local_key()
+	for i in _fighter_cards_cache.size():
+		var slot: Dictionary = _fighter_cards_cache[i]
+		var card: PanelContainer = slot["card"] as PanelContainer
+		if i >= count:
+			card.visible = false
+			continue
+		card.visible = true
+		card.custom_minimum_size = Vector2(card_w, 72.0)
+
+		var entry: Dictionary = shown[i]
+		var is_me: bool = int(entry.get("key", 0)) == my_key
+		if is_me:
+			_local_fighter_card = card
+		var alive: bool = bool(entry.get("alive", true))
+		var pct: float = float(entry.get("damage_pct", 0.0))
+		var tint: Color = entry.get("color", UiPalette.CYAN) as Color
+
+		var plate: _SmashFighterPlate = slot["plate"] as _SmashFighterPlate
+		plate.accent_color = UiPalette.YELLOW if is_me else tint
+		plate.is_local = is_me
+		plate.alive = alive
+		plate.queue_redraw()
+
+		var nm: Label = slot["name"] as Label
+		nm.text = str(entry.get("name", "FIGHTER"))
+		nm.add_theme_color_override("font_color",
+			UiPalette.YELLOW if is_me else (UiPalette.CREAM if alive else UiPalette.TEXT_DIM))
+
+		var tag: Label = slot["tag"] as Label
+		var kos: int = int(entry.get("kos", 0))
+		if is_me:
+			tag.text = "YOU" if kos <= 0 else "YOU·%dKO" % kos
+			tag.add_theme_color_override("font_color", UiPalette.YELLOW)
+		else:
+			tag.text = "%dKO" % kos if kos > 0 else "%dP" % int(entry.get("score", 0))
+			tag.add_theme_color_override("font_color", UiPalette.CYAN)
+
+		var pct_lbl: Label = slot["pct"] as Label
+		pct_lbl.add_theme_font_size_override("font_size", pct_font)
+		pct_lbl.text = "%d%%" % int(round(pct)) if alive else "KO!"
+		pct_lbl.add_theme_color_override("font_color",
+			_damage_color(pct) if alive else UiPalette.RED)
 
 
 func _ranked_contestants() -> Array[Dictionary]:
@@ -2429,9 +2778,12 @@ func _ranked_contestants() -> Array[Dictionary]:
 
 
 func _layout_hud() -> void:
+	var view: Vector2 = get_viewport().get_visible_rect().size
+	if view.x <= 1.0 or view.y <= 1.0:
+		view = Vector2(1280.0, 720.0)
 	if _top_bar != null:
 		var min_top: Vector2 = _top_bar.get_combined_minimum_size()
-		var w: float = maxf(TOP_BAR_WIDTH, min_top.x + 8.0)
+		var w: float = maxf(TOP_BAR_WIDTH, min_top.x + 6.0)
 		var h: float = maxf(TOP_BAR_HEIGHT, min_top.y)
 		_top_bar.offset_left = -w * 0.5
 		_top_bar.offset_right = w * 0.5
@@ -2446,6 +2798,15 @@ func _layout_hud() -> void:
 		var lb_min: Vector2 = _leaderboard_panel.get_combined_minimum_size()
 		_leaderboard_panel.offset_right = LEADERBOARD_LEFT + maxf(LEADERBOARD_WIDTH, lb_min.x)
 		_leaderboard_panel.offset_bottom = LEADERBOARD_TOP + lb_min.y
+	if _fighter_bar != null:
+		var lane_l: float = 324.0
+		var lane_r: float = maxf(view.x - 246.0, lane_l + 320.0)
+		var f_min: Vector2 = _fighter_bar.get_combined_minimum_size()
+		var f_h: float = maxf(74.0, f_min.y)
+		_fighter_bar.offset_left = lane_l
+		_fighter_bar.offset_right = maxf(lane_r, lane_l + f_min.x)
+		_fighter_bar.offset_bottom = -10.0
+		_fighter_bar.offset_top = -10.0 - f_h
 
 
 func _hud_clips() -> bool:
@@ -2460,6 +2821,8 @@ func _hud_clips() -> bool:
 
 func _hud_clips_for_rect(view: Vector2) -> bool:
 	var checks: Array[Control] = [_top_bar, _leaderboard_panel]
+	if _fighter_bar != null and _fighter_bar.visible:
+		checks.append(_fighter_bar)
 	if _toast_panel != null and _toast_panel.visible:
 		checks.append(_toast_panel)
 	if _countdown_label != null and _countdown_label.visible:
@@ -2482,8 +2845,8 @@ func _hud_clips_for_rect(view: Vector2) -> bool:
 
 
 func _pulse_hud_damage() -> void:
-	if _damage_badge != null:
-		_pop_control(_damage_badge)
+	if _local_fighter_card != null:
+		_pop_control(_local_fighter_card)
 
 
 func _show_toast(text: String, duration: float, accent: Color = UiPalette.YELLOW) -> void:
@@ -2491,8 +2854,10 @@ func _show_toast(text: String, duration: float, accent: Color = UiPalette.YELLOW
 		return
 	_toast_label.text = text
 	_toast_label.add_theme_color_override("font_color", accent)
-	if _toast_style != null:
-		_toast_style.border_color = accent
+	if _toast_plate != null:
+		_toast_plate.accent_color = accent
+		_toast_plate.border_color = accent
+		_toast_plate.queue_redraw()
 	_toast_panel.visible = true
 	_toast_timer = duration
 	_layout_hud()
@@ -2519,15 +2884,28 @@ func _card_style(bg: Color, border: Color, border_w: int, radius: int) -> StyleB
 
 
 func _ui_label(text: String, font_size: int, colour: Color,
-		outline: int = 0) -> Label:
+		outline: int = 0, hard_shadow: Variant = null) -> Label:
 	var lbl := Label.new()
 	lbl.text = text
 	lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	lbl.theme_type_variation = &"TitleLabel"
+	lbl.add_theme_font_override("font", BODY_FONT)
 	lbl.add_theme_font_size_override("font_size", font_size)
 	lbl.add_theme_color_override("font_color", colour)
 	if outline > 0:
-		lbl.add_theme_color_override("font_outline_color", UiPalette.OUTLINE)
-		lbl.add_theme_constant_override("outline_size", outline)
+		lbl.add_theme_color_override("font_outline_color", UiPalette.INK)
+		lbl.add_theme_constant_override("outline_size", mini(outline, 3))
+	else:
+		lbl.add_theme_constant_override("outline_size", 0)
+	var use_shadow: bool = (outline >= 5) if hard_shadow == null else bool(hard_shadow)
+	if use_shadow:
+		lbl.add_theme_color_override("font_shadow_color", KO_TEXT_SHADOW)
+		lbl.add_theme_constant_override("shadow_offset_x", 1)
+		lbl.add_theme_constant_override("shadow_offset_y", 2)
+	else:
+		lbl.add_theme_color_override("font_shadow_color", Color(0.0, 0.0, 0.0, 0.0))
+		lbl.add_theme_constant_override("shadow_offset_x", 0)
+		lbl.add_theme_constant_override("shadow_offset_y", 0)
 	return lbl
 
 

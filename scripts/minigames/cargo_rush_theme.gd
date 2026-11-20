@@ -476,6 +476,11 @@ static func build_arena(stage: Node3D, id: String) -> Dictionary:
 	theme_root.name = "ThemeRoot"
 	stage.add_child(theme_root)
 	build_scenery(theme_root, theme, {"half": ARENA_HALF, "base_pads": pads}, stats)
+	# The cargo arenas sit on a 170 m floor; keep the ambient ring between the
+	# 56 m barrier and the floor edge so nothing hangs off the world.
+	preload("res://scripts/minigames/scenery/ambient_world.gd").build_arena(
+		theme_root, canonical, ARENA_HALF,
+		{"radius_in": 62.0, "radius_out": 80.0, "floor_y": -0.05})
 
 	# Visible crates on the map's elevated & lane spawn spots
 	var spots: Array[Vector3] = present_spots(theme)

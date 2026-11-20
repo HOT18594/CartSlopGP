@@ -94,7 +94,7 @@ func _on_update_available(version: String) -> void:
 	_update_button.tooltip_text = "Download and install v%s" % version
 	_update_button.visible = true
 	_update_button.fit_text()
-	_status_label.text = "New version %s is out" % version
+	_status_label.text = ""
 	if not _update_auto_opened and not UpdateChecker.auto_prompted \
 			and not _update_panel.visible and not _modal_visible():
 		_update_auto_opened = true

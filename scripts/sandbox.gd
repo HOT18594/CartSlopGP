@@ -248,7 +248,7 @@ func _setup_bots() -> void:
 		label.no_depth_test = true
 		label.position = Vector3(0.0, 2.4, 0.0)
 		node.add_child(label)
-		var difficulty: int = clampi(GameSettings.minigame_difficulty, 0, 2)
+		var difficulty: int = Network.bot_difficulty()
 		var bot: SandboxBot = SandboxBot.new()
 		bot.setup(node, i, rng, difficulty)
 		_bots.append(bot)
@@ -809,12 +809,60 @@ func _ground_height(at: Vector3) -> float:
 
 
 # --------------------------------------------------------------------------
-# zone hints
+# zone hints (Slop-Slash floating comic banner — zero shaded rounded boxes!)
+
+
+class _ZoneSlashTag extends Control:
+	func _init() -> void:
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	func _notification(what: int) -> void:
+		if what == NOTIFICATION_RESIZED:
+			queue_redraw()
+
+	func _draw() -> void:
+		var sk: float = 12.0
+		var pad_l: float = 2.0
+		var pad_t: float = 2.0
+		var pad_r: float = 6.0
+		var pad_b: float = 7.0
+		var w: float = size.x - pad_l - pad_r - sk
+		var h: float = size.y - pad_t - pad_b
+		if w <= 12.0 or h <= 8.0:
+			return
+		var pts := PackedVector2Array([
+			Vector2(pad_l + sk, pad_t),
+			Vector2(pad_l + sk + w, pad_t),
+			Vector2(pad_l + w, pad_t + h),
+			Vector2(pad_l, pad_t + h),
+		])
+		var sh := PackedVector2Array([
+			pts[0] + Vector2(4.0, 5.0),
+			pts[1] + Vector2(4.0, 5.0),
+			pts[2] + Vector2(4.0, 5.0),
+			pts[3] + Vector2(4.0, 5.0),
+		])
+		draw_colored_polygon(sh, Color(0.07, 0.05, 0.15, 0.88))
+		draw_colored_polygon(pts, UiPalette.YELLOW)
+		var wedge := PackedVector2Array([
+			Vector2(pad_l + sk, pad_t),
+			Vector2(pad_l + sk + 12.0, pad_t),
+			Vector2(pad_l + 12.0, pad_t + h),
+			Vector2(pad_l, pad_t + h),
+		])
+		draw_colored_polygon(wedge, UiPalette.CYAN)
+		draw_line(
+			Vector2(pad_l + sk + 12.0, pad_t),
+			Vector2(pad_l + 12.0, pad_t + h),
+			UiPalette.INK, 2.5, true)
+		var closed := pts.duplicate()
+		closed.append(pts[0])
+		draw_polyline(closed, UiPalette.INK, 3.5, true)
 
 
 func _build_zone_hint() -> void:
-	## Compact top-center banner at y = 22 using theme.tres (LuckiestGuy title +
-	## Fredoka body) so it never collides with BoostBox or SpeedBox at 960x540.
+	## Top-center floating Slop-Slash zone callout at y = 22 (zero dark boxes!),
+	## staying clear of BoostBox and SpeedGauge even at 960x540.
 	if _hint_panel != null:
 		return
 	_hint_layer = CanvasLayer.new()
@@ -851,21 +899,48 @@ func _build_zone_hint() -> void:
 	column.add_child(_hint_panel)
 	var body := VBoxContainer.new()
 	body.name = "Body"
-	body.add_theme_constant_override("separation", HINT_SMALL_GAP)
+	body.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	body.add_theme_constant_override("separation", 6)
 	_hint_panel.add_child(body)
+
+	var title_tag := PanelContainer.new()
+	title_tag.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	title_tag.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var tag_empty := StyleBoxEmpty.new()
+	tag_empty.content_margin_left = 24.0
+	tag_empty.content_margin_right = 22.0
+	tag_empty.content_margin_top = 5.0
+	tag_empty.content_margin_bottom = 9.0
+	title_tag.add_theme_stylebox_override("panel", tag_empty)
+	var slash := _ZoneSlashTag.new()
+	slash.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	title_tag.add_child(slash)
+	body.add_child(title_tag)
+
 	_hint_title = Label.new()
 	_hint_title.name = "ZoneName"
+	_hint_title.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_hint_title.theme_type_variation = &"TitleLabel"
-	_hint_title.add_theme_font_size_override("font_size", 18)
-	_hint_title.add_theme_color_override("font_color", UiPalette.YELLOW)
-	_hint_title.add_theme_color_override("font_outline_color", UiPalette.OUTLINE)
-	_hint_title.add_theme_constant_override("outline_size", 5)
+	_hint_title.add_theme_font_override("font", TITLE_FONT)
+	_hint_title.add_theme_font_size_override("font_size", 20)
+	_hint_title.add_theme_color_override("font_color", UiPalette.INK)
+	_hint_title.add_theme_constant_override("outline_size", 0)
+	_hint_title.add_theme_color_override("font_shadow_color", Color(0.0, 0.0, 0.0, 0.0))
 	_hint_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	body.add_child(_hint_title)
+	title_tag.add_child(_hint_title)
+
 	_hint_body = Label.new()
 	_hint_body.name = "ZoneHint"
-	_hint_body.add_theme_font_size_override("font_size", 14)
+	_hint_body.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_hint_body.theme_type_variation = &"TitleLabel"
+	_hint_body.add_theme_font_override("font", TITLE_FONT)
+	_hint_body.add_theme_font_size_override("font_size", 16)
 	_hint_body.add_theme_color_override("font_color", UiPalette.CREAM)
+	_hint_body.add_theme_color_override("font_outline_color", UiPalette.INK)
+	_hint_body.add_theme_constant_override("outline_size", 7)
+	_hint_body.add_theme_color_override("font_shadow_color", Color(0.08, 0.06, 0.16, 0.85))
+	_hint_body.add_theme_constant_override("shadow_offset_x", 3)
+	_hint_body.add_theme_constant_override("shadow_offset_y", 4)
 	_hint_body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_hint_body.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_hint_body.custom_minimum_size.x = HINT_WIDTH
@@ -901,20 +976,12 @@ func _measure_zone_hint() -> void:
 			and bottom >= HINT_MARGIN - 0.5 and top >= float(HINT_TOP) - 0.5 else "CLIPPED"])
 
 
-func _hint_style() -> StyleBoxFlat:
-	var style := StyleBoxFlat.new()
-	style.bg_color = Color(UiPalette.INK, 0.90)
-	style.border_color = UiPalette.OUTLINE
-	style.set_border_width_all(3)
-	style.set_corner_radius_all(HINT_RADIUS)
-	style.content_margin_left = 18.0
-	style.content_margin_right = 18.0
-	style.content_margin_top = 10.0
-	style.content_margin_bottom = 10.0
-	style.shadow_color = Color(0.02, 0.02, 0.06, 0.45)
-	style.shadow_size = 4
-	style.shadow_offset = Vector2(0.0, 2.0)
-	style.anti_aliasing = true
+func _hint_style() -> StyleBoxEmpty:
+	var style := StyleBoxEmpty.new()
+	style.content_margin_left = 4.0
+	style.content_margin_right = 4.0
+	style.content_margin_top = 0.0
+	style.content_margin_bottom = 2.0
 	return style
 
 

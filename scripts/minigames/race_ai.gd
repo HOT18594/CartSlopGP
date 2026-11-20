@@ -216,7 +216,7 @@ func configure(skill: float, lane_bias: float, boost_bias: float,
 		* clampf(lookahead_trim, 0.82, 1.18)
 	_steer_gain = lerpf(1.85, 2.45, tuned)
 	_reaction = lerpf(6.5, 13.5, tuned)
-	_lat_accel = lerpf(9.0, 13.5, tuned)
+	_lat_accel = lerpf(10.0, 15.0, tuned)
 	_phase = phase
 	_aggression = clampf(aggression, 0.0, 1.0)
 	if personality >= 0:
@@ -239,7 +239,7 @@ func configure(skill: float, lane_bias: float, boost_bias: float,
 	_wobble_amp = _rand_range(0.015, 0.035) + (1.0 - tuned) * 0.05
 	_wobble_rate = _rand_range(0.7, 1.5)
 	_mistake_rate = 0.004 + (1.0 - tuned) * 0.045
-	_speed_cap = maxf(max_speed, 1.0) * lerpf(0.86, 1.0, tuned)
+	_speed_cap = maxf(max_speed, 1.0) * lerpf(0.84, 1.0, tuned)
 	_build_speed_profile(lerpf(0.86, 1.0, tuned))
 	line_mode = LineMode.NORMAL
 	_time = 0.0
@@ -310,7 +310,8 @@ func update(delta: float, node: CartPlayer, progress: float,
 		_last_steer = _reverse_steer
 		_last_throttle = 0.0
 		return
-	if speed < STUCK_SPEED and _last_throttle > 0.05:
+	var planar_speed: float = Vector2(node.velocity.x, node.velocity.z).length()
+	if planar_speed < STUCK_SPEED and node.is_on_floor():
 		_stuck_time += delta
 	else:
 		_stuck_time = maxf(_stuck_time - delta * 2.0, 0.0)

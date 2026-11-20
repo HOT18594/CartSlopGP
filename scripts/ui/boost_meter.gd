@@ -1,6 +1,9 @@
 extends Control
-## Segmented slanted arcade boost meter with recessed dark power cells, inner
-## specular shine, frontier spark, and animated surge pulse while boosting.
+## Slop-Slash 10-cell standalone skewed parallelogram boost meter.
+## Zero outer frame box: every cell is an independent comic-inked power slash
+## with a hard offset shadow, vibrant cyan/gold/hot-pink fill, and white sheen.
+
+const UiPalette := preload("res://scripts/ui/ui_palette.gd")
 
 @export var ratio: float = 1.0:
 	set(value):
@@ -8,6 +11,7 @@ extends Control
 		if not is_equal_approx(clamped, ratio):
 			ratio = clamped
 			queue_redraw()
+
 @export var boosting: bool = false:
 	set(value):
 		if boosting != value:
@@ -15,45 +19,18 @@ extends Control
 			queue_redraw()
 
 const CELLS: int = 10
-const GAP: float = 3.5
-const SKEW: float = 5.0
-const CYAN_START: Color = Color("1aa7ec")
-const CYAN_MID: Color = Color("38d6f0")
-const CYAN_END: Color = Color("7ef9ff")
-const GOLD_START: Color = Color("ff9e00")
-const GOLD_END: Color = Color("fff280")
-const LOW_START: Color = Color("e5383b")
-const LOW_END: Color = Color("ff758f")
-const SLOT_BG: Color = Color(0.11, 0.17, 0.29, 0.82)
-const SLOT_RIM: Color = Color(0.03, 0.05, 0.11, 0.92)
+const GAP: float = 4.5
+const SKEW: float = 8.0
+const INK_BORDER: float = 2.5
+const SHADOW_OFFSET := Vector2(3.0, 4.0)
+const SHADOW_COLOR := Color(0.07, 0.05, 0.15, 0.88)
+const EMPTY_FILL := Color(0.118, 0.106, 0.227, 0.90)
 
-var _frame := StyleBoxFlat.new()
-var _glow := StyleBoxFlat.new()
 var _surge_time: float = 0.0
 
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_frame.bg_color = Color(0.04, 0.08, 0.16, 0.96)
-	_frame.set_corner_radius_all(9)
-	_frame.set_border_width_all(2)
-	_frame.border_color = Color(0.45, 0.80, 1.0, 0.36)
-	_frame.shadow_color = Color(0.02, 0.03, 0.09, 0.50)
-	_frame.shadow_size = 5
-	_frame.shadow_offset = Vector2(0, 3)
-	_frame.anti_aliasing = true
-
-	_glow.draw_center = false
-	_glow.set_corner_radius_all(11)
-	_glow.set_border_width_all(2)
-	_glow.border_color = Color("ffd166")
-	_glow.expand_margin_left = 2.0
-	_glow.expand_margin_right = 2.0
-	_glow.expand_margin_top = 2.0
-	_glow.expand_margin_bottom = 2.0
-	_glow.shadow_color = Color(1.0, 0.82, 0.25, 0.42)
-	_glow.shadow_size = 8
-	_glow.anti_aliasing = true
 	resized.connect(queue_redraw)
 
 
@@ -70,75 +47,82 @@ func _process(delta: float) -> void:
 
 
 func _draw() -> void:
-	var low: bool = ratio <= 0.16 and not boosting
-	var reduce: bool = _is_reduce_motion()
-	var pulse: float = 1.0 if reduce else (0.5 + 0.5 * sin(_surge_time * 9.0))
-
-	if boosting:
-		_frame.border_color = Color("ffd166").lerp(Color.WHITE, 0.28 * pulse)
-		_glow.shadow_color = Color(1.0, 0.82, 0.25, 0.32 + 0.20 * pulse)
-		draw_style_box(_glow, Rect2(Vector2.ZERO, size))
-	elif low and ratio > 0.005:
-		_frame.border_color = Color("ff6b6b").lerp(Color(0.45, 0.80, 1.0, 0.36), 0.45 * (1.0 - pulse))
-	else:
-		_frame.border_color = Color(0.45, 0.80, 1.0, 0.38)
-	draw_style_box(_frame, Rect2(Vector2.ZERO, size))
-
-	var pad_x: float = 6.0
-	var pad_y: float = 5.0
-	var inner_w: float = size.x - pad_x * 2.0 - SKEW
-	var inner_h: float = size.y - pad_y * 2.0
-	if inner_w <= 8.0 or inner_h <= 4.0:
+	var pad_left: float = 2.0
+	var pad_right: float = 5.0
+	var pad_top: float = 2.0
+	var pad_bottom: float = 5.5
+	var inner_w: float = size.x - pad_left - pad_right - SKEW
+	var inner_h: float = size.y - pad_top - pad_bottom
+	if inner_w <= 12.0 or inner_h <= 4.0:
 		return
 	var cell_w: float = (inner_w - GAP * float(CELLS - 1)) / float(CELLS)
-	if cell_w <= 1.0:
+	if cell_w <= 1.5:
 		return
 
+	var low: bool = ratio <= 0.16 and not boosting
+	var reduce: bool = _is_reduce_motion()
+	var pulse: float = 1.0 if reduce else (0.5 + 0.5 * sin(_surge_time * 10.0))
 	var filled_cells: float = ratio * float(CELLS)
 	var lead_idx: int = clampi(int(ceilf(filled_cells)) - 1, -1, CELLS - 1)
-	var wave_pos: float = fposmod(_surge_time * 12.0, float(CELLS) + 2.5) - 1.25
+	var wave_pos: float = fposmod(_surge_time * 14.0, float(CELLS) + 2.5) - 1.25
 
+	# Pass 1: hard offset comic shadows for all 10 standalone cells.
+	for index in CELLS:
+		var x0: float = pad_left + float(index) * (cell_w + GAP)
+		var shadow_pts: PackedVector2Array = _slanted_points(
+			x0 + SHADOW_OFFSET.x, pad_top + SHADOW_OFFSET.y, cell_w, inner_h, SKEW)
+		draw_colored_polygon(shadow_pts, SHADOW_COLOR)
+
+	# Pass 2: cell bodies, vibrant active slashes, white top sheen, and ink borders.
 	for index in CELLS:
 		var t: float = float(index) / float(CELLS - 1)
-		var x0: float = pad_x + float(index) * (cell_w + GAP)
-		var y0: float = pad_y
+		var x0: float = pad_left + float(index) * (cell_w + GAP)
+		var y0: float = pad_top
 		var slot_pts: PackedVector2Array = _slanted_points(x0, y0, cell_w, inner_h, SKEW)
-		draw_colored_polygon(slot_pts, SLOT_BG)
-		draw_polyline(_closed_points(slot_pts), SLOT_RIM, 1.2, true)
+		draw_colored_polygon(slot_pts, EMPTY_FILL)
 
 		var amount: float = clampf(filled_cells - float(index), 0.0, 1.0)
-		if amount <= 0.002:
-			continue
+		if amount > 0.002:
+			var fill: Color = _cell_color(t, index, wave_pos, low, pulse, reduce)
+			var lit_w: float = cell_w * amount
+			var lit_pts: PackedVector2Array = _slanted_points(x0, y0, lit_w, inner_h, SKEW)
+			draw_colored_polygon(lit_pts, fill)
 
-		var fill: Color
-		if boosting:
-			fill = GOLD_START.lerp(GOLD_END, t)
-			if not reduce:
-				var surge: float = maxf(0.0, 1.0 - absf(float(index) - wave_pos) * 0.55)
-				fill = fill.lerp(Color.WHITE, surge * 0.42)
-		elif low:
-			fill = LOW_START.lerp(LOW_END, t)
-		else:
-			fill = CYAN_START.lerp(CYAN_MID, clampf(t * 1.5, 0.0, 1.0))
-			if t > 0.5:
-				fill = fill.lerp(CYAN_END, (t - 0.5) * 2.0)
+			# Crisp comic white top sheen across each lit power cell.
+			if lit_w > 1.6 and inner_h >= 7.0:
+				var sheen_h: float = maxf(inner_h * 0.34, 2.4)
+				var sheen_pts: PackedVector2Array = _slanted_points(
+					x0 + SKEW * 0.64, y0 + 1.4, maxf(lit_w - 1.4, 0.6), sheen_h, SKEW * 0.34)
+				draw_colored_polygon(sheen_pts, Color(1.0, 1.0, 1.0, 0.46 if boosting else 0.34))
 
-		var lit_w: float = cell_w * amount
-		var lit_pts: PackedVector2Array = _slanted_points(x0, y0, lit_w, inner_h, SKEW)
-		draw_colored_polygon(lit_pts, fill)
+			# Bright frontier spark slash on the leading active cell.
+			if index == lead_idx and lit_w >= 2.4:
+				var spark_w: float = minf(3.0, lit_w * 0.45)
+				var spark_pts: PackedVector2Array = _slanted_points(
+					x0 + lit_w - spark_w, y0 + 0.8, spark_w, maxf(inner_h - 1.6, 2.0), SKEW * 0.92)
+				draw_colored_polygon(spark_pts, UiPalette.CREAM)
 
-		# Crisp inner specular shine across the top of each lit slanted cell.
-		var shine_pts: PackedVector2Array = _slanted_points(
-			x0 + SKEW * 0.62, y0 + 1.0, maxf(lit_w - 1.2, 0.5),
-			maxf(inner_h * 0.36, 2.2), SKEW * 0.34)
-		draw_colored_polygon(shine_pts, Color(1.0, 1.0, 1.0, 0.38 if boosting else 0.26))
+		var rim_col: Color = UiPalette.INK
+		if boosting and amount > 0.5 and pulse > 0.58:
+			rim_col = UiPalette.INK.lerp(UiPalette.CREAM, 0.35)
+		draw_polyline(_closed_points(slot_pts), rim_col, INK_BORDER, true)
 
-		# Bright spark edge on the leading active cell.
-		if index == lead_idx and lit_w >= 2.2:
-			var spark_w: float = minf(2.4, lit_w * 0.45)
-			var spark_pts: PackedVector2Array = _slanted_points(
-				x0 + lit_w - spark_w, y0 + 0.8, spark_w, maxf(inner_h - 1.6, 2.0), SKEW * 0.88)
-			draw_colored_polygon(spark_pts, Color(1.0, 1.0, 1.0, 0.82))
+
+func _cell_color(t: float, index: int, wave_pos: float, low: bool,
+		pulse: float, reduce: bool) -> Color:
+	if boosting:
+		var boost_col: Color = UiPalette.YELLOW.lerp(Color("ff3ec9"), clampf((t - 0.35) * 1.4, 0.0, 1.0))
+		if not reduce:
+			var surge: float = maxf(0.0, 1.0 - absf(float(index) - wave_pos) * 0.60)
+			boost_col = boost_col.lerp(Color.WHITE, surge * 0.48)
+		return boost_col
+	if low:
+		return Color("ff3b3f").lerp(UiPalette.PINK, 0.35 + 0.45 * pulse)
+	if t < 0.55:
+		return UiPalette.CYAN.lerp(Color("62f4ff"), t / 0.55)
+	if t < 0.82:
+		return Color("62f4ff").lerp(UiPalette.YELLOW, (t - 0.55) / 0.27)
+	return UiPalette.YELLOW.lerp(UiPalette.PINK, (t - 0.82) / 0.18)
 
 
 func _slanted_points(x: float, y: float, w: float, h: float,

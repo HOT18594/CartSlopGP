@@ -48,6 +48,7 @@ const MINIGAMES_MENU: String = "res://scenes/ui/minigames_menu.tscn"
 const UI_THEME: Theme = preload("res://assets/ui/theme.tres")
 const CANDY_BUTTON := preload("res://scripts/ui/candy_button.gd")
 const TITLE_FONT: Font = preload("res://assets/ui/fonts/LuckiestGuy-Regular.ttf")
+const BODY_FONT: Font = preload("res://assets/ui/fonts/Fredoka-Bold.ttf")
 
 const COUNTDOWN_BEEP: AudioStream = preload("res://assets/audio/sfx/race/countdown_beep.wav")
 const COUNTDOWN_GO: AudioStream = preload("res://assets/audio/sfx/race/countdown_go.wav")
@@ -64,7 +65,7 @@ const INTERACT_KEY: Key = KEY_E
 const MATCH_SECONDS: float = 120.0
 const OVERTIME_SECONDS: float = 60.0
 const COUNTDOWN_SECONDS: float = 3.0
-const BASE_TARGET: int = 5
+const BASE_TARGET: int = 8
 const TEAM_COUNT: int = 2
 const CORNER_RADIUS: int = 16 ## One radius for every HUD tile, per the UI kit.
 
@@ -74,10 +75,156 @@ const SPACE_MARGIN: float = 24.0
 const SPACE_GAP: float = 16.0
 const SPACE_GAP_SMALL: float = 8.0
 const SCOREBOARD_TOP: float = 12.0
-const SCOREBOARD_WIDTH: float = 520.0
+const SCOREBOARD_WIDTH: float = 532.0
 const SCOREBOARD_MAX_HEIGHT: float = 64.0
-const TOAST_HEIGHT: float = 42.0
-const PROMPT_HEIGHT: float = 44.0
+const TOAST_HEIGHT: float = 44.0
+const PROMPT_HEIGHT: float = 48.0
+const CARGO_SHADOW_COLOR := Color(0.07, 0.05, 0.15, 0.88)
+const CARGO_TEXT_SHADOW := Color(0.08, 0.06, 0.16, 0.85)
+
+
+class _CargoTugHeader extends Control:
+	var overtime: bool = false
+	var leader: int = -1
+
+	func _init() -> void:
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	func _notification(what: int) -> void:
+		if what == NOTIFICATION_RESIZED:
+			queue_redraw()
+
+	func _draw() -> void:
+		var sk: float = 12.0
+		var pad_l: float = 2.0
+		var pad_t: float = 2.0
+		var pad_r: float = 6.0
+		var pad_b: float = 7.0
+		var total_w: float = size.x - pad_l - pad_r - sk
+		var h: float = size.y - pad_t - pad_b
+		if total_w <= 60.0 or h <= 12.0:
+			return
+		var mid_x: float = pad_l + total_w * 0.5
+		var center_w: float = 106.0
+		var wing_w: float = (total_w - center_w + 12.0) * 0.5
+
+		var blue_pts := PackedVector2Array([
+			Vector2(pad_l + sk, pad_t),
+			Vector2(pad_l + sk + wing_w, pad_t),
+			Vector2(pad_l + wing_w, pad_t + h),
+			Vector2(pad_l, pad_t + h),
+		])
+		var red_x0: float = pad_l + total_w - wing_w
+		var red_pts := PackedVector2Array([
+			Vector2(red_x0 + sk, pad_t),
+			Vector2(red_x0 + sk + wing_w, pad_t),
+			Vector2(red_x0 + wing_w, pad_t + h),
+			Vector2(red_x0, pad_t + h),
+		])
+		var clk_x0: float = mid_x - center_w * 0.5
+		var clk_pts := PackedVector2Array([
+			Vector2(clk_x0 + sk, pad_t - 1.0),
+			Vector2(clk_x0 + sk + center_w, pad_t - 1.0),
+			Vector2(clk_x0 + center_w, pad_t + h + 1.0),
+			Vector2(clk_x0, pad_t + h + 1.0),
+		])
+
+		# Hard comic shadows
+		for poly: PackedVector2Array in [blue_pts, red_pts, clk_pts]:
+			var sh := PackedVector2Array([
+				poly[0] + Vector2(4.0, 5.0),
+				poly[1] + Vector2(4.0, 5.0),
+				poly[2] + Vector2(4.0, 5.0),
+				poly[3] + Vector2(4.0, 5.0),
+			])
+			draw_colored_polygon(sh, CARGO_SHADOW_COLOR)
+
+		# Left BLUE slash & Right RED slash
+		var blue_col: Color = UiPalette.BLUE.lightened(0.06 if leader == 0 else 0.0)
+		var red_col: Color = UiPalette.RED.lightened(0.06 if leader == 1 else 0.0)
+		draw_colored_polygon(blue_pts, blue_col)
+		draw_colored_polygon(red_pts, red_col)
+
+		# White top comic sheens on both team wings
+		var sh_h: float = maxf(h * 0.28, 3.0)
+		for x_start: float in [pad_l, red_x0]:
+			var sheen := PackedVector2Array([
+				Vector2(x_start + sk + 2.0, pad_t + 2.0),
+				Vector2(x_start + sk + wing_w - 2.0, pad_t + 2.0),
+				Vector2(x_start + sk * 0.72 + wing_w - 2.0, pad_t + 2.0 + sh_h),
+				Vector2(x_start + sk * 0.72 + 2.0, pad_t + 2.0 + sh_h),
+			])
+			draw_colored_polygon(sheen, Color(1.0, 1.0, 1.0, 0.24))
+
+		for poly: PackedVector2Array in [blue_pts, red_pts]:
+			var closed := poly.duplicate()
+			closed.append(poly[0])
+			draw_polyline(closed, UiPalette.INK, 3.5, true)
+
+		# Center Clock Diamond/Slash Plate
+		var clk_col: Color = UiPalette.PINK if overtime else UiPalette.YELLOW
+		draw_colored_polygon(clk_pts, clk_col)
+		var clk_sheen := PackedVector2Array([
+			Vector2(clk_x0 + sk + 2.0, pad_t + 1.0),
+			Vector2(clk_x0 + sk + center_w - 2.0, pad_t + 1.0),
+			Vector2(clk_x0 + sk * 0.72 + center_w - 2.0, pad_t + 1.0 + sh_h),
+			Vector2(clk_x0 + sk * 0.72 + 2.0, pad_t + 1.0 + sh_h),
+		])
+		draw_colored_polygon(clk_sheen, Color(1.0, 1.0, 1.0, 0.30))
+		var clk_closed := clk_pts.duplicate()
+		clk_closed.append(clk_pts[0])
+		draw_polyline(clk_closed, UiPalette.INK, 4.0, true)
+
+
+class _CargoPromptSlash extends Control:
+	var fill_color: Color = Color("1e1b3a")
+	var accent_color: Color = Color("ffd22e")
+
+	func _init() -> void:
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	func _notification(what: int) -> void:
+		if what == NOTIFICATION_RESIZED:
+			queue_redraw()
+
+	func _draw() -> void:
+		var sk: float = 12.0
+		var pad_l: float = 4.0
+		var pad_t: float = 3.0
+		var pad_r: float = 8.0
+		var pad_b: float = 8.0
+		var w: float = size.x - pad_l - pad_r - sk
+		var h: float = size.y - pad_t - pad_b
+		if w <= 16.0 or h <= 8.0:
+			return
+		var pts := PackedVector2Array([
+			Vector2(pad_l + sk, pad_t),
+			Vector2(pad_l + sk + w, pad_t),
+			Vector2(pad_l + w, pad_t + h),
+			Vector2(pad_l, pad_t + h),
+		])
+		var sh := PackedVector2Array([
+			pts[0] + Vector2(4.0, 5.0),
+			pts[1] + Vector2(4.0, 5.0),
+			pts[2] + Vector2(4.0, 5.0),
+			pts[3] + Vector2(4.0, 5.0),
+		])
+		draw_colored_polygon(sh, CARGO_SHADOW_COLOR)
+		draw_colored_polygon(pts, fill_color)
+		var wedge := PackedVector2Array([
+			Vector2(pad_l + sk, pad_t),
+			Vector2(pad_l + sk + 16.0, pad_t),
+			Vector2(pad_l + 16.0, pad_t + h),
+			Vector2(pad_l, pad_t + h),
+		])
+		draw_colored_polygon(wedge, accent_color)
+		draw_line(
+			Vector2(pad_l + sk + 16.0, pad_t),
+			Vector2(pad_l + 16.0, pad_t + h),
+			UiPalette.INK, 2.5, true)
+		var closed := pts.duplicate()
+		closed.append(pts[0])
+		draw_polyline(closed, accent_color, 3.5, true)
 
 const TEAM_COLORS: Array[Color] = [UiPalette.BLUE, UiPalette.RED]
 
@@ -101,7 +248,7 @@ const FLAG_MODEL_GREEN: String = "flagGreen"
 
 ## Present rules.
 const PRESENT_COUNT: int = 7
-const PRESENT_RESPAWN: float = 1.1
+const PRESENT_RESPAWN: float = 2.2
 const PICK_RADIUS: float = 4.2
 const HOLD_SECONDS: float = 0.45
 const HOLD_MAX_SPEED: float = 6.5
@@ -269,6 +416,7 @@ var _selftest_present: int = -1
 var _canvas: CanvasLayer
 var _hud_root: Control
 var _scoreboard_panel: PanelContainer
+var _tug_header: _CargoTugHeader
 var _timer_panel: PanelContainer
 var _timer_label: Label
 var _arena_tag_label: Label
@@ -276,6 +424,7 @@ var _score_labels: Array[Label] = []
 var _team_name_labels: Array[Label] = []
 var _countdown_label: Label
 var _toast_label: Label
+var _prompt_slash: _CargoPromptSlash
 var _prompt_label: Label
 var _toast_timer: float = 0.0
 var _hud_timer: float = 0.0
@@ -1293,7 +1442,8 @@ func _collect_hold_wants() -> Dictionary:
 			wants[peer] = int(entry.get("index", -1))
 	for index in _bots.size():
 		var entry: Dictionary = _bots[index]
-		if int(entry.get("state", BOT_SEEK)) != BOT_HOLD:
+		if int(entry.get("state", BOT_SEEK)) != BOT_HOLD \
+				or float(entry.get("hold_wait", 0.0)) > 0.0:
 			continue
 		var present_index: int = int(entry.get("present", -1))
 		if present_index >= 0:
@@ -1752,8 +1902,8 @@ func _bot_count() -> int:
 	if _selftest:
 		return 1
 	if _multiplayer:
-		return clampi(Network.session_bot_count, 0, BOT_MAX)
-	return clampi(maxi(GameSettings.effective_bot_count(), BOT_MIN), BOT_MIN, BOT_MAX)
+		return clampi(Network.session_bot_count, 0, BOT_MAX) if Network.session_bots else 0
+	return clampi(GameSettings.effective_bot_count(), 0, BOT_MAX)
 
 
 func _bot_vehicle() -> String:
@@ -1800,7 +1950,7 @@ func _spawn_bot(index: int, ghost: bool) -> void:
 		ai = SandboxBot.new()
 		var rng := RandomNumberGenerator.new()
 		rng.seed = 7301 + index * 137
-		ai.setup(cart, index, rng, clampi(GameSettings.minigame_difficulty, 0, 2))
+		ai.setup(cart, index, rng, Network.bot_difficulty())
 	var label := Label3D.new()
 	label.name = "BotTag"
 	label.text = "BOT %d" % (index + 1)
@@ -1823,6 +1973,7 @@ func _spawn_bot(index: int, ghost: bool) -> void:
 		"present": -1,
 		"seek_time": 0.0,
 		"hold_time": 0.0,
+		"hold_wait": 0.0,
 		"blocked_time": 0.0,
 		"carry_time": 0.0,
 		"selftest": _selftest and index == 0,
@@ -1908,6 +2059,7 @@ func _tick_bot(index: int, entry: Dictionary, cart: CartPlayer,
 	var state: int = int(entry.get("state", BOT_SEEK))
 	match state:
 		BOT_HOLD:
+			entry["hold_wait"] = maxf(float(entry.get("hold_wait", 0.0)) - delta, 0.0)
 			var hold_index: int = int(entry.get("present", -1))
 			if hold_index < 0 or hold_index >= _presents.size():
 				_bot_release(entry, key)
@@ -1991,6 +2143,8 @@ func _tick_bot_seek(index: int, entry: Dictionary, cart: CartPlayer,
 	if _present_in_range(cart, present_index):
 		entry["state"] = BOT_HOLD
 		entry["hold_time"] = 0.0
+		var reaction: Array[float] = [1.15, 0.70, 0.35]
+		entry["hold_wait"] = reaction[Network.bot_difficulty()] + float(index % 3) * 0.08
 		_bot_stop(cart)
 		return
 	var target: Vector3 = _presents[present_index]["position"] as Vector3
@@ -2061,6 +2215,8 @@ func _bot_stop(cart: CartPlayer) -> void:
 
 func _bot_drive(cart: CartPlayer, ai: SandboxBot, target: Vector3,
 		delta: float, speed_scale: float) -> void:
+	var difficulty_speed: Array[float] = [0.72, 0.88, 1.0]
+	speed_scale *= difficulty_speed[Network.bot_difficulty()]
 	var waypoint: Vector3 = _elevated_waypoint(cart, target)
 	var gap: float = _planar_distance(cart.global_position, waypoint)
 	if gap > BOT_NEAR_DRIVE:
@@ -2496,6 +2652,7 @@ func _build_hud() -> void:
 	_hud_root.theme = UI_THEME
 	_canvas.add_child(_hud_root)
 
+	# Blue-vs-Red Skewed Parallelogram Tug-of-War Header (StyleBoxEmpty outer box!)
 	_scoreboard_panel = PanelContainer.new()
 	_scoreboard_panel.name = "ScoreboardBar"
 	_scoreboard_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -2504,117 +2661,126 @@ func _build_hud() -> void:
 	_scoreboard_panel.offset_left = -SCOREBOARD_WIDTH * 0.5
 	_scoreboard_panel.offset_right = SCOREBOARD_WIDTH * 0.5
 	_scoreboard_panel.offset_top = SCOREBOARD_TOP
-	_scoreboard_panel.offset_bottom = SCOREBOARD_TOP + 56.0
-	_scoreboard_panel.add_theme_stylebox_override("panel", _scoreboard_style())
+	_scoreboard_panel.offset_bottom = SCOREBOARD_TOP + 54.0
+	var empty_sb := StyleBoxEmpty.new()
+	empty_sb.content_margin_left = 18.0
+	empty_sb.content_margin_right = 20.0
+	empty_sb.content_margin_top = 4.0
+	empty_sb.content_margin_bottom = 8.0
+	_scoreboard_panel.add_theme_stylebox_override("panel", empty_sb)
+	_tug_header = _CargoTugHeader.new()
+	_tug_header.name = "TugOfWarSlash"
+	_tug_header.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_scoreboard_panel.add_child(_tug_header)
 	_hud_root.add_child(_scoreboard_panel)
 	_timer_panel = _scoreboard_panel
 
 	var bar_column := VBoxContainer.new()
 	bar_column.alignment = BoxContainer.ALIGNMENT_CENTER
-	bar_column.add_theme_constant_override("separation", 1)
+	bar_column.add_theme_constant_override("separation", 0)
 	bar_column.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_scoreboard_panel.add_child(bar_column)
 
 	var main_row := HBoxContainer.new()
 	main_row.alignment = BoxContainer.ALIGNMENT_CENTER
-	main_row.add_theme_constant_override("separation", int(SPACE_GAP_SMALL))
+	main_row.add_theme_constant_override("separation", 8)
 	main_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	bar_column.add_child(main_row)
 
-	var dot_a := ColorRect.new()
-	dot_a.color = TEAM_COLORS[0]
-	dot_a.custom_minimum_size = Vector2(10, 10)
-	dot_a.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	dot_a.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	main_row.add_child(dot_a)
-
-	var name_a := _label(_team_names[0], 14, UiPalette.CREAM, 4)
-	name_a.custom_minimum_size = Vector2(124, 0)
-	name_a.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	var name_a := _label(_team_names[0], 15, UiPalette.CREAM, 6)
+	name_a.custom_minimum_size = Vector2(142.0, 0.0)
+	name_a.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	name_a.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	name_a.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	name_a.clip_text = true
 	main_row.add_child(name_a)
 	_team_name_labels.append(name_a)
 
-	var score_a := _label("0", 22, UiPalette.YELLOW, 6)
-	score_a.custom_minimum_size = Vector2(24, 0)
-	score_a.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	var score_a := _label("0", 26, UiPalette.YELLOW, 7)
+	score_a.custom_minimum_size = Vector2(34.0, 38.0)
+	score_a.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	score_a.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	main_row.add_child(score_a)
 	_score_labels.append(score_a)
 
-	var sep_left := _label("·", 16, Color(1.0, 1.0, 1.0, 0.45))
-	main_row.add_child(sep_left)
-
-	_timer_label = _label("2:00", 22, UiPalette.YELLOW, 6)
-	_timer_label.custom_minimum_size = Vector2(68, 0)
+	_timer_label = _label("2:00", 23, UiPalette.INK, 0, false)
+	_timer_label.custom_minimum_size = Vector2(106.0, 38.0)
 	_timer_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_timer_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	main_row.add_child(_timer_label)
 
-	var sep_right := _label("·", 16, Color(1.0, 1.0, 1.0, 0.45))
-	main_row.add_child(sep_right)
-
-	var score_b := _label("0", 22, UiPalette.CREAM, 6)
-	score_b.custom_minimum_size = Vector2(24, 0)
-	score_b.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	var score_b := _label("0", 26, UiPalette.CREAM, 7)
+	score_b.custom_minimum_size = Vector2(34.0, 38.0)
+	score_b.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	score_b.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	main_row.add_child(score_b)
 	_score_labels.append(score_b)
 
-	var name_b := _label(_team_names[1], 14, UiPalette.CREAM, 4)
-	name_b.custom_minimum_size = Vector2(124, 0)
-	name_b.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	var name_b := _label(_team_names[1], 15, UiPalette.CREAM, 6)
+	name_b.custom_minimum_size = Vector2(142.0, 0.0)
+	name_b.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	name_b.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	name_b.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	name_b.clip_text = true
 	main_row.add_child(name_b)
 	_team_name_labels.append(name_b)
 
-	var dot_b := ColorRect.new()
-	dot_b.color = TEAM_COLORS[1]
-	dot_b.custom_minimum_size = Vector2(10, 10)
-	dot_b.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	dot_b.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	main_row.add_child(dot_b)
-
-	_arena_tag_label = _label("", 11, Color(1.0, 1.0, 1.0, 0.68))
-	_arena_tag_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	# Preserved hidden reference so _refresh_theme_text() stays valid without height bloat.
+	_arena_tag_label = _label("", 11, UiPalette.CREAM, 5)
+	_arena_tag_label.visible = false
 	bar_column.add_child(_arena_tag_label)
 
-	_countdown_label = _label("3", 112, UiPalette.YELLOW, 14)
-	_countdown_label.theme_type_variation = &"TitleLabel"
-	_countdown_label.add_theme_constant_override("outline_size", 14)
-	_countdown_label.add_theme_color_override("font_outline_color", UiPalette.OUTLINE)
+	_countdown_label = _label("3", 108, UiPalette.YELLOW, 14)
 	_countdown_label.anchor_left = 0.5
 	_countdown_label.anchor_right = 0.5
 	_countdown_label.anchor_top = 0.5
 	_countdown_label.anchor_bottom = 0.5
 	_countdown_label.offset_left = -320.0
 	_countdown_label.offset_right = 320.0
-	_countdown_label.offset_top = -70.0
-	_countdown_label.offset_bottom = 70.0
+	_countdown_label.offset_top = -78.0
+	_countdown_label.offset_bottom = 78.0
 	_countdown_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_countdown_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	_hud_root.add_child(_countdown_label)
 
-	_toast_label = _label("", 24, Color.WHITE, 10)
+	_toast_label = _label("", 24, UiPalette.YELLOW, 9)
 	_toast_label.anchor_left = 0.5
 	_toast_label.anchor_right = 0.5
 	_toast_label.offset_left = -360.0
 	_toast_label.offset_right = 360.0
-	_toast_label.offset_top = SCOREBOARD_TOP + 68.0
-	_toast_label.offset_bottom = SCOREBOARD_TOP + 68.0 + TOAST_HEIGHT
+	_toast_label.offset_top = SCOREBOARD_TOP + 66.0
+	_toast_label.offset_bottom = SCOREBOARD_TOP + 66.0 + TOAST_HEIGHT
 	_toast_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_toast_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_toast_label.clip_text = true
 	_toast_label.visible = false
 	_hud_root.add_child(_toast_label)
 
-	_prompt_label = _label("", 20, UiPalette.CREAM, 8)
+	_prompt_slash = _CargoPromptSlash.new()
+	_prompt_slash.name = "PromptSlash"
+	_prompt_slash.anchor_left = 0.5
+	_prompt_slash.anchor_right = 0.5
+	_prompt_slash.anchor_top = 1.0
+	_prompt_slash.anchor_bottom = 1.0
+	_prompt_slash.offset_left = -256.0
+	_prompt_slash.offset_right = 256.0
+	_prompt_slash.offset_top = -SPACE_MARGIN - PROMPT_HEIGHT - 2.0
+	_prompt_slash.offset_bottom = -SPACE_MARGIN + 2.0
+	_prompt_slash.visible = false
+	_hud_root.add_child(_prompt_slash)
+
+	_prompt_label = _label("", 19, UiPalette.YELLOW, 7)
 	_prompt_label.anchor_left = 0.5
 	_prompt_label.anchor_right = 0.5
 	_prompt_label.anchor_top = 1.0
 	_prompt_label.anchor_bottom = 1.0
-	_prompt_label.offset_left = -220.0
-	_prompt_label.offset_right = 220.0
+	_prompt_label.offset_left = -244.0
+	_prompt_label.offset_right = 244.0
 	_prompt_label.offset_top = -SPACE_MARGIN - PROMPT_HEIGHT
 	_prompt_label.offset_bottom = -SPACE_MARGIN
 	_prompt_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_prompt_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_prompt_label.clip_text = true
 	_prompt_label.visible = false
 	_hud_root.add_child(_prompt_label)
 	_layout_hud()
@@ -2703,21 +2869,43 @@ func _scoreboard_style() -> StyleBoxFlat:
 	return style
 
 
-func _label(text: String, size: int, colour: Color, outline: int = 0) -> Label:
+func _label(text: String, size: int, colour: Color, outline: int = 0,
+		hard_shadow: Variant = null) -> Label:
 	var label := Label.new()
 	label.text = text
+	label.theme_type_variation = &"TitleLabel"
+	label.add_theme_font_override("font", BODY_FONT)
 	label.add_theme_font_size_override("font_size", size)
 	label.add_theme_color_override("font_color", colour)
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	if outline > 0:
-		label.add_theme_color_override("font_outline_color", UiPalette.OUTLINE)
-		label.add_theme_constant_override("outline_size", outline)
+		label.add_theme_color_override("font_outline_color", UiPalette.INK)
+		label.add_theme_constant_override("outline_size", mini(outline, 3))
+	else:
+		label.add_theme_constant_override("outline_size", 0)
+	var use_shadow: bool = (outline >= 5) if hard_shadow == null else bool(hard_shadow)
+	if use_shadow:
+		label.add_theme_color_override("font_shadow_color", CARGO_TEXT_SHADOW)
+		label.add_theme_constant_override("shadow_offset_x", 1)
+		label.add_theme_constant_override("shadow_offset_y", 2)
+	else:
+		label.add_theme_color_override("font_shadow_color", Color(0.0, 0.0, 0.0, 0.0))
+		label.add_theme_constant_override("shadow_offset_x", 0)
+		label.add_theme_constant_override("shadow_offset_y", 0)
 	return label
 
 
 func _refresh_theme_text() -> void:
 	if _arena_tag_label == null:
 		return
+	var ot_now: bool = _overtime and _phase != Phase.FINISHED
+	if _tug_header != null and _tug_header.overtime != ot_now:
+		_tug_header.overtime = ot_now
+		_tug_header.queue_redraw()
+		if _timer_label != null:
+			_timer_label.add_theme_constant_override("outline_size", 5 if ot_now else 0)
+			_timer_label.add_theme_color_override("font_color",
+				UiPalette.CREAM if ot_now else UiPalette.INK)
 	var arena_name: String = str(_theme.get("name", "DOCKYARD"))
 	var blurb: String = str(_theme.get("blurb", "")).strip_edges()
 	if _overtime and _phase != Phase.FINISHED:
@@ -2751,6 +2939,15 @@ func _refresh_score_now() -> void:
 	## so a glance answers "who is winning and how close is it".
 	_refresh_theme_text()
 	var leader: int = _leader()
+	if _tug_header != null:
+		_tug_header.overtime = _overtime and _phase != Phase.FINISHED
+		_tug_header.leader = leader
+		_tug_header.queue_redraw()
+	if _timer_label != null:
+		var ot_active: bool = _overtime and _phase != Phase.FINISHED
+		_timer_label.add_theme_constant_override("outline_size", 5 if ot_active else 0)
+		_timer_label.add_theme_color_override("font_color",
+			UiPalette.CREAM if ot_active else UiPalette.INK)
 	for team in TEAM_COUNT:
 		var value: int = _score[team]
 		if team < _score_labels.size():
@@ -2839,6 +3036,12 @@ func _refresh_prompt() -> void:
 				text = "HOLD  [%s]  TO LOAD" % _interact_key_name()
 	_prompt_label.text = text
 	_prompt_label.visible = text != ""
+	if _prompt_slash != null:
+		_prompt_slash.visible = text != ""
+		var carrying_now: bool = _carried_by(_local_key()) >= 0
+		_prompt_slash.accent_color = TEAM_COLORS[_local_team] \
+			if (carrying_now and _team_valid(_local_team)) else UiPalette.YELLOW
+		_prompt_slash.queue_redraw()
 
 
 func _clock_text() -> String:

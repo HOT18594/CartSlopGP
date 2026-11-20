@@ -15,10 +15,9 @@ const UiAnim := preload("res://scripts/ui/ui_anim.gd")
 @export var shadow_offset: int = 8 ## Vertical offset of the hard shadow in px.
 @export var corner_radius: int = 16 ## Shared rounded-square radius.
 
-@export_group("Hover Wiggle")
-@export var hover_scale: float = 1.03 ## Peak scale while hovered/focused.
-@export var hover_wobble_degrees: float = 0.28 ## Side-to-side tilt.
-@export var hover_speed: float = 3.6 ## Wiggle speed.
+@export_group("Hover Scale")
+@export var hover_scale: float = 1.03 ## Static scale while hovered.
+@export var focus_scale: float = 1.015 ## Static scale while focused (not hovered).
 @export var press_scale: float = 0.96 ## Squash while the button is held.
 
 const UiPalette := preload("res://scripts/ui/ui_palette.gd")
@@ -29,9 +28,7 @@ var _inner_rim := StyleBoxFlat.new()
 var _bevel_shade := StyleBoxFlat.new()
 var _hovered: bool = false
 var _held: bool = false
-var _time: float = 0.0
 var _scale_now: float = 1.0
-var _rotation_now: float = 0.0
 var _last_fit_width: float = -1.0
 
 
@@ -83,35 +80,27 @@ func fit_text(max_width: float = -1.0, min_font: int = MIN_LABEL_FONT) -> void:
 	kit.call("fit_button", self, cap, min_font)
 
 
-func _is_reduce_motion() -> bool:
-	var gs: Node = get_node_or_null("/root/GameSettings")
-	return bool(gs.get("reduce_motion")) if gs != null else false
-
-
 func _process(delta: float) -> void:
 	if not is_visible_in_tree():
 		return
-	_time += delta
 	var focused: bool = has_focus()
 	var active: bool = (_hovered or focused) and not _held and not disabled
 	if disabled:
 		_held = false
 	z_index = 1 if active or _held else 0
-	var reduce: bool = _is_reduce_motion()
-	var target_scale: float = press_scale if _held else 1.0
-	var target_rotation: float = 0.0
-	if active:
-		if reduce:
-			target_scale = 1.015
-		else:
-			var energy: float = 1.0 if _hovered else 0.30
-			target_scale = hover_scale + 0.004 * sin(_time * hover_speed * 2.0) * energy
-			target_rotation = deg_to_rad(hover_wobble_degrees) \
-				* sin(_time * hover_speed) * energy
+	var target_scale: float = 1.0
+	if not disabled:
+		if _held:
+			target_scale = press_scale
+		elif _hovered:
+			target_scale = hover_scale
+		elif focused:
+			target_scale = focus_scale
 	_scale_now = UiAnim.damp(_scale_now, target_scale, delta, 18.0)
-	_rotation_now = UiAnim.damp(_rotation_now, target_rotation, delta, 15.0)
+	if absf(_scale_now - target_scale) < 0.0005:
+		_scale_now = target_scale
 	scale = Vector2.ONE * _scale_now
-	rotation = _rotation_now
+	rotation = 0.0
 
 
 func _set_hovered(value: bool) -> void:

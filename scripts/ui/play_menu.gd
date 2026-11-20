@@ -53,10 +53,7 @@ func _enter() -> void:
 
 func _build_ui() -> void:
 	_body.add_theme_constant_override("separation", 20)
-
-	var title_box := VBoxContainer.new()
-	title_box.add_theme_constant_override("separation", 4)
-	_body.add_child(title_box)
+	_body.alignment = BoxContainer.ALIGNMENT_CENTER
 
 	_title = Label.new()
 	_title.theme_type_variation = &"TitleLabel"
@@ -64,24 +61,19 @@ func _build_ui() -> void:
 	_title.add_theme_color_override("font_color", UiPalette.INK)
 	_title.text = "PLAY"
 	_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title_box.add_child(_title)
-
-	var sub := UiKit.label("RACING  ·  DELIVER  ·  KNOCKOUT  ·  BLAST TAG  ·  SANDBOX",
-		13, UiPalette.MUTED)
-	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title_box.add_child(sub)
+	_body.add_child(_title)
 
 	_cards_row = HBoxContainer.new()
 	_cards_row.add_theme_constant_override("separation", UiKit.SPACING_WIDE)
 	_cards_row.alignment = BoxContainer.ALIGNMENT_CENTER
 	_body.add_child(_cards_row)
 
-	_single_card = _card("SOLO", "SINGLE PLAYER", UiPalette.YELLOW, false)
+	_single_card = _card("SOLO", "", UiPalette.YELLOW, false)
 	_single_card.name = "SoloCard"
 	_single_card.pressed.connect(_on_solo_card)
 	_cards_row.add_child(_single_card)
 
-	_multi_card = _card("MULTIPLAYER", "ONLINE · LAN", UiPalette.BLUE, true)
+	_multi_card = _card("MULTIPLAYER", "", UiPalette.BLUE, true)
 	_multi_card.name = "MultiplayerCard"
 	_multi_card.pressed.connect(_on_multi_card)
 	_cards_row.add_child(_multi_card)

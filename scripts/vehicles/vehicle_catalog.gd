@@ -11,13 +11,12 @@ extends RefCounted
 const DEFAULT_ID: String = "shopping_cart"
 const REFERENCE_MASS: float = 1200.0
 
-## Racing class. The Kenney racing-kit cars are only offered in racing modes;
-## the sandbox roster above stays exactly as it is. The stock shopping cart is
-## the default racing pick because it is the game's signature vehicle; the four
-## Kenney chassis below are an opt-in choice. A racing chassis entry is a base
-## chassis: the player spends RACING_STAT_POINTS across four stats and the
-## composition below rewrites the same catalog fields the physics already reads.
-## The stock cart has no spendable build; it always runs its stock handling.
+## Racing uses the complete road roster plus the four racing-kit cars below.
+## The stock shopping cart stays first because it is the game's signature
+## vehicle. Every racing pick is a base chassis: the player spends
+## RACING_STAT_POINTS across four stats and composition rewrites the same
+## catalog fields the physics already reads. The cart uses centred deltas so its
+## balanced build preserves stock handling; engine cars add points to their base.
 const DEFAULT_RACING_ID: String = DEFAULT_ID
 const RACING_STAT_POINTS: int = 12
 const RACING_STAT_MAX: int = 6
@@ -381,8 +380,8 @@ const RACING_VEHICLES: Array[Dictionary] = [
 	},
 ]
 
-## Alias for readers that look for the class by name. Same read-only list: the
-## four opt-in chassis only, since racing_all() adds the stock cart default.
+## The four dedicated racing-kit models. racing_all() also includes every road
+## vehicle, with the signature shopping cart kept at index zero.
 const RACING_CLASS: Array[Dictionary] = RACING_VEHICLES
 
 
@@ -469,40 +468,33 @@ static func all() -> Array[Dictionary]:
 
 
 static func racing_all() -> Array[Dictionary]:
-	## The stock shopping cart first, then the four racing-class chassis. Every
-	## racing picker opens on index 0, so a player only leaves the game's
-	## signature cart after deliberately stepping onto a Kenney chassis.
+	## Every real chassis is legal on a circuit. Keep the signature cart first,
+	## then road vehicles in their familiar garage order, then the race kits.
 	var entries: Array[Dictionary] = []
-	var stock: Dictionary = find(DEFAULT_ID)
-	if not stock.is_empty():
-		entries.append(stock)
+	entries.append_array(VEHICLES)
 	entries.append_array(RACING_VEHICLES)
 	return entries
 
 
 static func is_racing_id(id: String) -> bool:
-	## True only for a real id in RACING_VEHICLES. Paths and sandbox ids are
-	## never accepted, so a saved string cannot smuggle another model in. The
-	## stock cart is the racing default but is not a composed chassis.
-	for entry: Dictionary in RACING_VEHICLES:
-		if str(entry.get("id", "")) == id:
-			return true
-	return false
+	## A composed racing chassis is any non-cart entry in the curated catalog.
+	return id != DEFAULT_ID and not racing_find(id).is_empty()
 
 
 static func is_racing_choice(id: String) -> bool:
-	## Every legal racing-class pick: the stock shopping cart default plus the
-	## four Kenney chassis. Physics composition, paint and the network racing
-	## fields stay keyed to is_racing_id(), which excludes the stock cart.
 	return id == DEFAULT_ID or is_racing_id(id)
 
 
 static func racing_find(id: String) -> Dictionary:
-	## A real Kenney chassis only. The stock cart default is resolved through
-	## find(DEFAULT_ID) so callers keep the uncomposed sandbox handling.
 	for entry: Dictionary in RACING_VEHICLES:
 		if str(entry.get("id", "")) == id:
 			return entry
+	for entry: Dictionary in VEHICLES:
+		if str(entry.get("id", "")) != id or id == DEFAULT_ID:
+			continue
+		var road_entry: Dictionary = entry.duplicate(true)
+		road_entry["racing"] = true
+		return road_entry
 	return {}
 
 
@@ -553,14 +545,14 @@ static func allocation_total(allocation: Dictionary) -> int:
 	return total
 
 
-static func compose_racing_entry(id: String, allocation: Dictionary,
-		tint: Color = Color(0, 0, 0, 0)) -> Dictionary:
+static func compose_racing_entry(id: String,
+		allocation: Dictionary) -> Dictionary:
 	## Turn a chassis id plus a point spend into a normal catalog entry. Every
 	## field player_cart.gd and vehicle_visual.gd already read is preserved; only
 	## mass, engine_power/push_accel, max_speed, grip, steering and push_scale are
 	## rewritten from the four allocation axes, so the physics shape is unchanged.
 	## For the Shopping Cart, allocation deltas apply around the balanced 3/3/3/3
-	## default so stock allocation keeps baseline feel while +/- tuning and paint work.
+	## default so stock allocation keeps baseline feel while +/- tuning.
 	var clean: Dictionary = sanitize_allocation(allocation)
 	if id == DEFAULT_ID:
 		var stock_base: Dictionary = find(DEFAULT_ID)
@@ -584,8 +576,6 @@ static func compose_racing_entry(id: String, allocation: Dictionary,
 		cart_entry["push_scale"] = maxf(float(stock_base.get("push_scale", 0.50))
 			+ CART_PUSH_PER_POINT * d_weight, 0.2)
 		cart_entry["racing_allocation"] = clean
-		if tint.a > 0.0:
-			cart_entry["tint_color"] = tint
 		return cart_entry
 	var base: Dictionary = racing_find(id)
 	if base.is_empty():
@@ -604,28 +594,6 @@ static func compose_racing_entry(id: String, allocation: Dictionary,
 	entry["push_scale"] = float(base.get("push_scale", 1.0)) \
 		+ RACING_PUSH_PER_POINT * float(clean["weight"])
 	entry["racing_allocation"] = clean
-	if tint.a > 0.0:
-		entry["tint_color"] = tint
-	return entry
-
-
-static func tinted_racing_entry(id: String, tint: Color) -> Dictionary:
-	## Base chassis plus a paint tint only. Remote ghosts use this when only a
-	## colour swatch is needed, including custom Shopping Cart paint.
-	if id == DEFAULT_ID:
-		var stock_base: Dictionary = find(DEFAULT_ID)
-		if stock_base.is_empty():
-			return {}
-		var cart_entry: Dictionary = stock_base.duplicate(true)
-		if tint.a > 0.0:
-			cart_entry["tint_color"] = tint
-		return cart_entry
-	var base: Dictionary = racing_find(id)
-	if base.is_empty():
-		return {}
-	var entry: Dictionary = base.duplicate(true)
-	if tint.a > 0.0:
-		entry["tint_color"] = tint
 	return entry
 
 

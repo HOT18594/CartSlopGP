@@ -53,14 +53,14 @@ rotation = -0.12
 pivot_offset = Vector2(100.0, 80.0)
 mouse_filter = 2
 script = ExtResource("5")
-wave_amount = 8.0
+wave_amount = 3.5
 
 [node name="TitleRow" type="HBoxContainer" parent="Center/Column/TitleStack"]
 layout_mode = 1
 anchor_right = 1.0
 anchor_bottom = 1.0
-offset_left = -16.0
-offset_right = -16.0
+offset_left = 0.0
+offset_right = 0.0
 grow_horizontal = 2
 grow_vertical = 2
 theme_override_constants/separation = 12

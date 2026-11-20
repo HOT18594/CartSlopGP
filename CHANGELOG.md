@@ -2,14 +2,44 @@
 
 Player-facing notes, newest first.
 
-## [0.8.0] - 2026-11-17
+## [0.8.0] - 2026-11-20
 
-### Two brand-new party modes, a rebuilt Deliver mode, and 9 unique 3D arenas
+### Driving, vehicles and circuits
+
+- Added the full road-vehicle roster to Racing: shopping carts, vans, trucks and
+  specialty vehicles join the race-kit cars, with per-vehicle preview framing.
+- Retuned high-speed steering, tyre grip, heavy-vehicle handling, ramp launches,
+  air control and collision response for more predictable cornering and jumps.
+- Corrected Speed-Up Aurora travel direction and opened scenic gaps in flat
+  guardrail straights while retaining corner and elevated-track protection.
+- Added dense themed perimeter scenery, animated landmarks and batched weather
+  to every circuit and party arena; regenerated all 18 previews from live scenes.
+
+### Bots, party modes and interface
+
+- Added host-replicated Easy, Normal and Hard bot difficulty across Racing,
+  Deliver, Knockout, Blast Tag and Sandbox, including genuine zero-bot sessions.
+- Improved racing-bot recovery and corner planning. Deliver now targets eight
+  crates, respawns cargo more gradually and gives bots human-like loading delays.
+- Simplified the racing and party HUDs with modern body typography, lighter
+  outlines, flatter parallelogram plates and fewer decorative labels.
+- Reworked multiplayer room controls and menu spacing while keeping the
+  homescreen artwork stable and removing redundant HUD clutter.
+
+### Verification and updates
+
+- Added real-physics driving, vehicle-roster, multiplayer-rules and 133-check
+  updater smoke coverage, including archive hashes, traversal rejection and
+  Windows/Linux/macOS installer staging.
+
+### Launch content
+
+![Party Modes](assets/ui/art/bg_arena.png)
 
 - **Knockout (Bumper Royale)**: 2–8 player (+ AI) last-cart-standing brawler.
   Hits build Smash-style **Knockback %** (`0%–250%`), **Power-Slam Surge**
   (`E` / `F` / Right Mouse / Gamepad `B`) delivers heavy shockwave hits, and
-  outer platform sectors collapse as the round heats up. Play across **Skytop
+  outer platform sectors collapse as the round heats up across **Skytop
   Helipad**, **Molten Foundry**, and **Fractured Iceberg**.
 - **Blast Tag (Hot-Potato Chase)**: 2–8 player (+ AI) 2-minute chase with a
   ticking **Mega-Bomb** overhead (`+18%` Carrier Panic Overdrive), **Ram-Pass**
@@ -23,6 +53,8 @@ Player-facing notes, newest first.
   faster `0.45 s` crate pickups and `120 s` matches.
 
 ### Five longer, high-verticality racing circuits & Speed-Up Aurora
+
+![Sunset Canyon](assets/ui/art/preview_canyon.png)
 
 - Added **Sunset Canyon** (`987 m` lap, `12.0 m` mesa climb, sandstone arches,
   canyon oasis) and expanded all circuits to `857–1,050 m` laps with real
@@ -44,23 +76,26 @@ Player-facing notes, newest first.
 - Shopping Cart now supports custom paint colours and Racing Garage stat
   tuning.
 
-### Steam-grade UI, widescreen key art & 18 map screenshots
+### Comic-arcade HUD, cel-shaded key art & centered menus
 
-- Simplified navigation: **SOLO** opens a clean **SELECT MODE** hub showing all
-  5 modes front-and-center, and **MULTIPLAYER** presents 3 clear cards
-  (**CREATE ONLINE ROOM**, **CREATE LAN ROOM**, **JOIN ROOM**) plus a clean
-  2-column room lobby with live map screenshots.
-- Rendered `1600x900` 3D screenshots for all 18 circuits, party maps, and
-  modes, paired with new widescreen menu key art, tactile beveled buttons,
-  slanted power-cell stat bars, and a redesigned racing HUD (`WRONG WAY`,
-  `FINAL LAP!`, `NEW BEST LAP!`, drift tier pips) with zero clipping at `720p`
-  and `540p`.
+- Replaced generic shaded HUD boxes with a bold **Slop-Slash Comic-Arcade HUD**
+  across Racing, Knockout, Blast Tag, Deliver, and Sandbox: thick-outlined
+  display typography, skewed parallelogram slashes, a 14-cell radial
+  parallelogram tachometer, standalone 10-cell boost bars, Smash-style `%`
+  plates, and a 16-cell slanted loading bar.
+- Added crisp cel-shaded widescreen key art and `1600x900` 3D renders for all
+  18 circuits, party maps, and modes; eliminated homescreen background/button
+  jitter, stripped redundant menu badges, and horizontally centered all menus
+  and Garage parallelogram stat bars.
 
-### Server 1.8.0 & bug fixes
+### Server 1.8.0, networking & hardened 1-click auto-updates
 
 - Upgraded the Raspberry Pi relay/web server to **v1.8.0** with custom 3D track
-  polylines, Knockout/Blast Tag room events, live console leaderboards, memory
-  reporting fixes, and non-destructive Windows self-updates.
+  polylines, Knockout/Blast Tag room events, live console leaderboards, and
+  accurate memory reporting.
+- Hardened desktop auto-updates with strict HTTPS/LAN origin validation,
+  SHA-256 verification on both Pi mirrors and GitHub Releases, stale sidecar
+  `.pck` cleanup, and atomic self-replacement on Windows, macOS, and Linux.
 
 ## [0.7.3] - 2026-11-17
 

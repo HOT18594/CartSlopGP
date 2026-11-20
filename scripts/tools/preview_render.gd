@@ -18,6 +18,8 @@ const KenneyTiles := preload("res://scripts/minigames/tiles/kenney_tiles.gd")
 const CargoTheme := preload("res://scripts/minigames/cargo_rush_theme.gd")
 const SceneryKit := preload("res://scripts/minigames/scenery/scenery_kit.gd")
 const PropBatch := preload("res://scripts/minigames/scenery/prop_batch.gd")
+const Catalog := preload("res://scripts/vehicles/vehicle_catalog.gd")
+const VehicleVisual := preload("res://scripts/vehicles/vehicle_visual.gd")
 
 const RACE_SCENE: String = "res://scenes/minigames/grass_race.tscn"
 const KO_MAPS_SCRIPT: String = "res://scripts/minigames/knockout_maps.gd"
@@ -34,14 +36,15 @@ const SANDBOX_SCENES: Array[String] = [
 	"res://scenes/sandbox/sandbox.tscn",
 	"res://scenes/world/sandbox.tscn",
 ]
-const PREVIEW_CAR_MODELS: Array[String] = [
-	"raceCarRed", "raceCarOrange", "raceCarGreen", "raceCarWhite",
+const PREVIEW_VEHICLE_IDS: Array[String] = [
+	"shopping_cart", "van", "truck", "sports",
 ]
 
 const OUT_DIR: String = "res://assets/ui/art/"
 const PREVIEW_PREFIX: String = "preview_"
 const DRY_RUN_ENV: String = "CART_PREVIEW_DRY_RUN"
 const FORCE_FALLBACK_ENV: String = "CART_PREVIEW_FORCE_FALLBACK"
+const ONLY_ENV: String = "CART_PREVIEW_ONLY"
 
 const WIDTH: int = 1600
 const HEIGHT: int = 900
@@ -49,9 +52,9 @@ const MIN_PNG_BYTES: int = 120 * 1024
 const MIN_COLOURS: int = 24
 const MAX_FLAT_RATIO: float = 0.94
 const SAMPLE_STEP: int = 8
-const WAIT_FRAMES: int = 8
+const WAIT_FRAMES: int = 16
 
-const CAMERA_FOV: float = 38.0
+const CAMERA_FOV: float = 44.0
 const CAMERA_PITCH_DEG: float = 33.0
 const CAMERA_YAW_STEPS: int = 24
 const FRAME_FILL: float = 0.95
@@ -140,19 +143,19 @@ const ENVIRONMENTS: Dictionary = {
 	},
 	"ko_rooftop": {
 		"sky_top": Color("2e56a6"), "sky_horizon": Color("f5be9b"),
-		"sun_color": Color("ffe4c2"), "sun_energy": 1.26,
+		"sun_color": Color("ffe4c2"), "sun_energy": 1.38, "ambient": 0.46,
 		"sun_rot": Vector3(-42.0, -42.0, 0.0),
 		"fog_color": Color("eac8b5"), "fog_density": 0.00035,
 	},
 	"ko_foundry": {
 		"sky_top": Color("4a2824"), "sky_horizon": Color("e87838"),
-		"sun_color": Color("ffc285"), "sun_energy": 1.30,
+		"sun_color": Color("ffc285"), "sun_energy": 1.55, "ambient": 0.58,
 		"sun_rot": Vector3(-44.0, -36.0, 0.0),
-		"fog_color": Color("d97a46"), "fog_density": 0.00045,
+		"fog_color": Color("d97a46"), "fog_density": 0.00030,
 	},
 	"ko_iceberg": {
 		"sky_top": Color("2f7ec0"), "sky_horizon": Color("dff2fc"),
-		"sun_color": Color("f0f8ff"), "sun_energy": 1.20,
+		"sun_color": Color("f0f8ff"), "sun_energy": 1.34, "ambient": 0.46,
 		"sun_rot": Vector3(-48.0, -32.0, 0.0),
 		"fog_color": Color("d5ebf8"), "fog_density": 0.00040,
 	},
@@ -184,7 +187,7 @@ const ENVIRONMENTS: Dictionary = {
 
 const MAP_VIEWS: Dictionary = {
 	"stadium": {"pad": 13.0, "pitch_deg": 33.0},
-	"meadow": {"pad": 14.0, "pitch_deg": 34.0},
+	"meadow": {"pad": 14.0, "pitch_deg": 34.0, "start_fraction": 0.28},
 	"canyon": {"pad": 15.0, "pitch_deg": 34.0},
 	"dockyard": {"pad": 15.0, "pitch_deg": 33.0},
 	"glacier": {"pad": 16.0, "pitch_deg": 34.0},
@@ -194,9 +197,9 @@ const MAP_VIEWS: Dictionary = {
 	"farmyard": {"pad": 6.0, "pitch_deg": 34.0, "yaw_deg": 40.0},
 	"snowfield": {"pad": 6.0, "pitch_deg": 34.0, "yaw_deg": 28.0},
 	"knockout": {"pad": 6.0, "pitch_deg": 33.0, "yaw_deg": 36.0},
-	"ko_rooftop": {"pad": 6.0, "pitch_deg": 32.0, "yaw_deg": 36.0},
-	"ko_foundry": {"pad": 6.0, "pitch_deg": 34.0, "yaw_deg": 30.0},
-	"ko_iceberg": {"pad": 6.0, "pitch_deg": 33.0, "yaw_deg": 42.0},
+	"ko_rooftop": {"pad": 6.0, "pitch_deg": 27.0, "yaw_deg": 35.0},
+	"ko_foundry": {"pad": 8.0, "pitch_deg": 19.0, "yaw_deg": 33.0},
+	"ko_iceberg": {"pad": 6.0, "pitch_deg": 24.0, "yaw_deg": 40.0},
 	"bomb_tag": {"pad": 6.0, "pitch_deg": 34.0, "yaw_deg": 35.0},
 	"bt_plaza": {"pad": 6.0, "pitch_deg": 34.0, "yaw_deg": 35.0},
 	"bt_labyrinth": {"pad": 6.0, "pitch_deg": 35.0, "yaw_deg": 40.0},
@@ -208,6 +211,15 @@ var _viewport: SubViewport
 
 func _ready() -> void:
 	var targets: Array[Dictionary] = _all_targets()
+	var only: String = OS.get_environment(ONLY_ENV).strip_edges()
+	if only != "":
+		var wanted: PackedStringArray = only.split(",", false)
+		targets = targets.filter(func(target: Dictionary) -> bool:
+			return wanted.has(str(target.get("id", ""))))
+		if targets.is_empty():
+			push_error("preview_render: %s did not match any preview id" % ONLY_ENV)
+			get_tree().quit(1)
+			return
 	if OS.get_environment(DRY_RUN_ENV) == "1":
 		print("preview_render: dry run, %d target(s) registered" % targets.size())
 		get_tree().quit(0)
@@ -335,6 +347,8 @@ func _render_target(target: Dictionary) -> Dictionary:
 	_trim_backdrop(stage)
 	_install_lighting(stage, preset)
 	var framing: Dictionary = _framing_for(target_kind, preset, stage, arena_info)
+	if target_kind == "race_map":
+		_stage_race_vehicles(stage, framing)
 	var camera: Camera3D = _install_camera(stage, framing)
 	var start_ndc: Vector2 = _start_ndc(framing, camera)
 	_install_vignette(stage)
@@ -542,26 +556,58 @@ func _ensure_floor_under(stage: Node3D, tint: Color) -> void:
 	stage.add_child(floor_node)
 
 
-## Stages 4 vibrant Kenney race karts (`raceCarRed/Orange/Green/White`) on the
-## arena's spawn points when the stage doesn't already carry live karts.
+## Stage the real game roster instead of misleading generic race cars. The
+## shopping cart leads every composition; vans and trucks make the party-game
+## scale readable even in a small menu card.
 func _stage_preview_karts(stage: Node3D, info: Dictionary,
 		arena_id: String) -> void:
 	if bool(info.get("has_scene_karts", false)):
 		return
 	var spawns: Array[Transform3D] = _extract_spawns(info, arena_id)
 	var holder := Node3D.new()
-	holder.name = "PreviewKarts"
+	holder.name = "PreviewVehicles"
 	stage.add_child(holder)
-	for i in mini(PREVIEW_CAR_MODELS.size(), spawns.size()):
-		var model: String = PREVIEW_CAR_MODELS[i]
-		var raw: Vector3 = CargoTheme.scaled_size(model, Vector3.ONE)
-		var longest: float = maxf(maxf(raw.x, raw.z), 0.25)
-		var scale_factor: float = 3.1 / longest
+	for i in mini(PREVIEW_VEHICLE_IDS.size(), spawns.size()):
+		var entry: Dictionary = Catalog.find(PREVIEW_VEHICLE_IDS[i])
+		var vehicle: Node3D = VehicleVisual.build(entry)
+		if vehicle == null:
+			continue
+		vehicle.name = "PreviewVehicle_%d" % i
+		holder.add_child(vehicle)
 		var xform: Transform3D = spawns[i]
-		var yaw: float = atan2(xform.basis.z.x, xform.basis.z.z)
-		CargoTheme.place_model(holder, model,
-			xform.origin + Vector3.UP * 0.02, yaw,
-			Vector3.ONE * scale_factor, "PreviewKart_%d" % i)
+		vehicle.position = xform.origin + Vector3.UP * 0.04
+		vehicle.rotation.y = atan2(xform.basis.z.x, xform.basis.z.z)
+		vehicle.scale = Vector3.ONE * 1.35
+
+
+func _stage_race_vehicles(stage: Node3D, framing: Dictionary) -> void:
+	if not framing.has("forward"):
+		return
+	for node: Node in _nodes_of_type(stage, "CharacterBody3D"):
+		if node is Node3D:
+			(node as Node3D).visible = false
+	var start: Vector3 = framing["start"] as Vector3
+	var forward: Vector3 = framing["forward"] as Vector3
+	var right: Vector3 = framing["right"] as Vector3
+	var yaw: float = atan2(-forward.x, -forward.z)
+	var offsets: Array[Vector3] = [
+		right * -2.2 + forward * 3.0,
+		right * 2.0,
+		right * -1.6 - forward * 4.0,
+		right * 2.2 - forward * 5.5,
+	]
+	var holder := Node3D.new()
+	holder.name = "PreviewRaceVehicles"
+	stage.add_child(holder)
+	for i in PREVIEW_VEHICLE_IDS.size():
+		var entry: Dictionary = Catalog.find(PREVIEW_VEHICLE_IDS[i])
+		var vehicle: Node3D = VehicleVisual.build(entry)
+		if vehicle == null:
+			continue
+		holder.add_child(vehicle)
+		vehicle.position = start + offsets[i] + Vector3.UP * 0.16
+		vehicle.rotation.y = yaw
+		vehicle.scale = Vector3.ONE * 1.25
 
 
 func _extract_spawns(info: Dictionary, arena_id: String) -> Array[Transform3D]:
@@ -768,10 +814,10 @@ func _install_lighting(stage: Node3D, preset: Dictionary) -> void:
 	sun.name = "PreviewSun"
 	sun.rotation_degrees = sun_rot
 	sun.light_color = sun_col
-	sun.light_energy = sun_energy
+	sun.light_energy = sun_energy * 0.88
 	sun.shadow_enabled = true
 	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS
-	sun.directional_shadow_max_distance = 1400.0
+	sun.directional_shadow_max_distance = 520.0
 	stage.add_child(sun)
 
 	for node: Node in _nodes_of_type(stage, "WorldEnvironment"):
@@ -792,20 +838,20 @@ func _install_lighting(stage: Node3D, preset: Dictionary) -> void:
 	environment.sky = sky
 	environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
 	environment.ambient_light_color = haze.lightened(0.05)
-	environment.ambient_light_energy = 0.38
+	environment.ambient_light_energy = float(env_spec.get("ambient", 0.30))
 	environment.tonemap_mode = Environment.TONE_MAPPER_FILMIC
-	environment.tonemap_exposure = 0.96
-	environment.tonemap_white = 1.00
+	environment.tonemap_exposure = 0.90
+	environment.tonemap_white = 1.35
 	environment.fog_enabled = true
 	environment.fog_light_color = fog_col
-	environment.fog_light_energy = 1.0
-	environment.fog_density = fog_dens
-	environment.fog_sky_affect = 0.28
-	environment.fog_aerial_perspective = 0.32
+	environment.fog_light_energy = 0.85
+	environment.fog_density = fog_dens * 0.14
+	environment.fog_sky_affect = 0.12
+	environment.fog_aerial_perspective = 0.08
 	environment.adjustment_enabled = true
-	environment.adjustment_brightness = 1.00
-	environment.adjustment_contrast = 1.15
-	environment.adjustment_saturation = 1.30
+	environment.adjustment_brightness = 0.98
+	environment.adjustment_contrast = 1.10
+	environment.adjustment_saturation = 1.20
 	var world := WorldEnvironment.new()
 	world.name = "PreviewEnvironment"
 	world.environment = environment
@@ -859,7 +905,17 @@ func _framing_for(target_kind: String, preset: Dictionary, stage: Node3D,
 	var framing: Dictionary = _expand_framing(points, pad)
 	framing["pitch_deg"] = pitch_deg
 	if not points.is_empty():
-		framing["start"] = points[0]
+		var start_fraction: float = float(view_spec.get("start_fraction", 0.12))
+		var start_index: int = mini(int(points.size() * start_fraction), points.size() - 2)
+		var start: Vector3 = points[start_index]
+		var ahead: Vector3 = points[mini(start_index + 4, points.size() - 1)]
+		var forward: Vector3 = (ahead - start).normalized()
+		var right: Vector3 = forward.cross(Vector3.UP).normalized()
+		framing["start"] = start
+		framing["forward"] = forward
+		framing["right"] = right
+		framing["eye"] = start - forward * 17.0 + right * 11.0 + Vector3.UP * 9.0
+		framing["target"] = start + forward * 18.0 + Vector3.UP * 1.6
 	return framing
 
 
@@ -893,12 +949,21 @@ func _install_camera(stage: Node3D, framing: Dictionary) -> Camera3D:
 	camera.near = 0.5
 	camera.far = 6000.0
 	stage.add_child(camera)
+	if framing.has("eye") and framing.has("target"):
+		camera.fov = 52.0
+		camera.look_at_from_position(framing["eye"] as Vector3,
+			framing["target"] as Vector3, Vector3.UP)
+		camera.current = true
+		return camera
 	var pitch: float = deg_to_rad(float(framing.get("pitch_deg", CAMERA_PITCH_DEG)))
 	if framing.has("yaw_deg"):
+		pitch = deg_to_rad(float(framing.get("pitch_deg", CAMERA_PITCH_DEG)) * 0.78)
 		var fixed_yaw: float = deg_to_rad(float(framing["yaw_deg"]))
 		var fixed_dir := Vector3(sin(fixed_yaw) * cos(pitch), sin(pitch),
 			cos(fixed_yaw) * cos(pitch))
-		var fixed_dist: float = _fit_distance(centre, points, fixed_dir)
+		var map_id: String = str(stage.name).trim_prefix("Map_")
+		var distance_scale: float = 0.86 if map_id == "knockout" or map_id.begins_with("ko_") else 0.76
+		var fixed_dist: float = _fit_distance(centre, points, fixed_dir) * distance_scale
 		camera.look_at_from_position(centre + fixed_dir * fixed_dist, centre,
 			Vector3.UP)
 		camera.current = true

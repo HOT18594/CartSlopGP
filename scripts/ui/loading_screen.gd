@@ -1,33 +1,89 @@
 extends Control
 const UiAnim := preload("res://scripts/ui/ui_anim.gd")
-## Themed loading overlay: full-bleed concept artwork, smooth rainbow progress
-## bar, destination title + hint from SceneLoader.go_to(), and rotating tip
-## anchored cleanly above SCREEN_MARGIN = 24 without bar-shadow overlap.
+## AAA slanted arcade transition overlay:
+## - Destination-aware full-bleed concept / map preview artwork
+## - Chunky 16-cell skewed parallelogram progress bar (`SKEW = 10.0`, thick
+##   `#1e1b3a` ink frame + hard `(5, 6)` comic shadow, vibrant gold->cyan->pink
+##   slanted cells with white top gloss)
+## - Bold 42px LuckiestGuy destination heading + `%` readout aligned above the
+##   bar, with a concise single-line tip centered below.
 
 const UiPalette := preload("res://scripts/ui/ui_palette.gd")
-const CartDrawing := preload("res://scripts/ui/cart_drawing.gd")
-const DISPLAY_FONT := "res://assets/ui/fonts/LuckiestGuy-Regular.ttf"
+const ART_DIR: String = "res://assets/ui/art/"
+const DISPLAY_FONT: String = "res://assets/ui/fonts/LuckiestGuy-Regular.ttf"
+
 const ART_PATHS: PackedStringArray = [
 	"res://assets/ui/art/bg_parking.png",
-	"res://assets/ui/art/scene_track_aerial.png",
-	"res://assets/ui/art/scene_road.png",
-	"res://assets/ui/art/scene_arena.png",
-	"res://assets/ui/art/scene_finish.png",
+	"res://assets/ui/art/bg_arena.png",
+	"res://assets/ui/art/preview_stadium.png",
+	"res://assets/ui/art/preview_canyon.png",
+	"res://assets/ui/art/preview_glacier.png",
+	"res://assets/ui/art/preview_dockyard.png",
+	"res://assets/ui/art/preview_meadow.png",
+]
+
+## Ordered specific-first so arena sub-maps match before mode names.
+const DESTINATION_PREVIEWS: Array[Array] = [
+	["harbour overpass", "preview_harbour.png"],
+	["harbour", "preview_harbour.png"],
+	["windmill hills", "preview_farmyard.png"],
+	["farmyard", "preview_farmyard.png"],
+	["glacier bowl", "preview_snowfield.png"],
+	["snowfield", "preview_snowfield.png"],
+	["skytop helipad", "preview_ko_rooftop.png"],
+	["ko_rooftop", "preview_ko_rooftop.png"],
+	["helipad", "preview_ko_rooftop.png"],
+	["molten foundry", "preview_ko_foundry.png"],
+	["ko_foundry", "preview_ko_foundry.png"],
+	["foundry", "preview_ko_foundry.png"],
+	["fractured iceberg", "preview_ko_iceberg.png"],
+	["ko_iceberg", "preview_ko_iceberg.png"],
+	["iceberg", "preview_ko_iceberg.png"],
+	["terrace plaza", "preview_bt_plaza.png"],
+	["bt_plaza", "preview_bt_plaza.png"],
+	["canyon labyrinth", "preview_bt_labyrinth.png"],
+	["bt_labyrinth", "preview_bt_labyrinth.png"],
+	["labyrinth", "preview_bt_labyrinth.png"],
+	["twin ferries", "preview_bt_ferries.png"],
+	["bt_ferries", "preview_bt_ferries.png"],
+	["ferries", "preview_bt_ferries.png"],
+	["stadium circuit", "preview_stadium.png"],
+	["stadium", "preview_stadium.png"],
+	["redwood valley", "preview_meadow.png"],
+	["meadow", "preview_meadow.png"],
+	["sunset canyon", "preview_canyon.png"],
+	["canyon", "preview_canyon.png"],
+	["dockyard quay", "preview_dockyard.png"],
+	["dockyard", "preview_dockyard.png"],
+	["glacier pass", "preview_glacier.png"],
+	["glacier", "preview_glacier.png"],
+	["cargo_rush", "preview_cargo_rush.png"],
+	["cargo rush", "preview_cargo_rush.png"],
+	["deliver", "preview_cargo_rush.png"],
+	["knockout", "preview_knockout.png"],
+	["bomb_tag", "preview_bomb_tag.png"],
+	["blast tag", "preview_bomb_tag.png"],
+	["bomb tag", "preview_bomb_tag.png"],
+	["sandbox", "preview_sandbox.png"],
+	["stunt park", "preview_sandbox.png"],
+	["let's drive", "preview_sandbox.png"],
 ]
 
 const TIPS: PackedStringArray = [
 	"TIP: Hold SPACE to drift and charge a 3-tier speed boost.",
-	"TIP: Boost pads refill your meter instantly.",
-	"TIP: You can launch off speed bumps — floor it.",
-	"TIP: Press R to reset your cart back onto the track.",
-	"TIP: Crates and cones are light — smash right through them.",
+	"TIP: Drive over boost pads to refill your meter instantly.",
+	"TIP: Hit speed bumps at full boost for huge air.",
+	"TIP: Press R anytime to reset your cart onto the track.",
+	"TIP: Heavy rides resist knockback in arena brawls.",
 ]
 
-const BAR_X: float = 0.15
-const BAR_W: float = 0.70
+const BAR_SEGMENTS: int = 16
+const BAR_SKEW: float = 10.0
+const BAR_GAP: float = 5.0
+const BAR_W_RATIO: float = 0.72
 const SAFE_BOTTOM: float = 24.0
 const TIP_HEIGHT: float = 24.0
-const BAR_BOTTOM_CLEARANCE: float = 70.0 ## Clears 24 px margin + 24 px tip + 22 px shadow gap.
+const BAR_BOTTOM_CLEARANCE: float = 68.0
 
 var progress: float = 0.0
 var indeterminate: bool = false
@@ -47,20 +103,20 @@ var _art_index: int = -1
 var _task_mode: bool = false
 var _task_title: String = ""
 var _task_message: String = ""
+var _dest_title: String = ""
+var _dest_hint: String = ""
 var _last_percent: int = -1
 
 
 func _ready() -> void:
 	_display = load(DISPLAY_FONT)
-	randomize_art()
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	_title_label = get_node_or_null("Title") as Label
 	_tip_label = get_node_or_null("Tip") as Label
 	_percent_label = get_node_or_null("Percent") as Label
 	_caption_label = get_node_or_null("Caption") as Label
 	_message_label = get_node_or_null("Message") as Label
-	if _title_label != null:
-		_title_label.visible = false
+	randomize_art()
 	_place_labels()
 	resized.connect(_on_resized)
 	_show_tip()
@@ -73,26 +129,15 @@ func _on_resized() -> void:
 
 
 func _bar_rect(area: Vector2) -> Rect2:
-	var bar_h: float = clampf(area.y * 0.042, 26.0, 34.0)
-	var bar_top: float = maxf(area.y - BAR_BOTTOM_CLEARANCE - bar_h, 64.0)
-	return Rect2(area.x * BAR_X, bar_top, area.x * BAR_W, bar_h)
+	var bar_h: float = clampf(area.y * 0.048, 30.0, 38.0)
+	var bar_w: float = clampf(area.x * BAR_W_RATIO, 360.0, 960.0)
+	var bar_x: float = (area.x - bar_w) * 0.5
+	var bar_top: float = maxf(area.y - BAR_BOTTOM_CLEARANCE - bar_h, 80.0)
+	return Rect2(bar_x, bar_top, bar_w, bar_h)
 
 
 func _place_labels() -> void:
 	var area: Vector2 = size if size.y > 1.0 else get_viewport_rect().size
-	var bar: Rect2 = _bar_rect(area)
-	if _percent_label != null:
-		_percent_label.anchor_left = 0.0
-		_percent_label.anchor_right = 0.0
-		_percent_label.anchor_top = 0.0
-		_percent_label.anchor_bottom = 0.0
-		_percent_label.offset_left = bar.end.x - 160.0
-		_percent_label.offset_right = bar.end.x
-		_percent_label.offset_top = bar.position.y - 46.0
-		_percent_label.offset_bottom = bar.position.y - 6.0
-		_percent_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-		_percent_label.vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM
-		_percent_label.add_theme_font_size_override("font_size", 32)
 	if _tip_label != null:
 		_tip_label.anchor_left = 0.0
 		_tip_label.anchor_right = 1.0
@@ -104,12 +149,20 @@ func _place_labels() -> void:
 		_tip_label.offset_bottom = -SAFE_BOTTOM
 		_tip_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		_tip_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		_tip_label.autowrap_mode = TextServer.AUTOWRAP_OFF
+		_tip_label.max_lines_visible = 1
+		_tip_label.clip_text = true
+		_tip_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	if _percent_label != null:
+		_percent_label.visible = false
 	if _title_label != null:
 		_title_label.visible = false
 	if _caption_label != null:
 		_caption_label.visible = false
 	if _message_label != null:
 		_message_label.visible = false
+	if area.x > 0.0:
+		queue_redraw()
 
 
 func set_progress(value: float, immediate: bool = false) -> void:
@@ -122,19 +175,29 @@ func set_progress(value: float, immediate: bool = false) -> void:
 
 func set_indeterminate(value: bool) -> void:
 	indeterminate = value
-	if value:
-		_shown = 0.0
-	else:
-		_shown = progress
+	_shown = 0.0 if value else progress
 	_refresh_labels()
 	queue_redraw()
 
 
 func set_destination(title: String, hint: String = "") -> void:
+	_dest_title = title
+	_dest_hint = hint
 	if _title_label != null:
 		_title_label.text = title
 	if _message_label != null:
 		_message_label.text = hint
+	_try_apply_destination_art(title, hint)
+	queue_redraw()
+
+
+func set_task(active: bool, title: String = "", message: String = "") -> void:
+	_task_mode = active
+	_task_title = title
+	_task_message = message
+	if not active:
+		_dest_title = ""
+		_dest_hint = ""
 	queue_redraw()
 
 
@@ -157,7 +220,7 @@ func _process(delta: float) -> void:
 
 func _refresh_labels() -> void:
 	if _percent_label != null:
-		_percent_label.visible = not indeterminate
+		_percent_label.visible = false
 		if not indeterminate:
 			var percent: int = int(round(_shown * 100.0))
 			if percent != _last_percent:
@@ -181,15 +244,8 @@ func _show_tip() -> void:
 
 func _fill_ratio() -> float:
 	if indeterminate:
-		return 0.5 + 0.32 * sin(_time * 1.5)
+		return 0.5 + 0.34 * sin(_time * 1.6)
 	return _shown
-
-
-func set_task(active: bool, title: String = "", message: String = "") -> void:
-	_task_mode = active
-	_task_title = title
-	_task_message = message
-	queue_redraw()
 
 
 func _resolved_heading() -> String:
@@ -199,6 +255,8 @@ func _resolved_heading() -> String:
 		var dest: String = _title_label.text.strip_edges()
 		if dest != "" and dest.to_upper() != "LOADING":
 			return dest.to_upper()
+	if _dest_title.strip_edges() != "" and _dest_title.strip_edges().to_upper() != "LOADING":
+		return _dest_title.strip_edges().to_upper()
 	return "LOADING..."
 
 
@@ -209,6 +267,8 @@ func _resolved_hint() -> String:
 		var msg: String = _message_label.text.strip_edges()
 		if msg != "":
 			return msg
+	if _dest_hint.strip_edges() != "":
+		return _dest_hint.strip_edges()
 	if _caption_label != null:
 		var cap: String = _caption_label.text.strip_edges()
 		if cap != "" and cap.to_upper() != "LOADING SCENE":
@@ -216,7 +276,29 @@ func _resolved_hint() -> String:
 	return ""
 
 
+func _try_apply_destination_art(title: String, hint: String) -> bool:
+	# Check hint first (more specific arena map), then title (track or mode).
+	for candidate: String in [hint, title]:
+		var needle: String = candidate.strip_edges().to_lower()
+		if needle == "":
+			continue
+		for pair: Array in DESTINATION_PREVIEWS:
+			var token: String = str(pair[0])
+			var file_name: String = str(pair[1])
+			if needle.contains(token):
+				var full_path: String = ART_DIR + file_name
+				if ResourceLoader.exists(full_path):
+					var tex: Texture2D = load(full_path) as Texture2D
+					if tex != null:
+						_art = tex
+						return true
+	return false
+
+
 func randomize_art() -> void:
+	if _try_apply_destination_art(_resolved_heading(), _resolved_hint()):
+		queue_redraw()
+		return
 	if ART_PATHS.is_empty():
 		return
 	var next: int = randi_range(0, ART_PATHS.size() - 1)
@@ -235,11 +317,7 @@ func _draw() -> void:
 	if _art != null:
 		_draw_art(area)
 	else:
-		_draw_sky(area)
-		_draw_sun(area)
-		_draw_clouds(area)
-		_draw_hills(area)
-		_draw_backdrop(area)
+		draw_rect(Rect2(Vector2.ZERO, area), UiPalette.SURFACE_DARK)
 	_draw_scrim(area)
 	_draw_bar(area)
 
@@ -249,195 +327,157 @@ func _draw_art(area: Vector2) -> void:
 	if source.x <= 0.0 or source.y <= 0.0:
 		return
 	var cover_scale: float = maxf(area.x / source.x, area.y / source.y)
-	var drawn: Vector2 = source * cover_scale
-	var origin: Vector2 = (area - drawn) * 0.5
+	var drawn: Vector2 = (source * cover_scale).round()
+	var origin: Vector2 = ((area - drawn) * 0.5).round()
 	draw_texture_rect(_art, Rect2(origin, drawn), false)
 
 
-func _draw_sky(area: Vector2) -> void:
-	var bands: int = 40
-	for band in bands:
-		var t: float = float(band) / float(bands - 1)
-		var color: Color = UiPalette.SKY_TOP.lerp(UiPalette.SKY_BOTTOM, t)
-		draw_rect(Rect2(0.0, area.y * float(band) / float(bands) * 0.62,
-			area.x, area.y * 0.62 / float(bands) + 1.0), color)
-
-
-func _draw_sun(area: Vector2) -> void:
-	var center := Vector2(area.x * 0.82, area.y * 0.15)
-	var radius: float = area.y * 0.075
-	draw_circle(center, radius * 1.5, Color(UiPalette.YELLOW, 0.16))
-	draw_circle(center, radius, Color(UiPalette.YELLOW, 0.95))
-	for i in 3:
-		var y: float = center.y + radius * (0.25 + 0.22 * i)
-		var half: float = sqrt(maxf(radius * radius - pow(y - center.y, 2.0), 0.0))
-		draw_rect(Rect2(center.x - half, y, half * 2.0, radius * 0.06),
-			Color(UiPalette.RED, 0.35))
-
-
-func _draw_clouds(area: Vector2) -> void:
-	var clouds: Array[Vector4] = [
-		Vector4(0.10, 0.15, 1.0, 12.0),
-		Vector4(0.36, 0.10, 0.7, 18.0),
-		Vector4(0.62, 0.20, 0.55, 8.0),
-		Vector4(0.90, 0.27, 0.8, 14.0),
-	]
-	for cloud: Vector4 in clouds:
-		var x: float = fposmod(area.x * cloud.x + _time * cloud.w, area.x + 260.0) - 130.0
-		var center := Vector2(x, area.y * cloud.y)
-		var radius: float = area.y * 0.035 * cloud.z
-		var white := Color(1, 1, 1, 0.92)
-		draw_circle(center, radius, white)
-		draw_circle(center + Vector2(-radius * 1.1, radius * 0.2), radius * 0.75, white)
-		draw_circle(center + Vector2(radius * 1.05, radius * 0.25), radius * 0.65, white)
-
-
-func _draw_hills(area: Vector2) -> void:
-	var base_y: float = area.y * 0.46
-	for layer in 2:
-		var color := Color(0.24, 0.55, 0.34, 0.55) if layer == 0 \
-			else Color(0.19, 0.45, 0.29, 0.75)
-		var points := PackedVector2Array()
-		var steps: int = 32
-		var amp: float = area.y * (0.045 - layer * 0.012)
-		var phase: float = layer * 1.7
-		for step in steps + 1:
-			var t: float = float(step) / float(steps)
-			var y: float = base_y + layer * 10.0 - sin(t * PI * 2.0 + phase) * amp \
-				- sin(t * PI * 5.0 + phase) * amp * 0.25
-			points.append(Vector2(t * area.x, y))
-		points.append(Vector2(area.x, area.y))
-		points.append(Vector2(0.0, area.y))
-		draw_colored_polygon(points, color)
-	draw_rect(Rect2(0.0, base_y, area.x, area.y - base_y), Color(0.80, 0.75, 0.81, 0.58))
-
-
-func _draw_backdrop(area: Vector2) -> void:
-	var vanish := Vector2(area.x * 0.50, area.y * 0.47)
-	for index in range(-4, 5):
-		if index == 0:
-			continue
-		var bottom := vanish + Vector2(float(index) * area.x * 0.18, area.y * 0.30)
-		draw_line(vanish, bottom, Color(1, 1, 1, 0.32), 2.0, true)
-
-	var left: float = area.x * 0.79
-	var right: float = area.x * 0.975
-	var top: float = area.y * 0.315
-	var bottom: float = area.y * 0.465
-	draw_rect(Rect2(left, top, right - left, bottom - top), Color(0.96, 0.79, 0.76))
-	draw_rect(Rect2(left - 5.0, top, right - left + 10.0, area.y * 0.022),
-		Color(0.85, 0.50, 0.46))
-	draw_rect(Rect2(left, bottom - 4.0, right - left, 4.0), Color(0.72, 0.62, 0.68))
-	var sign_box := Rect2(left + (right - left) * 0.10, top + area.y * 0.022,
-		(right - left) * 0.80, area.y * 0.040)
-	var sign_style := StyleBoxFlat.new()
-	sign_style.bg_color = Color(0.91, 0.27, 0.24)
-	sign_style.set_corner_radius_all(6)
-	sign_style.set_border_width_all(3)
-	sign_style.border_color = Color(0.66, 0.16, 0.15)
-	draw_style_box(sign_style, sign_box)
-	if _display != null:
-		draw_string(_display, Vector2(sign_box.position.x,
-			sign_box.position.y + sign_box.size.y * 0.82), "SLOPMART",
-			HORIZONTAL_ALIGNMENT_CENTER, sign_box.size.x,
-			int(sign_box.size.y * 0.62), Color(1, 1, 1))
-	for index in 2:
-		var window := Rect2(left + (right - left) * (0.15 + float(index) * 0.46),
-			top + area.y * 0.085, (right - left) * 0.24, area.y * 0.050)
-		draw_rect(window, Color(0.72, 0.88, 0.96))
-		draw_rect(window, Color(0.90, 0.55, 0.50), false, 2.0)
-	_small_tree(Vector2(area.x * 0.06, area.y * 0.470), area.y * 0.028)
-	_small_tree(Vector2(area.x * 0.15, area.y * 0.466), area.y * 0.022)
-
-
-func _small_tree(base: Vector2, radius: float) -> void:
-	draw_rect(Rect2(base.x - radius * 0.10, base.y - radius * 0.7,
-		radius * 0.20, radius * 0.7), Color(0.45, 0.32, 0.25))
-	draw_circle(base + Vector2(0.0, -radius), radius, UiPalette.TREE)
-	draw_circle(base + Vector2(-radius * 0.65, -radius * 0.75), radius * 0.65,
-		UiPalette.TREE)
-	draw_circle(base + Vector2(radius * 0.65, -radius * 0.75), radius * 0.65,
-		UiPalette.TREE)
-
-
 func _draw_scrim(area: Vector2) -> void:
-	## Soft bottom gradient scrim so destination text, progress bar, and tip
-	## stay legible over any bright background illustration.
-	var top: float = area.y * 0.62
+	## Smooth bottom cinematic scrim so the 42px heading, 16-cell parallelogram
+	## bar, percentage readout, and tip pop cleanly over bright map previews.
+	var top: float = area.y * 0.52
 	var height: float = area.y - top
-	var bands: int = 48
+	var bands: int = 44
 	var step: float = height / float(bands)
 	for band in bands:
 		var t: float = (float(band) + 0.5) / float(bands)
-		var alpha: float = 0.46 * pow(t, 1.35)
-		draw_rect(Rect2(0.0, top + step * float(band), area.x, step),
-			Color(0.05, 0.07, 0.16, alpha))
+		var alpha: float = 0.68 * pow(t, 1.30)
+		draw_rect(Rect2(0.0, top + step * float(band), area.x, step + 1.0),
+			Color(0.04, 0.05, 0.14, alpha))
 
 
-func _draw_outlined_text(font: Font, pos: Vector2, text_value: String,
-		font_size: int, fill: Color, max_w: float = -1.0) -> void:
-	for offset: Vector2 in [Vector2(-2, 0), Vector2(2, 0), Vector2(0, -2),
-			Vector2(0, 2), Vector2(-1, -1), Vector2(1, 1)]:
+func _draw_comic_text(font: Font, pos: Vector2, text_value: String,
+		font_size: int, fill: Color, outline_px: float = 4.0,
+		shadow_ofs: Vector2 = Vector2(3.0, 4.0), max_w: float = -1.0) -> void:
+	# Hard comic shadow in #1e1b3a.
+	draw_string(font, pos + shadow_ofs, text_value,
+		HORIZONTAL_ALIGNMENT_LEFT, max_w, font_size, Color(UiPalette.INK.r, UiPalette.INK.g, UiPalette.INK.b, 0.85))
+	var d: float = outline_px * 0.72
+	for offset: Vector2 in [
+		Vector2(-outline_px, 0.0), Vector2(outline_px, 0.0),
+		Vector2(0.0, -outline_px), Vector2(0.0, outline_px),
+		Vector2(-d, -d), Vector2(d, -d), Vector2(-d, d), Vector2(d, d),
+	]:
 		draw_string(font, pos + offset, text_value,
-			HORIZONTAL_ALIGNMENT_LEFT, max_w, font_size, UiPalette.OUTLINE)
+			HORIZONTAL_ALIGNMENT_LEFT, max_w, font_size, UiPalette.INK)
 	draw_string(font, pos, text_value,
 		HORIZONTAL_ALIGNMENT_LEFT, max_w, font_size, fill)
+
+
+func _cell_color(t: float) -> Color:
+	if t <= 0.5:
+		return UiPalette.YELLOW.lerp(UiPalette.CYAN, t * 2.0)
+	return UiPalette.CYAN.lerp(UiPalette.PINK, (t - 0.5) * 2.0)
+
+
+func _para_poly(x: float, y: float, w: float, h: float, skew_px: float) -> PackedVector2Array:
+	return PackedVector2Array([
+		Vector2(x + skew_px, y),
+		Vector2(x + skew_px + w, y),
+		Vector2(x + w, y + h),
+		Vector2(x, y + h),
+	])
+
+
+func _closed_poly(pts: PackedVector2Array) -> PackedVector2Array:
+	var out := pts.duplicate()
+	if not out.is_empty():
+		out.append(out[0])
+	return out
 
 
 func _draw_bar(area: Vector2) -> void:
 	var bar: Rect2 = _bar_rect(area)
 	var ratio: float = clampf(_fill_ratio(), 0.0, 1.0)
-	var radius: float = bar.size.y * 0.5
 
-	var track := StyleBoxFlat.new()
-	track.bg_color = Color(0.05, 0.07, 0.15, 0.92)
-	track.set_corner_radius_all(int(radius))
-	track.set_border_width_all(4)
-	track.border_color = UiPalette.CREAM
-	track.shadow_color = Color(0.03, 0.03, 0.08, 0.42)
-	track.shadow_size = 8
-	track.shadow_offset = Vector2(0, 4)
-	draw_style_box(track, bar)
+	# Outer slanted parallelogram frame + hard (5, 6) comic shadow.
+	var outer_skew: float = BAR_SKEW + 2.0
+	var frame_body_w: float = maxf(bar.size.x - outer_skew, 40.0)
+	var frame_pts: PackedVector2Array = _para_poly(
+		bar.position.x, bar.position.y, frame_body_w, bar.size.y, outer_skew)
+	var shadow_pts: PackedVector2Array = _para_poly(
+		bar.position.x + 5.0, bar.position.y + 6.0, frame_body_w, bar.size.y, outer_skew)
+	draw_colored_polygon(shadow_pts, Color(UiPalette.INK.r, UiPalette.INK.g, UiPalette.INK.b, 0.80))
+	draw_colored_polygon(frame_pts, UiPalette.INK)
 
-	var inner := Rect2(bar.position + Vector2(4, 4), bar.size - Vector2(8, 8))
-	var fill_width: float = inner.size.x * ratio
-	if fill_width > 1.0:
-		var strips: int = 48
-		var strip_width: float = inner.size.x / float(strips)
-		for strip in strips:
-			var t: float = float(strip) / float(strips - 1)
-			var x: float = inner.position.x + strip_width * float(strip)
-			if x > inner.position.x + fill_width:
-				break
-			var width: float = minf(strip_width + 1.0,
-				inner.position.x + fill_width - x)
-			var hue: float = fposmod(t * 0.82 + _time * 0.035, 1.0)
-			var color := Color.from_hsv(hue, 0.72, 1.0)
-			draw_rect(Rect2(x, inner.position.y, width, inner.size.y), color)
-		var shine_x: float = inner.position.x + fposmod(_time * 220.0,
-			inner.size.x + 160.0) - 160.0
-		for stripe in 2:
-			var sx: float = shine_x + float(stripe) * 42.0
-			if sx > inner.position.x and sx < inner.position.x + fill_width - 10.0:
-				draw_rect(Rect2(sx, inner.position.y + 3.0, 10.0,
-					inner.size.y - 6.0), Color(1, 1, 1, 0.22))
-		# Glossy top-half specular sheen across the active loading bar.
-		draw_rect(Rect2(inner.position.x + 4.0, inner.position.y + 2.0,
-			maxf(fill_width - 8.0, 0.0), maxf(inner.size.y * 0.34, 3.0)),
-			Color(1.0, 1.0, 1.0, 0.28))
+	var recess_inset: float = 4.0
+	var recess_pts: PackedVector2Array = _para_poly(
+		bar.position.x + recess_inset, bar.position.y + recess_inset,
+		maxf(frame_body_w - recess_inset * 2.0, 20.0),
+		maxf(bar.size.y - recess_inset * 2.0, 10.0), BAR_SKEW)
+	draw_colored_polygon(recess_pts, Color(0.06, 0.08, 0.17, 0.96))
+	draw_polyline(_closed_poly(frame_pts), UiPalette.INK, 4.0, true)
 
-	if _display != null:
-		var heading: String = _resolved_heading()
-		var hint: String = _resolved_hint()
-		var max_text_w: float = maxf(bar.size.x - 160.0, 120.0)
-		if hint != "":
-			_draw_outlined_text(_display,
-				Vector2(bar.position.x + 2.0, bar.position.y - 30.0),
-				heading, 26, UiPalette.YELLOW, max_text_w)
-			_draw_outlined_text(_display,
-				Vector2(bar.position.x + 3.0, bar.position.y - 10.0),
-				hint.to_upper(), 15, UiPalette.CREAM, max_text_w)
-		else:
-			_draw_outlined_text(_display,
-				Vector2(bar.position.x + 2.0, bar.position.y - 12.0),
-				heading, 26, UiPalette.CREAM, max_text_w)
+	# 16 inner skewed parallelogram power cells centered inside the frame.
+	var pad_v: float = 6.0
+	var cell_y: float = bar.position.y + pad_v
+	var cell_h: float = maxf(bar.size.y - pad_v * 2.0, 10.0)
+	var usable_span: float = bar.size.x - 16.0
+	var cell_w: float = (usable_span - BAR_SKEW - BAR_GAP * float(BAR_SEGMENTS - 1)) / float(BAR_SEGMENTS)
+	if cell_w > 2.0:
+		var total_span: float = float(BAR_SEGMENTS) * cell_w + float(BAR_SEGMENTS - 1) * BAR_GAP + BAR_SKEW
+		var start_x: float = (area.x - total_span) * 0.5
+		var filled: float = ratio * float(BAR_SEGMENTS)
+		var lead_idx: int = clampi(int(ceilf(filled)) - 1, -1, BAR_SEGMENTS - 1)
+
+		for i in BAR_SEGMENTS:
+			var cx: float = start_x + float(i) * (cell_w + BAR_GAP)
+			var slot_pts: PackedVector2Array = _para_poly(cx, cell_y, cell_w, cell_h, BAR_SKEW)
+			draw_colored_polygon(slot_pts, Color(0.13, 0.16, 0.28, 0.92))
+
+			var amount: float = clampf(filled - float(i), 0.0, 1.0)
+			if amount > 0.003:
+				var t: float = float(i) / float(BAR_SEGMENTS - 1)
+				var seg_col: Color = _cell_color(t)
+				var lit_w: float = cell_w * amount
+				var active_pts: PackedVector2Array = _para_poly(cx, cell_y, lit_w, cell_h, BAR_SKEW)
+				draw_colored_polygon(active_pts, seg_col)
+
+				if lit_w > 2.0:
+					var gloss_h: float = maxf(cell_h * 0.36, 3.0)
+					var gloss_pts: PackedVector2Array = _para_poly(
+						cx + BAR_SKEW * 0.62, cell_y + 1.5,
+						maxf(lit_w - 1.5, 0.8), gloss_h, BAR_SKEW * 0.34)
+					draw_colored_polygon(gloss_pts, Color(1.0, 1.0, 1.0, 0.38))
+
+				if i == lead_idx and lit_w >= 2.8 and amount < 0.995:
+					var spark_w: float = minf(3.0, lit_w * 0.45)
+					var spark_pts: PackedVector2Array = _para_poly(
+						cx + lit_w - spark_w, cell_y + 1.0,
+						spark_w, maxf(cell_h - 2.0, 2.0), BAR_SKEW * 0.85)
+					draw_colored_polygon(spark_pts, Color(1.0, 1.0, 1.0, 0.78))
+
+			draw_polyline(_closed_poly(slot_pts), UiPalette.INK, 2.0, true)
+
+	if _display == null:
+		return
+
+	var heading: String = _resolved_heading()
+	var hint: String = _resolved_hint().to_upper()
+	if hint == heading:
+		hint = ""
+
+	# Right-aligned percentage readout above the bar's right edge.
+	var pct_reserved_w: float = 0.0
+	if not indeterminate:
+		var pct_text: String = "%d%%" % int(round(_shown * 100.0))
+		var pct_font_size: int = 38
+		var pct_w: float = _display.get_string_size(pct_text,
+			HORIZONTAL_ALIGNMENT_LEFT, -1, pct_font_size).x
+		pct_reserved_w = pct_w + 24.0
+		var pct_x: float = bar.end.x - pct_w - 2.0
+		_draw_comic_text(_display, Vector2(pct_x, bar.position.y - 16.0),
+			pct_text, pct_font_size, UiPalette.YELLOW, 4.0, Vector2(3.0, 4.0))
+
+	# Destination heading (42px LuckiestGuy) + optional concise subtitle above left edge.
+	var max_heading_w: float = maxf(bar.size.x - pct_reserved_w - 16.0, 180.0)
+	var heading_x: float = bar.position.x + BAR_SKEW
+	var heading_color: Color = UiPalette.YELLOW if heading != "LOADING..." else UiPalette.CREAM
+	if hint != "":
+		_draw_comic_text(_display, Vector2(heading_x, bar.position.y - 38.0),
+			heading, 42, heading_color, 4.5, Vector2(3.5, 4.5), max_heading_w)
+		_draw_comic_text(_display, Vector2(heading_x + 2.0, bar.position.y - 13.0),
+			hint, 18, UiPalette.CREAM, 3.0, Vector2(2.0, 3.0), max_heading_w)
+	else:
+		_draw_comic_text(_display, Vector2(heading_x, bar.position.y - 16.0),
+			heading, 42, heading_color, 4.5, Vector2(3.5, 4.5), max_heading_w)

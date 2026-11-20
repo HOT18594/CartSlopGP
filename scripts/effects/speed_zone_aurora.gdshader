@@ -36,9 +36,9 @@ void fragment() {
 	vec2 uv = UV;
 	float t = TIME;
 
-	// SpeedZone QuadMesh is rotated -90 deg on X: UV.y = 1.0 is +Z (entry),
-	// UV.y = 0.0 is -Z (forward boost exit).
-	float forward_uv = 1.0 - uv.y;
+	// Godot QuadMesh UV.y = 0.0 is local +Y. After the scene's -90 deg X
+	// rotation that is world +Z (entry), so UV.y = 1.0 is the -Z boost exit.
+	float forward_uv = uv.y;
 	float abs_x = abs(uv.x - 0.5) * 2.0;
 
 	// Sleek elliptical capsule falloff so ends feather smoothly with zero box cut.
