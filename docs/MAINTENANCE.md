@@ -23,14 +23,14 @@ run or ships a mislabelled build.
 
 | # | File | What to change |
 | --- | --- | --- |
-| 1 | `godot_project/version.txt` | the number alone, e.g. `0.8.1` |
-| 2 | `godot_project/project.godot` | `config/version="0.8.1"` under `[application]` |
-| 3 | `godot_project/export_presets.cfg` | four `export_path="../builds/v0.8.1/..."` lines |
-| 4 | `pi_setup/build_0_8_1.ps1` | `[string]$Version = "0.8.1"` (rename the file too, by convention) |
-| 5 | `pi_setup/Deploy-Server.cmd` | the `builds\v0.8.1\web` checks |
-| 6 | `godot_project/CHANGELOG.md` | a new `## [0.8.1] - YYYY-MM-DD` section at the top |
+| 1 | `godot_project/version.txt` | the number alone, e.g. `0.8.2` |
+| 2 | `godot_project/project.godot` | `config/version="0.8.2"` under `[application]` |
+| 3 | `godot_project/export_presets.cfg` | four `export_path="../builds/v0.8.2/..."` lines |
+| 4 | `pi_setup/build_0_8_2.ps1` | `[string]$Version = "0.8.2"` (rename the file too, by convention) |
+| 5 | `pi_setup/Deploy-Server.cmd` | the `builds\v0.8.2\web` checks |
+| 6 | `godot_project/CHANGELOG.md` | a new `## [0.8.2] - YYYY-MM-DD` section at the top |
 
-`build_0_8_1.ps1` compares `version.txt` against its own `-Version` and aborts
+`build_0_8_2.ps1` compares `version.txt` against its own `-Version` and aborts
 on a mismatch, which is the safety net for item 1 vs item 4.
 
 `scripts/systems/update_checker.gd` reads `version.txt` at runtime, so the
@@ -39,7 +39,7 @@ in-game "update available" check needs no edit — just the file.
 ## 2. Building a release
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File pi_setup\build_0_8_1.ps1
+powershell -ExecutionPolicy Bypass -File pi_setup\build_0_8_2.ps1
 ```
 
 Writes `builds/v<version>/`:

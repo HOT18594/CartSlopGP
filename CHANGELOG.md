@@ -2,6 +2,12 @@
 
 Player-facing notes, newest first.
 
+## [0.8.2] - 2026-11-21
+
+### Multiplayer and platform fixes
+
+- Under audit: macOS multiplayer connection fixes, Pi server hardening, build verification across all four platforms and a full bug sweep.
+
 ## [0.8.1] - 2026-11-20
 
 ### Maps
