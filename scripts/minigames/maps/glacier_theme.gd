@@ -64,18 +64,20 @@ static func build(race: Node3D, spline) -> void:
 		return
 	TileKit.dress_track(race, spline, {
 		"id": "glacier",
-		"hoarding_density": 0.28,
+		"hoarding_density": 0.0,
+		"kerb_a": Color("f4f9ff"),
+		"kerb_b": Color("3b8ec9"),
 	})
 	var preset: Dictionary = GlacierSurface.preset_for(race)
 	var holder := Node3D.new()
 	holder.name = HOLDER_NAME
 	race.add_child(holder)
+	AmbientWorld.build_track(holder, spline, "glacier")
 	var layout: Dictionary = GlacierLayout.build(holder, spline, preset)
 	var forest: Dictionary = GlacierForest.build(holder, spline)
 	var terrain: Dictionary = GlacierTerrain.build(holder, spline)
 	var ice: Dictionary = GlacierIce.build(holder, race, spline, preset)
 	var ground: int = GlacierGround.build(race, preset)
-	AmbientWorld.build_track(holder, spline, "glacier")
 	_apply_climate(race, preset)
 	var measured: Dictionary = _measure(holder)
 	var stats: Dictionary = {
@@ -179,20 +181,21 @@ static func _descendants(root: Node) -> Array[Node]:
 static func _apply_climate(race: Node3D, preset: Dictionary) -> void:
 	var world := race.get_node_or_null("WorldEnvironment") as WorldEnvironment
 	if world != null and world.environment != null:
-		var env: Environment = world.environment
+		var env: Environment = world.environment.duplicate() as Environment
 		var haze: Color = GlacierSurface.fog_color(preset)
 		env.fog_enabled = true
 		env.fog_mode = Environment.FOG_MODE_EXPONENTIAL
 		env.fog_light_color = haze
-		env.fog_light_energy = 0.95
-		env.fog_density = 0.0018
+		env.fog_light_energy = 0.7
+		env.fog_density = 0.0016
 		env.fog_aerial_perspective = 0.6
 		env.fog_sky_affect = 0.0
 		if env.sky != null and env.sky.sky_material is ProceduralSkyMaterial:
 			var sky: ProceduralSkyMaterial = \
 				env.sky.sky_material as ProceduralSkyMaterial
 			sky.ground_horizon_color = haze
-			sky.ground_bottom_color = Color("8fa6b8")
+			sky.ground_bottom_color = Color("5f7f9e")
+		world.environment = env
 	var sun := race.get_node_or_null("Sun") as DirectionalLight3D
 	if sun != null:
 		sun.light_color = Color(0.94, 0.97, 1.0)

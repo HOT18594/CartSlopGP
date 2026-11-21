@@ -42,9 +42,9 @@ const Props := preload("res://scripts/minigames/maps/stadium/stadium_props.gd")
 ## Plan distance from the centreline at which the first trunk may stand. The
 ## outer stand tier sits 36 m out and reaches 44 m; 47 m leaves a row of meadow
 ## behind the seats instead of growing trunks through them.
-const FOREST_MIN: float = 47.0
+const FOREST_MIN: float = 50.0
 ## Density is feathered in over this distance, so the edge is not a cut circle.
-const FOREST_IN: float = 50.0
+const FOREST_IN: float = 54.0
 ## The belt starts thinning here and is gone at FOREST_OUT.
 const FOREST_FADE: float = 114.0
 const FOREST_OUT: float = 134.0

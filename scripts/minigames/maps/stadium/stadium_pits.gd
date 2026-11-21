@@ -37,14 +37,14 @@ const BANNER_RED: String = "bannerTowerRed"
 const BANNER_GREEN: String = "bannerTowerGreen"
 
 ## Metres from the centreline, on the infield side of the start straight.
-const PIT_WALL_LATERAL: float = 18.6
-const PIT_LANE_LATERAL: float = 28.0
-const PIT_SPLIT_LATERAL: float = 20.0
-const GARAGE_LATERAL: float = 43.0
-const OFFICE_LATERAL: float = 56.0
-const PADDOCK_LATERAL: float = 60.0
-const TOWER_LATERAL: float = 12.4
-const BOARD_LATERAL: float = 13.2
+const PIT_WALL_LATERAL: float = 20.5
+const PIT_LANE_LATERAL: float = 29.5
+const PIT_SPLIT_LATERAL: float = 21.5
+const GARAGE_LATERAL: float = 44.5
+const OFFICE_LATERAL: float = 57.5
+const PADDOCK_LATERAL: float = 61.5
+const TOWER_LATERAL: float = 13.8
+const BOARD_LATERAL: float = 14.2
 
 ## Pitch of the pieces along the straight, and how many the complex holds.
 const BAY: float = 16.0

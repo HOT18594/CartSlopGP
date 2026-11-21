@@ -21,11 +21,11 @@ const DRIFT_TIER_COLORS: Array[Color] = [
 const DRIFT_TIER_NAMES: PackedStringArray = ["", "TURBO!", "BLAZE!", "ULTRA!"]
 
 const NET_TOP: float = 16.0
-const NET_HEIGHT: float = 28.0
+const NET_HEIGHT: float = 32.0
 const STANDINGS_SOLO_TOP: float = 18.0
-const STANDINGS_NET_TOP: float = 50.0
-const STANDINGS_ROW_HEIGHT: float = 26.0
-const STANDINGS_COMPACT_ROW_HEIGHT: float = 23.0
+const STANDINGS_NET_TOP: float = 56.0
+const STANDINGS_ROW_HEIGHT: float = 29.0
+const STANDINGS_COMPACT_ROW_HEIGHT: float = 24.0
 const STANDINGS_MAX_ROWS: int = 16
 
 @export_group("Minigame HUD")
@@ -294,9 +294,12 @@ func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_build_state_plate()
 	_build_dial_canvas()
-	if Network.is_session_active():
-		_build_net_block()
-		_build_scoreboard()
+	_build_net_block()
+	_build_scoreboard()
+	if _net_panel != null:
+		_net_panel.visible = Network.is_session_active()
+	if _scoreboard != null:
+		_scoreboard.visible = false
 	_debug_label.visible = false
 	_build_boost_header()
 	_build_race_plaque()
@@ -363,6 +366,19 @@ func _attach_slash(host: Control, skew: float, fill: Color,
 	return plate
 
 
+func _slash_margin(host: PanelContainer, pad_l: int, pad_t: int,
+		pad_r: int, pad_b: int) -> MarginContainer:
+	host.add_theme_stylebox_override("panel", _empty_style())
+	var margin := MarginContainer.new()
+	margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	margin.add_theme_constant_override("margin_left", pad_l)
+	margin.add_theme_constant_override("margin_top", pad_t)
+	margin.add_theme_constant_override("margin_right", pad_r)
+	margin.add_theme_constant_override("margin_bottom", pad_b)
+	host.add_child(margin)
+	return margin
+
+
 func _label(text: String, font_size: int, color: Color,
 		outline: int = 6, hard_shadow: bool = true) -> Label:
 	var label := Label.new()
@@ -391,7 +407,9 @@ func _label(text: String, font_size: int, color: Color,
 func _build_state_plate() -> void:
 	if _state_pill == null:
 		return
-	_state_pill.add_theme_stylebox_override("panel", _empty_style(22.0, 7.0, 24.0, 11.0))
+	var margin := _slash_margin(_state_pill, 28, 8, 30, 12)
+	if _state_label != null and _state_label.get_parent() == _state_pill:
+		_state_label.reparent(margin)
 	_state_plate = _attach_slash(_state_pill, 12.0, UiPalette.INK, UiPalette.CREAM, 3.5)
 
 
@@ -436,8 +454,8 @@ func _apply_display_settings() -> void:
 		var p_min: Vector2 = _race_plaque.get_combined_minimum_size()
 		_race_plaque.offset_left = 22.0
 		_race_plaque.offset_top = 16.0
-		_race_plaque.offset_right = 22.0 + maxf(p_min.x, 332.0)
-		_race_plaque.offset_bottom = 16.0 + maxf(p_min.y, 118.0)
+		_race_plaque.offset_right = 22.0 + maxf(p_min.x, 356.0)
+		_race_plaque.offset_bottom = 16.0 + maxf(p_min.y, 128.0)
 	if not _last_standings_entries.is_empty():
 		_apply_standings(_last_standings_entries)
 	else:
@@ -511,13 +529,13 @@ func _build_race_plaque() -> void:
 	_lap_tag_panel = PanelContainer.new()
 	_lap_tag_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_lap_tag_panel.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	_lap_tag_panel.custom_minimum_size = Vector2(128.0, 38.0)
-	_lap_tag_panel.add_theme_stylebox_override("panel", _empty_style(18.0, 5.0, 20.0, 9.0))
+	_lap_tag_panel.custom_minimum_size = Vector2(156.0, 44.0)
+	var lap_pad := _slash_margin(_lap_tag_panel, 24, 6, 26, 8)
 	_lap_tag_plate = _attach_slash(_lap_tag_panel, 12.0, UiPalette.YELLOW, UiPalette.INK, 3.5)
 	_plaque_lap = _label("LAP 1/3", 20, UiPalette.INK, 0, false)
 	_plaque_lap.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_plaque_lap.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	_lap_tag_panel.add_child(_plaque_lap)
+	lap_pad.add_child(_plaque_lap)
 	top.add_child(_lap_tag_panel)
 
 	# Row 2: Crisp floating 28px LuckiestGuy race clock + BEST lap readout.
@@ -571,15 +589,18 @@ func _build_race_plaque() -> void:
 	_delta_badge = PanelContainer.new()
 	_delta_badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_delta_badge.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	_delta_badge.add_theme_stylebox_override("panel", _empty_style(12.0, 2.0, 14.0, 5.0))
+	var delta_pad := _slash_margin(_delta_badge, 18, 4, 20, 6)
 	_delta_plate = _attach_slash(
 		_delta_badge, 10.0, UiPalette.INK, UiPalette.INK, 2.8, Vector2(3.0, 3.5))
 	_plaque_delta = _label("", 13, UiPalette.CREAM, 5, false)
 	_plaque_delta.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_delta_badge.add_child(_plaque_delta)
+	delta_pad.add_child(_plaque_delta)
 	_delta_badge.visible = false
 	delta_slot.add_child(_delta_badge)
 
+	_plaque_pos.visible = show_position_badge
+	_lap_tag_panel.visible = show_lap_badge
+	_lap_pips.visible = false
 	_race_plaque.visible = false
 
 
@@ -591,17 +612,17 @@ func _build_gear_badge() -> void:
 	_gear_badge.anchor_top = 0.5
 	_gear_badge.anchor_right = 0.5
 	_gear_badge.anchor_bottom = 0.5
-	_gear_badge.offset_left = -38.0
-	_gear_badge.offset_top = 44.0
-	_gear_badge.offset_right = 38.0
-	_gear_badge.offset_bottom = 78.0
-	_gear_badge.add_theme_stylebox_override("panel", _empty_style(12.0, 3.0, 14.0, 6.0))
+	_gear_badge.offset_left = -46.0
+	_gear_badge.offset_top = 42.0
+	_gear_badge.offset_right = 46.0
+	_gear_badge.offset_bottom = 80.0
+	var gear_pad := _slash_margin(_gear_badge, 18, 4, 20, 6)
 	_gear_plate = _attach_slash(
 		_gear_badge, 10.0, UiPalette.YELLOW, UiPalette.INK, 3.5, Vector2(3.5, 4.5))
 	_gear_value = _label("GN", 18, UiPalette.INK, 0, false)
 	_gear_value.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_gear_value.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	_gear_badge.add_child(_gear_value)
+	gear_pad.add_child(_gear_value)
 	_speed_gauge.add_child(_gear_badge)
 	_gear_badge.visible = false
 
@@ -614,18 +635,18 @@ func _build_drift_badge() -> void:
 	_drift_badge.anchor_top = 0.0
 	_drift_badge.anchor_right = 0.5
 	_drift_badge.anchor_bottom = 0.0
-	_drift_badge.offset_left = -52.0
-	_drift_badge.offset_top = 12.0
-	_drift_badge.offset_right = 52.0
-	_drift_badge.offset_bottom = 40.0
+	_drift_badge.offset_left = -64.0
+	_drift_badge.offset_top = 10.0
+	_drift_badge.offset_right = 64.0
+	_drift_badge.offset_bottom = 42.0
 	_drift_badge.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	_drift_badge.add_theme_stylebox_override("panel", _empty_style(12.0, 2.0, 14.0, 5.0))
+	var drift_pad := _slash_margin(_drift_badge, 18, 4, 20, 6)
 	_drift_plate = _attach_slash(
 		_drift_badge, 10.0, DRIFT_TIER_COLORS[1], UiPalette.INK, 3.0, Vector2(3.0, 4.0))
 	_drift_badge_label = _label("TURBO!", 14, UiPalette.INK, 0, false)
 	_drift_badge_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_drift_badge_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	_drift_badge.add_child(_drift_badge_label)
+	drift_pad.add_child(_drift_badge_label)
 	_drift_badge.visible = false
 	_speed_gauge.add_child(_drift_badge)
 
@@ -638,12 +659,12 @@ func _build_wrong_way_banner() -> void:
 	_wrong_way_banner.anchor_top = 0.0
 	_wrong_way_banner.anchor_right = 0.5
 	_wrong_way_banner.anchor_bottom = 0.0
-	_wrong_way_banner.offset_left = -142.0
+	_wrong_way_banner.offset_left = -168.0
 	_wrong_way_banner.offset_top = 56.0
-	_wrong_way_banner.offset_right = 142.0
-	_wrong_way_banner.offset_bottom = 106.0
+	_wrong_way_banner.offset_right = 168.0
+	_wrong_way_banner.offset_bottom = 112.0
 	_wrong_way_banner.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	_wrong_way_banner.add_theme_stylebox_override("panel", _empty_style(20.0, 6.0, 22.0, 10.0))
+	var ww_pad := _slash_margin(_wrong_way_banner, 36, 8, 30, 12)
 	_wrong_way_plate = _attach_slash(
 		_wrong_way_banner, 14.0, Color("ff3b3f"), UiPalette.INK, 3.8, Vector2(4.0, 5.0))
 	_wrong_way_plate.accent_color = UiPalette.YELLOW
@@ -651,7 +672,7 @@ func _build_wrong_way_banner() -> void:
 	_wrong_way_label = _label("WRONG WAY!", 26, UiPalette.YELLOW, 8, true)
 	_wrong_way_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_wrong_way_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	_wrong_way_banner.add_child(_wrong_way_label)
+	ww_pad.add_child(_wrong_way_label)
 	_wrong_way_banner.visible = false
 	add_child(_wrong_way_banner)
 
@@ -684,12 +705,15 @@ func _lap_pips_for(total: int) -> void:
 		pip.custom_minimum_size = Vector2(20.0, 11.0)
 		pip.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		_lap_pips.add_child(pip)
-	_lap_pips.visible = false
+	if _lap_pips != null:
+		_lap_pips.visible = total > 0 and show_lap_badge
 
 
 func _update_lap_pips(current: int) -> void:
-	if _lap_pip_total <= 0:
+	if _lap_pip_total <= 0 or _lap_pips == null:
 		return
+	if show_lap_badge:
+		_lap_pips.visible = true
 	var index: int = clampi(current - 1, 0, _lap_pip_total - 1)
 	if index == _lap_pip_index:
 		return
@@ -714,11 +738,11 @@ func _build_net_block() -> void:
 	_net_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_net_panel.anchor_left = 1.0
 	_net_panel.anchor_right = 1.0
-	_net_panel.offset_left = -304.0
+	_net_panel.offset_left = -328.0
 	_net_panel.offset_right = -24.0
 	_net_panel.offset_top = NET_TOP
 	_net_panel.offset_bottom = NET_TOP + NET_HEIGHT
-	_net_panel.add_theme_stylebox_override("panel", _empty_style(16.0, 3.0, 16.0, 6.0))
+	var net_pad := _slash_margin(_net_panel, 20, 4, 22, 6)
 	_net_plate = _attach_slash(
 		_net_panel, 10.0, UiPalette.INK, UiPalette.CYAN, 2.8, Vector2(3.0, 4.0))
 	_net_label = _label("SERVER —", 13, UiPalette.CREAM, 5, false)
@@ -728,7 +752,7 @@ func _build_net_block() -> void:
 	_net_label.clip_text = true
 	_net_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	add_child(_net_panel)
-	_net_panel.add_child(_net_label)
+	net_pad.add_child(_net_label)
 
 
 func _build_standings() -> void:
@@ -737,11 +761,11 @@ func _build_standings() -> void:
 	_standings_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_standings_panel.anchor_left = 1.0
 	_standings_panel.anchor_right = 1.0
-	_standings_panel.offset_left = -296.0
+	_standings_panel.offset_left = -328.0
 	_standings_panel.offset_right = -24.0
 	_standings_panel.offset_top = STANDINGS_SOLO_TOP
 	_standings_panel.offset_bottom = STANDINGS_SOLO_TOP
-	_standings_panel.custom_minimum_size = Vector2(272.0, 0.0)
+	_standings_panel.custom_minimum_size = Vector2(304.0, 0.0)
 	# StyleBoxEmpty: ZERO dark outer box around LiveStandings!
 	_standings_panel.add_theme_stylebox_override("panel", _empty_style())
 	add_child(_standings_panel)
@@ -757,7 +781,7 @@ func _build_standings() -> void:
 	column.add_child(_standings_title)
 
 	_standings_rows = VBoxContainer.new()
-	_standings_rows.add_theme_constant_override("separation", 3)
+	_standings_rows.add_theme_constant_override("separation", 4)
 	_standings_rows.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	column.add_child(_standings_rows)
 	_standings_panel.visible = false
@@ -774,12 +798,12 @@ func _position_standings_panel() -> void:
 	if _standings_panel == null:
 		return
 	var top_y: float = _standings_top_y(_hud_scale_factor)
-	_standings_panel.offset_left = -296.0
+	_standings_panel.offset_left = -328.0
 	_standings_panel.offset_right = -24.0
 	_standings_panel.offset_top = top_y
 	var min_sz: Vector2 = _standings_panel.get_combined_minimum_size()
 	_standings_panel.offset_bottom = top_y + min_sz.y
-	_standings_panel.size = Vector2(272.0, min_sz.y)
+	_standings_panel.size = Vector2(304.0, min_sz.y)
 	_standings_panel.scale = Vector2.ONE * _hud_scale_factor
 	_standings_panel.pivot_offset = _hud_pivot(_standings_panel)
 
@@ -852,17 +876,16 @@ func _apply_standings(entries: Array[Dictionary]) -> void:
 		var row := PanelContainer.new()
 		row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		row.custom_minimum_size = Vector2(0.0, row_h)
-		var empty_st := _empty_style(14.0, 1.0, 14.0, 3.0)
-		row.add_theme_stylebox_override("panel", empty_st)
+		var row_pad := _slash_margin(row, 18, 2, 22, 3)
 
 		var plate := _attach_slash(
 			row, 10.0, Color(0.118, 0.106, 0.227, 0.88), UiPalette.INK, 2.5, Vector2(3.0, 3.5))
 		plate.draw_sheen = false
 
 		var line := HBoxContainer.new()
-		line.add_theme_constant_override("separation", 8)
+		line.add_theme_constant_override("separation", 10)
 		line.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		row.add_child(line)
+		row_pad.add_child(line)
 
 		var place_label := _label("", row_font, UiPalette.CREAM, 5, false)
 		place_label.custom_minimum_size.x = 24.0
@@ -998,8 +1021,9 @@ func _show_position(place: int, _field_size: int = 0) -> void:
 	if _race_plaque == null:
 		return
 	place = maxi(place, 1)
-	show_position_badge = true
-	_race_plaque.visible = true
+	if _plaque_pos != null:
+		_plaque_pos.visible = show_position_badge
+	_race_plaque.visible = show_position_badge or show_lap_badge
 	var suffix: String = "th"
 	if place % 100 < 11 or place % 100 > 13:
 		match place % 10:
@@ -1028,10 +1052,9 @@ func _show_position(place: int, _field_size: int = 0) -> void:
 
 
 func set_lap(current: int, total: int) -> void:
-	show_lap_badge = true
 	if _race_plaque == null:
 		return
-	_race_plaque.visible = true
+	_race_plaque.visible = show_position_badge or show_lap_badge
 	var safe_total: int = maxi(total, 1)
 	var safe_current: int = clampi(current, 1, safe_total)
 	if safe_current != _last_lap_seen:
@@ -1052,9 +1075,13 @@ func set_lap(current: int, total: int) -> void:
 		_last_lap_seen = safe_current
 		_external_lap_readout = false
 	_plaque_lap.text = "LAP %d/%d" % [safe_current, safe_total]
+	if _lap_tag_panel != null:
+		_lap_tag_panel.visible = show_lap_badge
 	if safe_total != _lap_pip_total:
 		_lap_pips_for(safe_total)
 	_update_lap_pips(safe_current)
+	if _lap_pips != null:
+		_lap_pips.visible = show_lap_badge and safe_total > 0
 	_refresh_lap_readout()
 
 
@@ -1651,24 +1678,24 @@ func _build_scoreboard() -> void:
 	_scoreboard = PanelContainer.new()
 	_scoreboard.name = "Scoreboard"
 	_scoreboard.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_scoreboard.add_theme_stylebox_override("panel", _empty_style(22.0, 14.0, 24.0, 18.0))
+	var sb_pad := _slash_margin(_scoreboard, 26, 16, 28, 20)
 	_scoreboard_plate = _attach_slash(
 		_scoreboard, 14.0, UiPalette.INK, UiPalette.YELLOW, 4.0, Vector2(5.0, 6.0))
 	_scoreboard.anchor_left = 0.5
 	_scoreboard.anchor_right = 0.5
-	_scoreboard.offset_left = -216.0
-	_scoreboard.offset_right = 216.0
+	_scoreboard.offset_left = -224.0
+	_scoreboard.offset_right = 224.0
 	_scoreboard.offset_top = 140.0
 	_scoreboard.offset_bottom = 140.0
 	_scoreboard.grow_vertical = Control.GROW_DIRECTION_END
 	_scoreboard.visible = false
 
 	var column := VBoxContainer.new()
-	column.add_theme_constant_override("separation", 6)
-	_scoreboard.add_child(column)
+	column.add_theme_constant_override("separation", 10)
+	sb_pad.add_child(column)
 
 	var header := HBoxContainer.new()
-	header.add_theme_constant_override("separation", 8)
+	header.add_theme_constant_override("separation", 10)
 	column.add_child(header)
 
 	_scoreboard_count = _label("PLAYERS  0/%d" % Network.MAX_PLAYERS, 16, UiPalette.YELLOW, 5, false)
@@ -1682,7 +1709,7 @@ func _build_scoreboard() -> void:
 	header.add_child(_scoreboard_ping_header)
 
 	_scoreboard_rows = VBoxContainer.new()
-	_scoreboard_rows.add_theme_constant_override("separation", 4)
+	_scoreboard_rows.add_theme_constant_override("separation", 8)
 	column.add_child(_scoreboard_rows)
 
 	add_child(_scoreboard)
@@ -1698,15 +1725,15 @@ func _ping_color(ms: int) -> Color:
 
 func _make_scoreboard_row() -> Dictionary:
 	var panel := PanelContainer.new()
-	panel.custom_minimum_size = Vector2(0.0, 34.0)
+	panel.custom_minimum_size = Vector2(0.0, 38.0)
 	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	panel.add_theme_stylebox_override("panel", _empty_style(14.0, 3.0, 14.0, 5.0))
+	var sb_row_pad := _slash_margin(panel, 18, 4, 20, 6)
 	var plate := _attach_slash(
 		panel, 8.0, Color(0.16, 0.14, 0.30, 0.92), UiPalette.INK, 2.5, Vector2(2.5, 3.0))
 	plate.draw_sheen = false
 	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 9)
-	panel.add_child(row)
+	row.add_theme_constant_override("separation", 10)
+	sb_row_pad.add_child(row)
 
 	var name_label := _label("", 16, UiPalette.CREAM, 5, false)
 	name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL

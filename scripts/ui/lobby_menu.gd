@@ -199,22 +199,22 @@ func _tune_shell_chrome() -> void:
 		var base: StyleBox = _panel.get_theme_stylebox("panel")
 		if base is StyleBoxFlat:
 			var style: StyleBoxFlat = (base as StyleBoxFlat).duplicate() as StyleBoxFlat
-			style.content_margin_left = 26.0
-			style.content_margin_right = 26.0
-			style.content_margin_top = 18.0
-			style.content_margin_bottom = 18.0
+			style.content_margin_left = 32.0
+			style.content_margin_right = 32.0
+			style.content_margin_top = 24.0
+			style.content_margin_bottom = 24.0
 			_panel.add_theme_stylebox_override("panel", style)
 	if _shell != null:
-		_shell.add_theme_constant_override("separation", 8)
+		_shell.add_theme_constant_override("separation", 12)
 	if _body != null:
 		_body.alignment = BoxContainer.ALIGNMENT_BEGIN
-		_body.add_theme_constant_override("separation", 10)
+		_body.add_theme_constant_override("separation", 12)
 	var content_pad := get_node_or_null("Frame/Panel/Shell/Content/ContentPad") as MarginContainer
 	if content_pad != null:
-		content_pad.add_theme_constant_override("margin_left", 8)
-		content_pad.add_theme_constant_override("margin_right", 8)
-		content_pad.add_theme_constant_override("margin_top", 4)
-		content_pad.add_theme_constant_override("margin_bottom", 8)
+		content_pad.add_theme_constant_override("margin_left", 12)
+		content_pad.add_theme_constant_override("margin_right", 12)
+		content_pad.add_theme_constant_override("margin_top", 8)
+		content_pad.add_theme_constant_override("margin_bottom", 12)
 
 
 func _fit_panel() -> void:
@@ -440,10 +440,10 @@ func _build_profile() -> void:
 	_server_pill_style.set_corner_radius_all(12)
 	_server_pill_style.set_border_width_all(2)
 	_server_pill_style.border_color = UiPalette.OUTLINE
-	_server_pill_style.content_margin_left = 12.0
-	_server_pill_style.content_margin_right = 12.0
-	_server_pill_style.content_margin_top = 5.0
-	_server_pill_style.content_margin_bottom = 5.0
+	_server_pill_style.content_margin_left = 18.0
+	_server_pill_style.content_margin_right = 18.0
+	_server_pill_style.content_margin_top = 8.0
+	_server_pill_style.content_margin_bottom = 8.0
 	_server_pill_style.anti_aliasing = true
 	server_pill.add_theme_stylebox_override("panel", _server_pill_style)
 	_server_pill_label = Label.new()
@@ -486,10 +486,20 @@ func _build_idle() -> void:
 	_idle_box.alignment = BoxContainer.ALIGNMENT_CENTER
 	_body.add_child(_idle_box)
 
+	var idle_scroll := ScrollContainer.new()
+	idle_scroll.name = "IdleCardsScroll"
+	idle_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	idle_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	idle_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	idle_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	idle_scroll.follow_focus = true
+	_idle_box.add_child(idle_scroll)
+
 	var cards_row := HBoxContainer.new()
 	cards_row.add_theme_constant_override("separation", 16)
 	cards_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_idle_box.add_child(cards_row)
+	cards_row.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	idle_scroll.add_child(cards_row)
 
 	# 1. CREATE ONLINE ROOM card
 	var online_panel: PanelContainer = _card_panel(cards_row, 16, 14,
@@ -709,10 +719,10 @@ func _build_room() -> void:
 	_lobby_mode_chip_style.set_corner_radius_all(8)
 	_lobby_mode_chip_style.set_border_width_all(2)
 	_lobby_mode_chip_style.border_color = UiPalette.OUTLINE
-	_lobby_mode_chip_style.content_margin_left = 10.0
-	_lobby_mode_chip_style.content_margin_right = 10.0
-	_lobby_mode_chip_style.content_margin_top = 3.0
-	_lobby_mode_chip_style.content_margin_bottom = 3.0
+	_lobby_mode_chip_style.content_margin_left = 16.0
+	_lobby_mode_chip_style.content_margin_right = 16.0
+	_lobby_mode_chip_style.content_margin_top = 6.0
+	_lobby_mode_chip_style.content_margin_bottom = 6.0
 	_lobby_mode_chip_style.anti_aliasing = true
 	mode_chip.add_theme_stylebox_override("panel", _lobby_mode_chip_style)
 	_lobby_mode_chip_label = Label.new()
@@ -1912,10 +1922,10 @@ func _refresh_players() -> void:
 		row_style.bg_color = Color(UiPalette.CYAN, 0.18) if is_local \
 			else Color(1.0, 1.0, 1.0, 0.55)
 		row_style.set_corner_radius_all(10)
-		row_style.content_margin_left = 10.0
-		row_style.content_margin_right = 10.0
-		row_style.content_margin_top = 4.0
-		row_style.content_margin_bottom = 4.0
+		row_style.content_margin_left = 16.0
+		row_style.content_margin_right = 16.0
+		row_style.content_margin_top = 8.0
+		row_style.content_margin_bottom = 8.0
 		row_style.anti_aliasing = true
 		row_panel.add_theme_stylebox_override("panel", row_style)
 

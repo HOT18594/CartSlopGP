@@ -94,6 +94,8 @@ const BOT_COLORS: Array[Color] = [
 
 ## Multiplayer sync cadence.
 const CART_SYNC_INTERVAL: float = 0.05 ## 20 Hz pose/velocity stream.
+const CART_IDLE_SPEED: float = 1.0
+const CART_IDLE_INTERVAL: float = 0.20
 const DAMAGE_SYNC_INTERVAL: float = 0.10 ## 10 Hz damage/alive table sync.
 const CLOCK_SYNC_INTERVAL: float = 0.25 ## 4 Hz round clock keepalive.
 
@@ -353,6 +355,10 @@ var _peer_vehicles: Dictionary = {} ## peer_id -> vehicle_id
 var _pre_step_vel: Dictionary = {} ## key -> Vector3 velocity before move_and_slide
 var _pair_cooldowns: Dictionary = {} ## String pair key -> expire _time
 var _cart_relay_ms: Dictionary = {}
+var _cart_idle_ms: Dictionary = {}
+var _cart_idle_pos: Dictionary = {}
+var _cart_idle_yaw: Dictionary = {}
+var _bot_idle_ms: int = -100000
 
 var _total_rounds: int = DEFAULT_ROUNDS
 var _round_duration: float = ROUND_SECONDS
@@ -1294,6 +1300,8 @@ func _activate_slam(key: int, override_dir: Vector3 = Vector3.ZERO) -> bool:
 		var needed_mult: float = (target_speed + 2.0) / maxf(cart.max_speed, 1.0)
 		cart.boost_speed_multiplier = clampf(maxf(base_mult, needed_mult), base_mult, 2.35)
 		entry["kb_timer"] = maxf(float(entry.get("kb_timer", 0.0)), SLAM_DURATION + 0.15)
+		# The surge's only impulse: the per-frame ticks below enforce the hard
+		# planar-speed cap instead of pushing again on top of this.
 		cart.velocity += fwd * SLAM_SURGE_SPEED
 		if key == _local_key():
 			var cam_rig: ChaseCamera = cart.get_node_or_null("CameraArm") as ChaseCamera
@@ -1337,10 +1345,14 @@ func _tick_client_slam_surge() -> void:
 	var cart: CartPlayer = entry.get("cart") as CartPlayer
 	if cart == null or not is_instance_valid(cart):
 		return
-	var dir: Vector3 = entry.get("slam_dir", Vector3.FORWARD) as Vector3
-	var planar_spd: float = Vector2(cart.velocity.x, cart.velocity.z).length()
-	if planar_spd < cart.max_speed + SLAM_SURGE_SPEED * 0.55:
-		cart.velocity += dir * (16.0 * get_physics_process_delta_time())
+	# Single impulse was applied in _activate_slam; only enforce the hard
+	# planar-speed cap here instead of stacking a per-frame push on top.
+	var cap: float = cart.max_speed + SLAM_SURGE_SPEED
+	var planar := Vector2(cart.velocity.x, cart.velocity.z)
+	if planar.length() > cap:
+		var clamped: Vector2 = planar.normalized() * cap
+		cart.velocity.x = clamped.x
+		cart.velocity.z = clamped.y
 
 
 func _tick_power_slams() -> void:
@@ -1354,9 +1366,14 @@ func _tick_power_slams() -> void:
 			continue
 		var s_dir: Vector3 = attacker.get("slam_dir", -a_cart.global_transform.basis.z) as Vector3
 		if not a_cart.remote_mode:
-			var spd: float = Vector2(a_cart.velocity.x, a_cart.velocity.z).length()
-			if spd < a_cart.max_speed + SLAM_SURGE_SPEED * 0.55:
-				a_cart.velocity += s_dir * (16.0 * get_physics_process_delta_time())
+			# The surge is the single impulse from _activate_slam; hold the
+			# hard planar-speed cap instead of stacking a per-frame push.
+			var surge_cap: float = a_cart.max_speed + SLAM_SURGE_SPEED
+			var surge_planar := Vector2(a_cart.velocity.x, a_cart.velocity.z)
+			if surge_planar.length() > surge_cap:
+				var surge_clamped: Vector2 = surge_planar.normalized() * surge_cap
+				a_cart.velocity.x = surge_clamped.x
+				a_cart.velocity.z = surge_clamped.y
 
 		var hits: Dictionary = attacker.get("slam_hits", {}) as Dictionary
 		var a_pos: Vector3 = a_cart.global_position
@@ -1567,6 +1584,7 @@ func _apply_local_knockback_body(entry: Dictionary, cart: CartPlayer,
 # --------------------------------------------------------------------------
 
 func _tick_ring_outs() -> void:
+	var now_ms: int = Time.get_ticks_msec()
 	for raw_key: Variant in _contestants.keys():
 		var key: int = int(raw_key)
 		var entry: Dictionary = _contestants[key]
@@ -1575,6 +1593,14 @@ func _tick_ring_outs() -> void:
 		var cart: CartPlayer = entry.get("cart") as CartPlayer
 		if cart == null or not is_instance_valid(cart):
 			continue
+		if cart.remote_mode:
+			# A ghost that stopped streaming poses (crashed client, stalled
+			# loader) would otherwise sit parked above the arena alive forever
+			# and stall the round. Expire it like a ring-out.
+			var last_ms: int = cart._net_last_receive_ms
+			if now_ms - last_ms > CartPlayer.GHOST_STREAM_TIMEOUT_MS:
+				_eliminate_contestant(key, cart.net_position)
+				continue
 		var check_pos: Vector3 = cart.net_position if cart.remote_mode else cart.global_position
 		if check_pos.y <= _ko_y:
 			_eliminate_contestant(key, check_pos)
@@ -1762,7 +1788,7 @@ func _tick_ai_bots(delta: float) -> void:
 		var retarget_t: float = float(bot.get("ai_retarget_t", 0.0)) - delta
 		var target_key: int = int(bot.get("ai_target", 0))
 		if retarget_t <= 0.0 or not _is_valid_rival(bot_key, target_key):
-			target_key = _pick_ai_target(bot_key, pos)
+			target_key = _pick_ai_target(bot_key, pos, diff)
 			bot["ai_target"] = target_key
 			bot["ai_retarget_t"] = lerpf(0.55, 0.28, float(diff) * 0.5) \
 				+ float(absi(bot_key) % 3) * 0.08
@@ -1797,8 +1823,8 @@ func _tick_ai_bots(delta: float) -> void:
 		var local_goal: Vector3 = cart.to_local(Vector3(goal.x, pos.y, goal.z))
 		var angle_err: float = atan2(-local_goal.x, -local_goal.z)
 
-		var want_drift: bool = absf(angle_err) > 0.85 \
-			and Vector2(cart.velocity.x, cart.velocity.z).length() > 8.5
+		var want_drift: bool = absf(angle_err) > [1.00, 0.85, 0.70][diff] \
+			and Vector2(cart.velocity.x, cart.velocity.z).length() > [7.0, 8.5, 10.0][diff]
 		var slam_probe: Vector3 = pos + fwd * 8.2
 		var slam_path_safe: bool = KnockoutMaps.is_point_safe(
 			_arena_data, slam_probe, w1_danger, w2_danger)
@@ -1806,12 +1832,13 @@ func _tick_ai_bots(delta: float) -> void:
 
 		_steer_bot_toward(cart, goal, 1.0, want_boost, want_drift)
 
-		# 3. Fire Power-Slam when lined up within 8.5 m and trajectory stays safe!
+		# 3. Fire Power-Slam when lined up and the trajectory stays safe!
+		# Skill scales the trigger: Hard slams from further out and wider off.
 		var angle_to_rival: float = absf(atan2(
 			-cart.to_local(t_pos).x, -cart.to_local(t_pos).z))
 		if float(bot.get("slam_cooldown", 0.0)) <= 0.0 \
-				and dist_to_target <= 8.5 and dist_to_target >= 1.8 \
-				and angle_to_rival <= 0.36 and slam_path_safe:
+				and dist_to_target <= [7.0, 8.5, 9.5][diff] and dist_to_target >= 1.8 \
+				and angle_to_rival <= [0.30, 0.36, 0.42][diff] and slam_path_safe:
 			if _activate_slam(bot_key) and _multiplayer and _is_host:
 				_broadcast_slam(bot_key)
 
@@ -1845,10 +1872,15 @@ func _is_valid_rival(self_key: int, rival_key: int) -> bool:
 	return bool(_contestants[rival_key].get("alive", false))
 
 
-func _pick_ai_target(self_key: int, self_pos: Vector3) -> int:
+func _pick_ai_target(self_key: int, self_pos: Vector3, diff: int = 1) -> int:
 	var best_key: int = 0
 	var best_score: float = -INF
 	var safe_r: float = maxf(float(_arena_data.get("safe_radius", 20.0)), 1.0)
+	# Skill-weighted hunting: Easy chases whoever is nearest, Hard hunts the
+	# weakest high-percentage rival hanging near an edge. Same speed either way.
+	var pct_w: float = [0.05, 0.16, 0.24][clampi(diff, 0, 2)]
+	var edge_w: float = [4.0, 9.0, 12.0][clampi(diff, 0, 2)]
+	var dist_w: float = [1.20, 0.58, 0.35][clampi(diff, 0, 2)]
 	for raw_key: Variant in _contestants.keys():
 		var k: int = int(raw_key)
 		if k == self_key:
@@ -1864,7 +1896,7 @@ func _pick_ai_target(self_key: int, self_pos: Vector3) -> int:
 		var pct: float = float(rival.get("damage_pct", 0.0))
 		var edge_ratio: float = Vector2(r_pos.x, r_pos.z).length() / safe_r
 		var bias: float = float((absi(self_key * 7 + k * 13)) % 5) * 1.1
-		var score: float = pct * 0.16 + edge_ratio * 9.0 - dist * 0.58 + bias
+		var score: float = pct * pct_w + edge_ratio * edge_w - dist * dist_w + bias
 		if score > best_score:
 			best_score = score
 			best_key = k
@@ -2361,25 +2393,25 @@ func _build_result_card() -> void:
 	_result_panel.name = "ResultPanel"
 	_result_panel.custom_minimum_size = Vector2(468.0, 0.0)
 	var panel_style := _card_style(UiPalette.CREAM, UiPalette.OUTLINE, 5, UiKit.CORNER_RADIUS)
-	panel_style.content_margin_left = 18.0
-	panel_style.content_margin_right = 18.0
-	panel_style.content_margin_top = 14.0
-	panel_style.content_margin_bottom = 14.0
+	panel_style.content_margin_left = 28.0
+	panel_style.content_margin_right = 28.0
+	panel_style.content_margin_top = 24.0
+	panel_style.content_margin_bottom = 24.0
 	panel_style.shadow_color = Color(0.10, 0.09, 0.22, 0.45)
 	panel_style.shadow_offset = Vector2(0.0, 8.0)
 	_result_panel.add_theme_stylebox_override("panel", panel_style)
 	center.add_child(_result_panel)
 
 	var body := VBoxContainer.new()
-	body.add_theme_constant_override("separation", UiKit.SPACING_TIGHT)
+	body.add_theme_constant_override("separation", 12)
 	_result_panel.add_child(body)
 
 	var banner := PanelContainer.new()
 	var banner_style := _card_style(UiPalette.YELLOW, UiPalette.OUTLINE, 0, 12)
-	banner_style.content_margin_left = 14.0
-	banner_style.content_margin_right = 14.0
-	banner_style.content_margin_top = 6.0
-	banner_style.content_margin_bottom = 6.0
+	banner_style.content_margin_left = 22.0
+	banner_style.content_margin_right = 22.0
+	banner_style.content_margin_top = 12.0
+	banner_style.content_margin_bottom = 12.0
 	banner.add_theme_stylebox_override("panel", banner_style)
 	body.add_child(banner)
 
@@ -2393,7 +2425,7 @@ func _build_result_card() -> void:
 	body.add_child(_result_subtitle)
 
 	_result_rows = VBoxContainer.new()
-	_result_rows.add_theme_constant_override("separation", 4)
+	_result_rows.add_theme_constant_override("separation", 8)
 	body.add_child(_result_rows)
 
 	var actions := HBoxContainer.new()
@@ -2438,10 +2470,10 @@ func _show_result_card() -> void:
 		var row_panel := PanelContainer.new()
 		var bg: Color = Color(1.0, 0.85, 0.24, 0.32) if is_me else Color(0.12, 0.12, 0.22, 0.08)
 		var r_style := _card_style(bg, UiPalette.OUTLINE, 2 if i == 0 else 0, 8)
-		r_style.content_margin_left = 10.0
-		r_style.content_margin_right = 10.0
-		r_style.content_margin_top = 3.0
-		r_style.content_margin_bottom = 3.0
+		r_style.content_margin_left = 16.0
+		r_style.content_margin_right = 16.0
+		r_style.content_margin_top = 8.0
+		r_style.content_margin_bottom = 8.0
 		row_panel.add_theme_stylebox_override("panel", r_style)
 		_result_rows.add_child(row_panel)
 
@@ -2937,7 +2969,7 @@ func _setup_multiplayer() -> void:
 		Network.tag_colors_changed.connect(_on_net_identity_changed)
 
 	Network.notify_scene_ready()
-	if not _is_host:
+	if not _is_host and Network.is_scene_ready(1):
 		rpc_id(1, "_net_knockout_ready", _arena_id, _chosen_vehicle_id())
 
 
@@ -2947,11 +2979,21 @@ func _on_peer_connected(peer_id: int) -> void:
 
 func _on_peer_disconnected(peer_id: int) -> void:
 	if _contestants.has(peer_id):
+		# A disconnected peer must count as eliminated, not vanish: erasing the
+		# entry shrinks the field below two contestants and the round can never
+		# conclude, leaving a ghost stalling it forever.
 		var entry: Dictionary = _contestants[peer_id]
-		var cart: CartPlayer = entry.get("cart") as CartPlayer
-		if cart != null and is_instance_valid(cart):
-			cart.queue_free()
-		_contestants.erase(peer_id)
+		if bool(entry.get("alive", false)):
+			var gone_cart: CartPlayer = entry.get("cart") as CartPlayer
+			var gone_pos: Vector3 = gone_cart.net_position \
+				if (gone_cart != null and is_instance_valid(gone_cart) \
+					and gone_cart.remote_mode) else Vector3(0.0, _ko_y, 0.0)
+			_eliminate_contestant(peer_id, gone_pos)
+			entry["cart"] = null
+		var dead_cart: CartPlayer = entry.get("cart") as CartPlayer
+		if dead_cart != null and is_instance_valid(dead_cart):
+			dead_cart.queue_free()
+			entry["cart"] = null
 	_remote_carts.erase(peer_id)
 	_peer_vehicles.erase(peer_id)
 	_cart_relay_ms.erase(peer_id)
@@ -3097,8 +3139,33 @@ func _net_knockout_config(arena_id: String, bot_count: int, total_rounds: int,
 				rc.set_vehicle_id(vid)
 
 
+func _cart_idle_skip(peer_id: int, pos: Vector3, yaw: float, vel: Vector3) -> bool:
+	if Vector2(vel.x, vel.z).length() >= CART_IDLE_SPEED:
+		_cart_idle_ms[peer_id] = Time.get_ticks_msec()
+		_cart_idle_pos[peer_id] = pos
+		_cart_idle_yaw[peer_id] = yaw
+		return false
+	var now: int = Time.get_ticks_msec()
+	var last_ms: int = int(_cart_idle_ms.get(peer_id, -100000))
+	var last_pos: Vector3 = _cart_idle_pos.get(peer_id, pos)
+	var last_yaw: float = float(_cart_idle_yaw.get(peer_id, yaw))
+	if pos.distance_squared_to(last_pos) > 0.0004 or absf(angle_difference(last_yaw, yaw)) > 0.01:
+		_cart_idle_ms[peer_id] = now
+		_cart_idle_pos[peer_id] = pos
+		_cart_idle_yaw[peer_id] = yaw
+		return false
+	if now - last_ms < int(CART_IDLE_INTERVAL * 1000.0):
+		return true
+	_cart_idle_ms[peer_id] = now
+	_cart_idle_pos[peer_id] = pos
+	_cart_idle_yaw[peer_id] = yaw
+	return false
+
+
 func _broadcast_cart_pose(peer_id: int, pos: Vector3, yaw: float,
 		sent_ms: int, vel: Vector3) -> void:
+	if _cart_idle_skip(peer_id, pos, yaw, vel):
+		return
 	for target: int in multiplayer.get_peers():
 		if target != peer_id and Network.is_scene_ready(target):
 			rpc_id(target, "_net_ko_cart_state", peer_id, pos, yaw, sent_ms, vel)
@@ -3127,6 +3194,18 @@ func _net_ko_cart_state(peer_id: int, pos: Vector3, yaw: float,
 
 
 func _broadcast_bot_poses() -> void:
+	var now: int = Time.get_ticks_msec()
+	var all_idle: bool = true
+	for bk: int in _bot_keys:
+		var entry: Dictionary = _contestants.get(bk, {}) as Dictionary
+		var cart: CartPlayer = entry.get("cart") as CartPlayer
+		var vel: Vector3 = cart.velocity if cart != null and is_instance_valid(cart) else Vector3.ZERO
+		if Vector2(vel.x, vel.z).length() >= CART_IDLE_SPEED:
+			all_idle = false
+			break
+	if all_idle and now - _bot_idle_ms < int(CART_IDLE_INTERVAL * 1000.0):
+		return
+	_bot_idle_ms = now
 	var positions := PackedVector3Array()
 	var yaws := PackedFloat32Array()
 	var velocities := PackedVector3Array()

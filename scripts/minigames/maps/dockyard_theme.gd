@@ -50,9 +50,12 @@ static func build(race: Node3D, spline) -> void:
 	var meadow_ground: Node3D = race.get_node_or_null("MeadowGround") as Node3D
 	if meadow_ground != null:
 		meadow_ground.visible = false
+	_apply_harbour_atmosphere(race)
 	TileKit.dress_track(race, spline, {
 		"id": "dockyard",
-		"hoarding_density": 0.32,
+		"hoarding_density": 0.0,
+		"kerb_a": Color("e9edf0"),
+		"kerb_b": Color("e8b93a"),
 	})
 	var grid_stats: Dictionary = race.get_meta("kenney_grid_stats", {})
 	var plan: RefCounted = DockyardPlan.new(spline,
@@ -68,6 +71,7 @@ static func build(race: Node3D, spline) -> void:
 	var holder := Node3D.new()
 	holder.name = HOLDER_NAME
 	race.add_child(holder)
+	AmbientWorld.build_track(holder, spline, "dockyard")
 	var totals: Dictionary = {
 		"objects": 0, "draws": 0, "barriers": 0, "containers": 0,
 		"signs": 0, "stands": 0, "gantries": 0, "flags": 0, "lights": 0,
@@ -75,16 +79,10 @@ static func build(race: Node3D, spline) -> void:
 		"puddles": 0, "cranes": 0, "bollards": 0, "mooring": 0, "wharf": 0,
 	}
 	_merge(totals, DockyardGround.build(holder, spline, plan))
-	# The yard builds the catch fence; clear the fence cells under the hairpin
-	# stands first so the two one-off systems cannot clip into each other.
 	DockyardCircuit.reserve_stand_ring(spline, plan)
-	# The yard fills the working apron first; the circuit then takes the quay
-	# edge and the rings beyond it. Both passes claim cells through the plan, so
-	# no floodlight, sign or container can land on top of another.
 	_merge(totals, DockyardYard.build(holder, spline, plan))
 	_merge(totals, DockyardCircuit.build(holder, spline, plan))
 	_merge(totals, DockyardGreen.build(holder, spline, plan))
-	AmbientWorld.build_track(holder, spline, "dockyard")
 	# The barrier ring is the owner-facing invariant. Assert it against every
 	# collider the theme just emitted, not just against the path that built it.
 	TileKit.assert_barrier_clearance(holder, spline, "dockyard quay")
@@ -99,6 +97,30 @@ static func build(race: Node3D, spline) -> void:
 		int(totals["signs"]), int(totals["trees"])])
 	race.set_meta("dockyard_stats", totals)
 	race.set_meta("dockyard_draws", measured_draws)
+
+
+## Bright seaside grade: vivid azure sky, crisp sea-blue haze and a warm
+## harbour sun so the container port pops instead of sitting under default grey.
+static func _apply_harbour_atmosphere(race: Node3D) -> void:
+	var world_env := race.get_node_or_null("WorldEnvironment") as WorldEnvironment
+	if world_env == null or world_env.environment == null:
+		return
+	var env: Environment = world_env.environment.duplicate() as Environment
+	env.fog_enabled = true
+	env.fog_light_color = Color("aed6e8")
+	env.fog_density = 0.0011
+	env.fog_sky_affect = 0.18
+	if env.sky != null and env.sky.sky_material is ProceduralSkyMaterial:
+		var sky: ProceduralSkyMaterial = env.sky.sky_material as ProceduralSkyMaterial
+		sky.sky_top_color = Color("2a86d8")
+		sky.sky_horizon_color = Color("c2e8f8")
+		sky.ground_horizon_color = Color("7fb8d0")
+		sky.ground_bottom_color = Color("2e5a74")
+	world_env.environment = env
+	var sun := race.get_node_or_null("Sun") as DirectionalLight3D
+	if sun != null:
+		sun.light_color = Color("fff0d0")
+		sun.light_energy = 1.22
 
 
 static func _merge(totals: Dictionary, stats: Dictionary) -> void:

@@ -23,7 +23,7 @@ const API_HOST: String = "https://api.github.com"
 ## A healthy download moves bytes constantly; if nothing arrives for this
 ## long the connection is treated as dead instead of hanging the dialog on
 ## DOWNLOADING... forever.
-const DOWNLOAD_STALL_SECONDS: float = 20.0
+const DOWNLOAD_STALL_SECONDS: float = 5.0
 
 @export_group("Update Checks")
 @export var enable_update_checks: bool = true ## Master switch for the silent menu check.

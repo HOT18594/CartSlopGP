@@ -19,6 +19,8 @@ extends RefCounted
 const CollisionLayers := preload("res://scripts/systems/collision_layers.gd")
 const SceneryKit := preload("res://scripts/minigames/scenery/scenery_kit.gd")
 const PropBatch := preload("res://scripts/minigames/scenery/prop_batch.gd")
+const LandscapeSculptor := preload("res://scripts/minigames/scenery/landscape_sculptor.gd")
+const AmbientWorld := preload("res://scripts/minigames/scenery/ambient_world.gd")
 
 const RACING_ROOT: String = "res://assets/models/kenney_racing_kit/Models/GLTF format/"
 const NATURE_ROOT: String = "res://assets/models/kenney_nature_kit/Models/GLTF format/"
@@ -150,15 +152,15 @@ const SNOWFIELD_SPEC: Dictionary = {
 	"name": "GLACIER BOWL",
 	"blurb": "SLICK ICE RINK & BERM JUMPS",
 	"teams": ["YULECREW", "REINDEER"],
-	"sky_top": Color(0.36, 0.62, 0.86),
-	"sky_horizon": Color(0.90, 0.95, 0.99),
-	"ground_bottom": Color(0.72, 0.80, 0.88),
-	"fog_color": Color(0.88, 0.93, 0.98),
-	"fog_density": 0.0020,
-	"ground": Color("e2f0f7"),
-	"ground_alt": Color("cee5f0"),
-	"paint": Color("f7fbff"),
-	"paint_alt": Color("2e86ab"),
+	"sky_top": Color(0.20, 0.50, 0.82),
+	"sky_horizon": Color(0.62, 0.82, 0.94),
+	"ground_bottom": Color(0.45, 0.62, 0.78),
+	"fog_color": Color(0.62, 0.78, 0.90),
+	"fog_density": 0.0016,
+	"ground": Color("bcdcee"),
+	"ground_alt": Color("8fcbe8"),
+	"paint": Color("2e86ab"),
+	"paint_alt": Color("ffd22e"),
 	"grip": 0.94,
 	"present_kind": "gift",
 	"present_label": "WRAPPED GIFTS",
@@ -471,16 +473,11 @@ static func build_arena(stage: Node3D, id: String) -> Dictionary:
 				-PI * 0.5 * outward, Vector3.ONE * 8.0,
 				"BaseFlag_%d_%d" % [team, int(side)])
 
-	# Unique 3D map geometry & hazards
+	# Unique 3D map geometry, horizon landforms & animated scenery
 	var theme_root := Node3D.new()
 	theme_root.name = "ThemeRoot"
 	stage.add_child(theme_root)
 	build_scenery(theme_root, theme, {"half": ARENA_HALF, "base_pads": pads}, stats)
-	# The cargo arenas sit on a 170 m floor; keep the ambient ring between the
-	# 56 m barrier and the floor edge so nothing hangs off the world.
-	preload("res://scripts/minigames/scenery/ambient_world.gd").build_arena(
-		theme_root, canonical, ARENA_HALF,
-		{"radius_in": 62.0, "radius_out": 80.0, "floor_y": -0.05})
 
 	# Visible crates on the map's elevated & lane spawn spots
 	var spots: Array[Vector3] = present_spots(theme)
@@ -555,7 +552,113 @@ static func build_scenery(root: Node3D, theme: Dictionary, arena: Dictionary,
 			hazards = _build_glacier_bowl(root, theme, half, stats)
 		_:
 			hazards = _build_harbour_overpass(root, theme, half, stats)
+	AmbientWorld.build_arena(root, canonical, half,
+		{"radius_in": half + 10.0, "radius_out": half + 32.0, "floor_y": -0.05})
+	_build_horizon_scenery(root, canonical, half, stats)
 	return hazards
+
+
+static func _build_horizon_scenery(root: Node3D, canonical: String,
+		half: float, stats: Dictionary) -> void:
+	# Seamless outer horizon plane so neither arena floor cutoff nor sky-bottom leaks.
+	var horizon_col := Color("52a845")
+	var horizon_y: float = -0.18
+	match canonical:
+		"harbour":
+			horizon_col = Color("1973ba")
+			horizon_y = -0.35
+		"snowfield":
+			horizon_col = Color("9fd4ec")
+			horizon_y = -0.18
+	var skirt := MeshInstance3D.new()
+	skirt.name = "HorizonSkirt_" + canonical
+	var plane := PlaneMesh.new()
+	plane.size = Vector2(980.0, 980.0)
+	skirt.mesh = plane
+	skirt.position = Vector3(0.0, horizon_y, 0.0)
+	skirt.material_override = flat_material(horizon_col, false)
+	skirt.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	root.add_child(skirt)
+
+	var anim: Dictionary = AmbientWorld.anim_of(root)
+	var batch := PropBatch.new()
+	var rng := RandomNumberGenerator.new()
+	rng.seed = canonical.hash() ^ 0x51A7
+	match canonical:
+		"harbour":
+			var headland_pal := {
+				"skirt": Color("47853b"),
+				"mid": Color("5da346"),
+				"top": Color("76bd52"),
+			}
+			for i in 10:
+				var ang: float = TAU * float(i) / 10.0 + 0.25
+				var dist: float = 155.0 + float(i % 3) * 34.0
+				LandscapeSculptor.add_woodland_hill(batch,
+					Vector3(cos(ang) * dist, -0.4, sin(ang) * dist),
+					38.0 + float(i % 3) * 12.0, 32.0 + float((i + 1) % 3) * 10.0,
+					16.0 + float(i % 4) * 6.5, rng, headland_pal)
+			batch.flush_to(root, "HarbourHeadlands", false, SceneryKit.vertex_material())
+			LandscapeSculptor.build_lighthouse(root, Vector3(-106.0, 0.0, -104.0), 19.0, anim)
+			LandscapeSculptor.build_cargo_ship(root, Vector3(122.0, -0.45, -32.0), 0.25, 1.35, anim)
+			LandscapeSculptor.build_cargo_ship(root, Vector3(-124.0, -0.45, 36.0), -2.75, 1.30, anim)
+			LandscapeSculptor.build_port_crane(root, Vector3(-86.0, 0.0, 56.0), -1.1, 20.0,
+				Color("ff9f2e"), anim)
+			LandscapeSculptor.build_port_crane(root, Vector3(86.0, 0.0, -58.0), 2.1, 20.0,
+				Color("e65142"), anim)
+			LandscapeSculptor.add_biome_particles(root, "harbour", Vector3.ZERO, 96.0)
+		"farmyard":
+			var hill_pal := {
+				"skirt": Color("4c8e38"),
+				"mid": Color("65b046"),
+				"top": Color("7dc956"),
+			}
+			for i in 12:
+				var ang: float = TAU * float(i) / 12.0 + 0.12
+				var dist: float = 128.0 + float(i % 3) * 26.0
+				LandscapeSculptor.add_woodland_hill(batch,
+					Vector3(cos(ang) * dist, -0.2, sin(ang) * dist),
+					36.0 + float(i % 4) * 9.0, 30.0 + float((i + 1) % 3) * 8.0,
+					15.0 + float(i % 3) * 6.0, rng, hill_pal)
+			for j in 6:
+				var mang: float = TAU * float(j) / 6.0 + 0.45
+				LandscapeSculptor.add_alpine_mountain(batch,
+					Vector3(cos(mang) * 280.0, -0.2, sin(mang) * 280.0),
+					52.0 + float(j % 2) * 14.0, 56.0 + float(j % 3) * 14.0, rng,
+					{
+						"base": Color("3e7a35"),
+						"rock": Color("4d9e48"),
+						"cliff": Color("66b95a"),
+						"snow_lo": Color("b8e0b0"),
+						"snow_hi": Color("e8f6e8"),
+					})
+			batch.flush_to(root, "FarmyardHorizonHills", false, SceneryKit.vertex_material())
+			LandscapeSculptor.build_windmill(root, Vector3(-98.0, 2.0, -86.0), 0.75, 1.35,
+				"meadow", anim)
+			LandscapeSculptor.build_windmill(root, Vector3(102.0, 2.0, 82.0), -2.4, 1.30,
+				"meadow", anim)
+			LandscapeSculptor.build_hot_air_balloon(root, Vector3(78.0, 30.0, -84.0),
+				Color("ff595e"), Color("ffd22e"), 0.2, anim)
+			LandscapeSculptor.build_hot_air_balloon(root, Vector3(-86.0, 34.0, 72.0),
+				Color("38d6f0"), Color("ffd22e"), 2.1, anim)
+			LandscapeSculptor.build_hot_air_balloon(root, Vector3(12.0, 38.0, -118.0),
+				Color("71c847"), Color("ffd22e"), 4.0, anim)
+			LandscapeSculptor.add_biome_particles(root, "meadow", Vector3.ZERO, 96.0)
+		"snowfield":
+			for i in 14:
+				var ang: float = TAU * float(i) / 14.0 + 0.18
+				var dist: float = 132.0 + float(i % 3) * 28.0
+				LandscapeSculptor.add_alpine_mountain(batch,
+					Vector3(cos(ang) * dist, -0.2, sin(ang) * dist),
+					34.0 + float(i % 4) * 9.0, 38.0 + float(i % 3) * 15.0, rng)
+			LandscapeSculptor.add_ski_chalet(batch, Vector3(-92.0, 0.0, -78.0), 0.65, 1.25)
+			LandscapeSculptor.add_ski_chalet(batch, Vector3(94.0, 0.0, 74.0), -2.35, 1.25)
+			batch.flush_to(root, "SnowfieldAlpinePeaks", false, SceneryKit.vertex_material())
+			LandscapeSculptor.build_ski_lift_system(root,
+				Vector3(-114.0, 18.0, -88.0), Vector3(114.0, 22.0, -78.0),
+				4, 4, anim)
+			LandscapeSculptor.add_biome_particles(root, "snowfield", Vector3.ZERO, 96.0)
+	SceneryKit.bump(stats, "draw_calls")
 
 
 # --------------------------------------------------------------------------
@@ -611,12 +714,15 @@ static func _build_harbour_overpass(root: Node3D, theme: Dictionary,
 		add_box_collider(body, Transform3D(Basis.IDENTITY,
 			Vector3(rail_x, deck_y + 0.28, 0.0)),
 			Vector3(0.56, 0.56, deck_len))
-		# Steel H-columns supporting the bridge deck
+		# Heavy H-columns & seawall base pedestals supporting the bridge deck
 		for z_col: float in [-11.5, 0.0, 11.5]:
 			var col_pos := Vector3(sx * 4.8, 0.0, z_col)
 			batch.add_box(Transform3D(Basis.IDENTITY,
 				col_pos + Vector3.UP * ((deck_y - deck_thick) * 0.5)),
 				Vector3(0.95, deck_y - deck_thick, 0.95), girder_dark)
+			batch.add_box(Transform3D(Basis.IDENTITY,
+				col_pos + Vector3.UP * 0.20),
+				Vector3(1.55, 0.40, 1.55), seawall_col)
 			add_box_collider(body, Transform3D(Basis.IDENTITY,
 				col_pos + Vector3.UP * ((deck_y - deck_thick) * 0.5)),
 				Vector3(0.95, deck_y - deck_thick, 0.95))
@@ -891,29 +997,30 @@ static func _build_glacier_bowl(root: Node3D, theme: Dictionary,
 	var ramp_colors := PackedColorArray()
 	var body: StaticBody3D = solid_root(root, "GlacierBowlCollision")
 
-	var snow_pure := Color("f4f9fd")
-	var snow_shade := Color("d6e6f2")
-	var ice_outer := Color("7ad7ec")
-	var ice_mid := Color("4bc2e0")
-	var ice_core := Color("2ca6cc")
-	var frost_white := Color("eefbff")
-	var accent_blue := theme.get("paint_alt", Color("2e86ab")) as Color
+	var snow_pure := Color("dff0fa")
+	var snow_shade := Color("a8d4ec")
+	var ice_outer := Color("5fd0e8")
+	var ice_mid := Color("35b4d8")
+	var ice_core := Color("1f95c2")
+	var frost_white := Color("bfe9f7")
+	var accent_blue := theme.get("paint_alt", Color("ffd22e")) as Color
 
 	# 1. Central Frozen Ice Rink (radius = 28.0 m, 0.45 surface_grip!)
+	# Thin 1 cm sheets with clean 9 mm steps so side walls never interpenetrate.
 	var rink_r: float = 28.0
 	batch.add_cylinder(Transform3D(Basis.IDENTITY, Vector3(0.0, 0.015, 0.0)),
-		rink_r + 1.4, 0.025, 40, snow_pure)
+		rink_r + 1.4, 0.01, 40, snow_pure)
 	batch.add_cylinder(Transform3D(Basis.IDENTITY, Vector3(0.0, 0.024, 0.0)),
-		rink_r, 0.025, 40, ice_outer)
-	batch.add_cylinder(Transform3D(Basis.IDENTITY, Vector3(0.0, 0.032, 0.0)),
-		rink_r * 0.74, 0.025, 36, ice_mid)
-	batch.add_cylinder(Transform3D(Basis.IDENTITY, Vector3(0.0, 0.040, 0.0)),
-		rink_r * 0.42, 0.025, 32, ice_core)
+		rink_r, 0.01, 40, ice_outer)
+	batch.add_cylinder(Transform3D(Basis.IDENTITY, Vector3(0.0, 0.033, 0.0)),
+		rink_r * 0.74, 0.01, 36, ice_mid)
+	batch.add_cylinder(Transform3D(Basis.IDENTITY, Vector3(0.0, 0.042, 0.0)),
+		rink_r * 0.42, 0.01, 32, ice_core)
 	# Crisp cartoon frost-crack lines radiating across the ice sheet
 	for crack in 6:
 		var c_ang: float = float(crack) * PI / 6.0 + 0.22
 		batch.add_box(Transform3D(Basis(Vector3.UP, c_ang),
-			Vector3(0.0, 0.054, 0.0)),
+			Vector3(0.0, 0.050, 0.0)),
 			Vector3(0.32, 0.01, rink_r * 1.68), frost_white)
 
 	hazards.append({

@@ -29,7 +29,11 @@ signal ping_table_changed()
 signal relay_metrics_changed(rtt_ms: int, jitter_ms: int)
 ## Host -> Pi race state stream: whether /api/race/pos is acknowledging batches
 ## and how many batches it has accepted for the current race.
+## Host -> Pi live position batch cadence / acknowledgement.
 signal race_state_stream_changed(receiving: bool, updates: int)
+## Client-side notification that the host has entered `scene_path` and can
+## accept scene-level RPCs without "Node not found" errors.
+signal host_scene_ready(scene_path: String)
 
 const DEFAULT_PORT: int = 8910
 const PORT_RANGE: int = 40
@@ -59,7 +63,7 @@ const MINIGAMES_SCENE: String = "res://scenes/ui/minigames_menu.tscn"
 const PING_INTERVAL: float = 2.0
 const RELAY_DISCOVERY_PORT: int = 42778
 const LAN_ROOM_PORT: int = 42779
-const RELAY_HEARTBEAT_INTERVAL: float = 20.0
+const RELAY_HEARTBEAT_INTERVAL: float = 10.0
 ## A slow Pi can miss a heartbeat or two without the room being gone. A
 ## definite 404/410 still ends the lobby quickly; timeouts get more attempts.
 const HEARTBEAT_MAX_FAILURES: int = 4
@@ -213,6 +217,7 @@ var scene_ready_peers: Dictionary = {}
 var _left_scene_peers: Dictionary = {}
 var _scene_sync_timer: float = 0.0
 var _scene_load_path: String = ""
+var host_scene_ready_path: String = ""
 ## Pair key -> last solver impulse time. Rate-limits resting contact and
 ## duplicate remote impacts while a state packet is still in flight.
 var _separation_ms: Dictionary = {}
@@ -335,6 +340,8 @@ var _host_ticket: int = 0
 var _join_ticket: int = 0
 var _ping_timer: float = 0.0
 var _host_ping_pending: bool = false
+var _ping_last_broadcast_ms: int = -100000
+var _ping_last_table: Dictionary = {}
 var _join_started_ms: int = 0
 var _relay_heartbeat: float = 0.0
 var _relay_busy: bool = false
@@ -434,6 +441,8 @@ func _host_retry_scene_start() -> void:
 		_scene_retry_counts[peer_id] = attempts + 1
 		rpc_id(peer_id, "_net_begin_game", game_scene, session_mode,
 			session_bots, session_bot_count, race_seed)
+		if host_scene_ready_path == game_scene and host_scene_ready_path != "":
+			rpc_id(peer_id, "_net_host_scene_ready", host_scene_ready_path)
 
 
 func is_session_active() -> bool:
@@ -455,6 +464,7 @@ func clear_scene_ready() -> void:
 	_impact_closing.clear()
 	_last_good_position.clear()
 	_scene_load_path = ""
+	host_scene_ready_path = ""
 	if is_host:
 		scene_ready_peers[1] = true
 
@@ -964,15 +974,57 @@ func notify_scene_ready() -> void:
 	## Called by every gameplay scene after its networking setup.
 	if not is_session_active() or multiplayer.multiplayer_peer == null:
 		return
+	var current: Node = get_tree().current_scene
+	var scene_path: String = current.scene_file_path if current != null else ""
+	if scene_path == "" and in_game:
+		scene_path = game_scene
 	if is_host:
 		scene_ready_peers[1] = true
+		host_scene_ready_path = scene_path
+		if scene_path != "" and is_connected_to_server():
+			for peer_id: int in multiplayer.get_peers():
+				rpc_id(peer_id, "_net_host_scene_ready", scene_path)
 	else:
-		# The host is by definition in the gameplay scene that just loaded.
-		# Readiness is announced with the scene's existing reliable ready RPC
-		# (`_net_client_ready` / `_net_race_ready`) so older clients and hosts
-		# remain compatible.
-		scene_ready_peers[1] = true
+		# Do not assume the host finished loading the gameplay scene first:
+		# only mark peer 1 ready once the host announces it entered this scene.
+		if scene_path != "" and host_scene_ready_path == scene_path:
+			scene_ready_peers[1] = true
+		else:
+			scene_ready_peers.erase(1)
 	_scene_load_path = ""
+
+
+@rpc("authority", "call_remote", "reliable")
+func _net_host_scene_ready(scene_path: String) -> void:
+	if is_host or scene_path == "" or scene_path not in ALLOWED_SCENES:
+		return
+	host_scene_ready_path = scene_path
+	var current: Node = get_tree().current_scene
+	var active_path: String = current.scene_file_path if current != null else ""
+	if active_path == scene_path:
+		scene_ready_peers[1] = true
+		host_scene_ready.emit(scene_path)
+		_send_client_scene_ready(current, scene_path)
+
+
+func _send_client_scene_ready(current: Node, scene_path: String) -> void:
+	if is_host or current == null or not is_connected_to_server():
+		return
+	if not is_scene_ready(1):
+		return
+	if scene_path == GAME_SCENE:
+		current.rpc_id(1, "_net_client_ready", GameSettings.selected_vehicle)
+	elif scene_path == RACE_SCENE:
+		current.rpc_id(1, "_net_race_ready", GameSettings.minigame_vehicle)
+	elif scene_path == CARGO_SCENE:
+		current.rpc_id(1, "_net_cargo_ready", session_minigame,
+			GameSettings.minigame_vehicle)
+	elif scene_path == KNOCKOUT_SCENE:
+		current.rpc_id(1, "_net_knockout_ready", session_minigame,
+			GameSettings.minigame_vehicle)
+	elif scene_path == BOMB_TAG_SCENE:
+		current.rpc_id(1, "_net_bomb_ready", session_minigame,
+			GameSettings.minigame_vehicle)
 
 
 
@@ -1615,6 +1667,8 @@ func scan_lan_rooms(timeout: float = 1.4) -> Array:
 					packet.get_string_from_utf8(), sender_ip)
 				if room.is_empty():
 					continue
+				if not _lan_version_matches(str(room.get("version", ""))):
+					continue
 				room["_rank"] = arrival_rank
 				var key: String = "%s:%d" % [str(room["host"]), int(room["port"])]
 				if not found.has(key) or int((found[key] as Dictionary)["_rank"]) < arrival_rank:
@@ -1658,13 +1712,32 @@ func join_lan_room(room: Dictionary) -> void:
 	if not _is_lan_peer_address(host) or open_port <= 0:
 		join_failed.emit("That LAN room is no longer available. Scan again.")
 		return
+	if int(room.get("players", 1)) >= MAX_PLAYERS:
+		join_failed.emit("That LAN room is full. Pick another room or wait for a slot. Hint: try a different room.")
+		return
 	if str(room.get("state", "lobby")) != "lobby":
-		join_failed.emit("That LAN room has already started.")
+		join_failed.emit("That LAN match already started. Ask the host to return to the lobby. Hint: wait for the lobby.")
 		return
 	# A fresh user action re-arms the one-shot macOS permission retry.
 	_lan_join_retry = 0
 	join_status_changed.emit("Joining the LAN room...")
 	_connect_to(host, open_port, "lan")
+
+
+func _join_transport_reason(code: String = "") -> String:
+	var detail: String = _relay_result_detail()
+	match detail:
+		"tls_error":
+			return "Secure connection failed (TLS). Check system date/time and firewall, then try again. Hint: fix clock/VPN and retry."
+		"dns_error":
+			return "Could not resolve the server (DNS). Check DNS/VPN settings, then try again. Hint: check network and retry."
+		"timeout":
+			return "Connection timed out waiting for the server. Try again in a moment. Hint: retry."
+		"unreachable":
+			return "Could not reach the server. Check the internet connection, then try again. Hint: check connection and retry."
+	if _relay_http_status == 410:
+		return "That room expired on the server. Ask the host for a fresh code. Hint: host a new room." if code == "" else "Room %s expired on the server. Ask the host for a fresh code. Hint: host a new room." % code
+	return ""
 
 
 func _acquire_http(timeout: float) -> HTTPRequest:
@@ -1821,9 +1894,9 @@ func server_now_ms() -> int:
 	return Time.get_ticks_msec() + server_clock_offset_ms
 
 
-func sync_server_clock(samples: int = 5) -> bool:
-	## NTP-style: keep the sample with the lowest round trip and place the
-	## server clock at its midpoint. Every peer then derives the same race time.
+func sync_server_clock(samples: int = 7) -> bool:
+	## NTP-style median of at least 7 samples, step-applied (no slew). Every
+	## peer then derives the same race time.
 	if relay_base == "":
 		return false
 	if _clock_sync_pending:
@@ -1837,10 +1910,9 @@ func sync_server_clock(samples: int = 5) -> bool:
 	_clock_sync_pending = true
 	var sync_base: String = relay_base
 	var sync_ticket: int = _host_ticket + _join_ticket
-	var best_rtt: int = 1 << 30
-	var best_offset: int = 0
-	var got: bool = false
-	for i in maxi(samples, 1):
+	var offsets: Array[int] = []
+	var rtts: Array[int] = []
+	for i in maxi(samples, 7):
 		if relay_base == "" or relay_base != sync_base \
 				or sync_ticket != _host_ticket + _join_ticket:
 			break
@@ -1861,17 +1933,17 @@ func sync_server_clock(samples: int = 5) -> bool:
 		var rtt: int = maxi(t1 - t0, 0)
 		var offset: int = server_ms - ((t0 + t1) >> 1)
 		_note_relay_rtt(rtt)
-		if not got or rtt < best_rtt:
-			best_rtt = rtt
-			best_offset = offset
-			got = true
+		offsets.append(offset)
+		rtts.append(rtt)
 		await get_tree().process_frame
 	_clock_sync_pending = false
-	if not got or relay_base == "" or relay_base != sync_base \
+	if offsets.is_empty() or relay_base == "" or relay_base != sync_base \
 			or sync_ticket != _host_ticket + _join_ticket:
 		return false
-	server_clock_offset_ms = best_offset
-	server_rtt_ms = best_rtt
+	offsets.sort()
+	rtts.sort()
+	server_clock_offset_ms = offsets[offsets.size() / 2]
+	server_rtt_ms = rtts[rtts.size() / 2]
 	server_clock_ready = true
 	return true
 
@@ -2193,8 +2265,10 @@ func _on_relay_tunnel_ready() -> void:
 	_tunnel_retry_timer = -1.0
 
 
-func _on_relay_tunnel_lost() -> void:
+func _on_relay_tunnel_lost(reason: String = "") -> void:
 	relay_tunnel_active = false
+	if reason != "" and last_error == "":
+		last_error = reason
 	if not is_host or not relay_active or _relay_tunnel == null:
 		return
 	if _tunnel_retry_timer >= 0.0:
@@ -2202,7 +2276,7 @@ func _on_relay_tunnel_lost() -> void:
 	_tunnel_retry_attempt = mini(_tunnel_retry_attempt + 1, 8)
 	var delay: float = minf(
 		TUNNEL_RETRY_BASE * pow(2.0, float(_tunnel_retry_attempt - 1)),
-		TUNNEL_RETRY_MAX)
+		TUNNEL_RETRY_MAX) * randf_range(0.8, 1.2)
 	_tunnel_retry_timer = delay
 
 
@@ -2256,18 +2330,26 @@ func _relay_heartbeat_tick(delta: float) -> void:
 	if not is_host or not relay_active:
 		return
 	if response.is_empty() or response.get("ok") != true:
-		# A slow Pi can miss a heartbeat or two without the room being gone.
-		# Only a definite 404/410/ok:false (or a long run of timeouts) ends the
-		# lobby; a timed-out Pi keeps its room until the grace period expires.
+		# A slow Pi can miss a heartbeat without the room being gone. A
+		# definite 404/410 expires the room immediately; timeouts get retries.
 		_heartbeat_failures += 1
 		var detail: String = _relay_result_detail()
+		if status == 404:
+			detail = "room_not_found"
+		elif status == 410:
+			detail = "room_expired"
+		elif not response.is_empty() and response.get("ok") == false:
+			detail = "room_expired"
 		if detail != "" and last_error == "":
 			# Surface a TLS/DNS problem instead of reporting a healthy Pi as
 			# "offline" when the real cause is the trust store or resolution.
 			last_error = detail
+			server_detail = detail
+			server_status_changed.emit(server_online, server_detail)
 		var definite: bool = not response.is_empty() \
 			or status == 404 or status == 410
-		if (definite and _heartbeat_failures >= 2) \
+		if status == 404 or status == 410 \
+				or (definite and _heartbeat_failures >= 2) \
 				or _heartbeat_failures >= HEARTBEAT_MAX_FAILURES:
 			_on_relay_room_lost()
 		return
@@ -2747,10 +2829,22 @@ func _relay_result_detail() -> String:
 
 
 func _join_timeout_reason(was_lan: bool) -> String:
-	var reason: String = "Connection timed out. The room may have closed, or the server is unreachable."
+	var transport: String = _join_transport_reason()
+	if transport != "":
+		return transport
+	var reason: String = "Connection timed out. The room may have closed, or the server is unreachable. Hint: retry in a moment."
 	if was_lan and _is_macos():
 		reason += " On macOS, allow Cart Slop GP under System Settings > Privacy & Security > Local Network."
 	return reason
+
+
+func _lan_version_matches(room_version: String) -> bool:
+	var local: String = str(ProjectSettings.get_setting("application/config/version", "")).strip_edges()
+	if local == "":
+		return true
+	if room_version.strip_edges() == "":
+		return false
+	return room_version.strip_edges() == local
 
 
 func _parse_lan_room_reply(packet_text: String, sender_ip: String) -> Dictionary:
@@ -2802,6 +2896,7 @@ func _parse_lan_room_reply(packet_text: String, sender_ip: String) -> Dictionary
 		"state": clean_state,
 		"map": raw_map if TrackDefs.has_theme_id(raw_map) \
 			else GameSettings.sanitize_map_id(raw_map),
+		"version": str(room.get("version", "")).strip_edges(),
 	}
 
 
@@ -2921,7 +3016,11 @@ func join_public_room(room: Dictionary) -> void:
 	_lan_join_port = 0
 	if str(room.get("state", "lobby")).strip_edges().to_lower() != "lobby":
 		join_pending = false
-		join_failed.emit("That room has already started.")
+		join_failed.emit("That match already started. Ask the host to return to the lobby. Hint: wait for the lobby.")
+		return
+	if int(room.get("players", 1)) >= MAX_PLAYERS:
+		join_pending = false
+		join_failed.emit("That room is full. Pick another room or wait for a slot. Hint: try a different room.")
 		return
 	if room.has("public") and not bool(room.get("public")):
 		join_pending = false
@@ -2943,9 +3042,21 @@ func join_public_room(room: Dictionary) -> void:
 			break
 	if live_row.is_empty():
 		join_pending = false
-		join_failed.emit("That room is no longer public. Ask the host for the code.")
+		var transport: String = _join_transport_reason()
+		if transport != "":
+			join_failed.emit(transport)
+		else:
+			join_failed.emit("That room is no longer public. Ask the host for the code.")
 		return
 	room = live_row
+	if str(room.get("state", "lobby")).strip_edges().to_lower() != "lobby":
+		join_pending = false
+		join_failed.emit("That match already started. Ask the host to return to the lobby. Hint: wait for the lobby.")
+		return
+	if int(room.get("players", 1)) >= MAX_PLAYERS:
+		join_pending = false
+		join_failed.emit("That room is full. Pick another room or wait for a slot. Hint: try a different room.")
+		return
 	var host: String = ""
 	if relay_base_public:
 		host = relay_server_host
@@ -2990,8 +3101,15 @@ func join_game(raw_code: String) -> void:
 		# its offline state, not just print a line inside the JOIN card.
 		server_online = false
 		server_detail = "offline"
-		server_status_changed.emit(false, "offline")
-		join_failed.emit("The Cart Slop server is offline. Check the internet, or join a LAN room.")
+		var discover_reason: String = _join_transport_reason()
+		if discover_reason != "":
+			server_detail = _relay_result_detail()
+			last_error = server_detail
+		server_status_changed.emit(false, server_detail)
+		if discover_reason != "":
+			join_failed.emit(discover_reason)
+		else:
+			join_failed.emit("The Cart Slop server is offline. Check the internet, or join a LAN room.")
 		return
 	if ticket != _join_ticket or not join_pending:
 		return
@@ -3004,12 +3122,22 @@ func join_game(raw_code: String) -> void:
 		# A 404 can be a typo, but an empty result after a network failure
 		# would otherwise keep retrying the same dead route.
 		_invalidate_relay_route()
-		join_failed.emit("Room %s was not found. Ask the host for a fresh code." % text)
+		var transport: String = _join_transport_reason(text)
+		if transport != "":
+			join_failed.emit(transport)
+		elif _relay_http_status == 404:
+			join_failed.emit("Room %s was not found. Ask the host for a fresh code. Hint: check the code and retry." % text)
+		else:
+			join_failed.emit("Room %s was not found. Ask the host for a fresh code." % text)
+		return
+	if int(room.get("players", 1)) >= MAX_PLAYERS:
+		join_pending = false
+		join_failed.emit("That room is full. Pick another room or wait for a slot. Hint: try a different room.")
 		return
 	var state: String = str(room.get("state", "lobby")).to_lower()
 	if state != "lobby":
 		join_pending = false
-		join_failed.emit("That room has already started. Ask the host to return to the lobby.")
+		join_failed.emit("That match already started. Ask the host to return to the lobby. Hint: wait for the lobby.")
 		return
 	var host: String = str(room.get("lan_host", ""))
 	if relay_base_public:
@@ -3054,7 +3182,7 @@ func _connect_to(connect_ip: String, connect_port: int, mode: String) -> void:
 			return
 		if host == "":
 			join_pending = false
-			join_failed.emit("Could not find that room.")
+			join_failed.emit("Could not resolve the room address (DNS). Check DNS/VPN settings, then try again. Hint: check network and retry.")
 			return
 	if connect_port <= 0 or connect_port > 65535:
 		join_pending = false
@@ -3432,29 +3560,20 @@ func _net_begin_game(scene_path: String, mode: String, bots: bool, count: int,
 	var current: Node = get_tree().current_scene
 	if current != null and current.scene_file_path == scene_path and in_game:
 		# The first ready RPC can reach the host before its scene exists. On a
-		# retry, announce through the loaded scene again so it can mark this peer
-		# ready and resend the vehicle table.
+		# retry, announce through the loaded scene again once the host is ready.
 		notify_scene_ready()
 		if not is_host:
-			if scene_path == GAME_SCENE:
-				current.rpc_id(1, "_net_client_ready", GameSettings.selected_vehicle)
-			elif scene_path == RACE_SCENE:
-				current.rpc_id(1, "_net_race_ready", GameSettings.minigame_vehicle)
-			elif scene_path == CARGO_SCENE:
-				current.rpc_id(1, "_net_cargo_ready", session_minigame,
-					GameSettings.minigame_vehicle)
-			elif scene_path == KNOCKOUT_SCENE:
-				current.rpc_id(1, "_net_knockout_ready", session_minigame,
-					GameSettings.minigame_vehicle)
-			elif scene_path == BOMB_TAG_SCENE:
-				current.rpc_id(1, "_net_bomb_ready", session_minigame,
-					GameSettings.minigame_vehicle)
+			_send_client_scene_ready(current, scene_path)
 		return
 	if _scene_load_path == scene_path:
 		# A previous retry already asked SceneLoader for this scene. It may
 		# still be streaming; queueing it again would load the scene twice.
 		return
 	_scene_load_path = scene_path
+	if not is_host:
+		scene_ready_peers.erase(1)
+		if host_scene_ready_path != scene_path:
+			host_scene_ready_path = ""
 	input_locked = false
 	in_game = true
 	game_scene = scene_path
@@ -3521,6 +3640,7 @@ func _net_client_left_scene() -> void:
 
 @rpc("authority", "call_local", "reliable")
 func _net_return_lobby() -> void:
+	clear_scene_ready()
 	input_locked = false
 	in_game = false
 	SceneLoader.go_to(LOBBY_SCENE, "MULTIPLAYER")
@@ -3570,6 +3690,8 @@ func _on_peer_connected(id: int) -> void:
 		if in_game:
 			rpc_id(id, "_net_begin_game", game_scene, session_mode,
 				session_bots, session_bot_count, race_seed)
+			if host_scene_ready_path == game_scene and host_scene_ready_path != "":
+				rpc_id(id, "_net_host_scene_ready", host_scene_ready_path)
 	if is_session_active():
 		# Re-announce our name so the newcomer (and everyone) has it.
 		rpc("_net_set_name", multiplayer.get_unique_id(), GameSettings.player_name)
@@ -3697,7 +3819,10 @@ func _retry_lan_join_deferred(host: String, open_port: int) -> void:
 
 
 func _join_failure_reason(was_lan: bool) -> String:
-	var reason: String = "Could not reach that host. Check the code and that the host is online."
+	var transport: String = _join_transport_reason()
+	if transport != "":
+		return transport
+	var reason: String = "Could not reach that host. Check the code and that the host is online. Hint: verify the code and retry."
 	if was_lan and _is_macos():
 		reason += " On macOS, allow Cart Slop GP under System Settings > Privacy & Security > Local Network."
 	return reason
@@ -3767,9 +3892,24 @@ func _net_report_ping(ms: int) -> void:
 
 func _broadcast_ping_table() -> void:
 	## Host-only: relay everyone's reported ping so clients can show it too.
+	## Throttled: broadcast only on >50 ms change or every 10 s.
 	if not is_host or not is_session_active():
 		return
 	ping_table[1] = host_ping_ms
+	var now: int = Time.get_ticks_msec()
+	var changed: bool = false
+	if _ping_last_table.size() != ping_table.size():
+		changed = true
+	else:
+		for key: Variant in ping_table.keys():
+			var prev: int = int(_ping_last_table.get(key, -100000))
+			if absi(int(ping_table[key]) - prev) > 50:
+				changed = true
+				break
+	if not changed and now - _ping_last_broadcast_ms < 10000:
+		return
+	_ping_last_broadcast_ms = now
+	_ping_last_table = ping_table.duplicate()
 	rpc("_net_ping_table", ping_table)
 
 

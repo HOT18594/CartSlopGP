@@ -1,9 +1,11 @@
 extends Node3D
 ## Presentation-only themed life around tracks and arenas. Static detail is merged
-## into one mesh; weather is one MultiMesh and landmarks use a few moving nodes.
+## into one mesh via LandscapeSculptor + PropBatch; weather is one MultiMesh plus
+## optional biome GPU particles; landmarks use smooth animated pivots.
 
 const PropBatch := preload("res://scripts/minigames/scenery/prop_batch.gd")
 const SceneryKit := preload("res://scripts/minigames/scenery/scenery_kit.gd")
+const LandscapeSculptor := preload("res://scripts/minigames/scenery/landscape_sculptor.gd")
 
 var _theme: String = "meadow"
 var _floor_y: float = -0.1
@@ -11,9 +13,7 @@ var _arena_style: String = ""
 var _weather: MultiMeshInstance3D
 var _weather_seeds: Array[Vector3] = []
 var _weather_anchor: Vector3 = Vector3.ZERO
-var _spinners: Array[Node3D] = []
-var _bobbers: Array[Node3D] = []
-var _bob_origins: Array[Vector3] = []
+var _anim: Dictionary = {}
 var _time: float = 0.0
 
 
@@ -30,12 +30,6 @@ static func build_track(parent: Node3D, spline: RefCounted, theme_id: String) ->
 	return world
 
 
-## Adds themed life around a party arena. `context` keeps the ring honest about
-## the arena it decorates instead of assuming flat ground at y = 0:
-##   floor_y      world height the scenery stands on (city abyss, lava sea, ocean)
-##   radius_in    inner radius of the ring (defaults clear of the play surface)
-##   radius_out   outer radius of the ring
-##   style        cluster style override (defaults to the theme)
 static func build_arena(parent: Node3D, theme_id: String, half: float,
 		context: Dictionary = {}) -> Node3D:
 	if parent == null:
@@ -50,6 +44,21 @@ static func build_arena(parent: Node3D, theme_id: String, half: float,
 	return world
 
 
+## Allows map themes to register their own moving landmark pivots into the
+## shared AmbientWorld animation loop (skipped in headless).
+func get_anim_registry() -> Dictionary:
+	return _anim
+
+
+static func anim_of(parent: Node) -> Dictionary:
+	if parent == null:
+		return {}
+	var aw := parent.get_node_or_null("AmbientWorld")
+	if aw != null and aw.has_method("get_anim_registry"):
+		return aw.call("get_anim_registry") as Dictionary
+	return {}
+
+
 func _ready() -> void:
 	set_process(DisplayServer.get_name() != "headless")
 
@@ -61,15 +70,64 @@ func _build_track(track: RefCounted, theme_id: String) -> void:
 	rng.seed = 8100 + _theme.hash()
 	var batch := PropBatch.new()
 	var total: float = maxf(float(track.get("total_length")), 1.0)
-	# The perimeter pass is deliberately sparse: the map themes already carry the
-	# dense mid-field scenery, and a 15 m offset used to drop containers and palms
-	# into the dockyard's water. Dockyard skips the cluster pass entirely (its own
-	# yard/forest builders own that space) and keeps only the landmark cranes.
-	var cluster_count: int = 0 if _theme == "dockyard" else 56
-	var samples: PackedVector3Array = PackedVector3Array()
-	for index in 120:
-		var frame: Dictionary = track.call("sample", total * float(index) / 120.0)
-		samples.append(frame["position"] as Vector3)
+	var samples := PackedVector3Array()
+	var bounds_min := Vector3(INF, INF, INF)
+	var bounds_max := Vector3(-INF, -INF, -INF)
+	for index in 160:
+		var frame: Dictionary = track.call("sample", total * float(index) / 160.0)
+		var pt: Vector3 = frame["position"] as Vector3
+		samples.append(pt)
+		bounds_min = bounds_min.min(pt)
+		bounds_max = bounds_max.max(pt)
+	var center: Vector3 = (bounds_min + bounds_max) * 0.5
+	var radius_est: float = maxf(Vector2(bounds_max.x - bounds_min.x, bounds_max.z - bounds_min.z).length() * 0.5, 120.0)
+
+	# Outer sculpted mountain / mesa / headland horizon ring surrounding the circuit
+	# so the track feels enveloped in a living 360-degree landscape.
+	# Clearance is measured against each landform's real footprint (base radius
+	# x spread + margin): a flat 36 m gate let 80 m-wide peaks land on the road.
+	if _theme != "dockyard":
+		var ring_count: int = 20
+		for i in ring_count:
+			var ang: float = TAU * float(i) / float(ring_count) + rng.randf_range(-0.08, 0.08)
+			var dist: float = radius_est + rng.randf_range(55.0, 145.0)
+			var pos := Vector3(center.x + cos(ang) * dist, -1.0, center.z + sin(ang) * dist)
+			var foot: float = 90.0
+			match _theme:
+				"glacier":
+					foot = 54.0 * 1.5 + 16.0
+				"canyon":
+					foot = 42.0 + 16.0
+				"stadium":
+					foot = 56.0 * 1.2 + 16.0
+			if not _clear_of_track(pos, samples, foot):
+				continue
+			match _theme:
+				"glacier":
+					LandscapeSculptor.add_alpine_mountain(batch, pos,
+						rng.randf_range(28.0, 54.0), rng.randf_range(38.0, 86.0), rng)
+				"canyon":
+					if i % 3 == 0:
+						LandscapeSculptor.add_canyon_spire(batch, pos,
+							rng.randf_range(8.0, 15.0), rng.randf_range(24.0, 44.0), rng)
+					else:
+						LandscapeSculptor.add_stratified_mesa(batch, pos,
+							rng.randf_range(22.0, 42.0), rng.randf_range(24.0, 52.0), 4, rng)
+				"stadium":
+					LandscapeSculptor.add_woodland_hill(batch, pos,
+						rng.randf_range(30.0, 56.0), rng.randf_range(26.0, 50.0),
+						rng.randf_range(16.0, 34.0), rng, {
+							"skirt": Color("559c3e"),
+							"mid": Color("67b54a"),
+							"top": Color("7bc759"),
+						})
+				_:
+					LandscapeSculptor.add_woodland_hill(batch, pos,
+						rng.randf_range(32.0, 62.0), rng.randf_range(28.0, 54.0),
+						rng.randf_range(22.0, 48.0), rng)
+
+	# Mid-field clusters well clear of the widened lane.
+	var cluster_count: int = 0 if _theme == "dockyard" else 42
 	for index in cluster_count:
 		var frame: Dictionary = track.call("sample",
 			total * (float(index) + 0.35) / float(cluster_count))
@@ -79,40 +137,42 @@ func _build_track(track: RefCounted, theme_id: String) -> void:
 		right = right.normalized()
 		var forward: Vector3 = frame["forward"]
 		var side: float = 1.0 if index % 2 == 0 else -1.0
-		var distance: float = rng.randf_range(19.0, 34.0)
+		var distance: float = rng.randf_range(26.0, 48.0)
 		var position: Vector3 = point + right * side * distance
-		if not _clear_of_track(position, samples, 18.0):
+		if not _clear_of_track(position, samples, 24.0):
 			continue
-		position.y = point.y - 0.18
+		position.y = minf(point.y, 2.0) - 0.25
 		var yaw: float = atan2(-forward.x, -forward.z) + rng.randf_range(-0.4, 0.4)
 		_add_cluster(batch, position, yaw, rng, index)
-	var mesh := MeshInstance3D.new()
-	mesh.name = "ThemedPerimeter"
-	mesh.mesh = batch.build()
-	mesh.material_override = SceneryKit.vertex_material()
-	add_child(mesh)
+
+	var built := batch.build()
+	if built != null:
+		var mesh := MeshInstance3D.new()
+		mesh.name = "ThemedPerimeter"
+		mesh.mesh = built
+		mesh.material_override = SceneryKit.vertex_material()
+		add_child(mesh)
+
 	for index in 4:
-		var frame: Dictionary = track.call("sample", total * (0.09 + float(index) * 0.235))
+		var frame: Dictionary = track.call("sample", total * (0.11 + float(index) * 0.23))
 		var point: Vector3 = frame["position"]
 		var right: Vector3 = frame["right"]
 		right.y = 0.0
 		right = right.normalized()
 		var side: float = 1.0 if index % 2 == 0 else -1.0
-		var offset: Vector3 = right * side * (24.0 + index * 2.0)
+		var offset: Vector3 = right * side * (32.0 + index * 3.0)
 		var position: Vector3 = point + offset
-		if not _clear_of_track(position, samples, 18.0):
+		if not _clear_of_track(position, samples, 25.0):
 			continue
-		position.y = point.y
-		# Face the landmark away from the racing line so crane arms and rotors
-		# never reach back over the tarmac.
+		position.y = maxf(point.y, 0.0)
 		var outward: Vector3 = offset.normalized()
 		_add_landmark(position, index, atan2(outward.x, outward.z))
-	_build_weather(Vector3.ZERO)
+
+	_build_weather(Vector3(center.x, 0.0, center.z))
+	LandscapeSculptor.add_biome_particles(self, _theme,
+		Vector3(center.x, 0.0, center.z), radius_est * 0.85)
 
 
-## True when `position` keeps `clearance` metres from every sampled centreline
-## point. The track loops near itself, so an offset that is "safe" against its
-## own sample can still land on the other side of the circuit.
 func _clear_of_track(position: Vector3, samples: PackedVector3Array,
 		clearance: float) -> bool:
 	var flat := Vector2(position.x, position.z)
@@ -128,40 +188,73 @@ func _build_arena(theme_id: String, half: float, context: Dictionary) -> void:
 	_theme = _normalise_theme(theme_id)
 	_arena_style = str(context.get("style", _theme))
 	_floor_y = float(context.get("floor_y", -0.1))
-	var radius_in: float = float(context.get("radius_in", half + 18.0))
-	var radius_out: float = float(context.get("radius_out", half + 40.0))
+	var radius_in: float = float(context.get("radius_in", half + 20.0))
+	var radius_out: float = float(context.get("radius_out", half + 54.0))
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 9100 + _arena_style.hash()
 	var batch := PropBatch.new()
-	# Cluster width is 6-8 m, so space the ring by style instead of squeezing 72
-	# placements into ~4-8 m of arc (which made the rings overlap themselves).
-	var spacing: float = 16.0
+
+	var spacing: float = 18.0
 	match _arena_style:
 		"skyline":
 			spacing = 24.0
 		"foundry", "iceberg":
-			spacing = 13.0
+			spacing = 16.0
 		"dockyard":
-			spacing = 18.0
+			spacing = 22.0
 	var mid_radius: float = (radius_in + radius_out) * 0.5
-	var count: int = clampi(int(TAU * mid_radius / spacing), 12, 44)
+	var count: int = clampi(int(TAU * mid_radius / spacing), 14, 40)
 	for index in count:
 		var angle: float = TAU * float(index) / float(count)
 		var radius: float = rng.randf_range(radius_in, radius_out)
 		var position := Vector3(cos(angle) * radius, _floor_y, sin(angle) * radius)
-		_add_cluster(batch, position, -angle + rng.randf_range(-0.2, 0.2), rng, index)
-	var mesh := MeshInstance3D.new()
-	mesh.name = "ThemedPerimeter"
-	mesh.mesh = batch.build()
-	mesh.material_override = SceneryKit.vertex_material()
-	add_child(mesh)
+		_add_cluster(batch, position, -angle + rng.randf_range(-0.25, 0.25), rng, index)
+
+	# Second distant sculpted backdrop ring so no arena sits in an empty void.
+	var backdrop_count: int = 18
+	for index in backdrop_count:
+		var angle: float = TAU * (float(index) + 0.5) / float(backdrop_count)
+		var dist: float = radius_out + rng.randf_range(35.0, 95.0)
+		var pos := Vector3(cos(angle) * dist, _floor_y, sin(angle) * dist)
+		match _arena_style:
+			"skyline":
+				LandscapeSculptor.add_skyscraper(batch, pos, -angle,
+					rng.randf_range(12.0, 22.0), rng.randf_range(12.0, 22.0),
+					rng.randf_range(42.0, 88.0), Color("364568"), Color("ffdf8a"), rng)
+			"foundry":
+				LandscapeSculptor.add_volcanic_peak(batch, pos,
+					rng.randf_range(24.0, 44.0), rng.randf_range(32.0, 62.0), rng)
+			"iceberg", "glacier":
+				LandscapeSculptor.add_alpine_mountain(batch, pos,
+					rng.randf_range(24.0, 48.0), rng.randf_range(32.0, 74.0), rng)
+			"canyon":
+				LandscapeSculptor.add_stratified_mesa(batch, pos,
+					rng.randf_range(22.0, 42.0), rng.randf_range(22.0, 48.0), 4, rng)
+			_:
+				LandscapeSculptor.add_woodland_hill(batch, pos,
+					rng.randf_range(28.0, 52.0), rng.randf_range(26.0, 48.0),
+					rng.randf_range(18.0, 38.0), rng)
+
+	var built := batch.build()
+	if built != null:
+		var mesh := MeshInstance3D.new()
+		mesh.name = "ThemedPerimeter"
+		mesh.mesh = built
+		mesh.material_override = SceneryKit.vertex_material()
+		add_child(mesh)
+
 	for index in 4:
 		var angle: float = TAU * (float(index) + 0.5) / 4.0
-		var radius: float = radius_in + 6.0
+		# Small enclosed arenas (plaza, rooftop...): the old radius_in + 10
+		# planted the 11 m ferris wheel across the corner barriers. Push the
+		# ring out and fly balloons instead of the wide wheel there.
+		var radius: float = radius_in + 10.0 if half > 62.0 else radius_in + 24.0
 		var position := Vector3(cos(angle) * radius, _floor_y, sin(angle) * radius)
-		# The landmark's front (+Z) points away from the arena centre.
-		_add_landmark(position, index, angle)
+		var landmark_index: int = index if half > 62.0 else index + 1
+		_add_landmark(position, landmark_index, angle)
 	_build_weather(Vector3(0.0, _floor_y, 0.0))
+	LandscapeSculptor.add_biome_particles(self, _arena_style,
+		Vector3(0.0, maxf(_floor_y, 0.0), 0.0), half * 1.45)
 
 
 func _normalise_theme(raw: String) -> String:
@@ -186,106 +279,110 @@ func _add_cluster(batch: PropBatch, point: Vector3, yaw: float,
 	var style: String = _arena_style if _arena_style != "" else _theme
 	match style:
 		"skyline":
-			# Rooftop arenas float above a city, so the "ring" is a skyline of
-			# towers standing on the abyss plane below the action, never a
-			# grandstand ring hanging in mid-air.
-			var tower_w: float = rng.randf_range(7.0, 13.0)
-			var tower_h: float = rng.randf_range(30.0, 62.0)
-			var tower_col: Color = Color("3f4f78") if index % 2 == 0 \
-				else Color("4b5d88")
-			batch.add_box(base * Transform3D(Basis.IDENTITY,
-				Vector3(0.0, tower_h * 0.5, 0.0)),
-				Vector3(tower_w, tower_h, tower_w), tower_col)
+			var tower_w: float = rng.randf_range(8.5, 15.0)
+			var tower_d: float = rng.randf_range(8.5, 15.0)
+			var tower_h: float = rng.randf_range(34.0, 68.0)
+			var tower_col: Color = Color("3f4f78") if index % 2 == 0 else Color("4b5d88")
 			var lit: Color = Color("ffdf8a") if index % 3 == 0 else Color("8fd6f2")
-			for row in 4:
-				var window_y: float = tower_h * (0.18 + 0.18 * float(row))
-				batch.add_box(base * Transform3D(Basis.IDENTITY,
-					Vector3(0.0, window_y, tower_w * 0.5 + 0.02)),
-					Vector3(tower_w * 0.55, 0.9, 0.08), lit)
-			if index % 3 == 0:
-				batch.add_box(base * Transform3D(Basis.IDENTITY,
-					Vector3(0.0, tower_h + 0.6, 0.0)),
-					Vector3(0.8, 1.2, 0.8), Color("f05a5a"))
+			LandscapeSculptor.add_skyscraper(batch, point, yaw, tower_w, tower_d,
+				tower_h, tower_col, lit, rng)
 		"iceberg":
-			# Floes carry the pines so they stand in the arctic sea instead of
-			# hovering over it.
 			batch.add_cylinder(base * Transform3D(Basis.IDENTITY,
-				Vector3(0.0, 0.18, 0.0)), rng.randf_range(4.2, 6.4), 0.5, 9,
+				Vector3(0.0, 0.25, 0.0)), rng.randf_range(5.5, 8.5), 0.9, 9,
 				Color("dff3fa"))
-			for offset in [Vector3(-2.2, 0.0, 0.6), Vector3(2.0, 0.0, -1.2)]:
+			if index % 2 == 0:
+				LandscapeSculptor.add_alpine_mountain(batch, point + Vector3(0.0, 0.3, 0.0),
+					rng.randf_range(4.5, 7.2), rng.randf_range(6.0, 12.0), rng)
+			for offset: Vector3 in [Vector3(-2.6, 0.2, 0.8), Vector3(2.4, 0.2, -1.4)]:
 				_tree(batch, base * Transform3D(Basis.IDENTITY, offset),
-					rng.randf_range(0.9, 1.3), Color("285e58"),
-					Color("574b44"), true)
+					rng.randf_range(0.95, 1.45), Color("285e58"), Color("574b44"), true)
 		"dockyard":
 			if _arena_style == "dockyard":
-				# Harbours have water: containers ride steel barges instead of
-				# standing in the sea.
 				batch.add_box(base * Transform3D(Basis.IDENTITY,
-					Vector3(0.0, 0.3, 0.0)), Vector3(9.0, 0.6, 12.5),
+					Vector3(0.0, 0.35, 0.0)), Vector3(10.5, 0.8, 14.0),
 					Color("3d4a55"))
 				for level in 2:
 					for column in 2:
-						var p := Vector3(float(column) * 3.4 - 1.7,
-							1.25 + level * 2.55, 0.0)
+						var p := Vector3(float(column) * 3.6 - 1.8,
+							1.4 + level * 2.55, 0.0)
 						batch.add_box(base * Transform3D(Basis.IDENTITY, p),
-							Vector3(3.2, 2.45, 6.2),
+							Vector3(3.3, 2.45, 6.2),
 							[Color("e45a45"), Color("2d9fbd"), Color("e8ad3e"),
 								Color("567287")][(index + level + column) % 4])
 			else:
-				_dockyard_cluster(batch, base, rng, index)
+				_dockyard_cluster(batch, base, index)
 		"foundry":
-			for stack in 2:
-				var height: float = 4.5 + float(stack) * 3.0
-				batch.add_cylinder(base * Transform3D(Basis.IDENTITY,
-					Vector3(float(stack) * 3.0 - 1.5, height * 0.5, 0.0)),
-					0.72, height, 10, Color("3f424b"))
-				batch.add_cylinder(base * Transform3D(Basis.IDENTITY,
-					Vector3(float(stack) * 3.0 - 1.5, height - 0.2, 0.0)),
-					0.9, 0.4, 10, Color("ee7441"))
-			batch.add_box(base * Transform3D(Basis.IDENTITY, Vector3(0.0, 0.2, 3.0)),
-				Vector3(7.0, 0.35, 2.4), Color("f06032"))
-		"meadow":
-			for offset in [Vector3(-2.2, 0.0, 0.8), Vector3(1.8, 0.0, -1.4)]:
-				_tree(batch, base * Transform3D(Basis.IDENTITY, offset), rng.randf_range(0.8, 1.25),
-					Color("3d9148"), Color("765036"), false)
 			if index % 3 == 0:
-				batch.add_cylinder(base * Transform3D(Basis(Vector3.FORWARD, PI * 0.5),
-					Vector3(0.0, 0.65, 2.6)), 0.72, 1.5, 10, Color("e5b94f"))
+				LandscapeSculptor.add_volcanic_peak(batch, point,
+					rng.randf_range(7.0, 12.0), rng.randf_range(12.0, 24.0), rng)
+			else:
+				for stack in 2:
+					var height: float = 5.5 + float(stack) * 3.5
+					batch.add_cylinder(base * Transform3D(Basis.IDENTITY,
+						Vector3(float(stack) * 3.2 - 1.6, height * 0.5, 0.0)),
+						0.82, height, 10, Color("3f424b"))
+					batch.add_cylinder(base * Transform3D(Basis.IDENTITY,
+						Vector3(float(stack) * 3.2 - 1.6, height - 0.2, 0.0)),
+						1.02, 0.45, 10, Color("ee7441"))
+				batch.add_box(base * Transform3D(Basis.IDENTITY, Vector3(0.0, 0.2, 3.0)),
+					Vector3(7.6, 0.4, 2.6), Color("f06032"))
+		"meadow":
+			for offset: Vector3 in [Vector3(-2.6, 0.0, 1.0), Vector3(2.2, 0.0, -1.6)]:
+				_tree(batch, base * Transform3D(Basis.IDENTITY, offset),
+					rng.randf_range(0.95, 1.45), Color("3d9148"), Color("765036"), false)
+			if index % 4 == 0:
+				LandscapeSculptor.add_woodland_hill(batch, point + Vector3(0.0, -0.2, 0.0),
+					rng.randf_range(7.0, 12.0), rng.randf_range(7.0, 12.0),
+					rng.randf_range(3.5, 6.5), rng)
 			for flower in 5:
-				var p := Vector3(rng.randf_range(-3.0, 3.0), 0.15, rng.randf_range(-3.0, 3.0))
-				batch.add_box(base * Transform3D(Basis.IDENTITY, p), Vector3(0.18, 0.3, 0.18),
+				var p := Vector3(rng.randf_range(-3.2, 3.2), 0.16, rng.randf_range(-3.2, 3.2))
+				batch.add_box(base * Transform3D(Basis.IDENTITY, p), Vector3(0.22, 0.34, 0.22),
 					Color("ffd55c") if flower % 2 == 0 else Color("f48db5"))
 		"canyon":
-			for rock in 3:
-				var p := Vector3(rng.randf_range(-2.6, 2.6), 0.0, rng.randf_range(-2.0, 2.0))
-				var height: float = rng.randf_range(2.0, 6.5)
-				batch.add_cone(base * Transform3D(Basis.IDENTITY, p + Vector3.UP * height * 0.5),
-					rng.randf_range(1.0, 2.2), height, 6,
-					Color("bd5e3d") if rock % 2 == 0 else Color("db8050"))
 			if index % 2 == 0:
-				_cactus(batch, base * Transform3D(Basis.IDENTITY, Vector3(3.2, 0.0, 0.0)), rng)
+				LandscapeSculptor.add_canyon_spire(batch, point,
+					rng.randf_range(3.2, 5.8), rng.randf_range(7.5, 14.5), rng)
+			else:
+				LandscapeSculptor.add_stratified_mesa(batch, point,
+					rng.randf_range(5.5, 9.0), rng.randf_range(6.0, 11.0), 3, rng)
+			if index % 2 == 0:
+				_cactus(batch, base * Transform3D(Basis.IDENTITY, Vector3(4.5, 0.0, 0.0)), rng)
+			# Tumbled rock pile at the outcrop foot.
+			for rubble in 3:
+				var rr: float = rng.randf_range(0.7, 1.4)
+				batch.add_box(base * Transform3D(Basis(Vector3.UP, rng.randf() * TAU),
+					Vector3(-3.4 + float(rubble) * 1.1, rr * 0.35, 2.6 + rng.randf_range(-0.6, 0.6))),
+					Vector3(rr * 1.5, rr * 0.9, rr * 1.2),
+					Color("8a3c22") if rubble % 2 == 0 else Color("b85a35"))
 		"glacier":
-			for offset in [Vector3(-2.5, 0.0, 0.0), Vector3(2.1, 0.0, -1.5)]:
-				_tree(batch, base * Transform3D(Basis.IDENTITY, offset), rng.randf_range(0.9, 1.35),
-					Color("285e58"), Color("574b44"), true)
-			for crystal in 3:
-				var height: float = rng.randf_range(1.4, 3.8)
-				batch.add_cone(base * Transform3D(Basis.IDENTITY,
-					Vector3(2.8 + crystal * 0.6, height * 0.5, 2.0)), 0.55, height, 5, Color("89e5f2"))
+			for offset: Vector3 in [Vector3(-2.6, 0.0, 0.2), Vector3(2.4, 0.0, -1.6)]:
+				_tree(batch, base * Transform3D(Basis.IDENTITY, offset),
+					rng.randf_range(1.0, 1.5), Color("2f7d6e"), Color("5a4638"), true)
+			# Wind-sculpted snowdrift wedge + ice shards at the cluster foot.
+			batch.add_box(base * Transform3D(Basis(Vector3.UP, 0.35),
+				Vector3(0.2, 0.28, 3.4)), Vector3(5.2, 0.55, 1.8), Color("cfeaf8"))
+			batch.add_box(base * Transform3D(Basis(Vector3.FORWARD, 0.28),
+				Vector3(-2.2, 0.75, 3.1)), Vector3(0.5, 1.5, 0.5), Color("8fd4ec"))
+			if index % 3 == 0:
+				LandscapeSculptor.add_alpine_mountain(batch, point + Vector3(3.0, 0.0, 2.0),
+					rng.randf_range(5.0, 8.0), rng.randf_range(6.0, 11.0), rng)
 		_:
-			for row in 3:
-				batch.add_box(base * Transform3D(Basis.IDENTITY, Vector3(0.0, 0.45 + row * 0.55, row * 0.9)),
-					Vector3(7.5, 0.5, 1.1), Color("43566f"))
-				for seat in 8:
-					var colors: Array[Color] = [Color("ef5c67"), Color("f4c84c"), Color("49b7d1"), Color("f2eee2")]
-					batch.add_box(base * Transform3D(Basis.IDENTITY,
-						Vector3(-3.1 + seat * 0.9, 0.95 + row * 0.55, row * 0.9)),
-						Vector3(0.48, 0.65, 0.48), colors[(index + row + seat) % colors.size()])
+			# Grounded woodland cluster + festival pavilion (zero floating crowd strips).
+			LandscapeSculptor.add_woodland_hill(batch, point,
+				rng.randf_range(6.5, 11.0), rng.randf_range(6.5, 11.0),
+				rng.randf_range(2.2, 4.5), rng)
+			for offset: Vector3 in [Vector3(-2.6, 0.5, 0.8), Vector3(2.4, 0.5, -1.0)]:
+				_tree(batch, base * Transform3D(Basis.IDENTITY, offset),
+					rng.randf_range(0.9, 1.3), Color("4da34e"), Color("765036"), false)
+			# Berry bushes dotting the verge.
+			for bush in 3:
+				var bpos := Vector3(rng.randf_range(-4.0, 4.0), 0.35, rng.randf_range(2.0, 4.5))
+				batch.add_box(base * Transform3D(Basis(Vector3.UP, rng.randf() * TAU), bpos),
+					Vector3(0.9, 0.7, 0.9),
+					Color("3f9e46") if bush % 2 == 0 else Color("57b84a"))
 
 
-## The dockyard's land-side container stack (used by racing tracks).
-func _dockyard_cluster(batch: PropBatch, base: Transform3D,
-		rng: RandomNumberGenerator, index: int) -> void:
+func _dockyard_cluster(batch: PropBatch, base: Transform3D, index: int) -> void:
 	var colors: Array[Color] = [Color("e45a45"), Color("2d9fbd"), Color("e8ad3e"), Color("567287")]
 	for level in 2:
 		for column in 2:
@@ -313,11 +410,11 @@ func _tree(batch: PropBatch, base: Transform3D, scale_value: float,
 
 
 func _cactus(batch: PropBatch, base: Transform3D, rng: RandomNumberGenerator) -> void:
-	var height: float = rng.randf_range(2.5, 4.5)
+	var height: float = rng.randf_range(2.6, 4.6)
 	var green := Color("39855c")
 	batch.add_cylinder(base * Transform3D(Basis.IDENTITY, Vector3.UP * height * 0.5),
 		0.32, height, 8, green)
-	for side in [-1.0, 1.0]:
+	for side: float in [-1.0, 1.0]:
 		batch.add_cylinder(base * Transform3D(Basis(Vector3.FORWARD, PI * 0.5),
 			Vector3(side * 0.65, height * 0.52, 0.0)), 0.22, 1.25, 8, green)
 		batch.add_cylinder(base * Transform3D(Basis.IDENTITY,
@@ -327,98 +424,64 @@ func _cactus(batch: PropBatch, base: Transform3D, rng: RandomNumberGenerator) ->
 func _add_landmark(point: Vector3, index: int, yaw: float = 0.0) -> void:
 	match _theme:
 		"meadow":
-			_windmill(point, index, yaw)
-		"dockyard", "foundry":
-			_crane(point, index, yaw)
+			LandscapeSculptor.build_windmill(self, point, yaw, 1.15, "meadow", _anim)
+		"canyon":
+			LandscapeSculptor.build_windmill(self, point, yaw, 1.05, "canyon", _anim)
+		"dockyard":
+			if index % 2 == 0:
+				LandscapeSculptor.build_port_crane(self, point, yaw, 14.0, Color("f0b73e"), _anim)
+			else:
+				LandscapeSculptor.build_cargo_ship(self, point + Vector3(0.0, -0.5, 0.0), yaw, 0.78, _anim)
+		"foundry":
+			LandscapeSculptor.build_port_crane(self, point, yaw, 13.0, Color("e36642"), _anim)
 		"glacier":
-			_gondola(point, index, yaw)
+			var end_pt: Vector3 = point + Vector3(cos(yaw), 0.25, sin(yaw)) * 28.0
+			LandscapeSculptor.build_ski_lift_system(self, point + Vector3.UP * 8.0,
+				end_pt + Vector3.UP * 14.0, 2, 2, _anim)
 		_:
-			_balloon(point, index)
+			if index == 0:
+				LandscapeSculptor.build_ferris_wheel(self, point, yaw, 11.0, _anim)
+			else:
+				var col_a: Color = Color("ed5d68") if index % 2 == 0 else Color("38d6f0")
+				var col_b: Color = Color("ffd22e") if index % 2 == 0 else Color("f26ca7")
+				LandscapeSculptor.build_hot_air_balloon(self, point + Vector3.UP * 13.0,
+					col_a, col_b, float(index) * 1.4, _anim)
 
 
-func _windmill(point: Vector3, index: int, yaw: float) -> void:
-	var root := Node3D.new()
-	root.name = "Windmill_%d" % index
-	root.position = point
-	root.rotation.y = yaw
-	add_child(root)
-	_box(root, Vector3(0.0, 4.0, 0.0), Vector3(1.2, 8.0, 1.2), Color("eee0bd"))
-	var rotor := Node3D.new()
-	rotor.position = Vector3(0.0, 7.4, -0.8)
-	root.add_child(rotor)
-	for blade in 4:
-		var piece := _box(rotor, Vector3(0.0, 1.65, 0.0), Vector3(0.48, 3.5, 0.18),
-			Color("ef6355") if blade % 2 == 0 else Color("f7d156"))
-		piece.rotation.z = blade * PI * 0.5
-		piece.position = Vector3(-sin(piece.rotation.z), cos(piece.rotation.z), 0.0) * 1.65
-	_spinners.append(rotor)
-
-
-func _crane(point: Vector3, index: int, yaw: float) -> void:
-	var root := Node3D.new()
-	root.name = "AnimatedCrane_%d" % index
-	root.position = point
-	root.rotation.y = yaw
-	add_child(root)
-	var color := Color("f0b73e") if _theme == "dockyard" else Color("e36642")
-	_box(root, Vector3(0.0, 6.0, 0.0), Vector3(0.8, 12.0, 0.8), color)
-	_box(root, Vector3(3.5, 11.7, 0.0), Vector3(8.0, 0.65, 0.65), color)
-	var hook := Node3D.new()
-	hook.position = Vector3(6.8, 7.0, 0.0)
-	root.add_child(hook)
-	_box(hook, Vector3(0.0, 2.0, 0.0), Vector3(0.10, 4.0, 0.10), Color("303d48"))
-	_box(hook, Vector3.ZERO, Vector3(0.75, 0.75, 0.75), Color("e7e1ce"))
-	_bobbers.append(hook)
-	_bob_origins.append(hook.position)
-
-
-func _gondola(point: Vector3, index: int, yaw: float) -> void:
-	var root := Node3D.new()
-	root.name = "SkiLift_%d" % index
-	root.position = point
-	root.rotation.y = yaw
-	add_child(root)
-	_box(root, Vector3(-6.0, 4.0, 0.0), Vector3(0.5, 8.0, 0.5), Color("586b7a"))
-	_box(root, Vector3(6.0, 4.0, 0.0), Vector3(0.5, 8.0, 0.5), Color("586b7a"))
-	_box(root, Vector3(0.0, 7.8, 0.0), Vector3(12.0, 0.10, 0.10), Color("2f3d48"))
-	var car := Node3D.new()
-	car.position = Vector3(-4.0, 6.4, 0.0)
-	root.add_child(car)
-	_box(car, Vector3.ZERO, Vector3(2.0, 1.7, 1.7), Color("e85352"))
-	_box(car, Vector3(0.0, 1.2, 0.0), Vector3(0.12, 1.0, 0.12), Color("374955"))
-	_bobbers.append(car)
-	_bob_origins.append(car.position)
-
-
-func _balloon(point: Vector3, index: int) -> void:
-	var root := Node3D.new()
-	root.name = "FestivalBalloon_%d" % index
-	root.position = point + Vector3.UP * 9.0
-	add_child(root)
-	var color := Color("ed5d68") if index % 2 == 0 else Color("f1bd42")
-	var sphere := SphereMesh.new()
-	sphere.radius = 2.4
-	sphere.height = 4.8
-	sphere.radial_segments = 12
-	sphere.rings = 6
-	var mesh := MeshInstance3D.new()
-	mesh.mesh = sphere
-	mesh.material_override = _material(color)
-	root.add_child(mesh)
-	_box(root, Vector3(0.0, -3.0, 0.0), Vector3(1.2, 0.8, 1.2), Color("8a5b3d"))
-	_bobbers.append(root)
-	_bob_origins.append(root.position)
-
-
-func _box(parent: Node3D, point: Vector3, size: Vector3, color: Color) -> MeshInstance3D:
+func _build_weather(anchor: Vector3) -> void:
+	_weather_anchor = anchor
 	var mesh := BoxMesh.new()
-	mesh.size = size
-	var instance := MeshInstance3D.new()
-	instance.mesh = mesh
-	instance.position = point
-	instance.material_override = _material(color)
-	parent.add_child(instance)
-	return instance
+	var color := Color.WHITE
+	match _theme:
+		"glacier":
+			mesh.size = Vector3(0.14, 0.14, 0.14)
+		"dockyard":
+			mesh.size = Vector3(0.04, 1.1, 0.04)
+			color = Color("a6d8e8")
+		"canyon":
+			mesh.size = Vector3(0.16, 0.08, 0.16)
+			color = Color("edb276")
+		"foundry":
+			mesh.size = Vector3(0.11, 0.20, 0.11)
+			color = Color("ff9b42")
+		"stadium":
+			mesh.size = Vector3(0.13, 0.05, 0.24)
+			color = Color("ffd45e")
+		_:
+			mesh.size = Vector3(0.11, 0.06, 0.19)
+			color = Color("d8ef87")
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 12000 + _theme.hash()
+	var transforms: Array = []
+	for index in 120:
+		var seed_value := Vector3(rng.randf_range(-34.0, 34.0), rng.randf_range(0.0, 22.0),
+			rng.randf_range(-34.0, 34.0))
+		_weather_seeds.append(seed_value)
+		transforms.append(Transform3D(Basis.IDENTITY, anchor + seed_value))
+	_weather = SceneryKit.multimesh(mesh, _material(color), transforms, "AmbientWeather", false)
+	var material := _weather.material_override as StandardMaterial3D
+	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	add_child(_weather)
 
 
 func _material(color: Color) -> StandardMaterial3D:
@@ -428,56 +491,9 @@ func _material(color: Color) -> StandardMaterial3D:
 	return material
 
 
-func _build_weather(anchor: Vector3) -> void:
-	_weather_anchor = anchor
-	var mesh := BoxMesh.new()
-	var color := Color.WHITE
-	match _theme:
-		"glacier":
-			mesh.size = Vector3(0.12, 0.12, 0.12)
-		"dockyard":
-			mesh.size = Vector3(0.035, 1.1, 0.035)
-			color = Color("a6d8e8")
-		"canyon":
-			mesh.size = Vector3(0.16, 0.08, 0.16)
-			color = Color("edb276")
-		"foundry":
-			mesh.size = Vector3(0.10, 0.18, 0.10)
-			color = Color("ff9b42")
-		"stadium":
-			mesh.size = Vector3(0.12, 0.05, 0.22)
-			color = Color("ffd45e")
-		_:
-			mesh.size = Vector3(0.10, 0.06, 0.18)
-			color = Color("d8ef87")
-	var rng := RandomNumberGenerator.new()
-	rng.seed = 12000 + _theme.hash()
-	var transforms: Array = []
-	for index in 120:
-		var seed_value := Vector3(rng.randf_range(-28.0, 28.0), rng.randf_range(0.0, 18.0),
-			rng.randf_range(-28.0, 28.0))
-		_weather_seeds.append(seed_value)
-		transforms.append(Transform3D(Basis.IDENTITY, anchor + seed_value))
-	_weather = SceneryKit.multimesh(mesh, _material(color), transforms, "AmbientWeather", false)
-	var material := _weather.material_override as StandardMaterial3D
-	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	add_child(_weather)
-
-
 func _process(delta: float) -> void:
 	_time += delta
-	for index in _spinners.size():
-		_spinners[index].rotation.z += delta * (0.45 + index * 0.08)
-	for index in _bobbers.size():
-		var node: Node3D = _bobbers[index]
-		if _theme == "glacier":
-			node.position = _bob_origins[index] + Vector3(sin(_time * 0.32 + index) * 4.2, 0.0, 0.0)
-		elif _theme == "dockyard" or _theme == "foundry":
-			node.position = _bob_origins[index] + Vector3.UP * sin(_time * 0.7 + index) * 1.2
-		else:
-			node.position = _bob_origins[index] + Vector3(sin(_time * 0.2 + index) * 2.0,
-				sin(_time * 0.65 + index) * 0.6, 0.0)
-			node.rotation.y += delta * 0.08
+	LandscapeSculptor.step_animations(_anim, _time, delta)
 	if _weather == null:
 		return
 	var camera: Camera3D = get_viewport().get_camera_3d()
@@ -487,19 +503,19 @@ func _process(delta: float) -> void:
 		var p := seed_value
 		match _theme:
 			"glacier":
-				p.y = fposmod(seed_value.y - _time * 2.1, 18.0)
-				p.x += sin(_time * 0.8 + index) * 1.4
+				p.y = fposmod(seed_value.y - _time * 2.2, 22.0)
+				p.x += sin(_time * 0.8 + index) * 1.6
 			"dockyard":
-				p.y = fposmod(seed_value.y - _time * 15.0, 18.0)
+				p.y = fposmod(seed_value.y - _time * 14.0, 22.0)
 				p.x += _time * 0.8
 			"foundry":
-				p.y = fposmod(seed_value.y + _time * 2.8, 18.0)
-				p.x += sin(_time + index) * 0.7
+				p.y = fposmod(seed_value.y + _time * 2.8, 22.0)
+				p.x += sin(_time + index) * 0.8
 			"canyon":
-				p.x = fposmod(seed_value.x + _time * 3.0 + 28.0, 56.0) - 28.0
-				p.y = 1.0 + seed_value.y * 0.35 + sin(_time + index) * 0.6
+				p.x = fposmod(seed_value.x + _time * 3.2 + 34.0, 68.0) - 34.0
+				p.y = 1.0 + seed_value.y * 0.4 + sin(_time + index) * 0.6
 			_:
-				p.y = fposmod(seed_value.y - _time * 0.65, 18.0)
-				p.x += sin(_time * 0.45 + index) * 2.0
+				p.y = fposmod(seed_value.y - _time * 0.7, 22.0)
+				p.x += sin(_time * 0.45 + index) * 2.2
 		var basis := Basis(Vector3.UP, _time * 0.4 + index)
 		_weather.multimesh.set_instance_transform(index, Transform3D(basis, center + p))

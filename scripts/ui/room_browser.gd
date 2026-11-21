@@ -178,6 +178,7 @@ func _scan_lan(ticket: int) -> void:
 		return
 	_lan_rooms = _tag_rooms(result, SOURCE_LAN)
 	_lan_pending = false
+	_render_partial(ticket)
 	_finish_merged(ticket)
 
 
@@ -188,6 +189,7 @@ func _scan_online(ticket: int) -> void:
 	_online_failed = not Network.server_online
 	_online_rooms = _tag_rooms(result, SOURCE_ONLINE)
 	_online_pending = false
+	_render_partial(ticket)
 	_finish_merged(ticket)
 
 
@@ -201,6 +203,54 @@ func _tag_rooms(entries: Array, source: String) -> Array[Dictionary]:
 	return tagged
 
 
+func _render_partial(ticket: int) -> void:
+	if ticket != _ticket or not is_inside_tree():
+		return
+	_rooms.clear()
+	for room: Dictionary in _lan_rooms:
+		if _prefilter(room):
+			_rooms.append(room)
+	for room: Dictionary in _online_rooms:
+		if _prefilter(room):
+			_rooms.append(room)
+	_sort_rooms()
+	_clear_list()
+	if _rooms.is_empty():
+		return
+	var shown: int = 0
+	for room: Dictionary in _rooms:
+		if not _matches(room):
+			continue
+		shown += 1
+		_list.add_child(_room_row(room))
+	if shown > 0:
+		_count_label.text = "%d ROOM%s" % [shown, "" if shown == 1 else "S"]
+		_set_state("idle", "", "", Callable())
+		_title.text = _base_title()
+		MenuNav.refresh()
+		_restore_row_focus()
+
+
+func _prefilter(room: Dictionary) -> bool:
+	if int(room.get("players", 1)) >= MAX_PLAYERS:
+		return false
+	var room_ver: String = str(room.get("version", "")).strip_edges()
+	if room_ver != "":
+		var local_ver: String = str(ProjectSettings.get_setting("application/config/version", "")).strip_edges()
+		if local_ver != "" and room_ver != local_ver:
+			return false
+	return true
+
+
+func _sort_rooms() -> void:
+	_rooms.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		var sa: int = 0 if str(a.get("_source", SOURCE_ONLINE)) == SOURCE_LAN else 1
+		var sb: int = 0 if str(b.get("_source", SOURCE_ONLINE)) == SOURCE_LAN else 1
+		if sa != sb:
+			return sa < sb
+		return int(a.get("ping", 9999)) < int(b.get("ping", 9999)))
+
+
 func _finish_merged(ticket: int) -> void:
 	if not _busy or ticket != _ticket or _lan_pending or _online_pending:
 		return
@@ -210,9 +260,12 @@ func _finish_merged(ticket: int) -> void:
 	_refresh_button.fit_text()
 	_rooms.clear()
 	for room: Dictionary in _lan_rooms:
-		_rooms.append(room)
+		if _prefilter(room):
+			_rooms.append(room)
 	for room: Dictionary in _online_rooms:
-		_rooms.append(room)
+		if _prefilter(room):
+			_rooms.append(room)
+	_sort_rooms()
 	_error = _rooms.is_empty() and _online_failed
 	_rebuild_list()
 	MenuNav.refresh()
@@ -250,8 +303,11 @@ func _rebuild_list() -> void:
 	_clear_list()
 	if _busy:
 		return
+	_sort_rooms()
 	var shown: int = 0
 	for room: Dictionary in _rooms:
+		if not _prefilter(room):
+			continue
 		if not _matches(room):
 			continue
 		shown += 1
@@ -389,10 +445,10 @@ func _row_badge(text: String, color: Color, min_width: float = 88.0) -> PanelCon
 	var style := StyleBoxFlat.new()
 	style.bg_color = color
 	style.set_corner_radius_all(10)
-	style.content_margin_left = 10
-	style.content_margin_right = 10
-	style.content_margin_top = 1
-	style.content_margin_bottom = 1
+	style.content_margin_left = 14
+	style.content_margin_right = 14
+	style.content_margin_top = 5
+	style.content_margin_bottom = 5
 	badge.add_theme_stylebox_override("panel", style)
 	var label := Label.new()
 	label.text = text

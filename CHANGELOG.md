@@ -56,6 +56,80 @@ Player-facing notes, newest first.
   No reproducible gameplay regressions were found; the defects fixed here are
   the multiplayer/platform ones above.
 
+### Maps rebuilt: no more clipping, blocking, or washed-out white
+
+![Glacier Pass](assets/ui/art/preview_glacier.png)
+
+- **Mountains can't land on the road anymore.** Every peak, hill, and mesa ring
+  now measures its real footprint against the track: the Glacier summit vista
+  that swallowed karts, grey default peaks over green valleys, and hillsides
+  edging onto the tarmac are all placed clear, smaller where needed, and
+  painted in vivid cartoon blues and greens instead of flat grey.
+- **Meadow's green roads are gone.** The kerbs are terracotta again and the
+  dirt trail paints over bump tiles, so no grey asphalt wedges survive inside
+  the brown forest sector.
+- **Every blocked ramp now climbs clean.** The Terrace Plaza skywalk abutment
+  that stood 1.7 m across the climb is stepped supports; the Labyrinth's
+  abutments, the Twin Ferries' wheelhouse fills and gap-kicker supports, and
+  the Glacier Bowl's berms were all re-cut to stay under the ramp surface. The
+  Ferris wheel no longer straddles the Plaza's corner walls, crates are off
+  the Sandbox funbox deck, buried Iceberg kickers are uncovered, and Sandbox
+  bots steer down the real kicker centreline.
+- **Sculpted detail pass everywhere.** Peaks gain ridgelines, rock ribs, snow
+  cornices, and tertiary horns; hills get terraces and summit tors; mesas get
+  caprock lips, varnish streaks, and talus boulders; spires get balanced
+  boulders; arches get keystones and wing fins. Stadium and Dockyard have
+  bespoke skies, and trackside clusters add rubble, snowdrifts, and berry
+  bushes — all inside the existing draw budgets.
+
+![Sunset Canyon](assets/ui/art/preview_canyon.png)
+
+### Bots that actually race you
+
+![Blast Tag: Twin Ferries](assets/ui/art/preview_bt_ferries.png)
+
+- **Blast Tag bots play the mode now.** Hunters lead their target and ram the
+  intercept point; runners weave, break sightlines toward ramps, and juke with
+  difficulty nerve (Easy panics at 6.5 m, Hard holds until 4.2 m). With nobody
+  to chase, both roam arena rally circuits instead of camping a fixed point,
+  and a new anti-wall steer stops the old grind-into-the-pillar loops.
+- **Difficulty is real in every mode.** Knockout bots pick targets and time
+  slams by level, race bots hold boost over launch ramps they detect ahead,
+  Deliver bots seek longer and pick smarter, and Sandbox bots play tag —
+  chasing down the nearest kart for a bump using the same physics you drive.
+- **Same rules as you.** Every bot runs the identical kart controller, boost
+  drain, juke cooldowns, and slam activation as a human player. Skill only
+  changes aim, anticipation, and patience — never stats.
+
+### Netcode, relay efficiency, and Pi server speed
+
+- **Less bandwidth, same protocol.** Idle karts sync at 5 Hz instead of 20 Hz,
+  the tunnel caps runaway buffers with a surfaced reason, flushes to EAGAIN
+  with jittered backoff, heartbeats fail fast on dead rooms, LAN beacons
+  carry version filters, the clock sync takes a median of 7 samples, and join
+  failures finally say *why* (full, in-game, TLS, DNS, timeout) with a hint.
+- **The Pi serves faster.** Race ticks run on a deadline with skip-late
+  budgets, HTTP workers and queues are bigger with proper 503 + Retry-After,
+  the relay drain scales with backlog, keep-alives stop pinning threads, tunnel
+  frames coalesce, upstream sockets are shared, TLS resumes sessions, SSE and
+  bulk downloads stay off the API threads, and deploys gate on `/api/health`
+  with rollback. New perf harness: ~15,000 packets/s relay, sub-millisecond
+  ticks, 8 concurrent tunnels, ~23 TLS handshakes/s.
+
+![Redwood Valley](assets/ui/art/preview_meadow.png)
+
+### Also fixed in this pass
+
+- Respawn crash guard, fake best-lap rejection, stale Knockout ghosts that
+  could stall a round, bombs stacking on one kart, Deliver hold-starvation and
+  finish scoring, Sandbox bot re-seating, roof-perched bots, and the boost
+  meter exploit.
+- Lap pips light up again, late-join HUDs get ping and scoreboard, the lobby
+  fits 960×540, music volume actually routes to the Music bus, and every
+  settings field validates before it saves.
+- Vehicle outliers rebalanced (orange accel, white top speed, green grip) and
+  each race-kit livery gets its own engine voice.
+
 ## [0.8.1] - 2026-11-20
 
 ### Maps

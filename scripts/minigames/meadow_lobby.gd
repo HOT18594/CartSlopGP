@@ -10,6 +10,9 @@ const RealisticTree := preload("res://scripts/minigames/realistic_tree.gd")
 const FoliageBaker := preload("res://scripts/minigames/foliage_baker.gd")
 const VehicleCatalog := preload("res://scripts/vehicles/vehicle_catalog.gd")
 const UiPalette := preload("res://scripts/ui/ui_palette.gd")
+const LandscapeSculptor := preload("res://scripts/minigames/scenery/landscape_sculptor.gd")
+const PropBatch := preload("res://scripts/minigames/scenery/prop_batch.gd")
+const SceneryKit := preload("res://scripts/minigames/scenery/scenery_kit.gd")
 
 const RACE_SCENE: String = "res://scenes/minigames/grass_race.tscn"
 const MINIGAMES_MENU: String = "res://scenes/ui/minigames_menu.tscn"
@@ -55,6 +58,7 @@ var _status_label: Label
 var _countdown_label: Label
 var _rows: Array[Dictionary] = []
 var _leaf_sprites: Array[Dictionary] = []
+var _lobby_anim: Dictionary = {}
 
 
 func _ready() -> void:
@@ -71,6 +75,7 @@ func _process(delta: float) -> void:
 	_time += delta
 	_orbit_camera()
 	_animate_leaves(delta)
+	LandscapeSculptor.step_animations(_lobby_anim, _time, delta)
 	if _state == State.WAITING:
 		_tick_joining(delta)
 		_tick_status(delta)
@@ -89,7 +94,7 @@ func _build_preview() -> void:
 	var ground := MeshInstance3D.new()
 	ground.mesh = plane
 	ground.material_override = _pbr("grass_diff", "grass_nor", "grass_rough",
-		26.0, Color(1.05, 1.09, 0.98))
+		26.0, Color(0.95, 1.0, 0.85))
 	preview.add_child(ground)
 
 	var road := MeshInstance3D.new()
@@ -128,6 +133,56 @@ func _build_preview() -> void:
 			tree["leaf"], leaf_frond if frond else leaf_broad, transforms, false))
 
 	# A few drifting leaves in front of the camera.
+	var horizon_plane := PlaneMesh.new()
+	horizon_plane.size = Vector2(920, 920)
+	var horizon_ground := MeshInstance3D.new()
+	horizon_ground.mesh = horizon_plane
+	horizon_ground.position = Vector3(0.0, -0.06, 0.0)
+	var hmat := StandardMaterial3D.new()
+	hmat.albedo_color = Color("559c3f")
+	hmat.roughness = 1.0
+	hmat.specular_mode = BaseMaterial3D.SPECULAR_DISABLED
+	horizon_ground.material_override = hmat
+	horizon_ground.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	preview.add_child(horizon_ground)
+
+	var ridge_batch := PropBatch.new()
+	var l_rng := RandomNumberGenerator.new()
+	l_rng.seed = 20491
+	var h_pal := {
+		"skirt": Color("478735"),
+		"mid": Color("5da642"),
+		"top": Color("74bf51"),
+	}
+	for hi in 12:
+		var ang: float = TAU * float(hi) / 12.0 + 0.22
+		var dist: float = 112.0 + float(hi % 3) * 24.0
+		LandscapeSculptor.add_woodland_hill(ridge_batch,
+			Vector3(cos(ang) * dist, -0.1, sin(ang) * dist),
+			34.0 + float(hi % 4) * 8.0, 28.0 + float((hi + 1) % 3) * 7.0,
+			14.0 + float(hi % 3) * 6.0, l_rng, h_pal)
+	for mi in 8:
+		var mang: float = TAU * float(mi) / 8.0 + 0.42
+		LandscapeSculptor.add_alpine_mountain(ridge_batch,
+			Vector3(cos(mang) * 235.0, -0.1, sin(mang) * 235.0),
+			44.0 + float(mi % 3) * 12.0, 48.0 + float(mi % 4) * 14.0, l_rng,
+			{
+				"base": Color("3e7a35"),
+				"rock": Color("4d9e48"),
+				"cliff": Color("66b95a"),
+				"snow_lo": Color("b8e0b0"),
+				"snow_hi": Color("e8f6e8"),
+			})
+	ridge_batch.flush_to(preview, "MeadowHorizonRidges", false, SceneryKit.vertex_material())
+
+	_lobby_anim.clear()
+	LandscapeSculptor.build_windmill(preview, Vector3(-62.0, 0.0, -48.0), 0.72, 1.25,
+		"meadow", _lobby_anim)
+	LandscapeSculptor.build_hot_air_balloon(preview, Vector3(56.0, 22.0, -52.0),
+		Color("ff595e"), Color("ffd22e"), 0.5, _lobby_anim)
+	LandscapeSculptor.build_hot_air_balloon(preview, Vector3(-50.0, 26.0, 58.0),
+		Color("45b6f0"), Color("ffd22e"), 2.4, _lobby_anim)
+
 	var leaves := GPUParticles3D.new()
 	leaves.amount = 70
 	leaves.lifetime = 8.0
@@ -269,7 +324,7 @@ func _build_ui() -> void:
 	_panel.custom_minimum_size = Vector2(860, 0)
 	center.add_child(_panel)
 	var body := VBoxContainer.new()
-	body.add_theme_constant_override("separation", 10)
+	body.add_theme_constant_override("separation", 14)
 	_panel.add_child(body)
 
 	var flag := Control.new()
@@ -391,9 +446,9 @@ func _column(parent: Control, caption: String) -> VBoxContainer:
 	var box := VBoxContainer.new()
 	box.custom_minimum_size = Vector2(380, 0)
 	box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	box.add_theme_constant_override("separation", 9)
+	box.add_theme_constant_override("separation", 12)
 	var panel := PanelContainer.new()
-	panel.custom_minimum_size = Vector2(0, 210)
+	panel.custom_minimum_size = Vector2(0, 220)
 	var style := StyleBoxFlat.new()
 	style.bg_color = Color(0.97, 0.94, 0.85, 1)
 	style.border_color = UiPalette.OUTLINE
@@ -405,10 +460,10 @@ func _column(parent: Control, caption: String) -> VBoxContainer:
 	style.corner_radius_top_right = 16
 	style.corner_radius_bottom_left = 16
 	style.corner_radius_bottom_right = 16
-	style.content_margin_left = 16
-	style.content_margin_right = 16
-	style.content_margin_top = 12
-	style.content_margin_bottom = 12
+	style.content_margin_left = 22
+	style.content_margin_right = 22
+	style.content_margin_top = 16
+	style.content_margin_bottom = 16
 	panel.add_theme_stylebox_override("panel", style)
 	parent.add_child(panel)
 	panel.add_child(box)

@@ -85,31 +85,22 @@ static func reserve_stand_ring(spline: RefCounted, plan: RefCounted) -> void:
 ## zero-length span, and the inside is split again into colour sections.
 static func _barriers(parent: Node3D, spline: RefCounted, plan: RefCounted,
 		stats: Dictionary) -> void:
-	if not plan.is_grid():
-		# A legacy spline has no tile edges; the clearance path still follows the
-		# ribbon, but one run is enough.
-		_barrier_run(parent, spline, 0.0, plan.total - TileKit.SNAP_STEP, 1.0,
-			"barrierRed", stats)
-		_barrier_run(parent, spline, 0.0, plan.total - TileKit.SNAP_STEP, -1.0,
-			"barrierWhite", stats)
-		return
+	# Open harbour circuit: yellow/red safety rails along the elevated crane
+	# overpass, tight outer corners, and the seaside seawall edge only.
 	var total: float = maxf(float(plan.total), 1.0)
-	# Both sides use the short 4 m red/white blocks. The 16 m concrete wall is
-	# cheaper per metre, but on this grid the top chicane brings two strands
-	# within 16 m, and a 16 m block's end can reach the neighbouring lane even
-	# when its centre samples clear. Short blocks follow the edge honestly.
-	var section: float = total / float(INSIDE_SECTIONS)
-	for side: float in [1.0, -1.0]:
-		var phase: int = 0 if side > 0.0 else 1
-		for index in INSIDE_SECTIONS:
-			var from_distance: float = section * float(index)
-			var to_distance: float = section * float(index + 1)
-			if index == INSIDE_SECTIONS - 1:
-				to_distance = total
-			var kind: String = INSIDE_BARRIERS[(index + phase)
-				% INSIDE_BARRIERS.size()]
-			_barrier_run(parent, spline, from_distance, to_distance, side,
-				kind, stats)
+	var placed: int = TileKit.selective_safety_rails(parent, spline, {
+		"bridge_y": 2.2,
+		"curve_min": 0.032,
+		"spans": [{"from": total * 0.46, "to": total * 0.72, "side": -1.0}],
+		"rail_color": Color("e2c044"),
+		"accent_color": Color("c7422a"),
+		"post_color": Color("38434e"),
+	})
+	TileKit.build_outer_soft_containment(parent, spline, 12.5)
+	stats["objects"] = int(stats["objects"]) + placed
+	stats["barriers"] = int(stats["barriers"]) + placed
+	if placed > 0:
+		stats["draws"] = int(stats["draws"]) + 1
 
 
 static func _barrier_run(parent: Node3D, spline: RefCounted,
@@ -258,7 +249,7 @@ static func _outer_sites(plan: RefCounted, spline: RefCounted, limit: int,
 		if (seen - 1) % stride != 0:
 			continue
 		var point: Vector3 = plan.cell_point(cell)
-		if Parts.track_distance(spline, point) < 16.0:
+		if Parts.track_distance(spline, point) < Parts.SAFE_CLEARANCE + 2.0:
 			continue
 		if plan.is_used(cell):
 			continue

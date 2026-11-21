@@ -33,6 +33,14 @@ run or ships a mislabelled build.
 `build_0_8_2.ps1` compares `version.txt` against its own `-Version` and aborts
 on a mismatch, which is the safety net for item 1 vs item 4.
 
+Before any export the script runs a six-place version preflight: it re-reads
+`version.txt`, `project.godot`, the four `export_path` lines, its own file
+name plus the default `-Version`, `pi_setup/Deploy-Server.cmd` and the top
+`## [x.y.z]` section of `godot_project/CHANGELOG.md`, and aborts with a
+`BUILD FAILED` message naming the mismatched file when any of them disagrees
+with `-Version`. The preflight never edits versions itself — bump the six
+places by hand, then re-run the script.
+
 `scripts/systems/update_checker.gd` reads `version.txt` at runtime, so the
 in-game "update available" check needs no edit — just the file.
 
@@ -145,7 +153,7 @@ it is a real regression — the harness no longer has known-bad assertions.
 ## 7. Version control
 
 This directory is a git repository (`main`, remote
-`https://github.com/HOT18594/CartSlopGP.git`, 25+ commits of 0.7.1 history).
+`https://github.com/HOT18594/CartSlopGP.git`, 38 commits of 0.8.2 history).
 
 - **Commit from inside this directory**, not from the workspace root. The root
   is not a repo; an empty `project.godot` there once made the editor open the

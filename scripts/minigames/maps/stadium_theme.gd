@@ -34,7 +34,7 @@ const AmbientWorld := preload("res://scripts/minigames/scenery/ambient_world.gd"
 const THEME_ID: String = "stadium"
 const HOLDER_NAME: String = "StadiumDressing"
 const META_STATS: String = "stadium_dressing_stats"
-const HOARDING_DENSITY: float = 0.42
+const HOARDING_DENSITY: float = 0.0
 
 
 ## Builds the whole stadium dressing under `race`. `spline` is the grid spline
@@ -56,6 +56,7 @@ static func build(race: Node3D, spline) -> void:
 	var meadow_ground: Node3D = race.get_node_or_null("MeadowGround") as Node3D
 	if meadow_ground != null:
 		meadow_ground.visible = false
+	_apply_arena_atmosphere(race)
 	TileKit.dress_track(race, track, {
 		"id": THEME_ID,
 		"hoarding_density": HOARDING_DENSITY,
@@ -80,3 +81,27 @@ static func build(race: Node3D, spline) -> void:
 		float(stats.get("lap", 0.0)),
 		float(stats.get("elevation", 0.0))])
 	race.set_meta(META_STATS, stats)
+
+
+## Bright festival-afternoon grade: saturated blue sky, warm sun, light green
+## haze so the grand prix bowl reads vivid instead of default-flat.
+static func _apply_arena_atmosphere(race: Node3D) -> void:
+	var world_env := race.get_node_or_null("WorldEnvironment") as WorldEnvironment
+	if world_env == null or world_env.environment == null:
+		return
+	var env: Environment = world_env.environment.duplicate() as Environment
+	env.fog_enabled = true
+	env.fog_light_color = Color("bfe3c8")
+	env.fog_density = 0.0011
+	env.fog_sky_affect = 0.18
+	if env.sky != null and env.sky.sky_material is ProceduralSkyMaterial:
+		var sky: ProceduralSkyMaterial = env.sky.sky_material as ProceduralSkyMaterial
+		sky.sky_top_color = Color("2f8fe0")
+		sky.sky_horizon_color = Color("bfe6fa")
+		sky.ground_horizon_color = Color("9fd4a8")
+		sky.ground_bottom_color = Color("3f7a45")
+	world_env.environment = env
+	var sun := race.get_node_or_null("Sun") as DirectionalLight3D
+	if sun != null:
+		sun.light_color = Color("fff2d8")
+		sun.light_energy = 1.22

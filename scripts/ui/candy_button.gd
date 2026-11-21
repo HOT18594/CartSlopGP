@@ -172,9 +172,9 @@ func _make(color: Color, drop: int) -> StyleBoxFlat:
 	box.shadow_color = Color(0.08, 0.06, 0.18, 0.52)
 	box.shadow_size = 2
 	box.shadow_offset = Vector2(0, drop)
-	box.content_margin_left = 26
-	box.content_margin_right = 26
-	box.content_margin_top = 10
-	box.content_margin_bottom = 10
+	box.content_margin_left = 30
+	box.content_margin_right = 30
+	box.content_margin_top = 12
+	box.content_margin_bottom = 12
 	box.anti_aliasing = true
 	return box

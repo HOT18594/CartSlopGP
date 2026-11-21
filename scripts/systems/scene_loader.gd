@@ -178,9 +178,12 @@ func go_to(path: String, title: String = "LOADING", message: String = "") -> voi
 		_finish(started)
 		return
 
-	var error: Error = ResourceLoader.load_threaded_request(path, "", true)
+	# Single-thread background loading avoids sub-thread preload lock contention
+	# (notably on macOS/Metal with complex scene script dependency graphs).
+	var error: Error = ResourceLoader.load_threaded_request(path, "", false)
 	if error != OK:
 		_change_scene_to_file(path)
+		await get_tree().process_frame
 		_finish(started)
 		return
 	_poll(started)
@@ -221,22 +224,32 @@ func _go_direct(path: String) -> void:
 
 func _poll(started: float) -> void:
 	var progress: Array = [0.0]
-	var deadline: int = Time.get_ticks_msec() + 12000
+	var now_ms: int = Time.get_ticks_msec()
+	var deadline: int = now_ms + 20000
+	var stall_deadline: int = now_ms + 8000
+	var last_progress: float = -1.0
 	while true:
 		var status: int = ResourceLoader.load_threaded_get_status(_path, progress)
-		_ui.set_progress(progress[0])
+		var pct: float = float(progress[0]) if not progress.is_empty() else 0.0
+		_ui.set_progress(pct)
+		if pct > last_progress + 0.001:
+			last_progress = pct
+			stall_deadline = Time.get_ticks_msec() + 8000
 		await get_tree().process_frame
 		if status == ResourceLoader.THREAD_LOAD_LOADED:
 			break
 		if status == ResourceLoader.THREAD_LOAD_FAILED or status == ResourceLoader.THREAD_LOAD_INVALID_RESOURCE:
 			_change_scene_to_file(_path)
+			await get_tree().process_frame
 			_finish(started)
 			return
-		if Time.get_ticks_msec() > deadline:
+		var tick_ms: int = Time.get_ticks_msec()
+		if tick_ms > deadline or (last_progress <= 0.0 and tick_ms > stall_deadline):
 			# A threaded load can stall on some drivers/filesystems. Never
 			# leave multiplayer peers stuck on "Syncing players..."
 			push_warning("Threaded scene load timed out; falling back: " + _path)
 			_change_scene_to_file(_path)
+			await get_tree().process_frame
 			_finish(started)
 			return
 

@@ -72,17 +72,17 @@ const NATURE_SCALE: float = TileCatalog.NATURE_SCALE
 ## BARRIER_CLEARANCE (roughly the road half width plus 2.5 m) is the closest any
 ## barrier surface may come to the centreline. It lands two centimetres outside
 ## the visible 16 m tile edge, which is where the Kenney road mesh ends.
-const BARRIER_OFFSET: float = 2.5
+const BARRIER_OFFSET: float = 2.8
 const BARRIER_CLEARANCE: float = ROAD_HALF + BARRIER_OFFSET
-## A grandstand is a full 16 m kit footprint, so its centre sits a little over
-## one cell out: its front edge then clears the barrier's outer face instead of
-## swallowing the wall.
-const STAND_OFFSET: float = TILE_SIZE * 1.15
+const SANDBOX_BARRIER_CLEARANCE: float = 8.02
+## A grandstand is a 16 m kit footprint, so its centre sits well outside the
+## widened road and verge without overlapping the safety rail.
+const STAND_OFFSET: float = TILE_SIZE * 1.12
 ## A barrier piece is a 4 m chord, so on the outside of a corner its middle sags
 ## inside the arc and a tilted piece on a steep hill shifts several centimetres.
 ## The placement line is pushed out by this much so even after both effects no
 ## piece comes inside BARRIER_CLEARANCE.
-const BARRIER_SAG: float = 0.48
+const BARRIER_SAG: float = 0.55
 ## Meta flag on every barrier body, so an audit can find the wall even when two
 ## runs share a node name.
 const BARRIER_META: String = "tile_barrier"
@@ -98,22 +98,19 @@ const BANK_MODELS: Array[String] = [
 const TYRE_OFFSET: float = 2.8
 
 ## Trackside detail (detail only: no colliders, so it can never narrow the road).
-## A painted kerb line sits on the kit's raised kerb at the lane edge; low
-## advertising hoardings stand on the verge between the invisible kart barrier
-## and the themed catch wall; a marker stands on the outside of every corner.
 const DETAIL_META: String = "tile_kit_track_detail"
 const DETAIL_HOLDER: String = "TrackDetail"
-const KERB_LATERAL: float = ROAD_HALF + 0.32
-const KERB_HALF_WIDTH: float = 0.20
-const KERB_LIFT: float = TileCatalog.ROAD_SURFACE + 0.172
-const HOARDING_LATERAL: float = ROAD_HALF + 2.05
-const HOARDING_SPACING: float = 3.4
+const KERB_LATERAL: float = ROAD_HALF + 0.44
+const KERB_HALF_WIDTH: float = 0.28
+const KERB_LIFT: float = TileCatalog.ROAD_SURFACE + TILE_SIZE * 0.01 + 0.014
+const HOARDING_LATERAL: float = ROAD_HALF + 2.35
+const HOARDING_SPACING: float = 3.8
 const HOARDING_WIDTH: float = 3.2
 const HOARDING_HEIGHT: float = 1.25
 const HOARDING_DEPTH: float = 0.16
 const HOARDING_SINK: float = 0.12
-const MARKER_LATERAL: float = ROAD_HALF + 2.45
-const MARKER_HEIGHT: float = 2.30
+const MARKER_LATERAL: float = ROAD_HALF + 2.25
+const MARKER_HEIGHT: float = 1.65
 const MARKER_SINK: float = 0.20
 const DETAIL_RED: Color = Color("c23a2c")
 const DETAIL_CREAM: Color = Color("fff6e3")
@@ -562,11 +559,14 @@ class PropAudit extends Node:
 ## chord. Flat straights have regular scenic gaps; corners and elevated sections
 ## retain continuous protection. Distances snap to a quarter tile.
 static func barrier_line(parent: Node3D, spline: RefCounted, from_dist: float,
-		to_dist: float, side: float, kind: String = "barrierRed") -> int:
+		to_dist: float, side: float, kind: String = "barrierRed",
+		clearance_override: float = -1.0) -> int:
 	if parent == null or spline == null:
 		return 0
+	var used_clearance: float = clearance_override if clearance_override > 0.0 \
+		else BARRIER_CLEARANCE
 	var spec: Dictionary = TileCatalog.barrier_spec(kind)
-	var piece_length: float = float(spec.get("length", 0.25)) * TILE_SIZE
+	var piece_length: float = float(spec.get("length", 0.25)) * PROP_SCALE
 	if piece_length <= 0.01:
 		return 0
 	var total: float = maxf(float(spline.total_length), 0.001)
@@ -580,7 +580,7 @@ static func barrier_line(parent: Node3D, spline: RefCounted, from_dist: float,
 	if not bool(info.get("ok", false)):
 		return 0
 	var path: Dictionary = TileGeometry.clearance_path(spline, direction,
-		BARRIER_CLEARANCE + BARRIER_SAG, CLEARANCE_STEP)
+		used_clearance + BARRIER_SAG, CLEARANCE_STEP)
 	if not bool(path.get("ok", false)):
 		push_warning("TileKit.barrier_line: no usable %s clearance path for this spline." % (
 			"right" if direction > 0.0 else "left"))
@@ -589,12 +589,12 @@ static func barrier_line(parent: Node3D, spline: RefCounted, from_dist: float,
 		float(spline.total_length))
 	if run_length <= piece_length * 0.5:
 		return 0
-	var size_z: float = float(spec.get("depth", 0.123)) * TILE_SIZE
+	var size_z: float = float(spec.get("depth", 0.123)) * PROP_SCALE
 	var from_position: float = _path_position(path, start)
 	var body := _static_body(parent, "Barrier_%s_%d_%s" % [
 		kind, int(round(start)), "R" if direction > 0.0 else "L"])
 	body.set_meta(BARRIER_META, true)
-	body.set_meta("tile_barrier_clearance", BARRIER_CLEARANCE)
+	body.set_meta("tile_barrier_clearance", used_clearance)
 	var transforms: Array = []
 	var closest: float = INF
 	# Sharp path corners are mitres: a 4 m chord across one would cut the corner
@@ -642,7 +642,7 @@ static func barrier_line(parent: Node3D, spline: RefCounted, from_dist: float,
 		body.free()
 		return 0
 	_batch_model(body, model, transforms, "BarrierRun", true)
-	_assert_run_clearance(closest, start, span, direction)
+	_assert_run_clearance(closest, start, span, direction, used_clearance)
 	return transforms.size()
 
 
@@ -715,31 +715,24 @@ static func _path_breaks(path: Dictionary) -> PackedFloat32Array:
 ## Publishes the closest approach of one run and fails a debug build when a
 ## piece would be on the racing surface.
 static func _assert_run_clearance(closest: float, start: float, span: float,
-		direction: float) -> void:
+		direction: float, limit: float = BARRIER_CLEARANCE) -> void:
 	if closest == INF:
 		return
-	if closest >= BARRIER_CLEARANCE - 0.02:
+	if closest >= limit - 0.02:
 		return
 	push_error("TileKit.barrier_line: %s run from %.1f m over %.1f m has a barrier %.2f m from the centreline, inside BARRIER_CLEARANCE %.2f m." % [
-		"right" if direction > 0.0 else "left", start, span, closest,
-		BARRIER_CLEARANCE])
+		"right" if direction > 0.0 else "left", start, span, closest, limit])
 
 
-## Closest plan distance from a barrier run's three sampled points to the
-## centreline. Uses the grid spline's exact plan helper when available.
 static func _min_clearance(spline: RefCounted, p0: Vector3, p1: Vector3,
 		p2: Vector3) -> float:
 	return minf(spline_distance(spline, p0),
 		minf(spline_distance(spline, p1), spline_distance(spline, p2)))
 
 
-## Debug assert for a whole built circuit: measures every barrier collider and
-## reports the closest approach, so a map can prove its wall clears the road.
-## Returns true when every piece is at least BARRIER_CLEARANCE from the
-## centreline.
 static func assert_barrier_clearance(parent: Node3D, spline: RefCounted,
-		label: String = "") -> bool:
-	var report: Dictionary = barrier_clearance(parent, spline)
+		label: String = "", min_clearance: float = BARRIER_CLEARANCE) -> bool:
+	var report: Dictionary = barrier_clearance(parent, spline, min_clearance)
 	var clears: bool = bool(report["clears"])
 	print("BARRIER CLEARANCE %s: %d piece(s), closest %.2f m, limit %.2f m -> %s" % [
 		label if label != "" else "circuit", int(report["pieces"]),
@@ -754,25 +747,28 @@ static func assert_barrier_clearance(parent: Node3D, spline: RefCounted,
 
 ## Closest plan approach of every barrier collider under `parent` to the
 ## centreline: {pieces, closest, limit, offenders, clears}.
-static func barrier_clearance(parent: Node3D, spline: RefCounted) -> Dictionary:
+static func barrier_clearance(parent: Node3D, spline: RefCounted,
+		min_clearance: float = BARRIER_CLEARANCE) -> Dictionary:
 	var report: Dictionary = {"pieces": 0, "closest": INF,
-		"limit": BARRIER_CLEARANCE, "offenders": 0, "clears": false}
+		"limit": min_clearance, "offenders": 0, "clears": false}
 	if parent == null or spline == null:
 		report["closest"] = 0.0
 		return report
-	_walk_barrier_shapes(parent, spline, report)
+	_walk_barrier_shapes(parent, spline, report, min_clearance)
 	var closest: float = float(report["closest"])
 	if closest == INF:
 		closest = 0.0
 	report["closest"] = closest
-	report["clears"] = closest >= BARRIER_CLEARANCE - 0.02
+	report["clears"] = closest >= min_clearance - 0.02
 	return report
 
 
 static func _walk_barrier_shapes(node: Node, spline: RefCounted,
-		report: Dictionary) -> void:
+		report: Dictionary, min_clearance: float) -> void:
 	for child: Node in node.get_children():
 		if child is StaticBody3D and bool(child.get_meta(BARRIER_META, false)):
+			var body_limit: float = float(child.get_meta("tile_barrier_clearance",
+				min_clearance))
 			for shape_node: Node in child.get_children():
 				var collision := shape_node as CollisionShape3D
 				if collision == null:
@@ -780,12 +776,13 @@ static func _walk_barrier_shapes(node: Node, spline: RefCounted,
 				var box := collision.shape as BoxShape3D
 				if box == null:
 					continue
-				_measure_barrier_box(collision, box, spline, report)
-		_walk_barrier_shapes(child, spline, report)
+				_measure_barrier_box(collision, box, spline, report, body_limit)
+		_walk_barrier_shapes(child, spline, report, min_clearance)
 
 
 static func _measure_barrier_box(collision: CollisionShape3D, box: BoxShape3D,
-		spline: RefCounted, report: Dictionary) -> void:
+		spline: RefCounted, report: Dictionary,
+		min_clearance: float = BARRIER_CLEARANCE) -> void:
 	var xform: Transform3D = _world_transform(collision)
 	var half: Vector3 = box.size * 0.5
 	var closest: float = INF
@@ -795,7 +792,7 @@ static func _measure_barrier_box(collision: CollisionShape3D, box: BoxShape3D,
 		return
 	report["pieces"] = int(report["pieces"]) + 1
 	report["closest"] = minf(float(report["closest"]), closest)
-	if closest < BARRIER_CLEARANCE - 0.02:
+	if closest < min_clearance - 0.02:
 		report["offenders"] = int(report["offenders"]) + 1
 
 
@@ -884,12 +881,18 @@ static func dress_track(parent: Node3D, spline: RefCounted,
 	var theme_id: String = ""
 	var explicit_density: bool = false
 	var density: float = -1.0
+	var kerb_a: Color = DETAIL_CREAM
+	var kerb_b: Color = DETAIL_RED
 	if options is Dictionary:
 		var opt_dict: Dictionary = options as Dictionary
 		theme_id = str(opt_dict.get("id", opt_dict.get("theme", "")))
 		if opt_dict.has("hoarding_density"):
 			density = clampf(float(opt_dict["hoarding_density"]), 0.0, 1.0)
 			explicit_density = true
+		if opt_dict.has("kerb_a") and opt_dict["kerb_a"] is Color:
+			kerb_a = opt_dict["kerb_a"] as Color
+		if opt_dict.has("kerb_b") and opt_dict["kerb_b"] is Color:
+			kerb_b = opt_dict["kerb_b"] as Color
 	else:
 		theme_id = str(options)
 	if density < 0.0:
@@ -912,7 +915,8 @@ static func dress_track(parent: Node3D, spline: RefCounted,
 	var verts := PackedVector3Array()
 	var normals := PackedVector3Array()
 	var colors := PackedColorArray()
-	var kerbs: int = _build_kerb_detail(spline, verts, normals, colors)
+	var kerbs: int = _build_kerb_detail(spline, verts, normals, colors,
+		kerb_a, kerb_b)
 	var hoardings: int = _build_hoarding_detail(spline, verts, normals, colors,
 		density)
 	var markers: int = _build_corner_marker_detail(spline, verts, normals,
@@ -945,26 +949,17 @@ static func dress_track(parent: Node3D, spline: RefCounted,
 	return stats
 
 
-static func _default_hoarding_density(theme_id: String) -> float:
-	match theme_id:
-		"stadium":
-			return 0.42
-		"dockyard":
-			return 0.32
-		"meadow":
-			return 0.24
-		"canyon":
-			return 0.22
-		"glacier":
-			return 0.28
-	return 0.35
+static func _default_hoarding_density(_theme_id: String) -> float:
+	# Open scenic tracks do not wall off verges with billboard cages.
+	return 0.0
 
 
-## A painted red/cream band on the kit's raised kerb along both lane edges. The
+## A painted kerb band on the kit's raised kerb along both lane edges. The
 ## band follows the true clearance path, so it never cuts inside a corner.
 static func _build_kerb_detail(spline: RefCounted,
 		verts: PackedVector3Array, normals: PackedVector3Array,
-		colors: PackedColorArray) -> int:
+		colors: PackedColorArray, kerb_a: Color = DETAIL_CREAM,
+		kerb_b: Color = DETAIL_RED) -> int:
 	var quads: int = 0
 	for side: float in [-1.0, 1.0]:
 		var path: Dictionary = TileGeometry.clearance_path(spline, side,
@@ -995,8 +990,8 @@ static func _build_kerb_detail(spline: RefCounted,
 				+ Vector3.UP * KERB_LIFT
 			var b1: Vector3 = b - across * KERB_HALF_WIDTH \
 				+ Vector3.UP * KERB_LIFT
-			var color: Color = DETAIL_CREAM \
-				if int(travelled / 2.4) % 2 == 0 else DETAIL_RED
+			var color: Color = kerb_a \
+				if int(travelled / 2.4) % 2 == 0 else kerb_b
 			_append_detail_quad(verts, normals, colors, a0, b0, b1, a1,
 				color)
 			travelled += length
@@ -1119,7 +1114,7 @@ static func _build_corner_marker_detail(spline: RefCounted,
 	var placed: int = 0
 	for tile: Dictionary in tiles_value as Array:
 		var tile_char: String = str(tile.get("tile", ""))
-		if tile_char != "L" and tile_char != "R" and tile_char != "W":
+		if tile_char != "L" and tile_char != "R":
 			continue
 		var centre: Vector3 = TileGeometry._cell_center(tile["cell"])
 		var entry: int = int(tile.get("entry", 0))
@@ -2111,3 +2106,234 @@ static func _multimesh(mesh: Mesh, material: Material, transforms: Array,
 		GeometryInstance3D.SHADOW_CASTING_SETTING_ON if cast_shadow \
 		else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	return instance
+
+
+# --------------------------------------------------------------------------
+# open-track selective safety rails & outer containment
+
+
+## Low-profile open-world safety guardrails placed ONLY where needed (bridges,
+## elevated drops, tight outer hairpin bends, or water-edge quays), leaving
+## straights and sweeping curves open to the scenery. Every rail collider sits
+## >= used_clearance from every spline strand and carries BARRIER_META so
+## TileKit.barrier_clearance() verifies it cleanly.
+static func selective_safety_rails(parent: Node3D, spline: RefCounted,
+		opts: Dictionary = {}) -> int:
+	if parent == null or spline == null:
+		return 0
+	var used_clearance: float = float(opts.get("clearance", BARRIER_CLEARANCE))
+	var bridge_y: float = float(opts.get("bridge_y", 2.1))
+	var curve_min: float = float(opts.get("curve_min", 0.032))
+	var outer_bends: bool = bool(opts.get("outer_bends", true))
+	var water_edge: bool = bool(opts.get("water_edge", false))
+	var rail_col: Color = opts.get("rail_color", Color("d8dde4")) as Color
+	var accent_col: Color = opts.get("accent_color", Color("e04c38")) as Color
+	var post_col: Color = opts.get("post_color", Color("454c58")) as Color
+	var extra_spans: Array = opts.get("spans", []) as Array
+
+	var body := _static_body(parent, "SafetyRails")
+	body.set_meta(BARRIER_META, true)
+	body.set_meta("tile_barrier_clearance", used_clearance)
+
+	var verts := PackedVector3Array()
+	var normals := PackedVector3Array()
+	var colors := PackedColorArray()
+	var pieces: int = 0
+	var step_len: float = 4.4
+	var rail_depth: float = 0.42
+	var rail_height: float = 0.92
+	var lap_total: float = maxf(float(spline.total_length), 1.0)
+
+	for side: float in [-1.0, 1.0]:
+		var path: Dictionary = TileGeometry.clearance_path(spline, side,
+			used_clearance + BARRIER_SAG + rail_depth * 0.5, CLEARANCE_STEP)
+		if not bool(path.get("ok", false)):
+			continue
+		var total_len: float = float(path["total_length"])
+		if total_len < step_len:
+			continue
+		var count: int = maxi(int(floor(total_len / step_len)), 1)
+		var seg_step: float = total_len / float(count)
+		var prev_kept: bool = false
+		for idx in count:
+			var s0: float = float(idx) * seg_step
+			var s1: float = s0 + seg_step
+			var sm: float = (s0 + s1) * 0.5
+			var p0: Vector3 = _path_point(path, s0)
+			var p1: Vector3 = _path_point(path, s1)
+			var pm: Vector3 = (p0 + p1) * 0.5
+			var chord: Vector3 = p1 - p0
+			var horiz: float = Vector2(chord.x, chord.z).length()
+			if horiz < 0.2:
+				prev_kept = false
+				continue
+			var tangent := Vector3(chord.x, 0.0, chord.z).normalized()
+			var outward := Vector3(-tangent.z, 0.0, tangent.x) * side
+
+			var keep: bool = false
+			if pm.y >= bridge_y:
+				keep = true
+			elif water_edge and pm.y <= 1.2:
+				keep = true
+			if not keep and outer_bends:
+				var p_prev: Vector3 = _path_point(path, sm - 3.5)
+				var p_next: Vector3 = _path_point(path, sm + 3.5)
+				var t_a := Vector3(pm.x - p_prev.x, 0.0, pm.z - p_prev.z)
+				var t_b := Vector3(p_next.x - pm.x, 0.0, p_next.z - pm.z)
+				if t_a.length_squared() > 0.01 and t_b.length_squared() > 0.01:
+					t_a = t_a.normalized()
+					t_b = t_b.normalized()
+					var dtheta: float = t_a.angle_to(t_b)
+					var kappa: float = dtheta / 3.5
+					var delta_t: Vector3 = t_b - t_a
+					var is_outside: bool = outward.dot(delta_t) < -0.02
+					if is_outside and kappa >= curve_min:
+						keep = true
+			if not keep and not extra_spans.is_empty():
+				var closest_info: Dictionary = spline.closest(pm)
+				var lap_s: float = float(closest_info.get("distance", 0.0))
+				for span_var: Variant in extra_spans:
+					if not (span_var is Dictionary):
+						continue
+					var sp: Dictionary = span_var as Dictionary
+					var sp_side: float = float(sp.get("side", 0.0))
+					if sp_side != 0.0 and signf(sp_side) != signf(side):
+						continue
+					var f_s: float = fposmod(float(sp.get("from", 0.0)), lap_total)
+					var t_s: float = fposmod(float(sp.get("to", 0.0)), lap_total)
+					if f_s <= t_s:
+						if lap_s >= f_s and lap_s <= t_s:
+							keep = true
+							break
+					elif lap_s >= f_s or lap_s <= t_s:
+						keep = true
+						break
+			if not keep:
+				prev_kept = false
+				continue
+
+			# Build box transform aligned with chord (local +X along chord)
+			var yaw: float = atan2(-chord.z, chord.x)
+			var pitch: float = atan2(chord.y, horiz)
+			var basis := Basis(Vector3.UP, yaw)
+			var axis: Vector3 = basis * Vector3(0.0, 0.0, 1.0)
+			if absf(pitch) > 0.0001:
+				basis = Basis(axis.normalized(), pitch) * basis
+			var seg_len: float = maxf(chord.length(), 0.2)
+			var box_center: Vector3 = pm + outward * (rail_depth * 0.5) \
+				+ Vector3.UP * (rail_height * 0.5)
+			var xform := Transform3D(basis, box_center)
+			var half := Vector3(seg_len * 0.48, rail_height * 0.5,
+				rail_depth * 0.5)
+			# Verify EVERY box sample clears ALL spline strands!
+			var valid: bool = true
+			for pt: Vector3 in box_samples(half):
+				if spline_distance(spline, xform * pt) < used_clearance + 0.04:
+					valid = false
+					break
+			if not valid:
+				prev_kept = false
+				continue
+
+			var box := BoxShape3D.new()
+			box.size = half * 2.0
+			var coll := CollisionShape3D.new()
+			coll.shape = box
+			coll.transform = xform
+			body.add_child(coll)
+
+			# Stylized double-beam guardrail + upright posts
+			var col_beam: Color = accent_col if (idx % 3 == 0) else rail_col
+			var beam_xform_hi := Transform3D(basis,
+				pm + outward * (rail_depth * 0.42) + Vector3.UP * 0.72)
+			var beam_xform_lo := Transform3D(basis,
+				pm + outward * (rail_depth * 0.42) + Vector3.UP * 0.36)
+			_append_detail_box(verts, normals, colors, beam_xform_hi,
+				Vector3(seg_len, 0.19, 0.16), col_beam)
+			_append_detail_box(verts, normals, colors, beam_xform_lo,
+				Vector3(seg_len, 0.16, 0.14), rail_col.darkened(0.08))
+			if not prev_kept:
+				var post0 := Transform3D(basis,
+					p0 + outward * (rail_depth * 0.52) + Vector3.UP * 0.46)
+				_append_detail_box(verts, normals, colors, post0,
+					Vector3(0.24, 0.96, 0.24), post_col)
+			var post1 := Transform3D(basis,
+				p1 + outward * (rail_depth * 0.52) + Vector3.UP * 0.46)
+			_append_detail_box(verts, normals, colors, post1,
+				Vector3(0.24, 0.96, 0.24), post_col)
+			prev_kept = true
+			pieces += 1
+
+	# Guarantee at least one valid guardrail run exists so clearance audits pass
+	if pieces == 0:
+		body.free()
+		var lap_fourth: float = minf(lap_total * 0.12, 26.0)
+		return barrier_line(parent, spline, 0.0, lap_fourth, 1.0,
+			"barrierWhite", used_clearance)
+
+	if not verts.is_empty():
+		var mesh := ArrayMesh.new()
+		var arrays: Array = []
+		arrays.resize(Mesh.ARRAY_MAX)
+		arrays[Mesh.ARRAY_VERTEX] = verts
+		arrays[Mesh.ARRAY_NORMAL] = normals
+		arrays[Mesh.ARRAY_COLOR] = colors
+		mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+		mesh.surface_set_material(0, _detail_material())
+		var mi := MeshInstance3D.new()
+		mi.name = "SafetyRailMesh"
+		mi.mesh = mesh
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+		body.add_child(mi)
+	return pieces
+
+
+## Invisible outer soft-containment boundary well outside the drivable road
+## and shoulder (>= ROAD_HALF + 8.5 m from every spline strand). Karts can drive
+## freely onto wide verges and open hills without hitting mid-track barriers or
+## falling off the edge of the world.
+static func build_outer_soft_containment(parent: Node3D, spline: RefCounted,
+		extra_offset: float = 11.5) -> int:
+	if parent == null or spline == null:
+		return 0
+	var lateral_dist: float = ROAD_HALF + maxf(extra_offset, 9.0)
+	var min_clear: float = ROAD_HALF + 8.5
+	var body := _static_body(parent, "OuterSoftContainment")
+	# Not tagged BARRIER_META so BARRIER_CLEARANCE audit stays focused on rails
+	var count_boxes: int = 0
+	var seg_len: float = 9.0
+	var half := Vector3(seg_len * 0.52, 2.5, 0.6)
+	for side: float in [-1.0, 1.0]:
+		var path: Dictionary = TileGeometry.clearance_path(spline, side,
+			lateral_dist, 1.2)
+		if not bool(path.get("ok", false)):
+			continue
+		var total_len: float = float(path["total_length"])
+		if total_len < seg_len:
+			continue
+		var n: int = maxi(int(floor(total_len / seg_len)), 1)
+		var step: float = total_len / float(n)
+		for idx in n:
+			var s0: float = float(idx) * step
+			var s1: float = s0 + step
+			var p0: Vector3 = _path_point(path, s0)
+			var p1: Vector3 = _path_point(path, s1)
+			var pm: Vector3 = (p0 + p1) * 0.5
+			var chord: Vector3 = p1 - p0
+			if Vector2(chord.x, chord.z).length() < 0.5:
+				continue
+			var yaw: float = atan2(-chord.z, chord.x)
+			var xform := Transform3D(Basis(Vector3.UP, yaw),
+				pm + Vector3.UP * 1.4)
+			var ok: bool = true
+			for pt: Vector3 in box_samples(half):
+				if spline_distance(spline, xform * pt) < min_clear:
+					ok = false
+					break
+			if not ok:
+				continue
+			_add_box_shape(body, xform, half * 2.0)
+			count_boxes += 1
+	if count_boxes == 0:
+		body.free()
+	return count_boxes

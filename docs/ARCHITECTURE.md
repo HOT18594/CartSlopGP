@@ -46,9 +46,9 @@ directly, or the fade and the loading overlay are skipped.
 | Folder | Files | Contents |
 | --- | --- | --- |
 | `scripts/minigames/` | 67 | race scenes, track registry, AI, themes, tile engine |
-| `scripts/ui/` | 30 | every menu, HUD, panels, UI kit |
+| `scripts/ui/` | 28 | every menu, HUD, panels, UI kit |
 | `scripts/systems/` | 10 | settings, collisions, backdrop, visual grade |
-| `scripts/tools/` | 3 | headless tests and the preview renderer |
+| `scripts/tools/` | 10 | headless tests and the preview renderer |
 | `scripts/vehicles/` | 2 | per-vehicle data |
 | `scripts/net/` | 2 | networking |
 | `scripts/feedback/` | 2 | `cart_feedback.gd` + `skid_trail.gd` |

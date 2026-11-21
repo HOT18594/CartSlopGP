@@ -34,7 +34,7 @@ const MAX_FLAT_RATIO: float = 0.94
 const SAMPLE_STEP: int = 12
 ## A solid prop must stay at least this far from the centreline; the lane edge
 ## is TileKit.ROAD_HALF, so 6.02 m leaves half a metre of real margin.
-const SOLID_MARGIN: float = 6.02
+const SOLID_MARGIN: float = TileKit.ROAD_HALF + 0.5
 ## Colliders whose lowest point is above this are overhead (start gantry beam).
 const DRIVE_UNDER: float = 3.2
 

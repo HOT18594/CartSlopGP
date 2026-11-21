@@ -71,8 +71,8 @@ const SIDE_SHARE: Array[float] = [0.38, 0.28, 0.0, 0.34]
 ## Hard clearance from the centreline: barrier clearance (8.02 m) plus a full
 ## tree canopy and the fence itself. The belt's inner edge lands near 28 m on
 ## this layout, so the number only matters on the legacy spline fallback.
-const TREE_CLEARANCE: float = 17.0
-const SCRUB_CLEARANCE: float = 13.5
+const TREE_CLEARANCE: float = TileKit.ROAD_HALF + 11.0
+const SCRUB_CLEARANCE: float = TileKit.ROAD_HALF + 6.5
 ## A band candidate may not stand this close to a dressed cell outside the fence.
 ## In-grid claims are the outer-band offices/containers, and a cell footprint is
 ## 16 m wide, so 8.5 m keeps a canopy off one. Off-grid claims are the sparse
@@ -118,7 +118,7 @@ const YARD_TREE_LIMIT: int = 14
 ## A pocket cell on this pinched layout sits 16-23 m from the centreline, so the
 ## in-site tree is allowed that close: the barrier is at 8.02 m and a 4 m canopy
 ## still clears it. The band trees keep the wider TREE_CLEARANCE.
-const YARD_CLEARANCE: float = 15.0
+const YARD_CLEARANCE: float = TileKit.ROAD_HALF + 9.5
 const YARD_STAND_CLEAR: float = 16.0
 ## Uniform wind direction for the in-site trees and the bent-palm species; the
 ## quay's dominant onshore breeze, matching the flags on the apron.

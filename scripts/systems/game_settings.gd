@@ -309,12 +309,14 @@ func set_master_volume(value: float) -> void:
 	master_volume = clampf(value, 0.0, 1.0)
 	_apply_bus("Master", master_volume)
 	_queue_save()
+	changed.emit()
 
 
 func set_sfx_volume(value: float) -> void:
 	sfx_volume = clampf(value, 0.0, 1.0)
 	_apply_bus(SFX_BUS, sfx_volume)
 	_queue_save()
+	changed.emit()
 
 
 func set_music_volume(value: float) -> void:
@@ -449,16 +451,125 @@ func set_connection_preference(mode: String) -> void:
 
 
 func set_relay_server(raw: String) -> void:
-	relay_server = raw.strip_edges()
+	var key: String = raw.strip_edges()
+	if key == "" or key.length() > 255:
+		return
+	if not _is_valid_relay_server(key):
+		return
+	relay_server = key
 	save_settings()
 
 
+static func _is_valid_relay_server(key: String) -> bool:
+	if key.contains(" ") or key.contains("\t") or key.contains("\n"):
+		return false
+	if key.contains("://"):
+		return false
+	var host: String = key
+	var path: String = ""
+	var slash: int = key.find("/")
+	if slash >= 0:
+		host = key.substr(0, slash)
+		path = key.substr(slash)
+		if path.contains(" "):
+			return false
+		if path.length() > 128:
+			return false
+	if host == "":
+		return false
+	var port: String = ""
+	var bracket_close: int = host.find("]")
+	if host.begins_with("["):
+		if bracket_close <= 1:
+			return false
+		var after: String = host.substr(bracket_close + 1)
+		if after != "" and not after.begins_with(":"):
+			return false
+		if after.begins_with(":"):
+			port = after.substr(1)
+		host = host.substr(0, bracket_close + 1)
+	elif host.count(":") > 1:
+		return false
+	elif host.contains(":"):
+		var parts: PackedStringArray = host.split(":")
+		if parts.size() != 2:
+			return false
+		host = parts[0]
+		port = parts[1]
+	if port != "":
+		if not port.is_valid_int():
+			return false
+		var port_num: int = int(port)
+		if port_num <= 0 or port_num > 65535:
+			return false
+	if host == "":
+		return false
+	if host.begins_with("[") and host.ends_with("]"):
+		var inner: String = host.substr(1, host.length() - 2)
+		return inner != "" and not inner.contains(" ")
+	if _is_valid_ipv4(host):
+		return true
+	return _is_valid_hostname(host)
+
+
+static func _is_valid_ipv4(host: String) -> bool:
+	var parts: PackedStringArray = host.split(".")
+	if parts.size() != 4:
+		return false
+	for part: String in parts:
+		if part == "" or not part.is_valid_int():
+			return false
+		if part.length() > 1 and part.begins_with("0"):
+			pass
+		var num: int = int(part)
+		if num < 0 or num > 255:
+			return false
+		for c: String in part:
+			if not c.is_valid_int():
+				return false
+	return true
+
+
+static func _is_valid_hostname(host: String) -> bool:
+	if host.length() > 253 or host == "":
+		return false
+	if host.begins_with(".") or host.ends_with(".") or host.begins_with("-") or host.ends_with("-"):
+		return false
+	if host.contains("..") or host.contains("--"):
+		pass
+	for label: String in host.split("."):
+		if label == "" or label.length() > 63:
+			return false
+		if label.begins_with("-") or label.ends_with("-"):
+			return false
+		for c: String in label:
+			var code: int = c.unicode_at(0)
+			var ok: bool = (code >= 48 and code <= 57) \
+				or (code >= 65 and code <= 90) \
+				or (code >= 97 and code <= 122) \
+				or code == 45 or code == 95
+			if not ok:
+				return false
+	return true
+
+
 func set_selected_minigame(id: String) -> void:
-	## Legacy minigame/arena selection. It used to clamp every id to
-	## `meadow_loop`, which discarded registry maps and cargo arena themes;
-	## keep the caller's id and only fall back when it is empty.
+	## Legacy minigame/arena selection. Only registry ids survive: empty,
+	## oversized or unknown ids fall back to `meadow_loop` like load_settings.
 	var key: String = id.strip_edges()
-	selected_minigame = key if key != "" else "meadow_loop"
+	if key == "" or key.length() > 64:
+		selected_minigame = "meadow_loop"
+	elif TrackDefs.has_theme_id(key) or TrackDefs.has_theme_id(key.to_lower()):
+		selected_minigame = key
+	elif not TrackDefs.get_minigame(key).is_empty() \
+			or not TrackDefs.get_minigame(key.to_lower()).is_empty():
+		selected_minigame = key
+	elif map_id_or_empty(key) != "":
+		selected_minigame = key
+	elif TrackDefs.all_ids().has(key) or TrackDefs.all_ids().has(key.to_lower()):
+		selected_minigame = key
+	else:
+		selected_minigame = "meadow_loop"
 	save_settings()
 
 

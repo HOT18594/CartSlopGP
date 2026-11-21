@@ -22,9 +22,12 @@ extends Node
 ##    with put_partial_data(); a partial write must never corrupt the stream.
 
 signal tunnel_ready()
-signal tunnel_lost()
+signal tunnel_lost(reason: String)
 
 const RECONNECT_DELAY: float = 2.0
+const RECONNECT_JITTER: float = 0.5
+const RX_MAX: int = 256 * 1024
+const TX_FLUSH_BUDGET: int = 64 * 1024
 ## A TCP handshake can outlive the retry delay on slow/roaming links.
 const CONNECT_TIMEOUT: float = 10.0
 ## Refuse to buffer an unbounded amount of data for a stalled Pi.
@@ -42,6 +45,8 @@ var _awaiting_ok: bool = false
 var _ready: bool = false
 var _hello_sent: bool = false
 var _retry: float = 0.0
+var _retry_attempt: int = 0
+var _loss_reason: String = ""
 var _connect_deadline_ms: int = 0
 var _sockets: Dictionary = {} ## client id -> PacketPeerUDP
 var _socket_seen: Dictionary = {} ## client id -> Time.get_ticks_msec() of last activity
@@ -58,7 +63,8 @@ func start() -> void:
 	_reset_transport()
 	_tcp.disconnect_from_host()
 	_tcp = StreamPeerTCP.new()
-	_retry = RECONNECT_DELAY
+	_retry_attempt = 0
+	_retry = _next_retry_delay()
 	_connect()
 
 
@@ -98,10 +104,15 @@ func _reset_transport() -> void:
 	_ready = false
 	_hello_sent = false
 	_awaiting_ok = false
+	_loss_reason = ""
 	_rx = PackedByteArray()
 	_line = ""
 	_tx = PackedByteArray()
 	_connect_deadline_ms = 0
+
+
+func _next_retry_delay() -> float:
+	return RECONNECT_DELAY * (1.0 - RECONNECT_JITTER * 0.5 + randf() * RECONNECT_JITTER) * pow(1.5, float(mini(_retry_attempt, 6)))
 
 
 func _connect() -> void:
@@ -110,9 +121,11 @@ func _connect() -> void:
 	_tcp.set_no_delay(true)
 	var error: Error = _tcp.connect_to_host(_host, _port)
 	if error != OK:
-		_retry = RECONNECT_DELAY
+		_retry_attempt += 1
+		_retry = _next_retry_delay()
 		_connect_deadline_ms = 0
-		tunnel_lost.emit()
+		_loss_reason = "connect_failed"
+		tunnel_lost.emit(_loss_reason)
 		return
 	_connect_deadline_ms = Time.get_ticks_msec() + int(CONNECT_TIMEOUT * 1000.0)
 
@@ -128,19 +141,22 @@ func _process(delta: float) -> void:
 				_tcp.disconnect_from_host()
 				_tcp = StreamPeerTCP.new()
 				_connect_deadline_ms = 0
-				_retry = RECONNECT_DELAY
+				_retry_attempt += 1
+				_retry = _next_retry_delay()
 		else:
 			_connect_deadline_ms = 0
 			_retry -= delta
 			if _retry <= 0.0 and _host != "" and _port > 0:
-				_retry = RECONNECT_DELAY
+				_retry_attempt += 1
+				_retry = _next_retry_delay()
 				_connect()
 				return
 	_tcp.poll()
 	var status: int = _tcp.get_status()
 	if status != StreamPeerTCP.STATUS_CONNECTED:
 		if _ready:
-			tunnel_lost.emit()
+			_loss_reason = "tcp_dropped"
+			tunnel_lost.emit(_loss_reason)
 		_ready = false
 		_hello_sent = false
 		_awaiting_ok = false
@@ -164,6 +180,9 @@ func _process(delta: float) -> void:
 		var result: Array = _tcp.get_data(available)
 		if int(result[0]) == OK:
 			_rx.append_array(result[1] as PackedByteArray)
+			if _rx.size() > RX_MAX:
+				_drop_link(true, "rx_overflow")
+				return
 
 	if _awaiting_ok:
 		var newline: int = _find_byte(_rx, 10)
@@ -178,21 +197,27 @@ func _process(delta: float) -> void:
 			# A rejected (rotated/expired) token used to fall straight back to
 			# "not _hello_sent", which re-sent TOKEN every frame at 60 Hz. Drop
 			# the link so the normal _retry backoff owns the next attempt.
-			_drop_link(true)
+			_drop_link(true, "token_rejected")
 			return
 		_ready = true
+		_retry_attempt = 0
 		tunnel_ready.emit()
 
 	while _rx.size() >= 8:
 		var client_id: int = _read_u32(_rx, 0)
 		var length: int = _read_u32(_rx, 4)
 		if length > 65535:
-			stop()
+			_drop_link(true, "bad_frame")
 			return
 		if _rx.size() < 8 + length:
+			if _rx.size() > RX_MAX:
+				_drop_link(true, "rx_overflow")
+				return
 			break
 		var payload: PackedByteArray = _rx.slice(8, 8 + length)
 		_rx = _rx.slice(8 + length)
+		if not _is_allowed_client(client_id):
+			continue
 		var udp: PacketPeerUDP = _socket_for(client_id)
 		if udp != null:
 			udp.put_packet(payload)
@@ -217,7 +242,7 @@ func _process(delta: float) -> void:
 			_socket_seen.erase(id)
 
 
-func _drop_link(force_reconnect: bool = false) -> void:
+func _drop_link(force_reconnect: bool = false, reason: String = "dropped") -> void:
 	## Tear the TCP side down without touching the loopback sockets. The retry
 	## timer (or an explicit reconnect) owns the next attempt.
 	var was_ready: bool = _ready
@@ -229,10 +254,30 @@ func _drop_link(force_reconnect: bool = false) -> void:
 	_tx = PackedByteArray()
 	_tcp.disconnect_from_host()
 	_tcp = StreamPeerTCP.new()
-	_retry = RECONNECT_DELAY
+	_retry_attempt += 1
+	_retry = _next_retry_delay()
 	_connect_deadline_ms = 0
+	_loss_reason = reason
 	if force_reconnect or was_ready:
-		tunnel_lost.emit()
+		tunnel_lost.emit(_loss_reason)
+
+
+func _is_allowed_client(client_id: int) -> bool:
+	if client_id <= 0 or client_id > 4096:
+		return false
+	if _sockets.has(client_id):
+		return true
+	var parent: Node = get_parent()
+	if parent != null and parent.has_method("participants"):
+		var ids: Array = parent.call("participants")
+		if ids.has(client_id):
+			return true
+		# Lone host has no peer list yet; allow the first allocation so the
+		# initial handshake can populate the ENet peer table.
+		if ids.size() <= 1:
+			return true
+		return false
+	return true
 
 
 func _socket_for(client_id: int) -> PacketPeerUDP:
@@ -268,7 +313,7 @@ func _queue_tx(frame: PackedByteArray) -> void:
 		# The Pi stopped reading. Drop the link rather than buffer forever or
 		# emit a partial frame that would desynchronise its length-prefixed
 		# reader.
-		_drop_link(true)
+		_drop_link(true, "tx_overflow")
 		return
 	_tx.append_array(frame)
 
@@ -278,14 +323,17 @@ func _flush_tx() -> void:
 		return
 	# put_partial_data() is the only honest write API here: put_data() may
 	# accept fewer bytes than asked, and a partial frame corrupts the stream.
-	var result: Array = _tcp.put_partial_data(_tx)
-	if int(result[0]) != OK:
-		_drop_link(true)
-		return
-	var sent: int = int(result[1])
-	if sent <= 0:
-		return
-	_tx = _tx.slice(sent)
+	var budget: int = TX_FLUSH_BUDGET
+	while not _tx.is_empty() and budget > 0:
+		var result: Array = _tcp.put_partial_data(_tx)
+		if int(result[0]) != OK:
+			_drop_link(true, "tx_error")
+			return
+		var sent: int = int(result[1])
+		if sent <= 0:
+			break
+		_tx = _tx.slice(sent)
+		budget -= sent
 
 
 func _find_byte(data: PackedByteArray, value: int) -> int:

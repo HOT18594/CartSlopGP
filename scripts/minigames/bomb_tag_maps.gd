@@ -25,6 +25,7 @@ extends RefCounted
 const CollisionLayers := preload("res://scripts/systems/collision_layers.gd")
 const SceneryKit := preload("res://scripts/minigames/scenery/scenery_kit.gd")
 const PropBatch := preload("res://scripts/minigames/scenery/prop_batch.gd")
+const LandscapeSculptor := preload("res://scripts/minigames/scenery/landscape_sculptor.gd")
 const AmbientWorld := preload("res://scripts/minigames/scenery/ambient_world.gd")
 const BOOST_PAD_SCENE: PackedScene = preload("res://scenes/track/boost_pad.tscn")
 
@@ -157,6 +158,7 @@ static func build_arena(host: Node3D, arena_id: String) -> Dictionary:
 			ambient = {"style": "dockyard", "floor_y": -3.0,
 				"radius_in": 46.0, "radius_out": 74.0}
 	AmbientWorld.build_arena(root, resolved, bounds_half, ambient)
+	_add_dynamic_landmarks(root, resolved)
 	meta["id"] = resolved
 	meta["spawns"] = spawns
 	meta["fall_y"] = fall_y
@@ -180,7 +182,7 @@ static func _build_plaza(root: Node3D, spawns: Array[Transform3D],
 	var batch := PropBatch.new()
 
 	# Surrounding festival lawn apron + sunlit cobblestone court base.
-	_add_plane(root, "OuterLawn", Vector2(420.0, 420.0), Vector3(0.0, -0.08, 0.0),
+	_add_plane(root, "OuterLawn", Vector2(1050.0, 1050.0), Vector3(0.0, -0.08, 0.0),
 		Color("52a849"))
 	_add_box_collider(body, Transform3D(Basis.IDENTITY, Vector3(0.0, -1.0, 0.0)),
 		Vector3(144.0, 2.0, 144.0))
@@ -253,10 +255,10 @@ static func _build_plaza(root: Node3D, spawns: Array[Transform3D],
 	#                  + Flanking Drive-Under Archways (>= 3.90 m clearance!)
 	# ------------------------------------------------------------------
 	var terrace_y: float = 2.2
-	var stone_wall := Color("d6bc94")
-	var terrace_top := Color("c96a48")
-	var terrace_trim := Color("f8efe0")
-	var arch_col := Color("e2844e")
+	var stone_wall := Color("d6a05e")
+	var terrace_top := Color("e0603c")
+	var terrace_trim := Color("ffd9a0")
+	var arch_col := Color("e86a2e")
 
 	for z_sign: float in [-1.0, 1.0]:
 		var tz_center: float = z_sign * 38.0
@@ -294,9 +296,11 @@ static func _build_plaza(root: Node3D, spawns: Array[Transform3D],
 			_add_ramp(batch, body, r_start, r_end, 10.0, 0.48,
 				Color("e08a54"), terrace_trim, true, ramps)
 			# Fill wedge underneath ramp so no kart wedges under the low slope.
+			# Kept 0.19 m below the ramp surface and inset inside the slab
+			# so it never pokes through the deck or out its sides.
 			_add_solid_box(batch, body,
-				Transform3D(Basis.IDENTITY, Vector3(sx * 33.2, terrace_y * 0.26, tz_center)),
-				Vector3(10.6, terrace_y * 0.52, 9.8), stone_wall)
+				Transform3D(Basis.IDENTITY, Vector3(sx * 33.2, terrace_y * 0.22, tz_center)),
+				Vector3(9.4, terrace_y * 0.44, 9.0), stone_wall)
 
 			# Grand Drive-Under Festival Archway Portal over the flanking lane!
 			# Spans from x = +-39.5 to x = +-57.5 (18.0 m clear tunnel width!),
@@ -325,8 +329,8 @@ static func _build_plaza(root: Node3D, spawns: Array[Transform3D],
 	# ------------------------------------------------------------------
 	var sky_y: float = 4.40
 	var sky_thick: float = 0.44
-	var sky_col := Color("3b89c9")
-	var sky_deck := Color("f5ecd8")
+	var sky_col := Color("2f7fc4")
+	var sky_deck := Color("ffc46b")
 
 	# Central flat Skywalk span: z in [-19.5, +19.5] (39.0 m long), width = 10.4 m.
 	# Underside is at y = 4.40 - 0.44 = 3.96 m over the ground courtyard!
@@ -343,10 +347,10 @@ static func _build_plaza(root: Node3D, spawns: Array[Transform3D],
 	for z_sign: float in [-1.0, 1.0]:
 		for sx: float in [-1.0, 1.0]:
 			_add_solid_box(batch, body,
-				Transform3D(Basis.IDENTITY, Vector3(sx * 4.85, sky_y + 0.45, z_sign * 14.5)),
+				Transform3D(Basis.IDENTITY, Vector3(sx * 5.35, sky_y + 0.45, z_sign * 14.5)),
 				Vector3(0.65, 0.90, 10.0), terrace_trim)
 			# Open roof edge drop markers along z in [-9.5, +9.5].
-			batch.add_box(Transform3D(Basis.IDENTITY, Vector3(sx * 4.85, sky_y + 0.035, 0.0)),
+			batch.add_box(Transform3D(Basis.IDENTITY, Vector3(sx * 5.35, sky_y + 0.035, 0.0)),
 				Vector3(0.65, 0.05, 18.6), Color("ff595e"))
 
 		# Terrace-to-Skywalk Ramp: climbs from (0, 2.2, z_sign * 30.5) on Mid Terrace
@@ -356,12 +360,16 @@ static func _build_plaza(root: Node3D, spawns: Array[Transform3D],
 		var sr_end := Vector3(0.0, sky_y, z_sign * 19.5)
 		_add_ramp(batch, body, sr_start, sr_end, 9.6, 0.46,
 			sky_col.lightened(0.12), terrace_trim, true, ramps)
-		# Solid stone abutment pier under z in [19.5, 28.0] so no low-ceiling wedge exists;
-		# ground drive-under avenues between fountain (r=4.6) and abutment (|z|=19.5) are
-		# 14.9 m wide with full 3.96 m vertical clearance!
-		_add_solid_box(batch, body,
-			Transform3D(Basis.IDENTITY, Vector3(0.0, sky_y * 0.5, z_sign * 23.75)),
-			Vector3(10.2, sky_y, 8.5), stone_wall)
+		# Stepped support blocks under the ramp: each top stays 0.35 m below
+		# the ramp surface so the climb is never walled off. The old single
+		# full-height abutment stood ~1.7 m across the slope and blocked it.
+		for step_i in 4:
+			var zc: float = z_sign * (29.0 - float(step_i) * 2.5)
+			var surf_y: float = 2.2 + (30.5 - absf(zc)) / 11.0 * 2.2
+			var top_y: float = surf_y - 0.35
+			_add_solid_box(batch, body,
+				Transform3D(Basis.IDENTITY, Vector3(0.0, top_y * 0.5, zc)),
+				Vector3(9.2, top_y, 2.6), stone_wall)
 		pillars.append(Vector3(0.0, 0.0, z_sign * 23.75))
 
 	# Enclosed Perimeter Barrier Ring (120 x 120 m, inner face at +-60.0 m).
@@ -452,7 +460,7 @@ static func _build_labyrinth(root: Node3D, spawns: Array[Transform3D],
 	var batch := PropBatch.new()
 
 	# Warm red-rock desert floor & wide desert horizon.
-	_add_plane(root, "DesertHorizon", Vector2(460.0, 460.0),
+	_add_plane(root, "DesertHorizon", Vector2(1050.0, 1050.0),
 		Vector3(0.0, -0.08, 0.0), Color("c96235"))
 	_add_box_collider(body, Transform3D(Basis.IDENTITY, Vector3(0.0, -1.0, 0.0)),
 		Vector3(150.0, 2.0, 150.0))
@@ -550,15 +558,16 @@ static func _build_labyrinth(root: Node3D, spawns: Array[Transform3D],
 		var mr_end := Vector3(0.0, bridge_y, z_sign * 9.5)
 		_add_ramp(batch, body, mr_start, mr_end, 10.4, 0.46,
 			strata[2], strata[4], true, ramps)
-		# Solid sandstone abutment + under-ramp mesa block (|z| in [9.5, 25.5])
-		# leaving the entire 19.0 m E/W Canyon Main Street (z in [-9.5, +9.5]) 100% clear
-		# with 3.47 m vertical headroom!
-		_add_solid_box(batch, body,
-			Transform3D(Basis.IDENTITY, Vector3(0.0, bridge_y * 0.48, z_sign * 13.2)),
-			Vector3(10.6, bridge_y * 0.96, 7.4), strata[0])
-		_add_solid_box(batch, body,
-			Transform3D(Basis.IDENTITY, Vector3(0.0, bridge_y * 0.24, z_sign * 20.6)),
-			Vector3(10.4, bridge_y * 0.48, 7.6), strata[0])
+		# Solid stepped mesa supports under each ramp: every top stays 0.30 m
+		# below the ramp surface so the climb is never walled off. The old
+		# full-height abutments poked ~0.6 m through the slope.
+		for step_i in 4:
+			var zc: float = z_sign * (21.0 - float(step_i) * 3.0)
+			var surf_y: float = (26.0 - absf(zc)) / 16.5 * bridge_y
+			var stop_y: float = surf_y - 0.30
+			_add_solid_box(batch, body,
+				Transform3D(Basis.IDENTITY, Vector3(0.0, stop_y * 0.5, zc)),
+				Vector3(9.8, stop_y, 3.2), strata[0])
 
 	# Canyon Perimeter Wall (124 x 124 m) + Red-Rock Rim Cliffs, Cacti & Palms outside!
 	_build_enclosed_perimeter(root, body, batch, half, "barrierWall", "barrierRed")
@@ -638,10 +647,12 @@ static func _dress_labyrinth_exterior(root: Node3D, body: StaticBody3D,
 
 	var stands: Array = []
 	for side: float in [-1.0, 1.0]:
-		var spos := Vector3(side * (half + 10.0), 0.0, 28.0 * side)
+		# Pushed well outside the +-62 m barrier ring at a smaller scale so
+		# the stands no longer straddle the wall and cover edge tiles.
+		var spos := Vector3(side * (half + 18.0), 0.0, 28.0 * side)
 		var syaw: float = -PI * 0.5 if side < 0.0 else PI * 0.5
-		stands.append(fit_transform("grandStand", spos, syaw, Vector3.ONE * 12.0))
-		var sz: Vector3 = scaled_size("grandStand", Vector3.ONE * 12.0)
+		stands.append(fit_transform("grandStand", spos, syaw, Vector3.ONE * 8.0))
+		var sz: Vector3 = scaled_size("grandStand", Vector3.ONE * 8.0)
 		_add_box_collider(body, Transform3D(Basis(Vector3.UP, syaw),
 			spos + Vector3.UP * (sz.y * 0.5)), sz)
 	batch_model(root, "grandStand", stands, "LabyrinthStands", true)
@@ -663,7 +674,7 @@ static func _build_ferries(root: Node3D, spawns: Array[Transform3D],
 	# Deep blue cartoon harbour ocean at y = -3.0 m (no collider on water —
 	# falling karts splash below fall_y = -2.1 m and teleport to nearest safe spawn!).
 	var water_y: float = -3.0
-	_add_plane(root, "HarbourOcean", Vector2(460.0, 460.0),
+	_add_plane(root, "HarbourOcean", Vector2(1050.0, 1050.0),
 		Vector3(0.0, water_y, 0.0), Color("166bb3"))
 	# Channel lighter turquoise water strip + white wake foam lines along x = +-6.0 m.
 	batch.add_box(Transform3D(Basis.IDENTITY, Vector3(0.0, water_y + 0.02, 0.0)),
@@ -729,9 +740,15 @@ static func _build_ferries(root: Node3D, spawns: Array[Transform3D],
 			var wr_end := Vector3(cx, raised_y, end_sign * 36.0)
 			_add_ramp(batch, body, wr_start, wr_end, 10.4, 0.44,
 				Color("9aa7b5"), hull_stripe, true, ramps)
-			_add_solid_box(batch, body,
-				Transform3D(Basis.IDENTITY, Vector3(cx, raised_y * 0.25, end_sign * 31.8)),
-				Vector3(10.4, raised_y * 0.50, 8.2), Color("5b6673"))
+			# Stepped fill under the ramp: every top stays 0.15 m below the
+			# ramp surface. The old flat fill stood ~0.8 m across the climb.
+			for wstep in 3:
+				var wzc: float = end_sign * (29.0 + float(wstep) * 2.5)
+				var wsurf: float = (absf(wzc) - 27.0) / 9.0 * raised_y
+				var wtop: float = wsurf - 0.15
+				_add_solid_box(batch, body,
+					Transform3D(Basis.IDENTITY, Vector3(cx, wtop * 0.5, wzc)),
+					Vector3(9.8, wtop, 2.7), Color("5b6673"))
 
 			if end_sign < 0.0:
 				# Bow Captain's Wheelhouse Cabin Tower (juke island on the +2.0 m bow deck!).
@@ -871,9 +888,16 @@ static func _build_ferries(root: Node3D, spawns: Array[Transform3D],
 	# West -> East Kicker at z = -5.5:
 	_add_ramp(batch, body, Vector3(-15.5, 0.0, -5.5), Vector3(-6.0, kicker_h, -5.5),
 		8.2, 0.46, Color("ff6b35"), Color("ffd22e"), true, ramps)
-	_add_solid_box(batch, body,
-		Transform3D(Basis.IDENTITY, Vector3(-9.2, kicker_h * 0.34, -5.5)),
-		Vector3(6.2, kicker_h * 0.68, 8.0), Color("394859"))
+	# Stepped supports under the kicker: every top stays 0.12 m below the
+	# ramp surface so the deck never pokes through. The old flat fill stood
+	# ~0.8 m across the low half of the climb.
+	for kstep in 5:
+		var kxc: float = [-14.5, -12.5, -10.5, -8.5, -7.0][kstep]
+		var ksurf: float = (kxc + 15.5) / 9.5 * kicker_h
+		var kstop: float = maxf(ksurf - 0.12, 0.05)
+		_add_solid_box(batch, body,
+			Transform3D(Basis.IDENTITY, Vector3(kxc, kstop * 0.5, -5.5)),
+			Vector3(2.0, kstop, 7.6), Color("394859"))
 	# Landing target chevron pad on East Ferry at (+10.5, 0.03, -5.5) + gentle catch bevel:
 	batch.add_box(Transform3D(Basis.IDENTITY, Vector3(11.0, 0.03, -5.5)),
 		Vector3(9.6, 0.04, 9.2), Color("38d6f0"))
@@ -884,9 +908,13 @@ static func _build_ferries(root: Node3D, spawns: Array[Transform3D],
 	# East -> West Kicker at z = +5.5:
 	_add_ramp(batch, body, Vector3(15.5, 0.0, 5.5), Vector3(6.0, kicker_h, 5.5),
 		8.2, 0.46, Color("ff6b35"), Color("ffd22e"), true, ramps)
-	_add_solid_box(batch, body,
-		Transform3D(Basis.IDENTITY, Vector3(9.2, kicker_h * 0.34, 5.5)),
-		Vector3(6.2, kicker_h * 0.68, 8.0), Color("394859"))
+	for kstep in 5:
+		var kxc2: float = [14.5, 12.5, 10.5, 8.5, 7.0][kstep]
+		var ksurf2: float = (15.5 - kxc2) / 9.5 * kicker_h
+		var kstop2: float = maxf(ksurf2 - 0.12, 0.05)
+		_add_solid_box(batch, body,
+			Transform3D(Basis.IDENTITY, Vector3(kxc2, kstop2 * 0.5, 5.5)),
+			Vector3(2.0, kstop2, 7.6), Color("394859"))
 	batch.add_box(Transform3D(Basis.IDENTITY, Vector3(-11.0, 0.03, 5.5)),
 		Vector3(9.6, 0.04, 9.2), Color("38d6f0"))
 	_spawn_boost_pad(root, Vector3(18.2, 0.03, 5.5), PI * 0.5, 12.5, boost_spots)
@@ -965,6 +993,89 @@ static func _dress_ferries_harbour(root: Node3D, batch: PropBatch, water_y: floa
 	batch_model(root, "lightPostModern", lights, "FerryDeckLights", false)
 	batch_model(root, "flagRed", flags_r, "WestFerryFlags", false)
 	batch_model(root, "flagGreen", flags_g, "EastFerryFlags", false)
+
+
+static func _add_dynamic_landmarks(root: Node3D, resolved: String) -> void:
+	var anim: Dictionary = AmbientWorld.anim_of(root)
+	var holder := Node3D.new()
+	holder.name = "DynamicLandmarks_" + resolved
+	root.add_child(holder)
+	var batch := PropBatch.new()
+	var rng := RandomNumberGenerator.new()
+	rng.seed = resolved.hash() ^ 0x4A12
+	match resolved:
+		"bt_plaza":
+			var hill_pal := {
+				"skirt": Color("478735"),
+				"mid": Color("60a844"),
+				"top": Color("77c254"),
+			}
+			for i in 12:
+				var ang: float = TAU * float(i) / 12.0 + 0.16
+				var dist: float = 128.0 + float(i % 3) * 28.0
+				LandscapeSculptor.add_woodland_hill(batch,
+					Vector3(cos(ang) * dist, -0.1, sin(ang) * dist),
+					38.0 + float(i % 3) * 10.0, 32.0 + float((i + 1) % 3) * 8.0,
+					16.0 + float(i % 4) * 5.5, rng, hill_pal)
+			batch.flush_to(holder, "PlazaHorizonHills", false, SceneryKit.vertex_material())
+			LandscapeSculptor.build_windmill(holder, Vector3(-96.0, 0.0, -88.0), 0.7, 1.3,
+				"meadow", anim)
+			LandscapeSculptor.build_windmill(holder, Vector3(98.0, 0.0, 86.0), -2.4, 1.25,
+				"meadow", anim)
+			LandscapeSculptor.build_hot_air_balloon(holder, Vector3(84.0, 32.0, -76.0),
+				Color("ff595e"), Color("ffd22e"), 0.4, anim)
+			LandscapeSculptor.build_hot_air_balloon(holder, Vector3(-88.0, 36.0, 74.0),
+				Color("38d6f0"), Color("ffd22e"), 2.1, anim)
+			LandscapeSculptor.build_hot_air_balloon(holder, Vector3(12.0, 38.0, -118.0),
+				Color("9d6bff"), Color("ffd22e"), 4.0, anim)
+			LandscapeSculptor.add_biome_particles(holder, "bt_plaza", Vector3.ZERO, 90.0)
+		"bt_labyrinth":
+			var mesa_pal := {
+				"base": Color("914228"),
+				"mid": Color("b85a35"),
+				"top": Color("d97a45"),
+				"cap": Color("e89e5a"),
+			}
+			for i in 12:
+				var ang: float = TAU * float(i) / 12.0 + 0.21
+				var dist: float = 122.0 + float(i % 3) * 28.0
+				var pos := Vector3(cos(ang) * dist, -0.2, sin(ang) * dist)
+				if i % 3 == 0:
+					LandscapeSculptor.add_canyon_spire(batch, pos, 18.0 + float(i % 2) * 5.0,
+						32.0 + float(i % 4) * 7.0, rng)
+				else:
+					LandscapeSculptor.add_stratified_mesa(batch, pos,
+						28.0 + float(i % 3) * 8.0, 26.0 + float(i % 4) * 8.0,
+						3, rng, mesa_pal)
+			LandscapeSculptor.add_natural_arch(batch, null,
+				Vector3(0.0, 0.0, -124.0), 0.15, 28.0, 14.0, 6.0,
+				Color("b85a35"), Color("e89e5a"))
+			batch.flush_to(holder, "LabyrinthHorizonMesas", false, SceneryKit.vertex_material())
+			LandscapeSculptor.build_windmill(holder, Vector3(-98.0, 0.0, 74.0), 0.85, 1.25,
+				"canyon", anim)
+			LandscapeSculptor.add_biome_particles(holder, "bt_labyrinth", Vector3.ZERO, 90.0)
+		"bt_ferries":
+			var coast_pal := {
+				"skirt": Color("47853b"),
+				"mid": Color("5da346"),
+				"top": Color("76bd52"),
+			}
+			for i in 10:
+				var ang: float = TAU * float(i) / 10.0 + 0.28
+				var dist: float = 148.0 + float(i % 3) * 32.0
+				LandscapeSculptor.add_woodland_hill(batch,
+					Vector3(cos(ang) * dist, -3.2, sin(ang) * dist),
+					38.0 + float(i % 3) * 11.0, 32.0 + float((i + 1) % 3) * 9.0,
+					18.0 + float(i % 4) * 7.0, rng, coast_pal)
+			batch.flush_to(holder, "FerriesCoastline", false, SceneryKit.vertex_material())
+			LandscapeSculptor.build_lighthouse(holder, Vector3(-108.0, -2.5, -98.0), 19.0, anim)
+			LandscapeSculptor.build_cargo_ship(holder, Vector3(-96.0, -3.1, -24.0), 0.15, 1.35, anim)
+			LandscapeSculptor.build_cargo_ship(holder, Vector3(98.0, -3.1, 28.0), 3.05, 1.30, anim)
+			LandscapeSculptor.build_port_crane(holder, Vector3(-84.0, -3.0, 78.0), -1.1, 20.0,
+				Color("ff9f2e"), anim)
+			LandscapeSculptor.build_port_crane(holder, Vector3(84.0, -3.0, -78.0), 2.1, 20.0,
+				Color("e65142"), anim)
+			LandscapeSculptor.add_biome_particles(holder, "bt_ferries", Vector3.ZERO, 90.0)
 
 
 # ==========================================================================

@@ -109,12 +109,12 @@ const SEAM_TOLERANCE: float = 0.005
 ## A ramp/jump tile is a solid structure: base block, two outer walls and a
 ## painted lip band. The walls sit outside the 11.04 m lane, so they can never
 ## catch a cart on the join, and they carry no collider (detail only).
-const RAMP_BASE_DEPTH: float = 0.45
-const RAMP_WALL_LATERAL: float = ROAD_HALF + 0.72
-const RAMP_WALL_THICKNESS: float = 0.28
-const RAMP_WALL_LIFT: float = 0.40
-const RAMP_LIP_HEIGHT: float = 0.55
-const RAMP_LIP_BAND: float = 0.42
+const RAMP_BASE_DEPTH: float = 0.62
+const RAMP_WALL_LATERAL: float = ROAD_HALF + 0.96
+const RAMP_WALL_THICKNESS: float = 0.36
+const RAMP_WALL_LIFT: float = 0.45
+const RAMP_LIP_HEIGHT: float = 0.65
+const RAMP_LIP_BAND: float = 0.54
 
 ## Clearance sampling. A barrier path is walked along the real road edge in
 ## steps this small, so a chord across a corner can never cut onto the surface.
@@ -2047,13 +2047,13 @@ static func _add_box_shape(body: StaticBody3D, xform: Transform3D,
 
 static func _ramp_face_height() -> float:
 	if _ramp_height < 0.0:
-		_ramp_height = _model_height("roadRamp") * 0.6
+		_ramp_height = _model_height("roadRamp") * TileCatalog.road_scale("J").y
 	return _ramp_height
 
 
 static func _bump_face_height() -> float:
 	if _bump_height < 0.0:
-		_bump_height = _model_height("roadBump") * 0.35
+		_bump_height = _model_height("roadBump") * TileCatalog.road_scale("B").y
 	return _bump_height
 
 

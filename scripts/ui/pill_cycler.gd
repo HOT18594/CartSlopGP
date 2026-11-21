@@ -12,7 +12,7 @@ const TEXT_ON: Color = Color("1e1b3a")
 
 @export var options: PackedStringArray = PackedStringArray()
 @export var values: Array = []
-@export var tile_min_width: float = 68.0 ## Equal width for every tile.
+@export var tile_min_width: float = 76.0 ## Equal width for every tile.
 var selected_index: int = 0
 
 var _track := StyleBoxFlat.new()
@@ -149,8 +149,8 @@ func _draw() -> void:
 		return
 	var base_size: int = get_theme_font_size("font_size")
 	var tile_width: float = size.x / float(options.size())
-	var inset: float = 3.5
-	var available_w: float = maxf(tile_width - inset * 4.0, 8.0)
+	var inset: float = 5.0
+	var available_w: float = maxf(tile_width - inset * 4.0 - 10.0, 8.0)
 	var font_size: int = base_size
 	for index in options.size():
 		font_size = mini(font_size, _fit_font(font, options[index], base_size, available_w))

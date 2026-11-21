@@ -11,7 +11,7 @@ const AmbientWorld := preload("res://scripts/minigames/scenery/ambient_world.gd"
 const THEME_ID: String = "meadow"
 const HOLDER_NAME: String = "MeadowDressing"
 const META_STATS: String = "meadow_stats"
-const HOARDING_DENSITY: float = 0.24
+const HOARDING_DENSITY: float = 0.0
 
 
 static func build(race: Node3D, spline) -> void:
@@ -29,12 +29,14 @@ static func build(race: Node3D, spline) -> void:
 	TileKit.dress_track(race, track, {
 		"id": THEME_ID,
 		"hoarding_density": HOARDING_DENSITY,
+		"kerb_a": Color("f3ead6"),
+		"kerb_b": Color("c9562c"),
 	})
 	var holder := Node3D.new()
 	holder.name = HOLDER_NAME
 	race.add_child(holder)
-	var stats: Dictionary = MeadowScenery.build(holder, track)
 	AmbientWorld.build_track(holder, track, THEME_ID)
+	var stats: Dictionary = MeadowScenery.build(holder, track)
 	race.set_meta(META_STATS, stats)
 	print("REDWOOD VALLEY: %d objects, %d draw nodes, %d barriers, %d trees, %d flora, %d props, %d bluffs" % [
 		int(stats.get("objects", 0)), int(stats.get("draws", 0)),

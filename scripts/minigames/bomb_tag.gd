@@ -93,6 +93,34 @@ const BLAST_PENALTY: int = 1 ## -1 PT (floored at 0) when a bomb detonates on yo
 const SOLO_MIN_BOTS: int = 3 ## Guarantees >= 4 total karts in Solo play.
 const MAX_CONTESTANTS: int = 8
 const AI_JUKE_TRIGGER_DIST: float = 5.5 ## Runner AI fires Juke Surge when carrier <= 5.5 m.
+## Per-difficulty bot brains. Skill never touches kart stats (same vehicle,
+## same physics as a human): it scales aim, anticipation, juke timing and
+## patience, so Easy feels fair and Hard feels ruthless at identical speed.
+const AI_LEAD_TIME: Array[float] = [0.16, 0.30, 0.46] ## Hunter intercept lookahead (s).
+const AI_STEER_GAIN: Array[float] = [1.70, 2.15, 2.55] ## Steering authority per level.
+const AI_EVADE_DIST: Array[float] = [13.0, 17.0, 21.0] ## Runner starts weaving at this range.
+const AI_JUKE_DIST: Array[float] = [6.5, 5.5, 4.2] ## Runner fires Juke Surge at this range.
+const AI_PATROL_SPEED: Array[float] = [0.55, 0.75, 0.95] ## No-threat cruise throttle.
+## Arena-aware patrol rally points (ground level; ramp/bridge routing lifts them).
+const AI_RALLY_POINTS: Dictionary = {
+	"bt_plaza": [
+		Vector3(-24.0, 0.0, -38.0), Vector3(24.0, 0.0, -38.0),
+		Vector3(-24.0, 0.0, 38.0), Vector3(24.0, 0.0, 38.0),
+		Vector3(-40.0, 0.0, -15.0), Vector3(40.0, 0.0, 15.0),
+		Vector3(0.0, 4.4, -14.0), Vector3(0.0, 4.4, 14.0),
+	],
+	"bt_labyrinth": [
+		Vector3(-44.0, 0.0, -44.0), Vector3(44.0, 0.0, -44.0),
+		Vector3(-44.0, 0.0, 44.0), Vector3(44.0, 0.0, 44.0),
+		Vector3(-30.0, 0.0, 0.0), Vector3(30.0, 0.0, 0.0),
+		Vector3(0.0, 3.85, 0.0), Vector3(0.0, 0.0, 30.0),
+	],
+	"bt_ferries": [
+		Vector3(-24.0, 0.0, -25.0), Vector3(-24.0, 0.0, 25.0),
+		Vector3(24.0, 0.0, -25.0), Vector3(24.0, 0.0, 25.0),
+		Vector3(0.0, 2.2, -18.0), Vector3(0.0, 2.2, 18.0),
+	],
+}
 const CART_SYNC_INTERVAL: float = 0.05 ## 20 Hz unreliable_ordered kart pose stream.
 const SNAPSHOT_SYNC_INTERVAL: float = 0.10 ## 10 Hz host bomb/score/shield snapshot stream.
 
@@ -601,6 +629,8 @@ func _spawn_bot(index: int, ghost: bool, spawn_slot: int) -> void:
 		"orbit_sign": 1.0 if index % 2 == 0 else -1.0,
 		"orbit_timer": 1.4 + float(index) * 0.45,
 		"color": tint,
+		"ai_level": clampi(Network.bot_difficulty(), 0, 2),
+		"rally_i": index % 6,
 	})
 
 
@@ -1172,18 +1202,36 @@ func _tick_fall_rescue() -> void:
 
 func _rescue_fallen_kart(key: int, cart: CartPlayer) -> void:
 	var planar_speed: float = Vector2(cart.velocity.x, cart.velocity.z).length()
-	var safe_xf: Transform3D = _nearest_safe_spawn(cart.global_position, true)
+	var from_pos: Vector3 = cart.global_position
+	var safe_xf: Transform3D = _nearest_safe_spawn(from_pos, true)
 	cart.set_spawn_transform(safe_xf)
 	cart.reset_for_respawn()
 	cart.global_transform = safe_xf
 	cart.reset_physics_interpolation()
-	var forward: Vector3 = -safe_xf.basis.z
-	forward.y = 0.0
-	if forward.length_squared() < 0.001:
-		forward = Vector3.FORWARD
+	# Face along the safe lane back into the arena: from the fall point toward
+	# the rescue pad, falling back to the pad's authored facing.
+	var lane: Vector3 = safe_xf.origin - from_pos
+	lane.y = 0.0
+	var forward: Vector3
+	if lane.length_squared() > 0.01:
+		forward = lane.normalized()
 	else:
-		forward = forward.normalized()
+		forward = -safe_xf.basis.z
+		forward.y = 0.0
+		if forward.length_squared() < 0.001:
+			forward = Vector3.FORWARD
+		else:
+			forward = forward.normalized()
 	cart.velocity = forward * (planar_speed * FALL_SPEED_KEEP)
+	# Brief shield plus a pass lock so the rescued kart is not instantly
+	# re-tagged (or stripped of a kept bomb) on the rescue pad.
+	if _contestants.has(key):
+		var cdata: Dictionary = _contestants[key] as Dictionary
+		cdata["shield_timer"] = 1.5
+		cdata["juke_active"] = 0.0
+	for bomb: Dictionary in _bombs:
+		if bool(bomb["active"]) and int(bomb["carrier"]) == key:
+			bomb["lock"] = maxf(float(bomb["lock"]), 1.0)
 	if key == _local_key():
 		if _is_bombed(key):
 			_show_callout("SPLASH!  ·  BOMB STAYS ON YOU!", UiPalette.RED, 1.5)
@@ -1459,14 +1507,47 @@ func _tick_bombs(delta: float) -> void:
 			continue
 		var holder: int = int(bomb["carrier"])
 		var holder_cart: CartPlayer = _cart_for_key(holder)
-		if holder_cart == null or not is_instance_valid(holder_cart):
-			# Disconnected holder: re-home the live bomb onto the nearest active kart.
-			var fallback: Array[int] = _active_contestant_keys()
-			if fallback.is_empty():
+		var holder_data: Dictionary = _contestants.get(holder, {}) as Dictionary
+		var holder_dead: bool = holder_cart == null \
+			or not is_instance_valid(holder_cart) \
+			or not _contestants.has(holder) \
+			or float(holder_data.get("respawn_timer", 0.0)) > 0.0
+		if holder_dead:
+			# Dead holder: re-home the live bomb onto the nearest active,
+			# non-bombed, non-respawning contestant. If nobody qualifies,
+			# deactivate this bomb instead of stacking it onto a carrier.
+			var ref_pos: Vector3 = Vector3.ZERO
+			var rig: Dictionary = _bomb_rigs[i] as Dictionary
+			var rig_root: Node3D = rig.get("root") as Node3D
+			if rig_root != null and is_instance_valid(rig_root):
+				ref_pos = rig_root.global_position
+			var best_key: int = 0
+			var best_d: float = INF
+			for k: int in _active_contestant_keys():
+				if _is_bombed(k):
+					continue
+				var kd: Dictionary = _contestants.get(k, {}) as Dictionary
+				if float(kd.get("respawn_timer", 0.0)) > 0.0:
+					continue
+				var kc: CartPlayer = _cart_for_key(k)
+				if kc == null or not is_instance_valid(kc):
+					continue
+				var d: float = _planar_distance(ref_pos, kc.global_position)
+				if d < best_d:
+					best_d = d
+					best_key = k
+			if best_key == 0:
 				bomb["active"] = false
+				bomb["carrier"] = 0
+				bomb["fuse"] = 0.0
 				continue
-			bomb["carrier"] = fallback[0]
-			holder = fallback[0]
+			bomb["carrier"] = best_key
+			bomb["lock"] = maxf(float(bomb["lock"]), 0.25)
+			if _contestants.has(best_key):
+				var hc: Dictionary = _contestants[best_key] as Dictionary
+				hc["times_bombed"] = int(hc.get("times_bombed", 0)) + 1
+				hc["shield_timer"] = 0.0
+			holder = best_key
 			holder_cart = _cart_for_key(holder)
 
 		bomb["lock"] = maxf(float(bomb["lock"]) - delta, 0.0)
@@ -1842,8 +1923,34 @@ func _tick_bots(delta: float) -> void:
 			_tick_bot_runner(idx, entry, cart, ai, key, delta)
 
 
+func _bot_level(entry: Dictionary) -> int:
+	return clampi(int(entry.get("ai_level", 1)), 0, 2)
+
+
+## Next arena-aware rally point for an idle bot: the nearest point it is not
+## already standing on, advancing the per-bot cursor so the field spreads out
+## instead of piling onto one waypoint.
+func _patrol_goal(entry: Dictionary, cart: CartPlayer) -> Vector3:
+	var points: Array = AI_RALLY_POINTS.get(_arena_id, [])
+	if points.is_empty():
+		return Vector3.ZERO
+	var my_pos: Vector3 = cart.global_position
+	var best_i: int = int(entry.get("rally_i", 0)) % points.size()
+	var best_d: float = INF
+	for i in points.size():
+		var d: float = _planar_distance(my_pos, points[i])
+		if d > 7.0 and d < best_d:
+			best_d = d
+			best_i = i
+	if best_d >= INF:
+		best_i = (int(entry.get("rally_i", 0)) + 1) % points.size()
+	entry["rally_i"] = best_i
+	return points[best_i]
+
+
 func _tick_bot_hunter(_idx: int, _entry: Dictionary, cart: CartPlayer,
 		ai: SandboxBot, bot_key: int, _delta: float) -> void:
+	var level: int = _bot_level(_entry)
 	# Lock onto nearest unshielded, non-bombed contestant.
 	var best_key: int = 0
 	var best_score: float = INF
@@ -1865,21 +1972,29 @@ func _tick_bot_hunter(_idx: int, _entry: Dictionary, cart: CartPlayer,
 			best_key = k
 
 	if best_key == 0:
-		_ai_steer_towards(cart, Vector3.ZERO, true)
+		# Nobody to hunt: patrol the rally circuit instead of camping the
+		# arena centre (fountain / water / bridge underside).
+		var cruise: Vector3 = _route_arena_waypoint(cart.global_position,
+			_patrol_goal(_entry, cart))
+		_ai_steer_towards(cart, cruise, false, AI_STEER_GAIN[level], 5.0,
+			AI_PATROL_SPEED[level])
 		return
 
 	var target_cart: CartPlayer = _cart_for_key(best_key)
 	var target_pos: Vector3 = _authoritative_pos(target_cart)
 	var target_vel: Vector3 = target_cart.get_collision_velocity()
 	var d_xz: float = _planar_distance(cart.global_position, target_pos)
-	var lead_time: float = clampf(d_xz / 24.0, 0.0, 0.48)
+	# Skill-scaled interception: Easy chases tail lights, Hard leads the target.
+	var lead_time: float = clampf(d_xz / 24.0, 0.0, AI_LEAD_TIME[level])
 	var intercept: Vector3 = target_pos + Vector3(target_vel.x, 0.0, target_vel.z) * lead_time
 
 	var nav_goal: Vector3 = _route_arena_waypoint(cart.global_position, intercept)
 	if ai != null and ai.stuck > 3.8:
 		ai.respawn()
 		return
-	_ai_steer_towards(cart, nav_goal, true)
+	# Ram the intercept point at full chat; ease only inside 3 m so the final
+	# lunge connects instead of orbiting the target.
+	_ai_steer_towards(cart, nav_goal, true, AI_STEER_GAIN[level], 3.0)
 	if ai != null:
 		ai._dest_target = nav_goal
 
@@ -1911,23 +2026,33 @@ func _tick_bot_runner(_idx: int, entry: Dictionary, cart: CartPlayer,
 	var orbit_sign: float = float(entry.get("orbit_sign", 1.0))
 
 	if not has_threat:
-		_ai_steer_towards(cart, Vector3(orbit_sign * 22.0, 0.0, 0.0), false)
+		# No carrier out there: roam the rally circuit (ramps included) at a
+		# difficulty cruise instead of camping one fixed point doing nothing.
+		var roam: Vector3 = _route_arena_waypoint(cart.global_position,
+			_patrol_goal(entry, cart))
+		_ai_steer_towards(cart, roam, false,
+			AI_STEER_GAIN[_bot_level(entry)], 5.0,
+			AI_PATROL_SPEED[_bot_level(entry)])
 		return
 
-	# Trigger Runner Juke Surge if Bomb Carrier closes within 5.5 m!
-	if threat_dist <= AI_JUKE_TRIGGER_DIST:
+	# Skill-scaled juke: Hard holds its nerve until 4.2 m and cuts hard, Easy
+	# panics early at 6.5 m. Same cooldown and burst as a human either way.
+	if threat_dist <= AI_JUKE_DIST[_bot_level(entry)]:
 		var local_threat: Vector3 = cart.to_local(threat_pos)
 		var dodge_sign: float = 1.0 if local_threat.x > 0.0 else -1.0
 		_trigger_juke(bot_key, dodge_sign, false)
 
 	var my_pos: Vector3 = cart.global_position
+	var level: int = _bot_level(entry)
 	var away: Vector3 = my_pos - threat_pos
 	away.y = 0.0
 	away = away.normalized() if away.length_squared() > 0.01 else Vector3.FORWARD
 	var perp := Vector3(-away.z * orbit_sign, 0.0, away.x * orbit_sign)
 
 	# Blend away + perpendicular weave, pulling back inside safe arena bounds.
-	var evade_goal: Vector3 = my_pos + (away * 0.62 + perp * 0.78).normalized() * 22.0
+	# Easy bots telegraph a wide berth early; Hard bots stay tight and late.
+	var evade_gain: float = lerpf(0.62, 0.78, float(level) * 0.5)
+	var evade_goal: Vector3 = my_pos + (away * evade_gain + perp * (1.0 - evade_gain)).normalized() * 22.0
 	var safe_lim: float = _bounds_half - 9.0
 	if _arena_id == "bt_ferries":
 		# Keep runners safely on their current ferry deck unless crossing a bridge!
@@ -1962,7 +2087,7 @@ func _tick_bot_runner(_idx: int, entry: Dictionary, cart: CartPlayer,
 		ai.respawn()
 		return
 	var want_boost: bool = threat_dist < 16.5 and cart.boost_amount > 32.0
-	_ai_steer_towards(cart, evade_goal, want_boost)
+	_ai_steer_towards(cart, evade_goal, want_boost, AI_STEER_GAIN[level])
 
 
 func _route_arena_waypoint(from_pos: Vector3, goal_pos: Vector3) -> Vector3:
@@ -1997,15 +2122,20 @@ func _route_arena_waypoint(from_pos: Vector3, goal_pos: Vector3) -> Vector3:
 	return goal_pos
 
 
-func _ai_steer_towards(cart: CartPlayer, target: Vector3, boost_wanted: bool) -> void:
+func _ai_steer_towards(cart: CartPlayer, target: Vector3, boost_wanted: bool,
+		steer_gain: float = 2.15, slow_radius: float = 0.0, cruise: float = 1.0) -> void:
 	var local: Vector3 = cart.to_local(Vector3(target.x, cart.global_position.y, target.z))
 	if not local.is_finite():
 		return
 	var angle: float = atan2(-local.x, -local.z)
-	var steer: float = clampf(angle * 2.15, -1.0, 1.0)
+	var dist: float = Vector2(local.x, local.z).length()
+	var steer: float = clampf(angle * steer_gain, -1.0, 1.0)
 
 	# Dual forward-whisker raycasts: deflect away from vertical walls/pillars
 	# (`normal.y < 0.55`) while ignoring drivable <= 14 deg ramps (`normal.y >= 0.96`).
+	# A wall dead ahead cuts the throttle so the kart stops grinding into it
+	# instead of feeding full power while the reverse timer counts up.
+	var throttle: float = cruise
 	var space: PhysicsDirectSpaceState3D = get_world_3d().direct_space_state \
 		if get_world_3d() != null else null
 	if space != null:
@@ -2019,17 +2149,32 @@ func _ai_steer_towards(cart: CartPlayer, target: Vector3, boost_wanted: bool) ->
 		var qr := PhysicsRayQueryParameters3D.create(origin, origin + right_dir, CollisionLayers.WORLD)
 		var hit_l: Dictionary = space.intersect_ray(ql)
 		var hit_r: Dictionary = space.intersect_ray(qr)
+		var dl: float = origin.distance_to(hit_l["position"]) if not hit_l.is_empty() else 99.0
+		var dr: float = origin.distance_to(hit_r["position"]) if not hit_r.is_empty() else 99.0
 		var block_l: bool = not hit_l.is_empty() and (hit_l["normal"] as Vector3).y < 0.55
 		var block_r: bool = not hit_r.is_empty() and (hit_r["normal"] as Vector3).y < 0.55
-		if block_l and not block_r:
+		if block_l and block_r:
+			# Walled in dead ahead: turn hard toward the roomier whisker and
+			# lift off so the kart pivots instead of grinding. The scheduled
+			# reverse below still fires if this fails.
+			steer = 0.95 if dl >= dr else -0.95
+			throttle = minf(throttle, 0.35)
+		elif block_l and not block_r:
 			steer = clampf(steer - 0.72, -1.0, 1.0)
+			throttle = minf(throttle, 0.6)
 		elif block_r and not block_l:
 			steer = clampf(steer + 0.72, -1.0, 1.0)
+			throttle = minf(throttle, 0.6)
+
+	# Arrival: ease off inside the slow radius so patrol and intercept points
+	# are met with a turn instead of an orbit or a wall grind.
+	if slow_radius > 0.0 and dist < slow_radius:
+		throttle = minf(throttle, lerpf(0.25, cruise, clampf(dist / slow_radius, 0.0, 1.0)))
 
 	var handbrake: bool = absf(angle) > 0.78 and cart.velocity.length() > 8.5
 	var brake: float = 0.25 if absf(angle) > 1.65 else 0.0
 	var boost_now: bool = boost_wanted and absf(steer) < 0.62
-	cart.set_ai_controls(1.0, brake, steer, boost_now, handbrake)
+	cart.set_ai_controls(throttle, brake, steer, boost_now, handbrake)
 
 
 # ==========================================================================
@@ -2051,7 +2196,7 @@ func _setup_multiplayer() -> void:
 	Network.notify_scene_ready()
 	if _is_host:
 		_broadcast_snapshot()
-	else:
+	elif Network.is_scene_ready(1):
 		rpc_id(1, "_net_bomb_ready", _arena_id, _bot_vehicle())
 
 
@@ -2121,7 +2266,7 @@ func _rpc_sender() -> int:
 func _net_tick(delta: float) -> void:
 	if not _multiplayer or not Network.is_session_active():
 		return
-	if not _is_host and _phase == Phase.COUNTDOWN:
+	if not _is_host and _phase == Phase.COUNTDOWN and Network.is_scene_ready(1):
 		_ready_retry_timer += delta
 		if _ready_retry_timer >= 1.2:
 			_ready_retry_timer = 0.0
@@ -2909,27 +3054,27 @@ func _build_result_card() -> void:
 	card_style.border_color = UiPalette.OUTLINE
 	card_style.set_border_width_all(5)
 	card_style.set_corner_radius_all(16)
-	card_style.content_margin_left = 18.0
-	card_style.content_margin_right = 18.0
-	card_style.content_margin_top = 14.0
-	card_style.content_margin_bottom = 14.0
+	card_style.content_margin_left = 28.0
+	card_style.content_margin_right = 28.0
+	card_style.content_margin_top = 24.0
+	card_style.content_margin_bottom = 24.0
 	card_style.shadow_color = Color(0.10, 0.09, 0.22, 0.48)
 	card_style.shadow_offset = Vector2(0.0, 8.0)
 	card.add_theme_stylebox_override("panel", card_style)
 	center.add_child(card)
 
 	var body := VBoxContainer.new()
-	body.add_theme_constant_override("separation", 10)
+	body.add_theme_constant_override("separation", 12)
 	card.add_child(body)
 
 	var banner := PanelContainer.new()
 	_result_banner_style = StyleBoxFlat.new()
 	_result_banner_style.bg_color = UiPalette.YELLOW
 	_result_banner_style.set_corner_radius_all(12)
-	_result_banner_style.content_margin_left = 16.0
-	_result_banner_style.content_margin_right = 16.0
-	_result_banner_style.content_margin_top = 6.0
-	_result_banner_style.content_margin_bottom = 6.0
+	_result_banner_style.content_margin_left = 24.0
+	_result_banner_style.content_margin_right = 24.0
+	_result_banner_style.content_margin_top = 12.0
+	_result_banner_style.content_margin_bottom = 12.0
 	banner.add_theme_stylebox_override("panel", _result_banner_style)
 	body.add_child(banner)
 
@@ -2956,7 +3101,7 @@ func _build_result_card() -> void:
 	body.add_child(header)
 
 	_result_rows_box = VBoxContainer.new()
-	_result_rows_box.add_theme_constant_override("separation", 4)
+	_result_rows_box.add_theme_constant_override("separation", 8)
 	body.add_child(_result_rows_box)
 
 	var btn_row := HBoxContainer.new()
@@ -3019,10 +3164,10 @@ func _show_result_card() -> void:
 		pstyle.bg_color = Color(1.0, 0.85, 0.25, 0.35) if rk == my_key \
 			else Color(0.12, 0.11, 0.23, 0.07)
 		pstyle.set_corner_radius_all(8)
-		pstyle.content_margin_left = 10.0
-		pstyle.content_margin_right = 10.0
-		pstyle.content_margin_top = 3.0
-		pstyle.content_margin_bottom = 3.0
+		pstyle.content_margin_left = 16.0
+		pstyle.content_margin_right = 16.0
+		pstyle.content_margin_top = 8.0
+		pstyle.content_margin_bottom = 8.0
 		pill.add_theme_stylebox_override("panel", pstyle)
 
 		var rbox := HBoxContainer.new()

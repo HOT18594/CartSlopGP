@@ -311,6 +311,8 @@ const SELFTEST_HOLD_TIMEOUT: float = 7.0
 const SELFTEST_DRIVE_TIMEOUT: float = 14.0
 
 const CART_SYNC_INTERVAL: float = 0.05
+const CART_IDLE_SPEED: float = 1.0
+const CART_IDLE_INTERVAL: float = 0.20
 const PRESENT_SYNC_INTERVAL: float = 0.10
 const STATE_SYNC_INTERVAL: float = 0.25
 const CLIENT_SNAP_DISTANCE: float = 7.0
@@ -397,6 +399,11 @@ var _is_host: bool = true
 var _remote_carts: Dictionary = {}
 var _name_labels: Dictionary = {}
 var _cart_relay_ms: Dictionary = {}
+var _cart_idle_ms: Dictionary = {}
+var _cart_idle_pos: Dictionary = {}
+var _cart_idle_yaw: Dictionary = {}
+var _bot_idle_ms: int = -100000
+var _bot_idle_pos: Array = []
 var _present_sync_timer: float = 0.0
 var _state_sync_timer: float = 0.0
 var _cart_sync_timer: float = 0.0
@@ -1372,10 +1379,9 @@ func _tick_presents(delta: float) -> void:
 
 
 func _tick_holds(delta: float) -> void:
-	## A present belongs to exactly one holder at a time. Every kart that asks
-	## is checked against the same claim table, so two players can never fill the
-	## same ring and lose the crate to each other, and a kart that drives out of
-	## range cancels instantly instead of finishing its hold from a distance.
+	## Every kart in range keeps its own hold progress and the first to fill
+	## the ring loads the crate; a kart that drives out of range cancels
+	## instantly instead of finishing its hold from a distance.
 	var wants: Dictionary = _collect_hold_wants()
 	var active: Dictionary = {}
 	for key: int in wants.keys():
@@ -1400,11 +1406,10 @@ func _tick_holds(delta: float) -> void:
 		_hold_owner.erase(index)
 	for key: int in active.keys():
 		var index: int = int(active[key])
-		if _hold_owner.has(index) and int(_hold_owner[index]) != key:
-			# Another kart reached this present first: this ring stays empty.
-			_hold_state.erase(key)
-			continue
-		_hold_owner[index] = key
+		if not _hold_owner.has(index):
+			# First kart in range claims the marker; later arrivals keep their
+			# own progress and the first to HOLD_SECONDS wins the crate.
+			_hold_owner[index] = key
 		var data: Dictionary = _hold_state.get(key, {"index": index, "time": 0.0})
 		if int(data.get("index", -1)) != index:
 			data = {"index": index, "time": 0.0}
@@ -1487,6 +1492,8 @@ func _take_present(index: int, key: int) -> void:
 
 
 func _tick_carriers() -> void:
+	if _phase == Phase.FINISHED:
+		return
 	for index in _presents.size():
 		var present: Dictionary = _presents[index]
 		if int(present["state"]) != PRESENT_CARRIED:
@@ -2149,7 +2156,8 @@ func _tick_bot_seek(index: int, entry: Dictionary, cart: CartPlayer,
 		return
 	var target: Vector3 = _presents[present_index]["position"] as Vector3
 	entry["seek_time"] = float(entry.get("seek_time", 0.0)) + delta
-	if float(entry["seek_time"]) > 26.0:
+	# Easy bots lose interest sooner, Hard bots grind a bad pick longer.
+	if float(entry["seek_time"]) > [20.0, 26.0, 32.0][Network.bot_difficulty()]:
 		_bot_release(entry, key)
 		entry["seek_time"] = 0.0
 		_bot_choose(index, entry, cart)
@@ -2183,6 +2191,10 @@ func _bot_choose(index: int, entry: Dictionary, cart: CartPlayer) -> void:
 		var to_present: float = _planar_distance(cart.global_position, position)
 		var to_base: float = _planar_distance(position, _pads[team])
 		var score: float = (to_present + to_base * 0.55) * bias
+		# Easy bots misjudge distances and grab suboptimal crates; Hard bots
+		# take the optimum every time. Same speed and loading rules either way.
+		if Network.bot_difficulty() == 0:
+			score *= 1.0 + float((key + present_index * 3) % 5) * 0.12
 		if score < best_score:
 			best_score = score
 			best = present_index
@@ -2475,6 +2487,11 @@ func _finish_match() -> void:
 	_phase = Phase.FINISHED
 	_hold_state.clear()
 	_hold_owner.clear()
+	# Loaded crates must not freeze on karts after the whistle: drop every
+	# carried present back into the pool instead of scoring it after time.
+	for index in _presents.size():
+		if int(_presents[index]["state"]) == PRESENT_CARRIED:
+			_release_present(index)
 	_hold_sent_index = -1
 	_hold_sent_holding = false
 	if _countdown_label != null:
@@ -2662,12 +2679,7 @@ func _build_hud() -> void:
 	_scoreboard_panel.offset_right = SCOREBOARD_WIDTH * 0.5
 	_scoreboard_panel.offset_top = SCOREBOARD_TOP
 	_scoreboard_panel.offset_bottom = SCOREBOARD_TOP + 54.0
-	var empty_sb := StyleBoxEmpty.new()
-	empty_sb.content_margin_left = 18.0
-	empty_sb.content_margin_right = 20.0
-	empty_sb.content_margin_top = 4.0
-	empty_sb.content_margin_bottom = 8.0
-	_scoreboard_panel.add_theme_stylebox_override("panel", empty_sb)
+	_scoreboard_panel.add_theme_stylebox_override("panel", StyleBoxEmpty.new())
 	_tug_header = _CargoTugHeader.new()
 	_tug_header.name = "TugOfWarSlash"
 	_tug_header.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -2675,11 +2687,19 @@ func _build_hud() -> void:
 	_hud_root.add_child(_scoreboard_panel)
 	_timer_panel = _scoreboard_panel
 
+	var bar_margin := MarginContainer.new()
+	bar_margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bar_margin.add_theme_constant_override("margin_left", 26)
+	bar_margin.add_theme_constant_override("margin_top", 8)
+	bar_margin.add_theme_constant_override("margin_right", 28)
+	bar_margin.add_theme_constant_override("margin_bottom", 12)
+	_scoreboard_panel.add_child(bar_margin)
+
 	var bar_column := VBoxContainer.new()
 	bar_column.alignment = BoxContainer.ALIGNMENT_CENTER
 	bar_column.add_theme_constant_override("separation", 0)
 	bar_column.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_scoreboard_panel.add_child(bar_column)
+	bar_margin.add_child(bar_column)
 
 	var main_row := HBoxContainer.new()
 	main_row.alignment = BoxContainer.ALIGNMENT_CENTER
@@ -2861,10 +2881,10 @@ func _scoreboard_style() -> StyleBoxFlat:
 	style.border_color = UiPalette.OUTLINE
 	style.set_border_width_all(3)
 	style.set_corner_radius_all(14)
-	style.content_margin_left = 16.0
-	style.content_margin_right = 16.0
-	style.content_margin_top = 5.0
-	style.content_margin_bottom = 5.0
+	style.content_margin_left = 22.0
+	style.content_margin_right = 22.0
+	style.content_margin_top = 9.0
+	style.content_margin_bottom = 9.0
 	style.anti_aliasing = true
 	return style
 
@@ -3350,7 +3370,7 @@ func _setup_multiplayer() -> void:
 	if _is_host:
 		_broadcast_state()
 		_broadcast_bot_states()
-	else:
+	elif Network.is_scene_ready(1):
 		rpc_id(1, "_net_cargo_ready", _theme_id, _bot_vehicle())
 
 
@@ -3446,8 +3466,33 @@ func _rpc_sender() -> int:
 	return multiplayer.get_remote_sender_id() if multiplayer.multiplayer_peer != null else 0
 
 
+func _cart_idle_skip(peer_id: int, position: Vector3, yaw: float, velocity: Vector3) -> bool:
+	if Vector2(velocity.x, velocity.z).length() >= CART_IDLE_SPEED:
+		_cart_idle_ms[peer_id] = Time.get_ticks_msec()
+		_cart_idle_pos[peer_id] = position
+		_cart_idle_yaw[peer_id] = yaw
+		return false
+	var now: int = Time.get_ticks_msec()
+	var last_ms: int = int(_cart_idle_ms.get(peer_id, -100000))
+	var last_pos: Vector3 = _cart_idle_pos.get(peer_id, position)
+	var last_yaw: float = float(_cart_idle_yaw.get(peer_id, yaw))
+	if position.distance_squared_to(last_pos) > 0.0004 or absf(angle_difference(last_yaw, yaw)) > 0.01:
+		_cart_idle_ms[peer_id] = now
+		_cart_idle_pos[peer_id] = position
+		_cart_idle_yaw[peer_id] = yaw
+		return false
+	if now - last_ms < int(CART_IDLE_INTERVAL * 1000.0):
+		return true
+	_cart_idle_ms[peer_id] = now
+	_cart_idle_pos[peer_id] = position
+	_cart_idle_yaw[peer_id] = yaw
+	return false
+
+
 func _broadcast_cart_state(peer_id: int, position: Vector3, yaw: float,
 		sent_ms: int, velocity: Vector3) -> void:
+	if _cart_idle_skip(peer_id, position, yaw, velocity):
+		return
 	for target: int in multiplayer.get_peers():
 		if Network.is_scene_ready(target):
 			rpc_id(target, "_net_cargo_cart_state", peer_id, position, yaw,
@@ -3707,6 +3752,17 @@ func _net_match_end(score_a: int, score_b: int, winner: int) -> void:
 func _broadcast_bot_states() -> void:
 	if _bots.is_empty() or not _is_host:
 		return
+	var now: int = Time.get_ticks_msec()
+	var all_idle: bool = true
+	for entry: Dictionary in _bots:
+		var cart: CartPlayer = entry.get("cart") as CartPlayer
+		var vel: Vector3 = cart.velocity if cart != null and is_instance_valid(cart) else Vector3.ZERO
+		if Vector2(vel.x, vel.z).length() >= CART_IDLE_SPEED:
+			all_idle = false
+			break
+	if all_idle and now - _bot_idle_ms < int(CART_IDLE_INTERVAL * 1000.0):
+		return
+	_bot_idle_ms = now
 	var positions := PackedVector3Array()
 	var yaws := PackedFloat32Array()
 	var velocities := PackedVector3Array()

@@ -28,7 +28,7 @@ var _ring := StyleBoxFlat.new()
 
 
 func _ready() -> void:
-	custom_minimum_size = Vector2(60, 30)
+	custom_minimum_size = Vector2(72, 36)
 	focus_mode = Control.FOCUS_ALL
 	mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	mouse_filter = Control.MOUSE_FILTER_STOP
@@ -93,9 +93,19 @@ func _gui_input(event: InputEvent) -> void:
 				_flip()
 				accept_event()
 		return
+	if event.is_action_pressed("ui_left") or event.is_action_pressed("ui_right"):
+		_flip()
+		accept_event()
+		return
 	if event.is_action_pressed("ui_accept"):
 		_flip()
 		accept_event()
+		return
+	if event is InputEventKey:
+		var key := event as InputEventKey
+		if key.pressed and not key.echo and key.keycode == KEY_SPACE:
+			_flip()
+			accept_event()
 
 
 func _flip() -> void:

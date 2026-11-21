@@ -51,23 +51,22 @@ const START_TOWERS: Array[String] = ["bannerTowerRed", "bannerTowerGreen"]
 ## Ploughed snow banks. The kit has no snow block, so the coldest rock shapes
 ## stand in for a bank; they read ice-grey against the snow.
 const SNOWBANK_MODELS: Array[String] = [
-	"rock_largeA", "rock_largeB", "rock_largeF", "rock_tallA",
+	"rock_largeA", "rock_largeB", "rock_largeF",
 ]
-const SNOWBANK_LATERAL: float = 18.2
-const SNOWBANK_STEP: float = 13.0
-const SNOWBANK_SCALE_MIN: float = 0.80
-const SNOWBANK_SCALE_MAX: float = 1.25
-const SNOWBANK_MAX: int = 64
+const SNOWBANK_LATERAL: float = 19.2
+const SNOWBANK_STEP: float = 15.0
+const SNOWBANK_SCALE_MIN: float = 0.78
+const SNOWBANK_SCALE_MAX: float = 1.20
+const SNOWBANK_MAX: int = 56
 
-## Avalanche fencing: Kenney's catch fence panel authored 1 m long, 0.5 m tall
-## per model unit. Placed at 7 m per piece so a run reads as a fence line.
+## Avalanche fencing: low sparse clusters rather than enclosing corridors.
 const FENCE_MODEL: String = "fenceStraight"
-const FENCE_LATERAL: float = 15.6
+const FENCE_LATERAL: float = 16.4
 const FENCE_LENGTH: float = 7.0
 const FENCE_HEIGHT: float = 3.4
-const FENCE_SPACING: float = 8.0
-const FENCE_EVERY: int = 3
-const FENCE_MAX: int = 30
+const FENCE_SPACING: float = 9.0
+const FENCE_EVERY: int = 5
+const FENCE_MAX: int = 18
 const FENCE_MAX_TURN: float = 0.07
 
 ## Floodlights, ten of them, on the outside of the lap.
@@ -88,14 +87,14 @@ const PROP_CLEARANCE: float = ROAD_HALF + TileKit.BARRIER_OFFSET + 8.5
 
 ## Grandstands: a 16 m kit footprint two cells out, facing the track.
 const STAND_MODELS: Array[String] = ["grandStandCovered", "grandStand"]
-const STAND_LATERAL: float = 23.0
+const STAND_LATERAL: float = 25.5
 
-## The split: a pit apron and garages behind the barrier on the longest
-## straight, so the base of the pass has a lane fork instead of a bare verge.
+## The split: a pit apron and garages behind the verge on the longest
+## straight, so the base of the pass has a lane fork.
 const SPLIT_APRON_MODEL: String = "roadPitStraight"
 const SPLIT_GARAGE_MODEL: String = "pitsGarage"
-const SPLIT_APRON_LATERAL: float = 24.0
-const SPLIT_GARAGE_LATERAL: float = 43.0
+const SPLIT_APRON_LATERAL: float = 26.0
+const SPLIT_GARAGE_LATERAL: float = 45.0
 const SPLIT_APRON_PIECES: int = 4
 const SPLIT_PYLONS: int = 3
 const SPLIT_APRON_Y: float = 0.07
@@ -146,18 +145,18 @@ static func build(holder: Node3D, spline: RefCounted,
 ## arc length inside TileKit's snapping, so the ring is split at the last
 ## quarter-tile seam and the final short run carries the line across the start.
 static func _barrier_ring(holder: Node3D, spline: RefCounted,
-		total: float) -> int:
-	var seam: float = fposmod(round((total - TILE * 0.5) / QUARTER) * QUARTER,
-		total)
-	if seam < TILE:
-		seam = fposmod(round(total * 0.5 / QUARTER) * QUARTER, total)
-	var placed: int = 0
-	for side: float in [-1.0, 1.0]:
-		placed += TileKit.barrier_line(holder, spline, 0.0, seam, side,
-			BARRIER_KIND)
-		placed += TileKit.barrier_line(holder, spline, seam, total, side,
-			BARRIER_KIND)
-	return placed
+		_total: float) -> int:
+	# Open alpine circuit: crisp cobalt/snow safety rails only on steep summit
+	# ledges (y >= 2.2) and tight outside hairpins, plus far outer containment.
+	var rails: int = TileKit.selective_safety_rails(holder, spline, {
+		"bridge_y": 2.2,
+		"curve_min": 0.032,
+		"rail_color": Color("eef6fc"),
+		"accent_color": Color("2a86b8"),
+		"post_color": Color("475a6b"),
+	})
+	TileKit.build_outer_soft_containment(holder, spline, 13.0)
+	return rails
 
 
 # --------------------------------------------------------------------------

@@ -25,6 +25,8 @@ extends RefCounted
 const Props := preload("res://scripts/minigames/maps/stadium/stadium_props.gd")
 const TileKit := preload("res://scripts/minigames/tile_kit.gd")
 const TileCatalog := preload("res://scripts/minigames/tiles/tile_catalog.gd")
+const LandscapeSculptor := preload("res://scripts/minigames/scenery/landscape_sculptor.gd")
+const PropBatch := preload("res://scripts/minigames/scenery/prop_batch.gd")
 
 const GRANDSTAND_OPEN: String = "grandStand"
 const GRANDSTAND_COVERED: String = "grandStandCovered"
@@ -41,37 +43,19 @@ const BRIDGE_CENTER: String = "bridge_center_stone"
 ## Metres between two stands of the lower ring: one grid cell, so the ring reads
 ## as a continuous terrace.
 const STAND_BAY: float = 16.0
-## Lateral distance of the lower stand ring. A stand is a 16 m footprint, so its
-## front face lands 12.8 m out: behind the barrier face at 8.02 m and behind the
-## barrier body (which is 2 m deep), leaving a 2.5 m furniture lane in front of
-## the seating. The upper tier stays inside 46 m so the designed woodland, whose
-## nearest trunk is 48.2 m, can never grow through the second roof.
-const STAND_LATERAL: float = 20.8
-## Second tier: a ring of covered stands further out, on both long sides. The
-## 0.65 m shadow gap between the back of the lower ring (28.8 m) and the front
-## of the upper one (29.45 m) keeps the two tiers reading separately.
-const TIER_TWO_LATERAL: float = 37.6
-const STAND_MAIN_BAYS: float = 6.0
+const STAND_LATERAL: float = 26.5
+const TIER_TWO_LATERAL: float = 41.5
+const STAND_MAIN_BAYS: float = 7.0
 
-## Lateral distances of the detail props, all outside the barrier body and
-## inside the furniture lane in front of the lower stand ring. Every prop here
-## is <= 2.3 m deep, which is what the lane holds.
-const FENCE_LATERAL: float = 11.0
-const TYRE_LATERAL: float = 11.45
-const MARSHAL_LATERAL: float = 11.7
-## A crane's measured footprint is 4.2 m deep, so it is yawed to run its long
-## axis along the track and only 1.7 m of it faces the road.
-const CAMERA_LATERAL: float = 11.5
-## Floodlights stand in the same lane, in front of the seating.
-const LIGHT_LATERAL: float = 11.45
-const SIGN_LATERAL: float = 11.45
-const FLAG_LATERAL: float = 11.6
-## Cliff walls stand behind the upper tier, so the rock face reads above the
-## second roof instead of being buried in the seating.
-const CLIFF_LATERAL: float = 49.0
-const BRIDGE_DECK: float = 3.7
-## Sponsor boards are drawn at four tenths of the catalogue sign scale so a
-## 7.6 m deep billboard becomes 1.8 m deep and fits the furniture lane.
+const FENCE_LATERAL: float = 13.6
+const TYRE_LATERAL: float = 12.6
+const MARSHAL_LATERAL: float = 13.8
+const CAMERA_LATERAL: float = 13.8
+const LIGHT_LATERAL: float = 13.8
+const SIGN_LATERAL: float = 13.8
+const FLAG_LATERAL: float = 13.4
+const CLIFF_LATERAL: float = 54.0
+const BRIDGE_DECK: float = 4.6
 const BOARD_SCALE: float = 0.4
 
 const TYRE_STACKS_PER_CORNER: int = 6
@@ -158,14 +142,19 @@ static func _grandstands(holder: Node3D, spline: RefCounted, plan: Dictionary,
 		var site: Dictionary = sites[index]
 		var point: Vector3 = (site["position"] as Vector3)
 		var lap: float = fposmod(start + STAND_BAY * (float(index) + 0.5), total)
+		var main_run: bool = _lap_gap(lap, start, total) < STAND_BAY * STAND_MAIN_BAYS
+		# Keep scenic bays open instead of walling the whole horizon with solid
+		# white stand backs: full row on the pit main stand, spaced clusters elsewhere.
+		if not main_run and (index % 4 == 1 or index % 4 == 2):
+			continue
 		if not Props.site_ok(spline, point, STAND_REACH):
 			continue
 		if not Props.side_ok(spline, point, outside):
 			continue
 		var model: String = GRANDSTAND_OPEN
-		if _lap_gap(lap, start, total) < STAND_BAY * STAND_MAIN_BAYS:
+		if main_run:
 			model = GRANDSTAND_COVERED
-		elif index % 4 == 2:
+		elif index % 4 == 3:
 			model = GRANDSTAND_AWNING
 		var yaw: float = ring_stand_yaw(site, outside)
 		var footprint: Vector3 = Props.size(model,
@@ -180,6 +169,8 @@ static func _grandstands(holder: Node3D, spline: RefCounted, plan: Dictionary,
 	var upper_sites: Array = Props.ring_run(upper_ring, 0.0, total,
 		STAND_BAY * 2.0)
 	for index in upper_sites.size():
+		if index % 2 == 1:
+			continue
 		var site: Dictionary = upper_sites[index]
 		var point: Vector3 = (site["position"] as Vector3)
 		var lap: float = fposmod(start + STAND_BAY * 2.0 \
@@ -277,13 +268,12 @@ static func _lap_gap(a: float, b: float, total: float) -> float:
 static func _catch_fence(holder: Node3D, spline: RefCounted, plan: Dictionary,
 		stats: Dictionary, placed: Array) -> void:
 	var outside: float = float(plan["outside"])
-	var longest: Dictionary = plan["longest"]
+	var start_run: Dictionary = plan["start_straight"]
+	# Catch fencing only in front of the main pit-straight stands so scenic
+	# corners look out directly into hills, infield park, and city skyline.
 	var runs: Array[Dictionary] = [
-		{"from": float(longest["from"]), "to": float(longest["to"])},
+		{"from": float(start_run["from"]) + 10.0, "to": float(start_run["to"]) - 10.0},
 	]
-	for corner: Dictionary in plan["fast_corners"] as Array:
-		var apex: float = float(corner["distance"])
-		runs.append({"from": apex - 20.0, "to": apex + 28.0})
 	var ring: Dictionary = Props.ring(spline, outside, FENCE_LATERAL)
 	var transforms: Array = []
 	var spots: Array[Dictionary] = []
@@ -585,51 +575,59 @@ static func _flags(holder: Node3D, spline: RefCounted, plan: Dictionary,
 ## valley. The cliff blocks stand on the meadow, so they hide the side of the
 ## raised deck and turn the valley into a cutting instead of a flat field.
 static func _cliff_walls(holder: Node3D, spline: RefCounted, plan: Dictionary,
-		stats: Dictionary, placed: Array) -> void:
-	var outside: float = float(plan["outside"])
-	var ring: Dictionary = Props.ring(spline, outside, CLIFF_LATERAL)
-	var spans: Array[Dictionary] = []
-	for key: String in ["raised", "valley"]:
-		var span: Dictionary = plan[key]
-		if bool(span.get("ok", false)):
-			spans.append(span)
-	if spans.is_empty():
-		return
-	var transforms: Array = []
-	var spots: Array[Dictionary] = []
-	var scale: Vector3 = Vector3.ONE * Props.NATURE_SCALE * 0.7
-	var body := Props.body(holder, "CliffWalls")
-	for span: Dictionary in spans:
-		var sites: Array = Props.ring_run(ring, float(span["from"]),
-			float(span["to"]), 15.0)
-		for site: Dictionary in sites:
-			var point: Vector3 = (site["position"] as Vector3)
-			if not Props.site_ok(spline, point, CLIFF_REACH):
-				continue
-			if not Props.side_ok(spline, point, outside):
-				continue
-			var yaw: float = float(site["yaw"])
-			var footprint: Vector3 = Props.size(CLIFF_MODEL, scale, true)
-			if not Props.site_free(placed, point, yaw, footprint):
-				continue
-			Props.remember(placed, point, yaw, footprint)
-			transforms.append(Props.fit(CLIFF_MODEL, point, yaw, scale, true))
-			spots.append({"point": point, "yaw": yaw})
-	if transforms.is_empty():
-		return
-	for spot: Dictionary in spots:
-		Props.model_body(body, CLIFF_MODEL, spot["point"], float(spot["yaw"]),
-			scale, 0.4, true)
-	stats["cliffs"] = int(stats.get("cliffs", 0)) + transforms.size()
-	stats["draws"] = int(stats.get("draws", 0)) \
-		+ Props.batch(holder, CLIFF_MODEL, transforms, "ValleyCliffs", true, true)
+		stats: Dictionary, _placed: Array) -> void:
+	# Replace flat rock-cube walls with sculpted green parkhills & a vibrant
+	# infield fountain/garden monument inside the circuit loop.
+	var batch := PropBatch.new()
+	var bounds: Rect2 = plan["bounds"] as Rect2
+	var cx: float = bounds.position.x + bounds.size.x * 0.5
+	var cz: float = bounds.position.y + bounds.size.y * 0.5
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 20260917
+	var hill_pal: Dictionary = {
+		"base": Color("488836"),
+		"mid": Color("5ba642"),
+		"top": Color("79c452"),
+	}
+	# Sculpted stadium parkland hills enveloping the bowl horizon
+	for i in 12:
+		var ang: float = TAU * float(i) / 12.0 + 0.14
+		var hrad: float = rng.randf_range(28.0, 48.0)
+		var r: float = maxf(bounds.size.x, bounds.size.y) * 0.56 + rng.randf_range(18.0, 42.0)
+		var pos := Vector3(cx + cos(ang) * r, 0.0, cz + sin(ang) * r)
+		# Hill skirts spread wider than the base radius: keep the whole
+		# mass clear of the road so no hillside lands on the track.
+		if TileKit.spline_distance(spline, pos) < hrad * 1.2 + 18.0:
+			continue
+		LandscapeSculptor.add_woodland_hill(batch, pos,
+			hrad, rng.randf_range(24.0, 44.0),
+			rng.randf_range(12.0, 26.0), rng, hill_pal)
+	# Infield landscaped park mounds + terraced fountain plaza (strictly clear of road)
+	var plaza_center := Vector3(cx, 0.0, cz)
+	if TileKit.spline_distance(spline, plaza_center) >= 24.0:
+		batch.add_cylinder(Transform3D(Basis.IDENTITY, plaza_center + Vector3.UP * 0.25),
+			11.0, 0.5, 14, Color("8fc3e0"))
+		batch.add_cylinder(Transform3D(Basis.IDENTITY, plaza_center + Vector3.UP * 0.62),
+			8.8, 0.24, 14, Color("2f9bc8"))
+		batch.add_cylinder(Transform3D(Basis.IDENTITY, plaza_center + Vector3.UP * 2.2),
+			1.35, 3.4, 10, Color("f0f8ff"))
+		batch.add_cone(Transform3D(Basis.IDENTITY, plaza_center + Vector3.UP * 5.2),
+			2.2, 2.6, 8, Color("e24938"))
+		stats["park_plaza"] = 1
+	for k in 8:
+		var ang_in: float = TAU * float(k) / 8.0 + 0.3
+		var r_in: float = 28.0 + float(k % 2) * 14.0
+		var pos_in := Vector3(cx + cos(ang_in) * r_in, 0.0, cz + sin(ang_in) * r_in)
+		if TileKit.spline_distance(spline, pos_in) >= 26.0:
+			LandscapeSculptor.add_woodland_hill(batch, pos_in, 16.0, 14.0,
+				rng.randf_range(3.2, 6.8), rng, hill_pal)
+	batch.flush_to(holder, "StadiumParklandHills", false)
+	stats["draws"] = int(stats.get("draws", 0)) + 1
+	stats["cliffs"] = int(stats.get("cliffs", 0)) + 20
 
 
-## A stone footbridge over the valley: two side modules carry the deck and a
-## centre module spans the road. Piers stand outside the barrier body and the
-## deck is high enough for a kart to drive under, which is what makes the dip
-## read as a tunnel mouth. The modules are spaced from their measured widths
-## plus a seam gap, so no two stone pieces share a face plane.
+## A stone footbridge over the valley: widened horizontally to span the wider
+## 15.19 m lane so both piers sit cleanly outside SOLID_CLEARANCE.
 static func _footbridge(holder: Node3D, spline: RefCounted, plan: Dictionary,
 		stats: Dictionary) -> void:
 	var valley: Dictionary = plan["valley"]
@@ -640,11 +638,10 @@ static func _footbridge(holder: Node3D, spline: RefCounted, plan: Dictionary,
 	var centre: Vector3 = f["position"]
 	var right: Vector3 = f["right"]
 	var yaw: float = atan2(-right.z, right.x)
-	var centre_size: Vector3 = Props.size(BRIDGE_CENTER,
-		Vector3.ONE * Props.NATURE_SCALE, true)
-	var side_size: Vector3 = Props.size(BRIDGE_SIDE,
-		Vector3.ONE * Props.NATURE_SCALE, true)
-	var seam: float = 0.05
+	var bridge_scale := Vector3(1.48, 1.22, 1.2) * Props.NATURE_SCALE
+	var centre_size: Vector3 = Props.size(BRIDGE_CENTER, bridge_scale, true)
+	var side_size: Vector3 = Props.size(BRIDGE_SIDE, bridge_scale, true)
+	var seam: float = 0.06
 	var module_offset: float = (centre_size.x + side_size.x) * 0.5 + seam
 	var deck_top: float = centre.y + BRIDGE_DECK + Props.LAYER_APRON
 	var modules: Array[Dictionary] = [
@@ -661,21 +658,20 @@ static func _footbridge(holder: Node3D, spline: RefCounted, plan: Dictionary,
 		if not batches.has(model):
 			batches[model] = []
 		(batches[model] as Array).append(Props.fit(model, point, yaw,
-			Vector3.ONE * Props.NATURE_SCALE, true))
+			bridge_scale, true))
 	for model: String in batches:
 		stats["draws"] = int(stats.get("draws", 0)) \
 			+ Props.batch(holder, model, batches[model] as Array,
 				"Bridge_" + model, true, true)
-	# The two piers are solid on WORLD; the deck only has to clear a kart.
 	var deck_width: float = side_size.x + module_offset * 2.0
 	Props.box(body, centre + Vector3.UP * BRIDGE_DECK, yaw,
-		Vector3(deck_width, 0.5, centre_size.z))
-	var pier_offset: float = maxf(deck_width * 0.5 + 0.45, 9.2)
+		Vector3(deck_width, 0.55, centre_size.z))
+	var pier_offset: float = maxf(deck_width * 0.5 + 0.5, TileKit.ROAD_HALF + 2.8)
 	for side: float in [-1.0, 1.0]:
 		var pier: Vector3 = centre + right * (side * pier_offset)
 		pier.y = centre.y
 		Props.box(body, pier, yaw,
-			Vector3(1.4, BRIDGE_DECK - Props.LAYER_APRON,
+			Vector3(1.5, BRIDGE_DECK - Props.LAYER_APRON,
 				centre_size.z * 0.7))
 	stats["bridge"] = int(stats.get("bridge", 0)) + modules.size()
 
@@ -770,10 +766,10 @@ static func _ground_and_terraces(holder: Node3D, spline: RefCounted,
 	var turf_outer := Color("6fae4a")
 	var turf_inner := Color("79ba53")
 	var berm_top := Color("66a244")
-	var berm_wall := Color("8b8e92")
+	var berm_wall := Color("7a6f60")
 
-	# Wide outer cartoon turf sheet covering 1500 x 1500 m at Z_GROUND (-0.02 m)
-	var half_ext: float = 750.0
+	# Wide outer cartoon turf sheet covering 2400 x 2400 m at Z_GROUND (-0.02 m)
+	var half_ext: float = 1200.0
 	var ground_y: float = TileKit.Z_GROUND
 	_push_quad(verts, normals, colors,
 		Vector3(cx - half_ext, ground_y, cz - half_ext),
@@ -783,8 +779,8 @@ static func _ground_and_terraces(holder: Node3D, spline: RefCounted,
 		turf_outer)
 
 	# Mowed infield stadium turf pad slightly above outer grass (-0.014 m)
-	var pad_min := Vector2(bounds.position.x - 24.0, bounds.position.y - 24.0)
-	var pad_max := Vector2(bounds.end.x + 24.0, bounds.end.y + 24.0)
+	var pad_min := Vector2(bounds.position.x - 36.0, bounds.position.y - 36.0)
+	var pad_max := Vector2(bounds.end.x + 36.0, bounds.end.y + 36.0)
 	_push_quad(verts, normals, colors,
 		Vector3(pad_min.x, ground_y + 0.006, pad_min.y),
 		Vector3(pad_max.x, ground_y + 0.006, pad_min.y),
@@ -792,65 +788,21 @@ static func _ground_and_terraces(holder: Node3D, spline: RefCounted,
 		Vector3(pad_min.x, ground_y + 0.006, pad_max.y),
 		turf_inner)
 
-	# Continuous stadium terrace embankment under elevated bowl props & stands,
-	# plus viaduct piers under the 9.0 m stadium sky-bridge.
-	var outside: float = float(plan["outside"])
-	var inner_ring: Dictionary = Props.ring(spline, outside, 8.6)
-	var outer_ring: Dictionary = Props.ring(spline, outside, 46.5)
-	if bool(inner_ring.get("ok", false)) and bool(outer_ring.get("ok", false)):
-		var total: float = maxf(float(plan["total"]), 1.0)
-		var steps: int = 144
-		for i in steps:
-			var lap0: float = total * float(i) / float(steps)
-			var lap1: float = total * float(i + 1) / float(steps)
-			var h0: float = float(spline.height_at(lap0))
-			var h1: float = float(spline.height_at(lap1))
-			if maxf(h0, h1) < 0.08:
-				continue
-			var a_in: Vector3 = Props.ring_point(inner_ring,
-				Props.ring_position(inner_ring, lap0))
-			var b_in: Vector3 = Props.ring_point(inner_ring,
-				Props.ring_position(inner_ring, lap1))
-			var a_out: Vector3 = Props.ring_point(outer_ring,
-				Props.ring_position(outer_ring, lap0))
-			var b_out: Vector3 = Props.ring_point(outer_ring,
-				Props.ring_position(outer_ring, lap1))
-			a_in.y = h0 - 0.015
-			b_in.y = h1 - 0.015
-			a_out.y = h0 - 0.015
-			b_out.y = h1 - 0.015
-			_push_quad(verts, normals, colors, a_in, b_in, b_out, a_out, berm_top)
-			_push_quad(verts, normals, colors,
-				Vector3(a_in.x, ground_y, a_in.z),
-				Vector3(b_in.x, ground_y, b_in.z),
-				b_in, a_in, berm_wall)
-			_push_quad(verts, normals, colors,
-				a_out, b_out,
-				Vector3(b_out.x, ground_y, b_out.z),
-				Vector3(a_out.x, ground_y, a_out.z), berm_wall.darkened(0.08))
-			# Infield sky-bridge concrete fascia & support columns on high spans
-			if i % 3 == 0 and minf(h0, h1) >= 2.8:
-				var f_mid: Dictionary = Props.frame(spline, (lap0 + lap1) * 0.5)
-				var p_mid: Vector3 = f_mid["position"]
-				var r_mid: Vector3 = f_mid["right"]
-				var fwd_mid: Vector3 = f_mid["forward"]
-				for p_side: float in [-3.8, 3.8]:
-					var col_base: Vector3 = p_mid + r_mid * p_side
-					var hw: Vector3 = r_mid * 0.65
-					var hd: Vector3 = fwd_mid * 0.65
-					var y_top: float = p_mid.y - 0.08
-					var c0 := Vector3(col_base.x, ground_y, col_base.z) - hw - hd
-					var c1 := Vector3(col_base.x, ground_y, col_base.z) + hw - hd
-					var c2 := Vector3(col_base.x, ground_y, col_base.z) + hw + hd
-					var c3 := Vector3(col_base.x, ground_y, col_base.z) - hw + hd
-					var t0 := Vector3(c0.x, y_top, c0.z)
-					var t1 := Vector3(c1.x, y_top, c1.z)
-					var t2 := Vector3(c2.x, y_top, c2.z)
-					var t3 := Vector3(c3.x, y_top, c3.z)
-					_push_quad(verts, normals, colors, c0, c1, t1, t0, berm_wall)
-					_push_quad(verts, normals, colors, c1, c2, t2, t1, berm_wall.darkened(0.08))
-					_push_quad(verts, normals, colors, c2, c3, t3, t2, berm_wall)
-					_push_quad(verts, normals, colors, c3, c0, t0, t3, berm_wall.darkened(0.08))
+	# Watertight sculpted green embankments & viaduct piers for elevated spans
+	var em_batch := PropBatch.new()
+	LandscapeSculptor.add_road_embankment(em_batch, spline, {
+		"road_half": TileKit.ROAD_HALF + 0.65,
+		"inner_offset": TileKit.ROAD_HALF + 0.75,
+		"outer_offset": TileKit.ROAD_HALF + 14.0,
+		"ground_y": ground_y,
+		"hill_rise": 1.6,
+		"shoulder": berm_top,
+		"slope": Color("5b9c40"),
+		"cliff": berm_wall,
+		"steps": 168,
+	})
+	em_batch.flush_to(holder, "StadiumEmbankments", true)
+	stats["draws"] = int(stats.get("draws", 0)) + 1
 
 	var mesh := ArrayMesh.new()
 	var arrays: Array = []

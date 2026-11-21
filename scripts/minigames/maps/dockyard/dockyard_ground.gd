@@ -20,8 +20,11 @@ extends RefCounted
 const TileKit := preload("res://scripts/minigames/tile_kit.gd")
 const TrackDefs := preload("res://scripts/minigames/track_defs.gd")
 const CollisionLayers := preload("res://scripts/systems/collision_layers.gd")
+const LandscapeSculptor := preload("res://scripts/minigames/scenery/landscape_sculptor.gd")
+const PropBatch := preload("res://scripts/minigames/scenery/prop_batch.gd")
+const AmbientWorld := preload("res://scripts/minigames/scenery/ambient_world.gd")
 
-const GROUND_SIZE: float = 2200.0
+const GROUND_SIZE: float = 2800.0
 ## 2 cm over the race's own meadow plane: far enough apart to avoid z-fighting
 ## at the chase camera's distance, still under the legacy road at 4 cm.
 const GROUND_Y: float = 0.02
@@ -78,7 +81,7 @@ static func _apron(parent: Node3D, plan: RefCounted, stats: Dictionary) -> void:
 	var plane := PlaneMesh.new()
 	if plan.is_grid():
 		var quay_edge_z: float = float(plan.rows) * TileKit.TILE_SIZE
-		var north_depth: float = 1100.0
+		var north_depth: float = 1400.0
 		plane.size = Vector2(GROUND_SIZE, north_depth)
 		ground.position = Vector3(plan.centre().x, GROUND_Y,
 			quay_edge_z - north_depth * 0.5)
@@ -454,52 +457,78 @@ static func _harbour_water_and_ships(parent: Node3D, spline: RefCounted,
 	var safety_yellow := Color("e8c34a")
 	var rubber_black := Color("1f2328")
 
-	# Deep cartoon ocean basin stretching south from the quay wall
+	# Deep cartoon ocean basin stretching south, east & west from the seawall
 	_hq_quad(verts, normals, colours,
-		Vector3(cx - 1100.0, water_y, quay_z),
-		Vector3(cx + 1100.0, water_y, quay_z),
-		Vector3(cx + 1100.0, water_y, quay_z + 1000.0),
-		Vector3(cx - 1100.0, water_y, quay_z + 1000.0), sea_deep)
+		Vector3(cx - 1400.0, water_y, quay_z),
+		Vector3(cx + 1400.0, water_y, quay_z),
+		Vector3(cx + 1400.0, water_y, quay_z + 1400.0),
+		Vector3(cx - 1400.0, water_y, quay_z + 1400.0), sea_deep)
 	# Lighter turquoise harbour shelf along the quay wall
 	_hq_quad(verts, normals, colours,
-		Vector3(cx - 260.0, water_y + 0.012, quay_z),
-		Vector3(cx + 260.0, water_y + 0.012, quay_z),
-		Vector3(cx + 260.0, water_y + 0.012, quay_z + 62.0),
-		Vector3(cx - 260.0, water_y + 0.012, quay_z + 62.0), sea_shelf)
+		Vector3(cx - 420.0, water_y + 0.012, quay_z),
+		Vector3(cx + 420.0, water_y + 0.012, quay_z),
+		Vector3(cx + 420.0, water_y + 0.012, quay_z + 85.0),
+		Vector3(cx - 420.0, water_y + 0.012, quay_z + 85.0), sea_shelf)
 	# White wave foam strip lapping the seawall
 	_hq_quad(verts, normals, colours,
-		Vector3(cx - 260.0, water_y + 0.024, quay_z),
-		Vector3(cx + 260.0, water_y + 0.024, quay_z),
-		Vector3(cx + 260.0, water_y + 0.024, quay_z + 1.4),
-		Vector3(cx - 260.0, water_y + 0.024, quay_z + 1.4), sea_foam)
+		Vector3(cx - 420.0, water_y + 0.024, quay_z),
+		Vector3(cx + 420.0, water_y + 0.024, quay_z),
+		Vector3(cx + 420.0, water_y + 0.024, quay_z + 1.8),
+		Vector3(cx - 420.0, water_y + 0.024, quay_z + 1.8), sea_foam)
 
-	# Concrete quay seawall face + raised yellow/grey coping beam + rubber fenders
+	# Concrete quay seawall face + stepped coping curb + safety stripes + fenders
 	_hq_box(verts, normals, colours,
 		Transform3D(Basis.IDENTITY, Vector3(cx, (GROUND_Y + water_y) * 0.5, quay_z - 0.35)),
-		Vector3(520.0, GROUND_Y - water_y + 0.25, 0.8), wall_concrete)
+		Vector3(840.0, GROUND_Y - water_y + 0.25, 0.9), wall_concrete)
 	_hq_box(verts, normals, colours,
 		Transform3D(Basis.IDENTITY, Vector3(cx, GROUND_Y + 0.14, quay_z - 0.55)),
-		Vector3(320.0, 0.28, 1.1), coping_grey)
+		Vector3(640.0, 0.28, 1.2), coping_grey)
 	_hq_box(verts, normals, colours,
 		Transform3D(Basis.IDENTITY, Vector3(cx, GROUND_Y + 0.29, quay_z - 0.55)),
-		Vector3(320.0, 0.05, 0.45), safety_yellow)
-	for f_idx in 22:
-		var fx: float = cx - 126.0 + float(f_idx) * 12.0
+		Vector3(640.0, 0.05, 0.50), safety_yellow)
+	for f_idx in 32:
+		var fx: float = cx - 204.0 + float(f_idx) * 13.0
 		_hq_box(verts, normals, colours,
-			Transform3D(Basis.IDENTITY, Vector3(fx, -0.45, quay_z + 0.28)),
-			Vector3(1.5, 1.35, 0.55), rubber_black)
+			Transform3D(Basis.IDENTITY, Vector3(fx, -0.45, quay_z + 0.32)),
+			Vector3(1.6, 1.4, 0.60), rubber_black)
 
-	# Moored cargo container ship right alongside the southern quay wall
-	var ship_pos := Vector3(cx - 4.0, water_y, quay_z + 17.5)
-	_append_cargo_ship(verts, normals, colours, ship_pos, 92.0, 19.0)
-	# Secondary container barge moored down-channel to the east
-	var barge_pos := Vector3(cx + 108.0, water_y, quay_z + 23.0)
-	_append_container_barge(verts, normals, colours, barge_pos, 52.0, 14.0)
+	# Animated bobbing cargo ships, lighthouse breakwater & harbour headland cliffs
+	var anim: Dictionary = AmbientWorld.anim_of(parent)
+	LandscapeSculptor.build_cargo_ship(parent,
+		Vector3(cx - 46.0, water_y + 0.2, quay_z + 24.0), PI * 0.5, 1.35, anim)
+	LandscapeSculptor.build_cargo_ship(parent,
+		Vector3(cx + 128.0, water_y + 0.2, quay_z + 36.0), PI * 0.45, 0.95, anim)
+	# Lighthouse rocky breakwater headland on the eastern harbour point
+	var lh_pos := Vector3(cx + 260.0, water_y + 0.3, quay_z + 42.0)
+	_hq_box(verts, normals, colours,
+		Transform3D(Basis.IDENTITY, lh_pos + Vector3(0.0, 0.4, 0.0)),
+		Vector3(24.0, 2.6, 22.0), Color("5b656e"))
+	LandscapeSculptor.build_lighthouse(parent, lh_pos + Vector3(0.0, 1.2, 0.0), 18.0, anim)
 
-	# Steel-and-concrete crane-deck overpass girders & support columns beneath the
-	# elevated 1.5..7.5 m port viaduct (zero extra draw calls!).
+	var cliff_batch := PropBatch.new()
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 20261105
+	var headland_pal: Dictionary = {
+		"base": Color("4f5d56"),
+		"mid": Color("588547"),
+		"top": Color("72a954"),
+	}
+	for h_i in 10:
+		var side_s: float = -1.0 if h_i < 5 else 1.0
+		var k_i: int = h_i % 5
+		var hx: float = cx + side_s * (260.0 + float(k_i) * 52.0)
+		var hz: float = quay_z - 95.0 - float(k_i) * 48.0
+		if TileKit.spline_distance(spline, Vector3(hx, 0.0, hz)) < 48.0:
+			continue
+		LandscapeSculptor.add_woodland_hill(cliff_batch, Vector3(hx, 0.0, hz),
+			rng.randf_range(38.0, 58.0), rng.randf_range(32.0, 48.0),
+			rng.randf_range(18.0, 36.0), rng, headland_pal)
+	cliff_batch.flush_to(parent, "HarbourHeadlands", false)
+
+	# Widened steel-and-concrete overpass girders & twin columns beneath the
+	# elevated 1.5..7.5 m port viaduct (matching 15.19 m lane width).
 	var lap_total: float = maxf(float(spline.total_length), 1.0)
-	var girder_steps: int = 72
+	var girder_steps: int = 84
 	for g_idx in girder_steps:
 		var gs: float = lap_total * (float(g_idx) + 0.5) / float(girder_steps)
 		var gf: Dictionary = spline.sample(gs)
@@ -510,61 +539,43 @@ static func _harbour_water_and_ships(parent: Node3D, spline: RefCounted,
 		var gfwd: Vector3 = gf["forward"]
 		var gyaw: float = atan2(-gfwd.x, -gfwd.z)
 		_hq_box(verts, normals, colours,
-			Transform3D(Basis(Vector3.UP, gyaw), gp - Vector3.UP * 0.42),
-			Vector3(12.2, 0.55, 11.8), wall_concrete)
+			Transform3D(Basis(Vector3.UP, gyaw), gp - Vector3.UP * 0.44),
+			Vector3(16.0, 0.65, 14.2), wall_concrete)
 		if g_idx % 2 == 0:
-			for p_side: float in [-4.4, 4.4]:
+			for p_side: float in [-5.8, 5.8]:
 				var col_pos: Vector3 = gp + gr * p_side
 				var col_h: float = maxf(gp.y - GROUND_Y - 0.35, 0.5)
 				_hq_box(verts, normals, colours,
 					Transform3D(Basis(Vector3.UP, gyaw),
 						Vector3(col_pos.x, GROUND_Y + col_h * 0.5, col_pos.z)),
-					Vector3(1.15, col_h, 1.15), coping_grey.darkened(0.14))
+					Vector3(1.25, col_h, 1.25), coping_grey.darkened(0.14))
 
-	# Two towering ship-to-shore port gantry cranes standing on the quay apron
+	# Two animated ship-to-shore port gantry cranes standing on the quay apron
 	var crane_body := StaticBody3D.new()
 	crane_body.name = "HarbourGantryCranes"
 	crane_body.collision_layer = CollisionLayers.WORLD
 	crane_body.collision_mask = 0
 	parent.add_child(crane_body)
-	var crane_yellow := Color("e6b432")
-	var crane_red := Color("c73e2f")
-	var crane_steel := Color("333b42")
-	for crane_x: float in [cx - 42.0, cx + 38.0]:
-		var crane_z: float = quay_z - 5.2
+	for crane_x: float in [cx - 56.0, cx + 48.0]:
+		var crane_z: float = quay_z - 7.0
 		var legs_clear: bool = true
-		for lx_chk: float in [-4.6, 4.6]:
+		for lx_chk: float in [-3.2, 3.2]:
 			for lz_chk: float in [-2.6, 2.6]:
 				if TileKit.spline_distance(spline,
-						Vector3(crane_x + lx_chk, 0.0, crane_z + lz_chk)) < 16.0:
+						Vector3(crane_x + lx_chk, 0.0, crane_z + lz_chk)) < TileKit.ROAD_HALF + 10.5:
 					legs_clear = false
 		if not legs_clear:
 			continue
-		for lx: float in [-4.6, 4.6]:
-			for lz: float in [-2.6, 2.6]:
-				var leg_pos := Vector3(crane_x + lx, 9.0, crane_z + lz)
-				_hq_box(verts, normals, colours,
-					Transform3D(Basis.IDENTITY, leg_pos),
-					Vector3(1.1, 18.0, 1.1), crane_yellow)
+		LandscapeSculptor.build_port_crane(parent, Vector3(crane_x, GROUND_Y, crane_z),
+			0.0, 18.0, Color("e6b432"), anim)
+		for lx: float in [-2.6, 2.6]:
+			for lz: float in [-2.2, 2.2]:
 				var shape := BoxShape3D.new()
-				shape.size = Vector3(1.2, 18.0, 1.2)
+				shape.size = Vector3(1.1, 18.0, 1.1)
 				var col := CollisionShape3D.new()
 				col.shape = shape
-				col.position = leg_pos
+				col.position = Vector3(crane_x + lx, 9.0, crane_z + lz)
 				crane_body.add_child(col)
-		# Portal crossbeams + operator cab + outreach boom over the container ship
-		_hq_box(verts, normals, colours,
-			Transform3D(Basis.IDENTITY, Vector3(crane_x, 10.5, crane_z)),
-			Vector3(10.6, 1.1, 6.4), crane_steel)
-		_hq_box(verts, normals, colours,
-			Transform3D(Basis.IDENTITY, Vector3(crane_x, 18.2, crane_z + 9.5)),
-			Vector3(3.4, 1.6, 36.0), crane_red)
-		_hq_box(verts, normals, colours,
-			Transform3D(Basis.IDENTITY, Vector3(crane_x, 22.0, crane_z)),
-			Vector3(2.4, 6.5, 2.4), crane_yellow)
-		_hq_box(verts, normals, colours,
-			Transform3D(Basis.IDENTITY, Vector3(crane_x, 15.8, crane_z + 18.0)),
-			Vector3(2.8, 0.9, 6.2), crane_steel)
 		stats["cranes"] = int(stats.get("cranes", 0)) + 1
 		stats["objects"] = int(stats["objects"]) + 1
 	if crane_body.get_child_count() == 0:

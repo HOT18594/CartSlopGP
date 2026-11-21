@@ -20,11 +20,13 @@ Hop-drift shopping carts and street rides across **5 vertical circuits**, brawl 
 
 ## Highlights in v0.8.2
 
+![Glacier Pass](assets/ui/art/preview_glacier.png)
+
+- **5 circuits, 9 arenas, zero clipping.** Mountain rings are footprint-checked so peaks can't land on the road, every blocked ramp was re-cut (Plaza skywalk, Labyrinth, Ferries kickers, Glacier Bowl berms), Meadow's green kerbs are terracotta, and washed-out white is now vivid cartoon color with bespoke Stadium and Dockyard skies.
+- **Bots that actually race you.** Blast Tag hunters lead their target and ram the intercept; runners weave and juke by difficulty; Knockout slams, race jump-boosts, Deliver crate brains, and Sandbox tag-chase all scale Easy → Hard — same kart, same physics, same rules as you.
+- **Faster netcode and Pi server.** Idle karts sync at 5 Hz, the tunnel caps and coalesces, heartbeats fail fast, joins explain themselves, and the Pi ticks on a deadline (~15k packets/s, sub-ms ticks) with TLS resumption and health-gated deploys.
 - **macOS Multiplayer Fixed** — the app bundle now declares macOS 14/15 **Local Network** access (the missing permission silently blocked LAN discovery and LAN joins), LAN discovery broadcasts across every local adapter instead of guessing one, and join failures explain how to allow the permission.
-- **Faster First-Run LAN** — discovery retries through the macOS permission prompt instead of timing out on the first scan; LAN hosts advertise the address on the joiner's subnet.
-- **Tougher Relay Connections** — safe IPv6 relay literals, sleep/wake recovery, partial-write-safe tunnel framing, and clear TLS/DNS errors instead of a vague "server offline".
-- **Hardened Pi Server & Website** — the HTTPS front end survives browser preconnect sockets, tunneled players no longer share one tiny connection budget, `HEAD` works again, and the SD-card installer places the web build and custom tracks correctly.
-- **Verified Builds** — the release pipeline inspects the real macOS app bundle (Local Network key, universal binary, sealed signature), proves embedded data packs, checks Linux/web artifacts and only publishes checksums for the expected zips.
+- **Verified end to end** — full headless battery green, 44 + 91 + 6 + 5 Pi server and perf cases green, all 18 previews regenerated from the live scenes.
 ---
 
 ## 5 High-Verticality Racing Circuits
@@ -141,6 +143,8 @@ Open **PLAY → MULTIPLAYER**, customize your driver name and tag colour, and co
 1. **Online Room (5-Letter Code)** — Press **CREATE ONLINE ROOM** to open an outbound relay tunnel (zero port forwarding required) and share your 5-letter room code (e.g. `SLOPZ`), or toggle the room public so friends can join from **BROWSE ROOMS**.
 2. **Same Wi-Fi / LAN** — Press **CREATE LAN ROOM** for zero-internet local play; friends on the same network discover the room automatically under **BROWSE ROOMS**.
 3. **Full Mode & Arena Picker** — Inside the 2-column room lobby, the host can switch freely between **Racing**, **Knockout**, **Blast Tag**, **Deliver**, and **Sandbox**, preview all **15 maps** with live screenshots, configure bot count or team assignments, and launch straight into the match.
+
+**Bots with a brain.** Set Easy, Normal, or Hard per room: hunters intercept, runners juke, rivals defend lines and boost jump ramps — all in the same karts with the same rules as you.
 
 ---
 

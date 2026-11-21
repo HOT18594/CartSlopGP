@@ -46,6 +46,8 @@ static func build(entry: Dictionary) -> Node3D:
 	_force_visible_materials(instance)
 	## Factory livery only. Vehicles keep the paint they ship with; there is no
 	## per-player body tinting any more (remote identity is shown by name tags).
+	## Per-livery engine voice for the shared racing loop (no new assets).
+	holder.set_meta("engine_audio_profile", engine_audio_profile(entry))
 	return holder
 
 
@@ -129,3 +131,28 @@ static func _measure(node: Node, xform: Transform3D, acc: Array) -> void:
 				acc[0] = (acc[0] as AABB).merge(box)
 	for child in node.get_children():
 		_measure(child, local, acc)
+
+
+static func engine_audio_profile(entry: Dictionary) -> Dictionary:
+	## Per-livery identity for the shared racing loop (no new assets). Pitch
+	## and span come from the catalog; cutoff is the low-pass brightness that
+	## keeps each kit distinct on the same sports_loop.wav: green rumbles low,
+	## red sits in the middle, orange bites brighter, white screams on top.
+	var cutoff: float = float(entry.get("loop_filter_cutoff", 0.0))
+	if cutoff <= 0.0:
+		match str(entry.get("id", "")):
+			"race_car_red":
+				cutoff = 5200.0
+			"race_car_green":
+				cutoff = 3800.0
+			"race_car_orange":
+				cutoff = 6500.0
+			"race_car_white":
+				cutoff = 7800.0
+			_:
+				cutoff = 5200.0
+	return {
+		"pitch": float(entry.get("loop_pitch", 1.0)),
+		"span": float(entry.get("loop_pitch_span", 0.9)),
+		"cutoff": cutoff,
+	}

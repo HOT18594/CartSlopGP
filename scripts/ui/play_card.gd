@@ -169,9 +169,9 @@ func _draw_badge() -> void:
 	var font_size: int = 13
 	var text_w: float = _display.get_string_size(badge_text,
 		HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x
-	var badge_w: float = text_w + 22.0
-	var badge_h: float = 26.0
-	var rect := Rect2(Vector2((size.x - badge_w) * 0.5, 14.0), Vector2(badge_w, badge_h))
+	var badge_w: float = text_w + 30.0
+	var badge_h: float = 30.0
+	var rect := Rect2(Vector2((size.x - badge_w) * 0.5, 16.0), Vector2(badge_w, badge_h))
 	draw_style_box(_badge_style, rect)
 	var ascent: float = _display.get_ascent(font_size)
 	var descent: float = _display.get_descent(font_size)
@@ -210,7 +210,7 @@ func _draw_label() -> void:
 	var width: float = _display.get_string_size(label_text,
 		HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x
 	var x: float = (size.x - width) * 0.5
-	var baseline: float = size.y * 0.89
+	var baseline: float = size.y * 0.88
 	# Crisp soft shadow under outlined sticker text.
 	draw_string(_display, Vector2(x, baseline + 5.0), label_text,
 		HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, Color(0.08, 0.06, 0.18, 0.34))

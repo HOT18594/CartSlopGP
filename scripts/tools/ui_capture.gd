@@ -12,6 +12,8 @@ func _run() -> void:
 		scene_path = "res://scenes/ui/hud.tscn"
 	var scene: Node = load(scene_path).instantiate()
 	add_child(scene)
+	if scene is CanvasItem:
+		(scene as CanvasItem).visible = true
 	if scene_path.ends_with("boost_pad.tscn"):
 		var camera := Camera3D.new()
 		add_child(camera)

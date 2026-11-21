@@ -109,3 +109,23 @@ func add_cone(xform: Transform3D, radius: float, height: float,
 ## Merges everything added so far. Returns null when the batch is empty.
 func build() -> ArrayMesh:
 	return SceneryKit.mesh_from(_verts, _colors, _indices, true)
+
+
+## Builds the mesh, assigns a vertex-colour material (or `material`), attaches a
+## MeshInstance3D under `parent`, and returns it (or null if empty).
+func flush_to(parent: Node3D, node_name: String, cast_shadow: bool = false,
+		material: Material = null) -> MeshInstance3D:
+	if parent == null:
+		return null
+	var mesh: ArrayMesh = build()
+	if mesh == null:
+		return null
+	var inst := MeshInstance3D.new()
+	inst.name = node_name
+	inst.mesh = mesh
+	inst.material_override = material if material != null \
+		else SceneryKit.vertex_material()
+	inst.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON \
+		if cast_shadow else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	parent.add_child(inst)
+	return inst

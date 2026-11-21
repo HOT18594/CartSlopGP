@@ -184,13 +184,13 @@ func _tune_panel_chrome() -> void:
 	var base: StyleBox = _panel.get_theme_stylebox("panel")
 	if base is StyleBoxFlat:
 		var style: StyleBoxFlat = (base as StyleBoxFlat).duplicate() as StyleBoxFlat
-		style.content_margin_left = 30.0
-		style.content_margin_right = 30.0
-		style.content_margin_top = 20.0
-		style.content_margin_bottom = 20.0
+		style.content_margin_left = 34.0
+		style.content_margin_right = 34.0
+		style.content_margin_top = 24.0
+		style.content_margin_bottom = 24.0
 		_panel.add_theme_stylebox_override("panel", style)
 	if _body != null:
-		_body.add_theme_constant_override("separation", 10)
+		_body.add_theme_constant_override("separation", 14)
 
 
 func _fit_panel() -> void:
@@ -770,7 +770,7 @@ func _populate_clean_card(card: Button, texture: Texture2D, preview_h: float,
 	card.add_child(pad)
 
 	var column := VBoxContainer.new()
-	column.add_theme_constant_override("separation", 5)
+	column.add_theme_constant_override("separation", 8)
 	column.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	pad.add_child(column)
 

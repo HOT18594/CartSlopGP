@@ -1,58 +1,60 @@
 extends RefCounted
 ## Authoritative course and elevation data for SUNSET CANYON (`canyon`).
 ##
-## Route (64 drivable cells, 985 m lap, difficulty MEDIUM):
-##   * start/finish straight perched high on a 12.0 m red-rock mesa rim skyway
-##     with flat rim-lip jump J #1
-##   * dramatic terraced switchback descent (12.0 m -> 9.0 -> 6.0 -> 3.0 -> 0.0 m)
-##     past towering sandstone buttes and under red-rock canyon arches
-##   * dusty canyon floor ("dirt" 0.86 grip) + turquoise desert oasis splash
-##     ("wet" 0.80 grip) with flat oasis jump J #2
-##   * 9-cell west cliffside climb back up to the 12.0 m mesa rim skyway
+## Route (76 drivable cells, 1620 m lap, difficulty MEDIUM):
+##   * start/finish straight perched high on an open 12.0 m red-rock mesa rim
+##     skyway with flat rim-lip jump J #1
+##   * sweeping multi-tier desert switchbacks descending past wind-carved spires
+##     and natural sandstone arches
+##   * dusty canyon floor ("dirt" 0.86 grip) + turquoise palm oasis splash
+##     ("wet" 0.80 grip) with flat oasis kicker jump J #2
+##   * dramatic west canyon wall climb back to the 12.0 m mesa skyway
 
 const HEIGHT_STEP: float = 1.5
-const LAP_LENGTH: int = 985
+const LAP_LENGTH: int = 1620
 const HIGHEST: float = 12.0
-const START_CELL: Vector2i = Vector2i(3, 1)
+const START_CELL: Vector2i = Vector2i(5, 1)
 
 const GRID_ROWS: Array[String] = [
-	"...................",
-	"..WSSPSSSJSSSSSSW..",
-	"..S.............S..",
-	"..S.............S..",
-	"..S.............S..",
-	"..S.........WSSSR..",
-	"..S.........S......",
-	"..S.........S......",
-	"..S.........S......",
-	"..S.........LSSSR..",
-	"..S.............S..",
-	"..S.............S..",
-	"..WSSSL.....WSSSR..",
-	"......S.....S......",
-	"......S.....S......",
-	"......WSSJSSW......",
-	"...................",
+	".......................",
+	"..WSSPSSSJSSSSSSSSSSW..",
+	"..S.................S..",
+	"..S.................S..",
+	"..S.................S..",
+	"..S............WSSSSR..",
+	"..S............S.......",
+	"..S............S.......",
+	"..S............S.......",
+	"..S............LSSSSR..",
+	"..S.................S..",
+	"..S.................S..",
+	"..WSSSSSL.....WSSSSSR..",
+	"........S.....S........",
+	"........S.....S........",
+	"........S.....S........",
+	"........WSSJSSW........",
+	".......................",
 ]
 
 const HEIGHT_ROWS: Array[String] = [
-	"...................",
-	"..888888888888888..",
-	"..8.............8..",
-	"..7.............6..",
-	"..6.............4..",
-	"..5.........44444..",
-	"..4.........4......",
-	"..3.........2......",
-	"..2.........0......",
-	"..1.........00000..",
-	"..0.............0..",
-	"..0.............0..",
-	"..00000.....00000..",
-	"......0.....0......",
-	"......0.....0......",
-	"......0000000......",
-	"...................",
+	".......................",
+	"..8888888888888888888..",
+	"..8.................8..",
+	"..7.................7..",
+	"..7.................6..",
+	"..6............444455..",
+	"..5............3.......",
+	"..4............2.......",
+	"..3............1.......",
+	"..2............000000..",
+	"..1.................0..",
+	"..0.................0..",
+	"..0000000.....0000000..",
+	"........0.....0........",
+	"........0.....0........",
+	"........0.....0........",
+	"........0000000........",
+	".......................",
 ]
 
 const SURFACES: Array[Dictionary] = [

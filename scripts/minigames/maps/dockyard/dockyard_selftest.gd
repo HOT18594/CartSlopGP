@@ -21,18 +21,16 @@ const KenneyTiles := preload("res://scripts/minigames/tiles/kenney_tiles.gd")
 const TileKit := preload("res://scripts/minigames/tile_kit.gd")
 const DockyardTheme := preload("res://scripts/minigames/maps/dockyard_theme.gd")
 
-const EXPECTED_TILES: int = 58
-const EXPECTED_LAP: float = 888.0
+const EXPECTED_TILES: int = 72
+const EXPECTED_LAP: float = 1529.1
 const EXPECTED_HEIGHT: float = 7.5
-## A solid prop must stay at least this far from the centreline. The lane edge
-## is TileKit.ROAD_HALF, so 6.02 m leaves half a metre of real margin.
-const SOLID_MARGIN: float = 6.02
+## A solid prop must stay at least this far from the centreline.
+const SOLID_MARGIN: float = TileKit.ROAD_HALF + 0.5
 ## Colliders whose lowest point is above this are overhead (gantry beams).
 const DRIVE_UNDER: float = 3.2
-## Object count is a runaway guard, not a target: the kit rebuild puts
-## ~1100-1800 objects here, and the real cost control is the draw-call ceiling.
-const MIN_OBJECTS: int = 900
-const MAX_OBJECTS: int = 1850
+## Object count is a runaway guard; draw-call ceiling enforces batching.
+const MIN_OBJECTS: int = 700
+const MAX_OBJECTS: int = 2400
 const MAX_DRAWS: int = 120
 
 

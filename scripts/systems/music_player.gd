@@ -21,15 +21,39 @@ var _tween: Tween
 var _poll: float = 0.0
 
 
+func _enter_tree() -> void:
+	_ensure_music_bus()
+	_reroute_players()
+
+
 func _ready() -> void:
+	_ensure_music_bus()
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	for _index in 2:
 		var player := AudioStreamPlayer.new()
-		player.bus = "Master"
+		player.bus = "Music"
 		player.volume_db = -60.0
 		player.process_mode = Node.PROCESS_MODE_ALWAYS
 		add_child(player)
 		_players.append(player)
+	_reroute_players()
+
+
+func _ensure_music_bus() -> void:
+	if AudioServer.get_bus_index("Music") != -1:
+		return
+	AudioServer.add_bus()
+	var index: int = AudioServer.bus_count - 1
+	AudioServer.set_bus_name(index, "Music")
+	AudioServer.set_bus_send(index, "Master")
+
+
+func _reroute_players() -> void:
+	if AudioServer.get_bus_index("Music") == -1:
+		return
+	for player: AudioStreamPlayer in _players:
+		if is_instance_valid(player):
+			player.bus = "Music"
 
 
 func _process(delta: float) -> void:
@@ -128,6 +152,8 @@ func _load_stream(track_name: String) -> AudioStream:
 func _fade_out(player: AudioStreamPlayer, fade: float) -> void:
 	if not player.playing:
 		return
+	if _tween != null and _tween.is_valid():
+		_tween.kill()
 	_tween = create_tween()
 	_tween.tween_property(player, "volume_db", -60.0, fade)
 	_tween.tween_callback(player.stop)

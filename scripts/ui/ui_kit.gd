@@ -22,15 +22,15 @@ const FIELD_HEIGHT: float = 48.0
 const BUTTON_FONT: int = 20
 const FIELD_FONT: int = 18
 const CORNER_RADIUS: int = 16 ## One radius for every tile, control and row.
-const SPACING: int = 16 ## Gap between form rows / screen blocks.
-const SPACING_TIGHT: int = 8 ## Gap inside one row or card.
-const SPACING_WIDE: int = 24 ## Gap between a page and the next big block.
+const SPACING: int = 18 ## Gap between form rows / screen blocks.
+const SPACING_TIGHT: int = 10 ## Gap inside one row or card.
+const SPACING_WIDE: int = 28 ## Gap between a page and the next big block.
 const CAPTION_SIZE: int = 15 ## Secondary explanation line.
 const TITLE_SIZE: int = 40 ## The one page-title size.
-const TILE_MIN_WIDTH: float = 68.0 ## Equal square tiles in an option strip.
+const TILE_MIN_WIDTH: float = 76.0 ## Equal square tiles in an option strip.
 const SCREEN_WIDTH: float = 1280.0 ## Design box every menu must fit inside.
 const SCREEN_HEIGHT: float = 720.0
-const SCREEN_MARGIN: float = 24.0 ## Safe gap between a control and the design edge.
+const SCREEN_MARGIN: float = 28.0 ## Safe gap between a control and the design edge.
 const CONTENT_WIDTH: float = 1000.0 ## Widest page column allowed at the design box.
 const FOCUS_RING: Color = Color("ffd22e")
 const FOCUS_RING_DARK: Color = Color("1e1b3a")
@@ -131,10 +131,10 @@ func _focus_style(radius: int) -> StyleBoxFlat:
 	style.set_corner_radius_all(radius + 4)
 	# Matching content margins keep a focused LineEdit's text in the same spot;
 	# Button ignores focus-style margins for layout.
-	style.content_margin_left = 16.0
-	style.content_margin_right = 16.0
-	style.content_margin_top = 10.0
-	style.content_margin_bottom = 10.0
+	style.content_margin_left = 20.0
+	style.content_margin_right = 20.0
+	style.content_margin_top = 12.0
+	style.content_margin_bottom = 12.0
 	# The stylebox is grown a few pixels so the ring lines up outside the
 	# control's own candy border instead of eating into the label.
 	style.expand_margin_left = 3.0
@@ -214,7 +214,7 @@ func fit_button(button: Button, max_width: float = BUTTON_MAX_WIDTH,
 	var normal: StyleBox = button.get_theme_stylebox("normal")
 	if normal != null:
 		padding = normal.get_minimum_size().x
-	var available: float = maxf(cap - padding - 6.0, 16.0)
+	var available: float = maxf(cap - padding - 12.0, 16.0)
 	var authored: int = _authored_font(button)
 	var fitted: int = fitted_font_size(button.get_theme_font("font"), button.text,
 		authored, available, min_font)

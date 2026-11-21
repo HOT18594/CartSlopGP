@@ -10,32 +10,34 @@ const TileKit := preload("res://scripts/minigames/tile_kit.gd")
 const TileCatalog := preload("res://scripts/minigames/tiles/tile_catalog.gd")
 const KenneyTiles := preload("res://scripts/minigames/tiles/kenney_tiles.gd")
 const CollisionLayers := preload("res://scripts/systems/collision_layers.gd")
+const LandscapeSculptor := preload("res://scripts/minigames/scenery/landscape_sculptor.gd")
+const PropBatch := preload("res://scripts/minigames/scenery/prop_batch.gd")
+const AmbientWorld := preload("res://scripts/minigames/scenery/ambient_world.gd")
 
 const TILE: float = TileKit.TILE_SIZE
-const SOLID_MIN_CLEARANCE: float = 16.5
-const TREE_MIN_CLEARANCE: float = 17.5
-const FLOWER_MIN_CLEARANCE: float = 12.2
+const SOLID_MIN_CLEARANCE: float = TileKit.ROAD_HALF + 4.5
+const TREE_MIN_CLEARANCE: float = 19.0
+const FLOWER_MIN_CLEARANCE: float = TileKit.ROAD_HALF + 3.2
 const SEED: int = 20260801
 
+# Natural rounded & pine forest species (no tall narrow spiky cyan cones).
 const REDWOOD_SPECIES: Array[Dictionary] = [
-	## Kept deliberately modest: 18-33 m "redwoods" used to form a wall of
-	## flat-shaded spires that hid the valley, river and the circuit beyond.
-	{"model": "tree_tall", "h_min": 11.0, "h_max": 18.0, "w": 2},
-	{"model": "tree_tall_dark", "h_min": 12.0, "h_max": 19.0, "w": 2},
-	{"model": "tree_pineTallA", "h_min": 11.0, "h_max": 20.0, "w": 5},
-	{"model": "tree_pineTallB", "h_min": 11.0, "h_max": 21.0, "w": 5},
-	{"model": "tree_oak", "h_min": 9.0, "h_max": 15.0, "w": 4},
-	{"model": "tree_oak_fall", "h_min": 9.0, "h_max": 15.0, "w": 4},
-	{"model": "tree_tall_fall", "h_min": 10.0, "h_max": 16.0, "w": 2},
-	{"model": "tree_default_fall", "h_min": 8.0, "h_max": 14.0, "w": 3},
+	{"model": "tree_pineTallA", "h_min": 12.0, "h_max": 22.0, "w": 5},
+	{"model": "tree_pineTallB", "h_min": 12.0, "h_max": 23.0, "w": 5},
+	{"model": "tree_pineRoundA", "h_min": 10.0, "h_max": 18.0, "w": 4},
+	{"model": "tree_oak", "h_min": 9.5, "h_max": 16.5, "w": 4},
+	{"model": "tree_oak_fall", "h_min": 9.5, "h_max": 16.5, "w": 4},
+	{"model": "tree_detailed", "h_min": 9.0, "h_max": 15.5, "w": 3},
+	{"model": "tree_default_fall", "h_min": 8.5, "h_max": 14.5, "w": 3},
+	{"model": "tree_fat", "h_min": 8.0, "h_max": 14.0, "w": 3},
 ]
 
 const FLORA_SPECIES: Array[Dictionary] = [
-	{"model": "flower_redA", "h_min": 0.45, "h_max": 0.85, "w": 3},
-	{"model": "flower_yellowA", "h_min": 0.45, "h_max": 0.85, "w": 3},
-	{"model": "flower_purpleA", "h_min": 0.45, "h_max": 0.85, "w": 3},
-	{"model": "grass_large", "h_min": 0.50, "h_max": 1.05, "w": 4},
-	{"model": "plant_bushLarge", "h_min": 0.95, "h_max": 1.90, "w": 3},
+	{"model": "flower_redA", "h_min": 0.48, "h_max": 0.90, "w": 4},
+	{"model": "flower_yellowA", "h_min": 0.48, "h_max": 0.90, "w": 4},
+	{"model": "flower_purpleA", "h_min": 0.48, "h_max": 0.90, "w": 4},
+	{"model": "grass_large", "h_min": 0.55, "h_max": 1.15, "w": 5},
+	{"model": "plant_bushLarge", "h_min": 1.00, "h_max": 1.95, "w": 3},
 ]
 
 
@@ -52,124 +54,147 @@ static func build(holder: Node3D, spline: RefCounted) -> Dictionary:
 	if holder == null or spline == null:
 		return stats
 
-	var total: float = maxf(float(spline.total_length), 1.0)
-	var seam: float = TileKit._snap_distance(spline, total * 0.5)
-	for side: float in [-1.0, 1.0]:
-		stats["barriers"] = int(stats["barriers"]) \
-			+ TileKit.barrier_line(holder, spline, 0.0, seam, side, "barrierWhite") \
-			+ TileKit.barrier_line(holder, spline, seam, 0.0, side, "barrierRed")
+	# Open-world meadow: timber/brass safety rails only on the 4.5 m viaduct,
+	# 9.0 m mountain overlook, and tight outside bends; free verges elsewhere.
+	stats["barriers"] = TileKit.selective_safety_rails(holder, spline, {
+		"bridge_y": 2.0,
+		"curve_min": 0.032,
+		"rail_color": Color("9e6b42"),
+		"accent_color": Color("df9b3c"),
+		"post_color": Color("5c3a20"),
+	})
+	TileKit.build_outer_soft_containment(holder, spline, 13.0)
 
-	var lake_centre := Vector3(144.0, 0.0, 116.0)
-	var south_basin := Vector3(120.0, 0.0, 268.0)
-	_build_ground_and_water(holder, spline, lake_centre, south_basin, stats)
+	var anchors: Dictionary = _derive_valley_anchors(spline)
+	var lake_centre: Vector3 = anchors["lake"]
+	var bridge_pos: Vector3 = anchors["bridge"]
+	var south_basin: Vector3 = anchors["south_basin"]
+
+	_build_ground_and_water(holder, spline, anchors, stats)
 	_build_timber_gantry(holder, spline, stats)
-	_build_valley_camps_and_logs(holder, spline, lake_centre, stats)
-	_build_valley_bluffs(holder, spline, stats)
-	_build_redwood_forest(holder, spline, lake_centre, south_basin, stats)
+	_build_valley_camps_and_logs(holder, spline, lake_centre, south_basin, stats)
+	_build_valley_hills_and_mill(holder, spline, anchors, stats)
+	_build_redwood_forest(holder, spline, lake_centre, south_basin, bridge_pos, stats)
 
 	stats["objects"] = int(stats["barriers"]) + int(stats["trees"]) \
-		+ int(stats["flora"]) + int(stats["props"]) + int(stats["cliffs"]) + 3
+		+ int(stats["flora"]) + int(stats["props"]) + int(stats["cliffs"]) + 4
 	stats["draws"] = _count_draws(holder)
 	return stats
 
 
+static func _derive_valley_anchors(spline: RefCounted) -> Dictionary:
+	var total: float = maxf(float(spline.total_length), 1.0)
+	var bmin := Vector2(INF, INF)
+	var bmax := Vector2(-INF, -INF)
+	for i in 120:
+		var p: Vector3 = spline.sample(total * float(i) / 120.0)["position"]
+		bmin.x = minf(bmin.x, p.x)
+		bmin.y = minf(bmin.y, p.z)
+		bmax.x = maxf(bmax.x, p.x)
+		bmax.y = maxf(bmax.y, p.z)
+	var centre := Vector3((bmin.x + bmax.x) * 0.5, 0.0, (bmin.y + bmax.y) * 0.5)
+	var bridge_pos := Vector3(centre.x, 0.0, bmax.y)
+	var tiles_val: Variant = spline.get("tiles")
+	if tiles_val is Array:
+		for t: Variant in tiles_val as Array:
+			if t is Dictionary and str((t as Dictionary).get("tile", "")) == "C":
+				var cpos: Vector3 = KenneyTiles._cell_center((t as Dictionary)["cell"])
+				bridge_pos = Vector3(cpos.x, 0.0, cpos.z)
+				break
+	var dir_out := Vector3(bridge_pos.x - centre.x, 0.0, bridge_pos.z - centre.z)
+	if absf(dir_out.z) >= absf(dir_out.x):
+		dir_out = Vector3(0.0, 0.0, 1.0 if dir_out.z >= 0.0 else -1.0)
+	else:
+		dir_out = Vector3(1.0 if dir_out.x >= 0.0 else -1.0, 0.0, 0.0)
+	var south_basin: Vector3 = bridge_pos + dir_out * 64.0
+	return {
+		"centre": centre,
+		"lake": centre + Vector3(-12.0, 0.0, -8.0),
+		"bridge": bridge_pos,
+		"dir_out": dir_out,
+		"south_basin": south_basin,
+		"bounds_min": bmin,
+		"bounds_max": bmax,
+	}
+
+
 static func _build_ground_and_water(holder: Node3D, spline: RefCounted,
-		lake_centre: Vector3, south_basin: Vector3, stats: Dictionary) -> void:
+		anchors: Dictionary, stats: Dictionary) -> void:
+	var lake_centre: Vector3 = anchors["lake"]
+	var bridge_pos: Vector3 = anchors["bridge"]
+	var dir_out: Vector3 = anchors["dir_out"]
+	var south_basin: Vector3 = anchors["south_basin"]
+	var bmin: Vector2 = anchors["bounds_min"]
+	var bmax: Vector2 = anchors["bounds_max"]
+	var cx: float = (bmin.x + bmax.x) * 0.5
+	var cz: float = (bmin.y + bmax.y) * 0.5
+
 	var verts := PackedVector3Array()
 	var normals := PackedVector3Array()
 	var colors := PackedColorArray()
 
-	var grass_deep := Color("5d9f41")
-	var grass_meadow := Color("72b54f")
+	var grass_deep := Color("599b3d")
+	var grass_meadow := Color("71b74e")
 	var sand_bank := Color("dfd0a3")
 	var water_shallow := Color("38cde0")
 	var water_deep := Color("1ba3bf")
 	var foam := Color("e6fbff")
-	var berm_earth := Color("7f6647")
-	var cliff_rock := Color("6f6961")
+	var berm_earth := Color("766248")
+	var cliff_rock := Color("6e685f")
 	var trail_dirt := Color("9a7046")
 	var trail_edge := Color("825b36")
 
 	var gy: float = TileKit.Z_GROUND
+	var half_ext: float = 1200.0
 	_quad(verts, normals, colors,
-		Vector3(-640.0, gy, -640.0), Vector3(920.0, gy, -640.0),
-		Vector3(920.0, gy, 940.0), Vector3(-640.0, gy, 940.0), grass_deep)
+		Vector3(cx - half_ext, gy, cz - half_ext),
+		Vector3(cx + half_ext, gy, cz - half_ext),
+		Vector3(cx + half_ext, gy, cz + half_ext),
+		Vector3(cx - half_ext, gy, cz + half_ext), grass_deep)
 	_quad(verts, normals, colors,
-		Vector3(-40.0, gy + 0.005, -40.0), Vector3(340.0, gy + 0.005, -40.0),
-		Vector3(340.0, gy + 0.005, 320.0), Vector3(-40.0, gy + 0.005, 320.0),
-		grass_meadow)
+		Vector3(bmin.x - 42.0, gy + 0.005, bmin.y - 42.0),
+		Vector3(bmax.x + 42.0, gy + 0.005, bmin.y - 42.0),
+		Vector3(bmax.x + 42.0, gy + 0.005, bmax.y + 42.0),
+		Vector3(bmin.x - 42.0, gy + 0.005, bmax.y + 42.0), grass_meadow)
 
-	# Central infield turquoise lake (>45 m clear of every road strand)
+	# Central infield turquoise lake
 	_disc(verts, normals, colors, lake_centre + Vector3.UP * (gy + 0.010),
-		29.0, 31.0, 28, sand_bank)
+		34.0, 32.0, 28, sand_bank)
 	_disc(verts, normals, colors, lake_centre + Vector3.UP * (gy + 0.016),
-		24.5, 26.5, 28, water_shallow)
+		29.0, 27.0, 28, water_shallow)
 	_disc(verts, normals, colors, lake_centre + Vector3.UP * (gy + 0.020),
-		18.0, 19.5, 24, water_deep)
+		21.0, 20.0, 24, water_deep)
 	_ring(verts, normals, colors, lake_centre + Vector3.UP * (gy + 0.023),
-		21.0, 22.2, 22.8, 24.2, 24, foam)
+		24.0, 25.4, 22.5, 24.0, 24, foam)
 
-	# Southern river pool beyond the 4.5 m river bridge viaduct
+	# River basin beyond the 4.5 m bridge viaduct
 	_disc(verts, normals, colors, south_basin + Vector3.UP * (gy + 0.010),
-		40.0, 28.0, 28, sand_bank)
+		44.0, 32.0, 28, sand_bank)
 	_disc(verts, normals, colors, south_basin + Vector3.UP * (gy + 0.016),
-		34.5, 23.5, 28, water_shallow)
+		38.0, 27.0, 28, water_shallow)
 	_disc(verts, normals, colors, south_basin + Vector3.UP * (gy + 0.020),
-		26.0, 17.0, 24, water_deep)
+		28.0, 19.5, 24, water_deep)
 
-	# River channel flowing from central lake right beneath (7, 13) 'C' (x=120, z=216)
+	# River channel meandering from central lake right beneath the 'C' viaduct
 	var river_pts: Array[Vector3] = [
-		Vector3(144.0, 0.0, 136.0),
-		Vector3(134.0, 0.0, 168.0),
-		Vector3(124.0, 0.0, 196.0),
-		Vector3(120.0, 0.0, 218.0),
-		Vector3(120.0, 0.0, 256.0),
+		lake_centre,
+		lake_centre.lerp(bridge_pos, 0.42) + Vector3(-10.0, 0.0, 4.0),
+		bridge_pos - dir_out * 18.0,
+		bridge_pos + dir_out * 18.0,
+		south_basin,
 	]
-	_ribbon(verts, normals, colors, river_pts, 14.5, gy + 0.011, sand_bank)
-	_ribbon(verts, normals, colors, river_pts, 10.8, gy + 0.017, water_shallow)
-	_ribbon(verts, normals, colors, river_pts, 7.2, gy + 0.021, water_deep)
-	_ribbon(verts, normals, colors, river_pts, 1.3, gy + 0.024, foam)
+	_ribbon(verts, normals, colors, river_pts, 15.0, gy + 0.011, sand_bank)
+	_ribbon(verts, normals, colors, river_pts, 11.2, gy + 0.017, water_shallow)
+	_ribbon(verts, normals, colors, river_pts, 7.6, gy + 0.021, water_deep)
+	_ribbon(verts, normals, colors, river_pts, 1.4, gy + 0.024, foam)
 
-	# Mountain cliff shelves & bridge abutments under the 9.0 m overlook and 4.5 m bridge,
-	# leaving the central river channel open beneath the viaduct!
+	# Dirt forest trail sector surface (normalized lap frac 0.72..0.93)
 	var total: float = maxf(float(spline.total_length), 1.0)
-	var steps: int = 128
-	for i in steps:
-		var s0: float = total * float(i) / float(steps)
-		var s1: float = total * float(i + 1) / float(steps)
-		var f0: Dictionary = spline.sample(s0)
-		var f1: Dictionary = spline.sample(s1)
-		var p0: Vector3 = f0["position"]
-		var p1: Vector3 = f1["position"]
-		if maxf(p0.y, p1.y) < 0.15:
-			continue
-		if p0.x > 96.0 and p0.x < 144.0 and p0.z > 192.0:
-			continue
-		var r0: Vector3 = f0["right"]
-		var r1: Vector3 = f1["right"]
-		for side: float in [-1.0, 1.0]:
-			var reach: float = 22.0 if maxf(p0.y, p1.y) > 5.0 else 16.5
-			var in0: Vector3 = p0 + r0 * (8.5 * side)
-			var in1: Vector3 = p1 + r1 * (8.5 * side)
-			var out0: Vector3 = p0 + r0 * (reach * side)
-			var out1: Vector3 = p1 + r1 * (reach * side)
-			in0.y = p0.y - 0.02
-			in1.y = p1.y - 0.02
-			out0.y = p0.y * 0.42 if side < 0.0 and p0.y > 5.0 else gy
-			out1.y = p1.y * 0.42 if side < 0.0 and p1.y > 5.0 else gy
-			_quad(verts, normals, colors, in0, in1, out1, out0,
-				cliff_rock if maxf(p0.y, p1.y) > 5.0 else berm_earth)
-			if out0.y > gy + 0.05 or out1.y > gy + 0.05:
-				_quad(verts, normals, colors, out0, out1,
-					Vector3(out1.x, gy, out1.z),
-					Vector3(out0.x, gy, out0.z), cliff_rock.darkened(0.14))
-
-	# Woodland "dirt" trail sector overlay (frac 0.72..0.93, skipping B/J tiles)
 	var dirt_from: float = total * 0.72
 	var dirt_to: float = total * 0.93
-	var dirt_steps: int = 56
+	var dirt_steps: int = 72
 	var surf_y: float = KenneyTiles.ROAD_SURFACE + 0.012
-	var half_lane: float = TileKit.ROAD_HALF - 0.45
+	var half_lane: float = TileKit.ROAD_HALF - 0.35
 	for i in dirt_steps:
 		var s0: float = lerpf(dirt_from, dirt_to, float(i) / float(dirt_steps))
 		var s1: float = lerpf(dirt_from, dirt_to, float(i + 1) / float(dirt_steps))
@@ -189,6 +214,35 @@ static func _build_ground_and_water(holder: Node3D, spline: RefCounted,
 	_emit_vertex_mesh(holder, "RedwoodTerrainWater", verts, normals, colors)
 	stats["draws"] = int(stats["draws"]) + 1
 
+	# Sculpted earthen embankments & viaduct stonework (gap cleanly over river)
+	var em_batch := PropBatch.new()
+	LandscapeSculptor.add_road_embankment(em_batch, spline, {
+		"road_half": TileKit.ROAD_HALF + 0.6,
+		"inner_offset": TileKit.ROAD_HALF + 0.75,
+		"outer_offset": TileKit.ROAD_HALF + 14.5,
+		"ground_y": gy,
+		"hill_rise": 1.9,
+		"shoulder": grass_meadow,
+		"slope": berm_earth,
+		"cliff": cliff_rock,
+		"skip_center": bridge_pos,
+		"skip_radius": 24.0,
+		"steps": 168,
+	})
+	# Stone bridge abutment piers on both banks of the river beneath the 'C' viaduct
+	var perp := Vector3(-dir_out.z, 0.0, dir_out.x).normalized()
+	var yaw_br: float = atan2(-perp.x, -perp.z)
+	for bank_sign: float in [-1.0, 1.0]:
+		var bank_pos: Vector3 = bridge_pos + perp * (bank_sign * 18.5)
+		em_batch.add_box(Transform3D(Basis(Vector3.UP, yaw_br),
+			bank_pos + Vector3.UP * 2.15), Vector3(6.0, 4.4, TILE * 0.78),
+			cliff_rock.darkened(0.08))
+		em_batch.add_box(Transform3D(Basis(Vector3.UP, yaw_br),
+			bank_pos + Vector3.UP * 4.25), Vector3(7.2, 0.55, TILE * 0.84),
+			Color("88827a"))
+	em_batch.flush_to(holder, "RedwoodEmbankments", true)
+	stats["draws"] = int(stats["draws"]) + 1
+
 
 static func _is_special_tile(spline: RefCounted, s: float) -> bool:
 	if not spline.has_method("tile_at"):
@@ -196,14 +250,17 @@ static func _is_special_tile(spline: RefCounted, s: float) -> bool:
 	var t: Variant = spline.call("tile_at", s)
 	if not (t is Dictionary):
 		return false
+	# Only jump ramps are skipped: the walled kicker mesh rises through the
+	# ribbon and a flat decal would slice across its deck. Bump tiles stay
+	# painted so no grey asphalt wedge survives inside the dirt sector.
 	var k: String = str((t as Dictionary).get("tile", ""))
-	return k == "B" or k == "J"
+	return k == "J"
 
 
 static func _build_timber_gantry(holder: Node3D, spline: RefCounted,
 		stats: Dictionary) -> void:
 	TileKit.gantry(holder, spline, 0.0)
-	var frame: Dictionary = spline.sample(120.0)
+	var frame: Dictionary = spline.sample(150.0)
 	var origin: Vector3 = frame["position"]
 	var right: Vector3 = frame["right"]
 	var forward: Vector3 = frame["forward"]
@@ -216,49 +273,50 @@ static func _build_timber_gantry(holder: Node3D, spline: RefCounted,
 	var banner_gold := Color("f4c430")
 	var banner_green := Color("3f8f45")
 
+	var post_lat: float = TileKit.ROAD_HALF + 8.6
+	var span_w: float = post_lat * 2.0 + 2.2
 	var body := _world_body(holder, "TimberGantry")
 	for side: float in [-1.0, 1.0]:
-		var post_pos: Vector3 = origin + right * (side * 16.6)
+		var post_pos: Vector3 = origin + right * (side * post_lat)
 		var xform := Transform3D(Basis(Vector3.UP, yaw),
-			post_pos + Vector3.UP * 2.7)
-		_box_verts(verts, normals, colors, xform, Vector3(1.1, 5.4, 1.1), cedar)
-		_add_box_collider(body, xform, Vector3(1.1, 5.4, 1.1))
+			post_pos + Vector3.UP * 2.8)
+		_box_verts(verts, normals, colors, xform, Vector3(1.2, 5.6, 1.2), cedar)
+		_add_box_collider(body, xform, Vector3(1.2, 5.6, 1.2))
 
-	# Overhead timber truss + valley banner (lowest_y = 4.48 m >= 4.4 m > 3.2 m!)
-	var beam_xf := Transform3D(Basis(Vector3.UP, yaw), origin + Vector3.UP * 4.98)
-	_box_verts(verts, normals, colors, beam_xf, Vector3(34.8, 0.96, 1.08), pine_beam)
+	var beam_xf := Transform3D(Basis(Vector3.UP, yaw), origin + Vector3.UP * 5.25)
+	_box_verts(verts, normals, colors, beam_xf, Vector3(span_w, 1.0, 1.1), pine_beam)
 	_box_verts(verts, normals, colors,
-		Transform3D(Basis(Vector3.UP, yaw), origin + Vector3.UP * 5.68),
-		Vector3(15.6, 0.74, 0.44), banner_green)
+		Transform3D(Basis(Vector3.UP, yaw), origin + Vector3.UP * 5.95),
+		Vector3(17.5, 0.80, 0.44), banner_green)
 	_box_verts(verts, normals, colors,
-		Transform3D(Basis(Vector3.UP, yaw), origin + Vector3.UP * 5.68),
-		Vector3(14.6, 0.46, 0.50), banner_gold)
-	_add_box_collider(body, beam_xf, Vector3(34.8, 0.96, 1.08))
+		Transform3D(Basis(Vector3.UP, yaw), origin + Vector3.UP * 5.95),
+		Vector3(16.4, 0.48, 0.50), banner_gold)
+	_add_box_collider(body, beam_xf, Vector3(span_w, 1.0, 1.1))
 	_emit_vertex_mesh(holder, "TimberGantryMesh", verts, normals, colors)
 
 
 static func _build_valley_camps_and_logs(holder: Node3D, spline: RefCounted,
-		lake_centre: Vector3, stats: Dictionary) -> void:
+		lake_centre: Vector3, south_basin: Vector3, stats: Dictionary) -> void:
 	stats["props"] = int(stats["props"]) \
-		+ TileKit.grandstand(holder, spline, 24.0, -1.0, true) \
-		+ TileKit.grandstand(holder, spline, 64.0, -1.0, false)
+		+ TileKit.grandstand(holder, spline, 32.0, -1.0, true) \
+		+ TileKit.grandstand(holder, spline, 82.0, -1.0, false)
 
 	var body := _world_body(holder, "ValleyCampProps")
 	var racing_batches: Dictionary = {}
 	var nature_batches: Dictionary = {}
 	var total: float = maxf(float(spline.total_length), 1.0)
 
-	# Camp tents at scenic clearings well outside the barrier ring (>= 18.5 m)
-	var camp_fractions: Array[float] = [0.09, 0.14, 0.74, 0.78, 0.92, 0.96]
+	# Woodland camps along flat clearings well clear of road
+	var camp_fractions: Array[float] = [0.08, 0.14, 0.75, 0.81, 0.91, 0.95]
 	var tent_models: Array[String] = ["tent", "tentRoof", "tentClosed"]
 	for i in camp_fractions.size():
 		var s: float = total * camp_fractions[i]
 		var f: Dictionary = spline.sample(s)
-		var pos: Vector3 = (f["position"] as Vector3) - (f["right"] as Vector3) * 20.5
+		var pos: Vector3 = (f["position"] as Vector3) - (f["right"] as Vector3) * 23.0
 		if (f["position"] as Vector3).y > 0.25:
 			continue
 		pos.y = 0.0
-		if TileKit.spline_distance(spline, pos) < 18.5:
+		if TileKit.spline_distance(spline, pos) < 20.0:
 			continue
 		var model: String = tent_models[i % tent_models.size()]
 		if not bool(TileCatalog.model_info(model, false).get("ok", false)):
@@ -273,9 +331,9 @@ static func _build_valley_camps_and_logs(holder: Node3D, spline: RefCounted,
 				pos + Vector3.UP * (sz.y * 0.5)), sz)
 		stats["props"] = int(stats["props"]) + 1
 
-	# Log stacks & wooden post-and-rail fences along woodland verges (>= 16.5 m)
+	# Log stacks & wooden post-and-rail fences along woodland verges (>= SOLID_MIN_CLEARANCE)
 	var log_models: Array[String] = ["log_stack", "log_large", "fence_simple"]
-	var steps: int = 36
+	var steps: int = 44
 	for i in steps:
 		var s: float = total * (float(i) + 0.35) / float(steps)
 		var f: Dictionary = spline.sample(s)
@@ -283,17 +341,19 @@ static func _build_valley_camps_and_logs(holder: Node3D, spline: RefCounted,
 		if p_road.y > 0.25:
 			continue
 		var side: float = -1.0 if i % 2 == 0 else 1.0
-		var pos: Vector3 = p_road + (f["right"] as Vector3) * (18.2 * side)
+		var pos: Vector3 = p_road + (f["right"] as Vector3) * ((TileKit.ROAD_HALF + 8.5) * side)
 		pos.y = 0.0
-		if TileKit.spline_distance(spline, pos) < SOLID_MIN_CLEARANCE + 1.5:
+		if TileKit.spline_distance(spline, pos) < SOLID_MIN_CLEARANCE + 2.0:
 			continue
-		if Vector2(pos.x - lake_centre.x, pos.z - lake_centre.z).length() < 34.0:
+		if Vector2(pos.x - lake_centre.x, pos.z - lake_centre.z).length() < 36.0:
+			continue
+		if Vector2(pos.x - south_basin.x, pos.z - south_basin.z).length() < 42.0:
 			continue
 		var model: String = log_models[i % log_models.size()]
 		if not bool(TileCatalog.model_info(model, true).get("ok", false)):
 			continue
 		var yaw: float = spline.yaw_at(s) + (PI * 0.5 if model == "fence_simple" else 0.25)
-		var sc: float = TileKit.NATURE_SCALE * 0.52
+		var sc: float = TileKit.NATURE_SCALE * 0.55
 		var sz: Vector3 = TileKit._scaled_size(model, Vector3.ONE * sc, true)
 		if not _box_clears_spline(spline, pos + Vector3.UP * (sz.y * 0.5), yaw, sz, SOLID_MIN_CLEARANCE):
 			continue
@@ -304,14 +364,12 @@ static func _build_valley_camps_and_logs(holder: Node3D, spline: RefCounted,
 			pos + Vector3.UP * (sz.y * 0.5)), sz)
 		stats["props"] = int(stats["props"]) + 1
 
-	# Checkered & green woodland flags: snap to 16 m cell centre FIRST so
-	# TileKit.flags never snaps a corner offset back onto the road!
 	var flag_spots: Array = []
 	var used_flag_cells: Dictionary = {}
-	for frac: float in [0.03, 0.11, 0.32, 0.56, 0.76, 0.94]:
+	for frac: float in [0.03, 0.11, 0.30, 0.54, 0.74, 0.94]:
 		var s: float = total * frac
 		var f: Dictionary = spline.sample(s)
-		var raw_pos: Vector3 = (f["position"] as Vector3) - (f["right"] as Vector3) * 18.0
+		var raw_pos: Vector3 = (f["position"] as Vector3) - (f["right"] as Vector3) * 19.0
 		var snapped: Vector3 = TileKit._snap_point(raw_pos)
 		snapped.y = (f["position"] as Vector3).y if (f["position"] as Vector3).y > 0.5 else 0.0
 		var cell_key := Vector2i(int(round(snapped.x)), int(round(snapped.z)))
@@ -336,77 +394,114 @@ static func _build_valley_camps_and_logs(holder: Node3D, spline: RefCounted,
 		body.free()
 
 
-static func _build_valley_bluffs(holder: Node3D, spline: RefCounted,
-		stats: Dictionary) -> void:
-	var body := _world_body(holder, "ValleyBluffs")
-	var batches: Dictionary = {}
-	var models: Array[String] = ["cliff_block_rock", "rock_largeA", "rock_tallA"]
-	var ring_centre := Vector3(144.0, 0.0, 120.0)
-	var count: int = 40
-	for i in count:
-		var ang: float = TAU * float(i) / float(count)
-		var rad_x: float = 156.0 + 14.0 * sin(float(i) * 1.9)
-		var rad_z: float = 132.0 + 12.0 * cos(float(i) * 2.3)
-		var pos := Vector3(ring_centre.x + cos(ang) * rad_x, 0.0,
-			ring_centre.z + sin(ang) * rad_z)
-		if pos.x > 85.0 and pos.x < 155.0 and pos.z > 210.0:
-			continue
-		if TileKit.spline_distance(spline, pos) < 24.0:
-			continue
-		var model: String = models[i % models.size()]
-		if not bool(TileCatalog.model_info(model, true).get("ok", false)):
-			continue
-		var sc: float = TileKit.NATURE_SCALE * (0.85 + 0.30 * float(i % 4))
-		var yaw: float = ang + PI * 0.5
-		var sz: Vector3 = TileKit._scaled_size(model, Vector3.ONE * sc, true)
-		if not _box_clears_spline(spline, pos + Vector3.UP * (sz.y * 0.5), yaw, sz * 0.85, SOLID_MIN_CLEARANCE):
-			continue
-		var xf: Transform3D = TileKit._fit_transform(model, pos, yaw,
-			Vector3.ONE * sc, true)
-		_push_batch(batches, model, xf)
-		_add_box_collider(body, Transform3D(Basis(Vector3.UP, yaw),
-			pos + Vector3.UP * (sz.y * 0.5)), sz * 0.85)
-		stats["cliffs"] = int(stats["cliffs"]) + 1
+## Sculpted 360-degree rolling mountain ridges + alpine peak horizon, cascading
+## meadow waterfall & turning waterwheel river mill (registered in AmbientWorld).
+static func _build_valley_hills_and_mill(holder: Node3D, spline: RefCounted,
+		anchors: Dictionary, stats: Dictionary) -> void:
+	var batch := PropBatch.new()
+	var rng := RandomNumberGenerator.new()
+	rng.seed = SEED + 404
+	var centre: Vector3 = anchors["centre"]
+	var bridge_pos: Vector3 = anchors["bridge"]
+	var lake_centre: Vector3 = anchors["lake"]
+	var hill_pal: Dictionary = {
+		"base": Color("478936"),
+		"mid": Color("5ea645"),
+		"top": Color("7cc458"),
+	}
+	var ridge_pal: Dictionary = {
+		"base": Color("3e7a35"),
+		"rock": Color("5a8f4c"),
+		"cliff": Color("7fae6a"),
+		"snow_lo": Color("a8d8a8"),
+		"snow_hi": Color("e4f4e4"),
+	}
 
-	for model: String in batches:
-		TileKit._batch_model(holder, model, batches[model] as Array,
-			"Bluff_" + model, false, true)
-	if body.get_child_count() == 0:
-		body.free()
+	# Layered ring of sculpted woodland hills & distant faceted alpine peaks
+	var max_span: float = maxf(
+		(anchors["bounds_max"] as Vector2).x - (anchors["bounds_min"] as Vector2).x,
+		(anchors["bounds_max"] as Vector2).y - (anchors["bounds_min"] as Vector2).y)
+	for i in 18:
+		var ang: float = TAU * float(i) / 18.0 + 0.1
+		var mrad: float = rng.randf_range(44.0, 68.0) if i % 3 == 0 \
+			else rng.randf_range(38.0, 62.0)
+		var rad: float = max_span * 0.58 + rng.randf_range(34.0, 96.0)
+		var pos := Vector3(centre.x + cos(ang) * rad, 0.0, centre.z + sin(ang) * rad)
+		if pos.distance_to(bridge_pos) < 88.0:
+			continue
+		# Sculpted feet spread wider than the base radius: keep the whole
+		# mass clear of the road or a hillside lands on the track.
+		if TileKit.spline_distance(spline, pos) < mrad * 1.4 + 22.0:
+			continue
+		if i % 3 == 0:
+			LandscapeSculptor.add_alpine_mountain(batch, pos,
+				mrad, rng.randf_range(48.0, 82.0), rng, ridge_pal)
+		else:
+			LandscapeSculptor.add_woodland_hill(batch, pos,
+				mrad, rng.randf_range(32.0, 54.0),
+				rng.randf_range(16.0, 32.0), rng, hill_pal)
+
+	# Scenic waterfall bluff pouring into the infield lake shoreline
+	var fall_base: Vector3 = lake_centre + Vector3(32.0, 0.0, -14.0)
+	if TileKit.spline_distance(spline, fall_base) >= 42.0:
+		LandscapeSculptor.add_alpine_mountain(batch, fall_base + Vector3(12.0, 0.0, 0.0),
+			24.0, 26.0, rng, {
+				"base": Color("4a7a52"),
+				"rock": Color("5f8f66"),
+				"cliff": Color("7fae86"),
+				"snow_lo": Color("bfe3c8"),
+				"snow_hi": Color("ecf8ef"),
+			})
+		# Cascading water chute & turquoise splash foam
+		for tier in 4:
+			var t_y: float = 2.0 + float(tier) * 4.2
+			var t_x: float = fall_base.x + float(tier) * 2.0 - 2.0
+			batch.add_box(Transform3D(Basis.IDENTITY, Vector3(t_x, t_y, fall_base.z)),
+				Vector3(4.2, 4.8, 5.4), Color("46d8eb") if tier % 2 == 0 else Color("daf9ff"))
+		stats["props"] = int(stats["props"]) + 1
+
+	batch.flush_to(holder, "ValleyMountainsAndHills", false)
+	stats["cliffs"] = int(stats["cliffs"]) + 19
+
+	# Riverside mill house + rotating waterwheel beside the southern river channel
+	var anim: Dictionary = AmbientWorld.anim_of(holder)
+	var mill_pos: Vector3 = bridge_pos + anchors["dir_out"] * 30.0 + Vector3(-16.0, 0.0, 0.0)
+	if TileKit.spline_distance(spline, mill_pos) >= 24.0:
+		LandscapeSculptor.build_waterwheel(holder, mill_pos, 0.25, 4.4, anim)
+		stats["props"] = int(stats["props"]) + 1
 
 
 static func _build_redwood_forest(holder: Node3D, spline: RefCounted,
-		lake_centre: Vector3, south_basin: Vector3, stats: Dictionary) -> void:
+		lake_centre: Vector3, south_basin: Vector3, bridge_pos: Vector3,
+		stats: Dictionary) -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = SEED
 	var tree_batches: Dictionary = {}
 	var flora_batches: Dictionary = {}
 	var total: float = maxf(float(spline.total_length), 1.0)
 
-	var laterals: Array[float] = [19.0, 25.0, 32.0, 40.0, 49.0, 60.0]
-	var steps: int = 92
+	var laterals: Array[float] = [20.5, 28.0, 36.5, 46.0, 58.0, 72.0]
+	var steps: int = 110
 	for lat: float in laterals:
 		for step in steps:
 			for side: float in [-1.0, 1.0]:
-				if rng.randf() > (0.58 if side < 0.0 else 0.34):
+				if rng.randf() > (0.56 if side < 0.0 else 0.36):
 					continue
 				var s: float = fposmod(float(step) / float(steps) * total
-					+ rng.randf_range(-2.5, 2.5), total)
+					+ rng.randf_range(-3.0, 3.0), total)
 				var f: Dictionary = spline.sample(s)
 				var pos: Vector3 = (f["position"] as Vector3) \
 					+ (f["right"] as Vector3) * (lat * side) \
-					+ Vector3(rng.randf_range(-2.4, 2.4), 0.0,
-						rng.randf_range(-2.4, 2.4))
+					+ Vector3(rng.randf_range(-2.6, 2.6), 0.0,
+						rng.randf_range(-2.6, 2.6))
 				pos.y = 0.0
 				if TileKit.spline_distance(spline, pos) < TREE_MIN_CLEARANCE:
 					continue
-				if Vector2(pos.x - lake_centre.x, pos.z - lake_centre.z).length() < 33.0:
+				if Vector2(pos.x - lake_centre.x, pos.z - lake_centre.z).length() < 38.0:
 					continue
-				if Vector2(pos.x - south_basin.x, pos.z - south_basin.z).length() < 42.0:
+				if Vector2(pos.x - south_basin.x, pos.z - south_basin.z).length() < 46.0:
 					continue
-				if pos.x > 98.0 and pos.x < 156.0 and pos.z > 130.0 and pos.z < 268.0:
-					continue
-				if pos.x > 36.0 and pos.x < 120.0 and pos.z > -8.0 and pos.z < 14.0:
+				if Vector2(pos.x - bridge_pos.x, pos.z - bridge_pos.z).length() < 24.0:
 					continue
 				var spec: Dictionary = _pick_weighted(rng, REDWOOD_SPECIES)
 				var model: String = str(spec["model"])
@@ -421,26 +516,27 @@ static func _build_redwood_forest(holder: Node3D, spline: RefCounted,
 					float(spec["h_max"]))
 				var sc: float = target_h / h_base
 				var xf: Transform3D = TileKit._fit_transform(model, pos,
-					rng.randf() * TAU, Vector3(sc * 0.95, sc, sc * 0.95), true)
+					rng.randf() * TAU, Vector3(sc * 0.96, sc, sc * 0.96), true)
 				_push_batch(tree_batches, model, xf)
 				stats["trees"] = int(stats["trees"]) + 1
 
-	var flora_steps: int = 120
+	# Rich roadside wildflowers & meadow shrubs outside the drivable curb
+	var flora_steps: int = 160
 	for step in flora_steps:
 		for side: float in [-1.0, 1.0]:
-			if rng.randf() > 0.65:
+			if rng.randf() > 0.72:
 				continue
 			var s: float = total * float(step) / float(flora_steps)
 			var f: Dictionary = spline.sample(s)
 			var road_p: Vector3 = f["position"]
 			if road_p.y > 0.25:
 				continue
-			var lat: float = rng.randf_range(12.6, 17.5)
+			var lat: float = rng.randf_range(TileKit.ROAD_HALF + 3.4, TileKit.ROAD_HALF + 10.2)
 			var pos: Vector3 = road_p + (f["right"] as Vector3) * (lat * side)
 			pos.y = 0.0
 			if TileKit.spline_distance(spline, pos) < FLOWER_MIN_CLEARANCE:
 				continue
-			if Vector2(pos.x - lake_centre.x, pos.z - lake_centre.z).length() < 28.0:
+			if Vector2(pos.x - lake_centre.x, pos.z - lake_centre.z).length() < 33.0:
 				continue
 			var spec: Dictionary = _pick_weighted(rng, FLORA_SPECIES)
 			var model: String = str(spec["model"])

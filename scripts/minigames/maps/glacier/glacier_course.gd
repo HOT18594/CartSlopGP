@@ -1,48 +1,51 @@
 extends RefCounted
 ## Authoritative route data for the Glacier Pass alpine circuit.
 ##
-## Route (68 drivable cells, 1,049 m lap, difficulty EXPERT):
-##   * 13.5 m high-alpine summit ridge on the 15-cell north straight with bump B
-##     and flat crest jump J launching into the sweeping summit bend
+## Route (84 drivable cells, 1794 m lap, difficulty EXPERT):
+##   * 13.5 m open high-alpine summit ridge on the north straight with bump B
+##     and flat crest jump J launching toward the summit overlook
 ##   * upper ice sector #1 (0.21..0.38, grip = 0.45) descending 13.5 m -> 3.0 m
-##     down the terraced east mountain switchbacks
-##   * lower ice sector #2 (0.46..0.70, grip = 0.45) plunging onto the 1.5 m
-##     glacier valley floor past the frozen turquoise alpine lake
-##   * base switchback & epic 12.0 m west mountainside climb (1.5 m -> 13.5 m,
-##     with 'C' waist knot) back up to the 13.5 m summit plateau
+##     down terraced mountain switchbacks framed by jagged alpine peaks
+##   * lower ice sector #2 (0.46..0.70, grip = 0.45) sweeping along the snow
+##     valley past crystalline ice arches, ski chalets & frozen alpine tarn
+##   * base switchback & alpine climb back through waist bridge 'C' to summit
 
 const GRID: PackedStringArray = [
-	"XXXXXXXXXXXXXXXXXXX",
-	"XXWSSBSSSSSSSSSJWXX",
-	"XXSXXXXXXXXXXXXXSXX",
-	"XXSXXXXXXXXXXXXXSXX",
-	"XXSXXXXXXXXXXXXXSXX",
-	"XXRSSSSLXXXLSSSSRXX",
-	"XXXXXXXSXXXSXXXXXXX",
-	"XXXXXXXCXXXSXXXXXXX",
-	"XXXXXXXSXXXLSSSSRXX",
-	"XXXRSSSLXXXXXXXXSXX",
-	"XXXSXXXXXXXXXXXXSXX",
-	"XXXSXXXXXXXXXXXXSXX",
-	"XXXWSSSSSBSSSSSSWXX",
-	"XXXXXXXXXXXXXXXXXXX",
+	"XXXXXXXXXXXXXXXXXXXXXXX",
+	"XXWSSBSSSSSSSSSSSSSJWXX",
+	"XXSXXXXXXXXXXXXXXXXXSXX",
+	"XXSXXXXXXXXXXXXXXXXXSXX",
+	"XXSXXXXXXXXXXXXXXXXXSXX",
+	"XXRSSSSSLXXXXXLSSSSSRXX",
+	"XXXXXXXXSXXXXXSXXXXXXXX",
+	"XXXXXXXXCXXXXXSXXXXXXXX",
+	"XXXXXXXXSXXXXXLSSSSSRXX",
+	"XXXRSSSSLXXXXXXXXXXXSXX",
+	"XXXSXXXXXXXXXXXXXXXXSXX",
+	"XXXSXXXXXXXXXXXXXXXXSXX",
+	"XXXSXXXXXXXXXXXXXXXXSXX",
+	"XXXSXXXXXXXXXXXXXXXXSXX",
+	"XXXWSSSSSSBSSSSSSSSSWXX",
+	"XXXXXXXXXXXXXXXXXXXXXXX",
 ]
 
 const HEIGHTS: PackedStringArray = [
-	"...................",
-	"..999999999999999..",
-	"..9.............9..",
-	"..8.............7..",
-	"..6.............6..",
-	"..666544...444566..",
-	".......4...4.......",
-	".......3...2.......",
-	".......2...222222..",
-	"...11222........2..",
-	"...1............1..",
-	"...1............1..",
-	"...11111111111111..",
-	"...................",
+	".......................",
+	"..9999999999999999999..",
+	"..9.................9..",
+	"..8.................8..",
+	"..7.................7..",
+	"..7766655.....4445566..",
+	"........5.....4........",
+	"........4.....3........",
+	"........3.....2222222..",
+	"...222333...........2..",
+	"...2................2..",
+	"...1................1..",
+	"...1................1..",
+	"...1................1..",
+	"...111111111111111111..",
+	".......................",
 ]
 
 const ELEVATION: Array[Dictionary] = [
@@ -64,7 +67,7 @@ const SURFACES: Array[Dictionary] = [
 
 const START_CELL: Vector2i = Vector2i(3, 1)
 const HEIGHT_STEP: float = 1.5
-const LAP_LENGTH: int = 1049
+const LAP_LENGTH: int = 1794
 
 
 static func grid() -> PackedStringArray:
@@ -105,7 +108,7 @@ static func theme_dict() -> Dictionary:
 		"id": "glacier",
 		"heights": heights(),
 		"elevation": elevation(),
-		"hoarding_density": 0.28,
+		"hoarding_density": 0.0,
 	}
 
 

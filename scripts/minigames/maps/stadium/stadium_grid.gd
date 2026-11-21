@@ -1,51 +1,54 @@
 extends RefCounted
 ## Canonical layout of the STADIUM CIRCUIT, as the authoring source of truth.
 ##
-## Route (56 drivable cells, 857 m lap, difficulty EASY):
+## Route (70 drivable cells, 1486 m lap, difficulty EASY):
 ##   * grand start/finish & pit straight (P-P-E-G-P) at 0.0 m heading east
-##   * multi-tier east climb (0.0 m -> 4.5 m -> 7.5 m -> 9.0 m) through sweeping
-##     east S-bends (W) up onto a towering 9.0 m stadium sky-bridge
-##   * 9.0 m south sky-bridge straight with a flat kicker jump J, plunging down
-##     into the 0.0 m valley roller B
-##   * flowing west infield hairpin valley (0.0 m) back onto the pit straight
+##   * sweeping east technical S-bend climbing up onto a 9.0 m open sky-bridge
+##   * 9.0 m south sky-bridge straight with flat kicker jump J plunging down
+##     into the 0.0 m open stadium valley roller B
+##   * wide west infield S-chicane back onto the pit straight
 
 const HEIGHT_STEP: float = 1.5
 
 const GRID_ROWS: Array[String] = [
-	"...................",
-	"..RSPPEGPSSSSSSSW..",
-	"..S.............S..",
-	"..S.............S..",
-	"..S.............S..",
-	"..RSL.........WSR..",
-	"....S.........S....",
-	"....S.........S....",
-	"..RSL.........LSR..",
-	"..S.............S..",
-	"..S.............S..",
-	"..WSSBSSSSSSSJSSW..",
-	"...................",
+	".......................",
+	"..RSPEGPSSSSSSSSSSSSW..",
+	"..S.................S..",
+	"..S.................S..",
+	"..S.................S..",
+	"..RSL............WSSR..",
+	"....S............S.....",
+	"....S............LSSW..",
+	"....S...............S..",
+	"..RSL...............S..",
+	"..S.................S..",
+	"..S.................S..",
+	"..S.................S..",
+	"..WSSSSBSSSSSSSJSSSSW..",
+	".......................",
 ]
 
 const HEIGHT_ROWS: Array[String] = [
-	"...................",
-	"..000000000000000..",
-	"..0.............0..",
-	"..0.............2..",
-	"..0.............3..",
-	"..000.........333..",
-	"....0.........3....",
-	"....0.........5....",
-	"..000.........555..",
-	"..0.............5..",
-	"..0.............6..",
-	"..000000124566666..",
-	"...................",
+	".......................",
+	"..0000000000000000000..",
+	"..0.................0..",
+	"..0.................1..",
+	"..0.................2..",
+	"..000............3222..",
+	"....0............4.....",
+	"....0............4455..",
+	"....0...............5..",
+	"..000...............6..",
+	"..0.................6..",
+	"..0.................6..",
+	"..0.................6..",
+	"..0000000123456666666..",
+	".......................",
 ]
 
 const HIGHEST: float = 9.0
 const LOWEST: float = 0.0
-const LAP_LENGTH: int = 857
+const LAP_LENGTH: int = 1486
 
 
 static func grid_rows() -> PackedStringArray:
@@ -63,7 +66,7 @@ static func height_rows() -> PackedStringArray:
 
 
 static func theme_dict() -> Dictionary:
-	return {"id": "stadium", "heights": height_rows(), "hoarding_density": 0.42}
+	return {"id": "stadium", "heights": height_rows(), "hoarding_density": 0.0}
 
 
 static func registry_preset_patch() -> Dictionary:

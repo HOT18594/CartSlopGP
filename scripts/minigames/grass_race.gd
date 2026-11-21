@@ -50,6 +50,8 @@ const LAP_CHIME: AudioStream = preload("res://assets/audio/sfx/race/lap_chime.wa
 const FINISH_FANFARE: AudioStream = preload("res://assets/audio/sfx/race/finish_fanfare.wav")
 const FOREST_AMBIENCE: AudioStream = preload("res://assets/audio/ambience/forest_ambience.mp3")
 const NET_SYNC_INTERVAL: float = 0.05
+const CART_IDLE_SPEED: float = 1.0
+const CART_IDLE_INTERVAL: float = 0.20
 ## Host -> Pi live position batch cadence (server race only).
 const STATE_STREAM_INTERVAL: float = 0.10
 ## A spoofed far-future sender stamp must not permanently freeze a peer's
@@ -92,8 +94,8 @@ const BARRIER_HEIGHT: float = 2.4
 const START_DISTANCE: float = 8.0
 const FIELD_X: float = 200.0
 const FIELD_Z: float = 170.0
-const GROUND_X: float = 1400.0
-const GROUND_Z: float = 1400.0
+const GROUND_X: float = 2400.0
+const GROUND_Z: float = 2400.0
 const GRID_CELL: float = 16.0
 const ROAD_STEP: float = 1.5
 
@@ -237,6 +239,10 @@ var _name_labels: Dictionary = {}
 var _remote_progress: Dictionary = {}
 var _remote_progress_ms: Dictionary = {} ## peer id -> newest accepted stamp
 var _net_sync_timer: float = 0.0
+var _cart_idle_ms: Dictionary = {}
+var _cart_idle_pos: Dictionary = {}
+var _cart_idle_yaw: Dictionary = {}
+var _bot_idle_ms: int = -100000
 var _state_stream_timer: float = 0.0
 ## Server-authoritative race (Pi 1.6.0+): clock, official times, bot field.
 var _server_race_active: bool = false
@@ -1163,6 +1169,23 @@ func _bunting_mesh(width: float, count: int) -> ArrayMesh:
 	return mesh
 
 
+func _track_surface_transform(distance: float, lateral: float = 0.0,
+		height: float = 0.02) -> Transform3D:
+	var frame: Dictionary = _spline.sample(distance)
+	var base_y: float = KenneyTiles.ROAD_SURFACE if _use_grid else 0.0
+	var forward: Vector3 = (frame["forward"] as Vector3).normalized()
+	var right: Vector3 = (frame["right"] as Vector3)
+	right.y = 0.0
+	right = right.normalized()
+	var up: Vector3 = right.cross(forward).normalized()
+	if up.y < 0.0:
+		up = -up
+	right = forward.cross(up).normalized()
+	var basis := Basis(right, up, -forward)
+	var pos: Vector3 = (frame["position"] as Vector3) + right * lateral + up * (base_y + height)
+	return Transform3D(basis, pos)
+
+
 func _build_boost_pads() -> void:
 	var packed: PackedScene = load(BOOST_PAD_SCENE) as PackedScene
 	if packed == null:
@@ -1170,29 +1193,32 @@ func _build_boost_pads() -> void:
 	var holder := Node3D.new()
 	holder.name = "BoostPads"
 	add_child(holder)
-	var laterals: Array[float] = [-2.2, 2.2, 0.0, -1.6]
+	var laterals: Array[float] = [-2.0, 2.0, 0.0, -1.8, 1.8, 0.0]
 	if _use_grid:
-		var distances: PackedFloat32Array = _grid_boost_distances(4)
+		var distances: PackedFloat32Array = _grid_boost_distances(6)
 		for i in distances.size():
 			var pad: Node3D = packed.instantiate() as Node3D
-			pad.transform = _track_transform(distances[i],
-				laterals[i % laterals.size()], 0.02)
+			pad.transform = _track_surface_transform(distances[i],
+				laterals[i % laterals.size()], 0.025)
+			if pad.has_method("set_pad_dimensions"):
+				pad.call("set_pad_dimensions", 8.8, 5.8)
 			holder.add_child(pad)
 		return
-	for i in 4:
-		var distance: float = _spline.total_length * (0.13 + float(i) * 0.245)
-		var lateral: float = [-2.4, 2.4, 0.0, -1.6][i]
+	for i in 6:
+		var distance: float = _spline.total_length * (0.12 + float(i) * 0.16)
+		var lateral: float = laterals[i % laterals.size()]
 		var pad: Node3D = packed.instantiate() as Node3D
-		# The road surface is at y = 0.04; a pad at 0.03 was completely hidden
-		# under the dirt. Sit it just above the surface so the glow reads.
-		pad.transform = _track_transform(distance, lateral, 0.075)
+		# The road surface is at y = 0.04; sit just above the surface.
+		pad.transform = _track_surface_transform(distance, lateral, 0.075)
+		if pad.has_method("set_pad_dimensions"):
+			pad.call("set_pad_dimensions", 7.8, 5.2)
 		holder.add_child(pad)
 
 
 func _grid_boost_distances(target_count: int) -> PackedFloat32Array:
-	## Pick evenly spaced flat straight cells on a Kenney grid so boost pads
-	## always sit flush at spline_pt.y + KenneyTiles.ROAD_SURFACE + 0.02 and
-	## never hover over a jump ramp, bump or sloped segment.
+	## Pick evenly spaced straight cells (flat or smooth grade) on a Kenney
+	## grid so boost pads align flush with the road deck and never land on a
+	## jump ramp or bump.
 	var picked := PackedFloat32Array()
 	var candidates: PackedFloat32Array = PackedFloat32Array()
 	var total: float = maxf(_spline.total_length, 1.0)
@@ -1209,11 +1235,13 @@ func _grid_boost_distances(target_count: int) -> PackedFloat32Array:
 				continue
 			var h_in: float = float(tile.get("height_in", 0.0))
 			var h_out: float = float(tile.get("height_out", 0.0))
-			if absf(h_out - h_in) > 0.01:
+			# Allow flat straights and gentle constant-grade ramps (<= 1.6 m / tile),
+			# avoiding sharp crests or jump edges.
+			if absf(h_out - h_in) > 1.65:
 				continue
 			var mid: float = (float(tile.get("from", 0.0)) + float(tile.get("to", 0.0))) * 0.5
 			var rel: float = fposmod(mid - START_DISTANCE, total)
-			if rel < 26.0 or rel > total - 20.0:
+			if rel < 28.0 or rel > total - 24.0:
 				continue
 			candidates.append(mid)
 	if candidates.is_empty():
@@ -1994,7 +2022,7 @@ func _build_rivals() -> void:
 	# first five rivals never share a single centreline.
 	var line_offset: int = rng.randi_range(0, RaceAI.LINE_COUNT - 1)
 	for i in count:
-		var lane: float = [-2.5, 2.5, 0.0, -1.2, 1.2][i % 5]
+		var lane: float = [-0.36, 0.36, 0.0, -0.18, 0.18][i % 5] * _road_half
 		var progress: float = START_DISTANCE + 5.0 + float(i) * 4.5
 		var spawn: Transform3D = _track_transform(progress, lane, 0.12)
 		var rival: CartPlayer = CART_SCENE.instantiate() as CartPlayer
@@ -2224,7 +2252,7 @@ func _tick_rivals(delta: float) -> void:
 			rival["stuck"] = float(rival["stuck"]) + delta
 		else:
 			rival["stuck"] = maxf(float(rival["stuck"]) - delta * 2.0, 0.0)
-		if float(track_distance) > _road_half + 5.0 or node.global_position.y < -3.0:
+		if float(track_distance) > _road_half + 7.5 or node.global_position.y < -8.0:
 			rival["off_time"] = float(rival["off_time"]) + delta
 		else:
 			rival["off_time"] = 0.0
@@ -2550,18 +2578,18 @@ func _build_result_standings(parent: VBoxContainer) -> void:
 	_result_row_style = StyleBoxFlat.new()
 	_result_row_style.bg_color = Color(0, 0, 0, 0)
 	_result_row_style.set_corner_radius_all(UI_RADIUS)
-	_result_row_style.content_margin_left = UI_GAP_SMALL
-	_result_row_style.content_margin_right = UI_GAP_SMALL
-	_result_row_style.content_margin_top = UI_GAP_SMALL
-	_result_row_style.content_margin_bottom = UI_GAP_SMALL
+	_result_row_style.content_margin_left = 16.0
+	_result_row_style.content_margin_right = 16.0
+	_result_row_style.content_margin_top = 8.0
+	_result_row_style.content_margin_bottom = 8.0
 	_result_local_row_style = StyleBoxFlat.new()
 	# "(YOU)" marks the local row; keep it neutral instead of a yellow bar.
 	_result_local_row_style.bg_color = Color(1.0, 1.0, 1.0, 0.10)
 	_result_local_row_style.set_corner_radius_all(UI_RADIUS)
-	_result_local_row_style.content_margin_left = UI_GAP_SMALL
-	_result_local_row_style.content_margin_right = UI_GAP_SMALL
-	_result_local_row_style.content_margin_top = UI_GAP_SMALL
-	_result_local_row_style.content_margin_bottom = UI_GAP_SMALL
+	_result_local_row_style.content_margin_left = 16.0
+	_result_local_row_style.content_margin_right = 16.0
+	_result_local_row_style.content_margin_top = 8.0
+	_result_local_row_style.content_margin_bottom = 8.0
 
 
 func _result_summary_text() -> String:
@@ -3068,11 +3096,13 @@ func _setup_multiplayer() -> void:
 	if Network.server_race_supported() and Network.relay_base != "":
 		Network.sync_server_clock()
 	if _is_host:
-		# Push the forced car to every peer. Peers that have not loaded the
-		# scene yet receive it again in _net_race_ready.
-		rpc("_net_force_race_vehicle", _race_vehicle)
+		# Push the forced car to peers already in the scene. Peers that have
+		# not loaded the scene yet receive it in _net_race_ready.
+		for target: int in multiplayer.get_peers():
+			if Network.is_scene_ready(target):
+				rpc_id(target, "_net_force_race_vehicle", _race_vehicle)
 		_broadcast_race_vehicle(multiplayer.get_unique_id(), _race_vehicle)
-	else:
+	elif Network.is_scene_ready(1):
 		rpc_id(1, "_net_race_ready", GameSettings.minigame_vehicle)
 
 
@@ -3086,7 +3116,8 @@ func _place_local_on_grid() -> void:
 	var row: int = index / 2
 	var column: int = index % 2
 	var start_s: float = START_DISTANCE - float(row) * 4.5
-	var spawn: Transform3D = _track_transform(start_s, -2.6 + float(column) * 5.2)
+	var col_lat: float = (-0.36 + float(column) * 0.72) * _road_half
+	var spawn: Transform3D = _track_transform(start_s, col_lat)
 	_cart.set_spawn_transform(spawn)
 	_cart.global_transform = spawn
 	_cart.velocity = Vector3.ZERO
@@ -3170,9 +3201,34 @@ func _refresh_net_names() -> void:
 			label.modulate = Network.color_of(peer_id)
 
 
+func _cart_idle_skip(peer_id: int, position: Vector3, yaw: float, velocity: Vector3) -> bool:
+	if Vector2(velocity.x, velocity.z).length() >= CART_IDLE_SPEED:
+		_cart_idle_ms[peer_id] = Time.get_ticks_msec()
+		_cart_idle_pos[peer_id] = position
+		_cart_idle_yaw[peer_id] = yaw
+		return false
+	var now: int = Time.get_ticks_msec()
+	var last_ms: int = int(_cart_idle_ms.get(peer_id, -100000))
+	var last_pos: Vector3 = _cart_idle_pos.get(peer_id, position)
+	var last_yaw: float = float(_cart_idle_yaw.get(peer_id, yaw))
+	if position.distance_squared_to(last_pos) > 0.0004 or absf(angle_difference(last_yaw, yaw)) > 0.01:
+		_cart_idle_ms[peer_id] = now
+		_cart_idle_pos[peer_id] = position
+		_cart_idle_yaw[peer_id] = yaw
+		return false
+	if now - last_ms < int(CART_IDLE_INTERVAL * 1000.0):
+		return true
+	_cart_idle_ms[peer_id] = now
+	_cart_idle_pos[peer_id] = position
+	_cart_idle_yaw[peer_id] = yaw
+	return false
+
+
 func _broadcast_race_state(peer_id: int, position: Vector3, yaw: float,
 		progress: float, sent_ms: int = 0,
 		velocity: Vector3 = Vector3.ZERO) -> void:
+	if _cart_idle_skip(peer_id, position, yaw, velocity):
+		return
 	if sent_ms <= 0:
 		sent_ms = Time.get_ticks_msec()
 	for target: int in multiplayer.get_peers():
@@ -3406,7 +3462,8 @@ func _on_local_push_requested(prop: Node, direction: Vector3, kick: float) -> vo
 	# Predict locally so the cone flies on this screen too; the host stays
 	# authoritative and the next snapshot corrects the pose.
 	_kick_prop(prop as RigidBody3D, direction, kick)
-	rpc_id(1, "_net_request_push", index, direction, kick)
+	if Network.is_scene_ready(1):
+		rpc_id(1, "_net_request_push", index, direction, kick)
 
 
 func _kick_prop(prop: RigidBody3D, direction: Vector3, kick: float) -> void:
@@ -3514,6 +3571,17 @@ func _net_request_push(index: int, direction: Vector3, kick: float) -> void:
 func _broadcast_bot_states() -> void:
 	if _rivals.is_empty():
 		return
+	var now: int = Time.get_ticks_msec()
+	var all_idle: bool = true
+	for rival: Dictionary in _rivals:
+		var node: CartPlayer = rival["node"]
+		var vel: Vector3 = node.velocity if is_instance_valid(node) else Vector3.ZERO
+		if Vector2(vel.x, vel.z).length() >= CART_IDLE_SPEED:
+			all_idle = false
+			break
+	if all_idle and now - _bot_idle_ms < int(CART_IDLE_INTERVAL * 1000.0):
+		return
+	_bot_idle_ms = now
 	var positions := PackedVector3Array()
 	var yaws := PackedFloat32Array()
 	var velocities := PackedVector3Array()
@@ -3744,7 +3812,9 @@ func _start_local_countdown(seconds: float) -> void:
 	_countdown_label.text = str(int(ceil(_countdown)))
 	if OS.get_environment("CART_DEBUG_NET") == "1":
 		print("RACE_COUNTDOWN_START host peers=", multiplayer.get_peers())
-	rpc("_net_race_countdown", _countdown)
+	for target: int in multiplayer.get_peers():
+		if Network.is_scene_ready(target):
+			rpc_id(target, "_net_race_countdown", _countdown)
 
 
 func _begin_server_race() -> void:
@@ -3768,7 +3838,9 @@ func _begin_server_race() -> void:
 		_start_local_countdown(3.0)
 		return
 	_apply_server_race(race_id, secret, start_ms, bots)
-	rpc("_net_server_race_start", race_id, secret, start_ms, bots)
+	for target: int in multiplayer.get_peers():
+		if Network.is_scene_ready(target):
+			rpc_id(target, "_net_server_race_start", race_id, secret, start_ms, bots)
 
 
 @rpc("authority", "reliable")
@@ -4069,7 +4141,7 @@ func _tick_race(delta: float) -> void:
 		# Only pull a kart back once it is really out (past the barrier or the
 		# grass) or has been stuck out there for a while. The respawn point is
 		# forward of the current arc length, never behind it.
-		if _off_timer > 4.5 or lateral > 13.0 or _cart.global_position.y < -3.0:
+		if _off_timer > 4.5 or lateral > _road_half + 12.5 or _cart.global_position.y < -8.0:
 			_respawn(s)
 	else:
 		_off_timer = 0.0
@@ -4304,6 +4376,8 @@ func _safe_respawn_transform(s: float) -> Transform3D:
 
 
 func _respawn(s: float) -> void:
+	if _cart == null or not is_instance_valid(_cart):
+		return
 	_cart.global_transform = _safe_respawn_transform(s)
 	_cart.call("reset_for_respawn")
 	_cart.velocity = Vector3.ZERO
@@ -4323,7 +4397,17 @@ func _respawn(s: float) -> void:
 
 
 func _complete_lap() -> void:
+	var min_speed: float = maxf(_base_max_speed, 1.0)
+	var total_len: float = maxf(_spline.total_length, 1.0)
+	var min_lap: float = maxf(5.0, total_len / min_speed)
 	var lap_time: float = _race_time - _lap_start
+	if lap_time < min_lap:
+		# Implausibly quick crossing (reset/teleport/physics glitch): ignore it
+		# without banking the time or advancing the lap, and require full
+		# sectors again before the next crossing can count.
+		_lap_start = _race_time
+		_sector_flags = 0
+		return
 	var completed_lap: int = _lap
 	var previous_lap: float = _lap_times[_lap_times.size() - 1] \
 		if not _lap_times.is_empty() else -1.0
@@ -4394,7 +4478,7 @@ func _finish() -> void:
 			_broadcast_race_state(multiplayer.get_unique_id(),
 				_cart.global_position, _cart.rotation.y, _unwrapped,
 				Time.get_ticks_msec(), _cart.velocity)
-		else:
+		elif Network.is_scene_ready(1):
 			rpc_id(1, "_net_race_cart_state", multiplayer.get_unique_id(),
 				_cart.global_position, _cart.rotation.y, _unwrapped,
 				Time.get_ticks_msec(), _cart.velocity)

@@ -44,13 +44,15 @@ const RACING_ROOT: String = "res://assets/models/kenney_racing_kit/Models/GLTF f
 const NATURE_ROOT: String = "res://assets/models/kenney_nature_kit/Models/GLTF format/"
 
 ## Metres per model unit. Measured module is 1.0 unit, lane 0.69027 units.
-const TILE_SIZE: float = 16.0
+## At 22 m the drivable lane is ~15.19 m wide (ROAD_HALF = 7.59 m), giving
+## generous overtaking room while keeping racing kit props at PROP_SCALE (16 m).
+const TILE_SIZE: float = 22.0
 ## Measured drivable lane width of every racing road piece, in model units.
 const ROAD_LANE_UNITS: float = 0.69027
 ## Half width of the drivable lane in metres.
 const ROAD_HALF: float = TILE_SIZE * ROAD_LANE_UNITS * 0.5
 ## Model-space Y of the asphalt plane inside every road GLB. The kerbs sit
-## +0.01 units (16 cm) above it; the slab underside is -0.01 units below.
+## +0.01 units above it; the slab underside is -0.01 units below.
 const LANE_PLANE_Y: float = 0.0
 ## Half a tile: the radius the 1-cell corner pieces are authored with.
 const HALF_TILE: float = TILE_SIZE * 0.5
@@ -60,10 +62,11 @@ const HALF_TILE: float = TILE_SIZE * 0.5
 ## tile collider owns the physics, while the old ribbon stays buried.
 const ROAD_SURFACE: float = 0.045
 
-## Prop scale for the racing kit: same unit-to-metre ratio as the road.
-const PROP_SCALE: float = TILE_SIZE
-## Nature pieces are trees and bushes; 0.45 keeps them ~12 m next to the road.
-const NATURE_SCALE: float = TILE_SIZE * 0.45
+## Prop scale for the racing kit (kept at 16 m so stands, lights & towers
+## stay crisply proportioned against karts even on 22 m wide lanes).
+const PROP_SCALE: float = 16.0
+## Nature pieces are trees and bushes; 8.4 m scale frames the 22 m road nicely.
+const NATURE_SCALE: float = 8.4
 ## Trackside distances snap to a quarter tile, lateral offsets to half a metre.
 const SNAP_STEP: float = TILE_SIZE * 0.25
 const LATERAL_STEP: float = 0.5
@@ -79,7 +82,7 @@ const ROAD_MODELS: Dictionary = {
 	"B": {"model": "roadBump", "scale": Vector3(1.0, 0.35, 0.5)},
 	# J uses the walled kicker so the launch ramp reads as a built structure.
 	# The side walls are part of the GLB; KenneyTiles adds a base and lip decal.
-	"J": {"model": "roadRampWall", "scale": Vector3(1.0, 0.6, 1.0)},
+	"J": {"model": "roadRampWall", "scale": Vector3(1.0, 0.52, 1.0)},
 	"P": {"model": "roadPitStraight", "scale": Vector3.ONE},
 	"E": {"model": "roadPitStraight", "scale": Vector3.ONE},
 	"G": {"model": "roadPitGarage", "scale": Vector3.ONE},

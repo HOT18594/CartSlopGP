@@ -1,55 +1,57 @@
 extends RefCounted
 ## Authoritative route and terrain data for the Dockyard Quay circuit.
 ##
-## Route (58 drivable cells, 888 m lap, difficulty HARD):
+## Route (72 drivable cells, ~1510 m lap, difficulty HARD):
 ##   * elevated 7.5 m north crane-deck overpass start/pit straight (P-E)
 ##   * multi-tier container port descent through the east port cross-road ('C')
-##     at (12, 6) onto the 0.0 m harbour seawall
-##   * wet quayside straight (0.80 grip) beside the ocean basin & moored cargo
-##     ship, with flat 'J' dock jump at (8, 11)
-##   * technical west harbourside chicane with flat 'B' bump at (4, 8) climbing
+##     onto the open harbour seawall
+##   * wet quayside straight (0.80 grip) beside the ocean basin & bobbing cargo
+##     ships, with flat 'J' dock jump
+##   * technical west harbourside chicane with flat 'B' bump climbing
 ##     back onto the 7.5 m crane-deck overpass
 
 const GRID_ROWS: Array[String] = [
-	"XXXXXXXXXXXXXXXXXX",
-	"XXRSPESSSSSSSSSWXX",
-	"XXSXXXXXXXXXXXXSXX",
-	"XXSXXXXXXXXXXXXSXX",
-	"XXSXXXXXXXXXXXXSXX",
-	"XXRSSLXXXXXXLSSRXX",
-	"XXXXXSXXXXXXCXXXXX",
-	"XXXXXSXXXXXXSXXXXX",
-	"XXRSBLXXXXXXLSSRXX",
-	"XXSXXXXXXXXXXXXSXX",
-	"XXSXXXXXXXXXXXXSXX",
-	"XXWSSSSSJSSSSSSWXX",
-	"XXXXXXXXXXXXXXXXXX",
+	"XXXXXXXXXXXXXXXXXXXXXX",
+	"XXRSPESSSSSSSSSSSSSWXX",
+	"XXSXXXXXXXXXXXXXXXXSXX",
+	"XXSXXXXXXXXXXXXXXXXSXX",
+	"XXSXXXXXXXXXXXXXXXXSXX",
+	"XXRSSSLXXXXXXXXLSSSRXX",
+	"XXXXXXSXXXXXXXXCXXXXXX",
+	"XXXXXXSXXXXXXXXSXXXXXX",
+	"XXRSBSLXXXXXXXXLSSSRXX",
+	"XXSXXXXXXXXXXXXXXXXSXX",
+	"XXSXXXXXXXXXXXXXXXXSXX",
+	"XXSXXXXXXXXXXXXXXXXSXX",
+	"XXWSSSSSSSJSSSSSSSSWXX",
+	"XXXXXXXXXXXXXXXXXXXXXX",
 ]
 
 const HEIGHT_ROWS: Array[String] = [
-	"..................",
-	"..55555555555555..",
-	"..5............5..",
-	"..5............4..",
-	"..3............3..",
-	"..3333......2233..",
-	".....3......2.....",
-	".....1......2.....",
-	"..1111......2222..",
-	"..1............2..",
-	"..0............0..",
-	"..00000000000000..",
-	"..................",
+	"......................",
+	"..555555555555555555..",
+	"..5................5..",
+	"..4................4..",
+	"..3................3..",
+	"..33333........22233..",
+	"......3........2......",
+	"......2........2......",
+	"..11111........22222..",
+	"..1................1..",
+	"..0................1..",
+	"..0................0..",
+	"..000000000000000000..",
+	"......................",
 ]
 
-const LAP_LENGTH: int = 888
+const LAP_LENGTH: int = 1529
 const HEIGHT_STEP: float = 1.5
 const START_CELL: Vector2i = Vector2i(3, 1)
 
 const SURFACES: Array[Dictionary] = [
-	{"kind": "normal", "from": 0.0, "to": 0.49},
-	{"kind": "wet", "from": 0.49, "to": 0.73},
-	{"kind": "normal", "from": 0.73, "to": 1.0},
+	{"kind": "normal", "from": 0.0, "to": 0.46},
+	{"kind": "wet", "from": 0.46, "to": 0.72},
+	{"kind": "normal", "from": 0.72, "to": 1.0},
 ]
 
 

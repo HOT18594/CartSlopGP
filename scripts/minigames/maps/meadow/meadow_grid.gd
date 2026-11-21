@@ -1,52 +1,53 @@
 extends RefCounted
 ## Authoritative course and elevation data for REDWOOD VALLEY (`meadow`).
 ##
-## Route (58 drivable cells, 889 m lap, difficulty MEDIUM):
-##   * start/finish straight at 0.0 m through a sunlit redwood clearing
-##   * mountain switchbacks climbing to a 9.0 m cliff-top redwood overlook
-##   * plunge down onto a 4.5 m bridge viaduct ('C') spanning the turquoise river
-##   * fast west forest S-curves along a "dirt" (0.86 grip) woodland trail with
-##     flat B rollers and flat J log-kicker jump
+## Route (68 drivable cells, 1443 m lap, difficulty MEDIUM):
+##   * sunlit open redwood meadow straight & sweeping north bends at 0.0 m
+##   * forested switchback climb up onto a 9.0 m alpine overlook terrace
+##   * sweeping descent onto the 4.5 m stone river viaduct ('C') over rapids
+##   * fast west dirt trail ('dirt', 0.86 grip) with B rollers & flat J log-jump
 
 const HEIGHT_STEP: float = 1.5
-const LAP_LENGTH: int = 889
+const LAP_LENGTH: int = 1443
 const HIGHEST: float = 9.0
-const START_CELL: Vector2i = Vector2i(3, 1)
+const START_CELL: Vector2i = Vector2i(6, 1)
 
 const GRID_ROWS: Array[String] = [
-	"..................",
-	"..WSSSSPSSSSSSSW..",
-	"..S............S..",
-	"..J............S..",
-	"..S............S..",
-	"..RSL..........S..",
-	"....S........WSR..",
-	"....S........S....",
-	"....S........S....",
-	"..RSL........LSR..",
-	"..S............S..",
-	"..B............S..",
-	"..S............S..",
-	"..WSSSSCSSSSSSSW..",
-	"..................",
+	"......................",
+	"..WSSSPSSSSSSSSSSSSW..",
+	"..S................S..",
+	"..J................S..",
+	"..S................S..",
+	"..RSL............WSR..",
+	"....S............S....",
+	"....S............S....",
+	"....S............LSW..",
+	"....S..............S..",
+	"..RSL..............S..",
+	"..S................S..",
+	"..B................S..",
+	"..S................S..",
+	"..WSSSSSSCSSSSSSSSSW..",
+	"......................",
 ]
 
 const HEIGHT_ROWS: Array[String] = [
-	"..................",
-	"..00000000000000..",
-	"..0............0..",
-	"..0............2..",
-	"..0............4..",
-	"..000..........6..",
-	"....0........666..",
-	"....0........6....",
-	"....0........6....",
-	"..000........666..",
-	"..0............6..",
-	"..0............4..",
-	"..0............3..",
-	"..00123333333333..",
-	"..................",
+	"......................",
+	"..000000000000000000..",
+	"..0................1..",
+	"..0................2..",
+	"..0................3..",
+	"..000............554..",
+	"....0............6....",
+	"....0............6....",
+	"....0............666..",
+	"....0..............5..",
+	"..000..............4..",
+	"..0................4..",
+	"..0................3..",
+	"..0................3..",
+	"..001122333333333333..",
+	"......................",
 ]
 
 const SURFACES: Array[Dictionary] = [

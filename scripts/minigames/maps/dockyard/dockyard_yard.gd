@@ -25,6 +25,7 @@ extends RefCounted
 
 const TileKit := preload("res://scripts/minigames/tile_kit.gd")
 const Parts := preload("res://scripts/minigames/maps/dockyard/dockyard_parts.gd")
+const PropBatch := preload("res://scripts/minigames/scenery/prop_batch.gd")
 
 const PAD_MODEL: String = "roadPitGarage"
 const GARAGE_MODEL: String = "pitsGarage"
@@ -49,7 +50,7 @@ const CONTAINER_COLLIDER_DEPTH: float = 1.97
 ## Minimum centre distance before the real box footprint is measured. A row of
 ## containers parallel to the road is only one metre deep towards it, so the
 ## exact box test below is the authority; this only skips the obvious cases.
-const LATTICE_CLEARANCE: float = 13.0
+const LATTICE_CLEARANCE: float = TileKit.ROAD_HALF + 8.5
 ## Off-lattice canyon walls: 11.5 m lateral puts the inner face at 10.5 m,
 ## outside the 9.0 m barrier face but close enough to read as a container lane.
 const CANYON_LATERAL: float = 11.5
@@ -110,7 +111,7 @@ static func _grid_yard(parent: Node3D, spline: RefCounted, plan: RefCounted,
 	# is skipped by every later pass, so these stay empty concrete for the trees.
 	_tree_islands(plan, spline, stats)
 	_grid_containers(parent, spline, plan, containers, container_boxes, stats)
-	_canyon_containers(spline, plan, containers, container_boxes, stats)
+	# Skip claustrophobic canyon barrier walls so the working container depot feels open.
 	_emit_containers(parent, containers, container_boxes, stats)
 	_cranes(parent, spline, plan, stats)
 	_bollards(parent, spline, plan, stats)
@@ -387,7 +388,7 @@ static func _loading_docks(parent: Node3D, spline: RefCounted, plan: RefCounted,
 		var found: bool = false
 		for side: float in [-1.0, 1.0]:
 			var point: Vector3 = frame["position"] \
-				+ frame["right"] * (15.5 * side)
+				+ frame["right"] * ((TileKit.ROAD_HALF + 10.5) * side)
 			if not _box_clears(spline, point, platform_yaw,
 					Vector3(24.0, deck, 8.0)):
 				continue
@@ -456,10 +457,10 @@ static func _dock_cells_free(plan: RefCounted, point: Vector3,
 		yaw: float) -> bool:
 	var extent: Vector3 = Basis(Vector3.UP, yaw) \
 		* Vector3(TileKit.TILE_SIZE, 0.0, TileKit.TILE_SIZE * 0.5)
-	for cell_x: int in range(int(floor((point.x - absf(extent.x)) / 16.0)),
-			int(floor((point.x + absf(extent.x)) / 16.0)) + 1):
-		for cell_y: int in range(int(floor((point.z - absf(extent.z)) / 16.0)),
-				int(floor((point.z + absf(extent.z)) / 16.0)) + 1):
+	for cell_x: int in range(int(floor((point.x - absf(extent.x)) / TileKit.TILE_SIZE)),
+			int(floor((point.x + absf(extent.x)) / TileKit.TILE_SIZE)) + 1):
+		for cell_y: int in range(int(floor((point.z - absf(extent.z)) / TileKit.TILE_SIZE)),
+				int(floor((point.z + absf(extent.z)) / TileKit.TILE_SIZE)) + 1):
 			var cell := Vector2i(cell_x, cell_y)
 			if plan.in_grid(cell) and not plan.is_track(cell) \
 					and plan.is_used(cell):
@@ -472,10 +473,10 @@ static func _mark_dock_cells(plan: RefCounted, point: Vector3,
 		yaw: float) -> void:
 	var extent: Vector3 = Basis(Vector3.UP, yaw) \
 		* Vector3(TileKit.TILE_SIZE, 0.0, TileKit.TILE_SIZE * 0.5)
-	for cell_x: int in range(int(floor((point.x - absf(extent.x)) / 16.0)),
-			int(floor((point.x + absf(extent.x)) / 16.0)) + 1):
-		for cell_y: int in range(int(floor((point.z - absf(extent.z)) / 16.0)),
-				int(floor((point.z + absf(extent.z)) / 16.0)) + 1):
+	for cell_x: int in range(int(floor((point.x - absf(extent.x)) / TileKit.TILE_SIZE)),
+			int(floor((point.x + absf(extent.x)) / TileKit.TILE_SIZE)) + 1):
+		for cell_y: int in range(int(floor((point.z - absf(extent.z)) / TileKit.TILE_SIZE)),
+				int(floor((point.z + absf(extent.z)) / TileKit.TILE_SIZE)) + 1):
 			var cell := Vector2i(cell_x, cell_y)
 			if plan.in_grid(cell) and not plan.is_track(cell):
 				plan.mark(cell)
@@ -657,17 +658,39 @@ static func _box_clears(spline: RefCounted, point: Vector3, yaw: float,
 ## One batch for every container, plus one collider per stack. Keeping the
 ## lattice, canyon and wharf stacks in the same array is what makes the detail
 ## fit the draw budget.
-static func _emit_containers(parent: Node3D, containers: Array,
+static func _emit_containers(parent: Node3D, _containers: Array,
 		container_boxes: Array[Dictionary], stats: Dictionary) -> void:
-	if containers.is_empty():
+	if container_boxes.is_empty():
 		return
 	var body := Parts.body(parent, "DockyardContainers")
-	stats["draws"] = int(stats["draws"]) \
-		+ Parts.batch(body, CONTAINER_MODEL, containers, "ContainerStacks", true)
+	var batch := PropBatch.new()
+	var palette: Array[Color] = [
+		Color("cf3e32"), Color("2a7ab0"), Color("e3b234"),
+		Color("3d9a55"), Color("e27833"), Color("53697a"),
+	]
+	var c_idx: int = 0
 	for entry: Dictionary in container_boxes:
-		Parts.box(body, entry["point"] as Vector3, float(entry["yaw"]),
-			entry["size"] as Vector3)
-	stats["objects"] = int(stats["objects"]) + containers.size()
+		var center: Vector3 = entry["point"] as Vector3
+		var yaw: float = float(entry["yaw"])
+		var size: Vector3 = entry["size"] as Vector3
+		Parts.box(body, center, yaw, size)
+		var stack_levels: int = maxi(int(round(size.y / 3.2)), 1)
+		var unit_h: float = size.y / float(stack_levels)
+		var b := Basis(Vector3.UP, yaw)
+		for lvl in stack_levels:
+			var col: Color = palette[(c_idx + lvl) % palette.size()]
+			var cy: float = -size.y * 0.5 + unit_h * (float(lvl) + 0.5)
+			var xf := Transform3D(b, center + Vector3.UP * cy)
+			batch.add_box(xf, Vector3(size.x * 0.96, unit_h * 0.92, size.z), col)
+			batch.add_box(Transform3D(b, center + Vector3.UP * (cy + unit_h * 0.44)),
+				Vector3(size.x * 0.98, unit_h * 0.08, size.z * 1.06), col.darkened(0.18))
+			for rib_t: float in [-0.32, 0.0, 0.32]:
+				batch.add_box(Transform3D(b, center + b * Vector3(size.x * rib_t, cy, 0.0)),
+					Vector3(0.32, unit_h * 0.88, size.z * 1.06), col.darkened(0.24))
+		c_idx += 1
+	batch.flush_to(body, "ContainerStacksMesh", true)
+	stats["draws"] = int(stats["draws"]) + 1
+	stats["objects"] = int(stats["objects"]) + container_boxes.size()
 
 
 ## Three quay cranes assembled from kit pieces: a banner-tower mast, a rail

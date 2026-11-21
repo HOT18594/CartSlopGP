@@ -11,11 +11,14 @@ const TileKit := preload("res://scripts/minigames/tile_kit.gd")
 const TileCatalog := preload("res://scripts/minigames/tiles/tile_catalog.gd")
 const KenneyTiles := preload("res://scripts/minigames/tiles/kenney_tiles.gd")
 const CollisionLayers := preload("res://scripts/systems/collision_layers.gd")
+const LandscapeSculptor := preload("res://scripts/minigames/scenery/landscape_sculptor.gd")
+const PropBatch := preload("res://scripts/minigames/scenery/prop_batch.gd")
+const AmbientWorld := preload("res://scripts/minigames/scenery/ambient_world.gd")
 
-const SOLID_SPLINE_CLEARANCE: float = 16.5
-const SOLID_PATH_CLEARANCE: float = 8.5
-const ARCH_PIER_PATH_CLEARANCE: float = 10.6
-const PLANT_MIN_CLEARANCE: float = 16.0
+const SOLID_SPLINE_CLEARANCE: float = TileKit.ROAD_HALF + 4.5
+const SOLID_PATH_CLEARANCE: float = 4.0
+const ARCH_PIER_PATH_CLEARANCE: float = 0.8
+const PLANT_MIN_CLEARANCE: float = TileKit.ROAD_HALF + 3.2
 const SEED: int = 20260802
 
 const PALM_CANDIDATES: Array[String] = [
@@ -26,8 +29,7 @@ const CACTUS_CANDIDATES: Array[String] = [
 	"cactus_tall", "cactus_short",
 ]
 const CLIFF_CANDIDATES: Array[String] = [
-	"cliff_block_stone", "cliff_large_stone", "cliff_block_rock",
-	"rock_tallA", "rock_largeA", "stone_largeA",
+	"rock_largeA", "rock_largeB", "stone_largeA",
 ]
 const DESERT_BRUSH: Array[String] = [
 	"plant_flatShort", "plant_bushSmall", "rock_smallA", "rock_smallFlatA",
@@ -51,20 +53,26 @@ static func build(holder: Node3D, spline: RefCounted) -> Dictionary:
 	if holder == null or spline == null:
 		return stats
 
-	var total: float = maxf(float(spline.total_length), 1.0)
-	var seam: float = TileKit._snap_distance(spline, total * 0.5)
-	for side: float in [-1.0, 1.0]:
-		stats["barriers"] = int(stats["barriers"]) \
-			+ TileKit.barrier_line(holder, spline, 0.0, seam, side, "barrierRed") \
-			+ TileKit.barrier_line(holder, spline, seam, 0.0, side, "barrierWhite")
+	# Open canyon circuit: warm rust/amber rails only along mesa cliffs & sharp bends
+	stats["barriers"] = TileKit.selective_safety_rails(holder, spline, {
+		"bridge_y": 2.0,
+		"curve_min": 0.032,
+		"rail_color": Color("e28945"),
+		"accent_color": Color("c7422a"),
+		"post_color": Color("7d3a22"),
+	})
+	TileKit.build_outer_soft_containment(holder, spline, 13.5)
 
 	var left_path: Dictionary = KenneyTiles.clearance_path(spline, -1.0,
 		TileKit.BARRIER_CLEARANCE, 1.5)
 	var right_path: Dictionary = KenneyTiles.clearance_path(spline, 1.0,
 		TileKit.BARRIER_CLEARANCE, 1.5)
-	var oasis_centre := Vector3(152.0, 0.0, 208.0)
-	_build_desert_ground_and_oasis(holder, spline, oasis_centre, stats)
-	_build_mesas_and_arches(holder, spline, left_path, right_path, oasis_centre, stats)
+
+	var anchors: Dictionary = _derive_canyon_anchors(spline)
+	var oasis_centre: Vector3 = anchors["oasis"]
+
+	_build_desert_ground_and_oasis(holder, spline, anchors, stats)
+	_build_mesas_and_arches(holder, spline, left_path, right_path, anchors, stats)
 	_build_canyon_cliffs_and_stands(holder, spline, left_path, right_path, oasis_centre, stats)
 	_build_oasis_palms_and_cacti(holder, spline, left_path, right_path, oasis_centre, stats)
 
@@ -75,94 +83,89 @@ static func build(holder: Node3D, spline: RefCounted) -> Dictionary:
 	return stats
 
 
+static func _derive_canyon_anchors(spline: RefCounted) -> Dictionary:
+	var total: float = maxf(float(spline.total_length), 1.0)
+	var bmin := Vector2(INF, INF)
+	var bmax := Vector2(-INF, -INF)
+	for i in 120:
+		var p: Vector3 = spline.sample(total * float(i) / 120.0)["position"]
+		bmin.x = minf(bmin.x, p.x)
+		bmin.y = minf(bmin.y, p.z)
+		bmax.x = maxf(bmax.x, p.x)
+		bmax.y = maxf(bmax.y, p.z)
+	var centre := Vector3((bmin.x + bmax.x) * 0.5, 0.0, (bmin.y + bmax.y) * 0.5)
+	var span_x: float = bmax.x - bmin.x
+	var span_z: float = bmax.y - bmin.y
+	# Find the spacious southern oasis basin inside the horseshoe fold
+	var oasis := Vector3(centre.x, 0.0, bmin.y + span_z * 0.62)
+	var best_dist: float = TileKit.spline_distance(spline, oasis)
+	for gz: float in [0.52, 0.58, 0.65, 0.72]:
+		for gx: float in [0.45, 0.50, 0.55]:
+			var cand := Vector3(bmin.x + span_x * gx, 0.0, bmin.y + span_z * gz)
+			var d: float = TileKit.spline_distance(spline, cand)
+			if d > best_dist:
+				best_dist = d
+				oasis = cand
+	return {
+		"centre": centre,
+		"oasis": oasis,
+		"bounds_min": bmin,
+		"bounds_max": bmax,
+	}
+
+
 static func _build_desert_ground_and_oasis(holder: Node3D, spline: RefCounted,
-		oasis_centre: Vector3, stats: Dictionary) -> void:
+		anchors: Dictionary, stats: Dictionary) -> void:
+	var oasis_centre: Vector3 = anchors["oasis"]
+	var bmin: Vector2 = anchors["bounds_min"]
+	var bmax: Vector2 = anchors["bounds_max"]
+	var cx: float = (bmin.x + bmax.x) * 0.5
+	var cz: float = (bmin.y + bmax.y) * 0.5
+
 	var verts := PackedVector3Array()
 	var normals := PackedVector3Array()
 	var colors := PackedColorArray()
 
-	var sand_outer := Color("d77643")
+	var sand_outer := Color("d6743f")
 	var sand_basin := Color("e49354")
 	var oasis_sand := Color("f2da9e")
-	var oasis_grass := Color("6cb857")
+	var oasis_grass := Color("5fad4c")
 	var water_rim := Color("34d2df")
 	var water_core := Color("179db8")
-	var mesa_shelf := Color("bd502d")
-	var mesa_wall := Color("9e3b22")
-	var mesa_band := Color("d96b38")
 	var dirt_tint := Color("c66535")
 	var splash_tint := Color("2fbcd0")
 
 	var gy: float = TileKit.Z_GROUND
+	var half_ext: float = 1200.0
 	_quad(verts, normals, colors,
-		Vector3(-680.0, gy, -680.0), Vector3(980.0, gy, -680.0),
-		Vector3(980.0, gy, 980.0), Vector3(-680.0, gy, 980.0), sand_outer)
+		Vector3(cx - half_ext, gy, cz - half_ext),
+		Vector3(cx + half_ext, gy, cz - half_ext),
+		Vector3(cx + half_ext, gy, cz + half_ext),
+		Vector3(cx - half_ext, gy, cz + half_ext), sand_outer)
 	_quad(verts, normals, colors,
-		Vector3(-40.0, gy + 0.005, -40.0), Vector3(350.0, gy + 0.005, -40.0),
-		Vector3(350.0, gy + 0.005, 320.0), Vector3(-40.0, gy + 0.005, 320.0),
-		sand_basin)
+		Vector3(bmin.x - 52.0, gy + 0.005, bmin.y - 52.0),
+		Vector3(bmax.x + 52.0, gy + 0.005, bmin.y - 52.0),
+		Vector3(bmax.x + 52.0, gy + 0.005, bmax.y + 52.0),
+		Vector3(bmin.x - 52.0, gy + 0.005, bmax.y + 52.0), sand_basin)
 
-	# Lush oasis fringe + bright turquoise desert pond in southern horseshoe pocket
+	# Lush turquoise oasis pond in canyon pocket (bounded to never touch tracks)
+	var pond_r: float = clampf(TileKit.spline_distance(spline, oasis_centre) - 14.0,
+		16.0, 30.0)
 	_disc(verts, normals, colors, oasis_centre + Vector3.UP * (gy + 0.009),
-		24.0, 18.5, 28, oasis_grass)
+		pond_r * 1.16, pond_r * 0.94, 28, oasis_grass)
 	_disc(verts, normals, colors, oasis_centre + Vector3.UP * (gy + 0.012),
-		20.5, 15.5, 28, oasis_sand)
+		pond_r * 0.98, pond_r * 0.78, 28, oasis_sand)
 	_disc(verts, normals, colors, oasis_centre + Vector3.UP * (gy + 0.017),
-		17.0, 12.5, 28, water_rim)
+		pond_r * 0.80, pond_r * 0.64, 28, water_rim)
 	_disc(verts, normals, colors, oasis_centre + Vector3.UP * (gy + 0.021),
-		12.0, 8.5, 24, water_core)
-
-	# Stratified red-rock cliff shelf under the 12.0 m mesa rim skyway & switchbacks
-	var total: float = maxf(float(spline.total_length), 1.0)
-	var steps: int = 144
-	for i in steps:
-		var s0: float = total * float(i) / float(steps)
-		var s1: float = total * float(i + 1) / float(steps)
-		var f0: Dictionary = spline.sample(s0)
-		var f1: Dictionary = spline.sample(s1)
-		var p0: Vector3 = f0["position"]
-		var p1: Vector3 = f1["position"]
-		if maxf(p0.y, p1.y) < 0.20:
-			continue
-		var r0: Vector3 = f0["right"]
-		var r1: Vector3 = f1["right"]
-		for side: float in [-1.0, 1.0]:
-			var reach: float = 25.0 if side < 0.0 else 16.0
-			var in0: Vector3 = p0 + r0 * (8.4 * side)
-			var in1: Vector3 = p1 + r1 * (8.4 * side)
-			var out0: Vector3 = p0 + r0 * (reach * side)
-			var out1: Vector3 = p1 + r1 * (reach * side)
-			in0.y = p0.y - 0.02
-			in1.y = p1.y - 0.02
-			out0.y = p0.y - 0.04 if side < 0.0 else maxf(p0.y * 0.52, gy)
-			out1.y = p1.y - 0.04 if side < 0.0 else maxf(p1.y * 0.52, gy)
-			_quad(verts, normals, colors, in0, in1, out1, out0, mesa_shelf)
-			# Three lit strata instead of one flat wall: each band steps in a
-			# little and alternates sandstone tone, which makes the 12 m rim read
-			# as carved rock rather than a slab leaning over the road.
-			var mid0_y: float = lerpf(gy, out0.y, 0.55)
-			var mid1_y: float = lerpf(gy, out1.y, 0.55)
-			var lum0 := Color("cf6a3a")
-			var lum1 := Color("8f3520")
-			var lum2 := Color("d98a52")
-			_quad(verts, normals, colors, out0, out1,
-				Vector3(out1.x, mid1_y, out1.z),
-				Vector3(out0.x, mid0_y, out0.z), lum0)
-			_quad(verts, normals, colors,
-				Vector3(out0.x, mid0_y, out0.z),
-				Vector3(out1.x, mid1_y, out1.z),
-				Vector3(out1.x, gy, out1.z),
-				Vector3(out0.x, gy, out0.z), lum1)
-			# Sun-facing rim lip catches the warm key light.
-			_quad(verts, normals, colors,
-				in0 + Vector3.UP * 0.12, in1 + Vector3.UP * 0.12,
-				out1 + Vector3.UP * 0.06, out0 + Vector3.UP * 0.06, lum2)
+		pond_r * 0.56, pond_r * 0.44, 24, water_core)
 
 	# Dusty red-earth canyon trail overlays on the two "dirt" sectors
+	var total: float = maxf(float(spline.total_length), 1.0)
 	var road_y: float = KenneyTiles.ROAD_SURFACE + 0.011
-	var half_lane: float = TileKit.ROAD_HALF - 0.50
+	var half_lane: float = TileKit.ROAD_HALF - 0.40
 	for span_pair: Vector2 in [Vector2(0.40, 0.61), Vector2(0.72, 0.85)]:
-		var d_steps: int = 36
+		var d_steps: int = 44
 		for idx in d_steps:
 			var s0: float = total * lerpf(span_pair.x, span_pair.y, float(idx) / float(d_steps))
 			var s1: float = total * lerpf(span_pair.x, span_pair.y, float(idx + 1) / float(d_steps))
@@ -178,7 +181,7 @@ static func _build_desert_ground_and_oasis(holder: Node3D, spline: RefCounted,
 				c0 - r0 * half_lane, c0 + r0 * half_lane,
 				c1 + r1 * half_lane, c1 - r1 * half_lane, dirt_tint)
 
-	# Oasis splash puddles on the flat 0.0 m southern straight (skipping J at 0.656..0.672!)
+	# Oasis spring splash puddles along the southern flat oasis road
 	var splash_y: float = KenneyTiles.ROAD_SURFACE + 0.013
 	for frac: float in [0.625, 0.644, 0.680, 0.700]:
 		if _is_special_tile(spline, total * frac):
@@ -187,12 +190,28 @@ static func _build_desert_ground_and_oasis(holder: Node3D, spline: RefCounted,
 		var p: Vector3 = f["position"]
 		if p.y > 0.05:
 			continue
-		var side_off: Vector3 = (f["right"] as Vector3) * (1.5 if int(frac * 100.0) % 2 == 0 else -1.5)
+		var side_off: Vector3 = (f["right"] as Vector3) * (2.0 if int(frac * 100.0) % 2 == 0 else -2.0)
 		_disc(verts, normals, colors,
 			Vector3(p.x + side_off.x, p.y + splash_y, p.z + side_off.z),
-			2.7, 2.0, 14, splash_tint)
+			3.2, 2.4, 14, splash_tint)
 
 	_emit_vertex_mesh(holder, "CanyonGroundAndOasis", verts, normals, colors)
+	stats["draws"] = int(stats["draws"]) + 1
+
+	# Warm terracotta sandstone embankments supporting elevated rim & switchbacks
+	var em_batch := PropBatch.new()
+	LandscapeSculptor.add_road_embankment(em_batch, spline, {
+		"road_half": TileKit.ROAD_HALF + 0.6,
+		"inner_offset": TileKit.ROAD_HALF + 0.55,
+		"outer_offset": TileKit.ROAD_HALF + 16.0,
+		"ground_y": gy,
+		"hill_rise": 1.6,
+		"shoulder": sand_basin,
+		"slope": Color("c24e2c"),
+		"cliff": Color("9f3921"),
+		"steps": 160,
+	})
+	em_batch.flush_to(holder, "CanyonSandstoneTerraces", true)
 	stats["draws"] = int(stats["draws"]) + 1
 
 
@@ -208,11 +227,18 @@ static func _is_special_tile(spline: RefCounted, s: float) -> bool:
 
 static func _build_mesas_and_arches(holder: Node3D, spline: RefCounted,
 		left_path: Dictionary, right_path: Dictionary,
-		oasis_centre: Vector3, stats: Dictionary) -> void:
-	var verts := PackedVector3Array()
-	var normals := PackedVector3Array()
-	var colors := PackedColorArray()
+		anchors: Dictionary, stats: Dictionary) -> void:
+	var oasis_centre: Vector3 = anchors["oasis"]
+	var centre: Vector3 = anchors["centre"]
+	var bmin: Vector2 = anchors["bounds_min"]
+	var bmax: Vector2 = anchors["bounds_max"]
+	var span: float = maxf(bmax.x - bmin.x, bmax.y - bmin.y)
+
 	var body := _world_body(holder, "CanyonMesasAndArches")
+	var sculptor_batch := PropBatch.new()
+	var cacti_batch := PropBatch.new()
+	var rng := RandomNumberGenerator.new()
+	rng.seed = SEED + 77
 
 	var layer_colors: Array[Color] = [
 		Color("9f3921"),
@@ -221,132 +247,135 @@ static func _build_mesas_and_arches(holder: Node3D, spline: RefCounted,
 		Color("ea9c54"),
 		Color("f1ba72"),
 	]
+	var mesa_pal: Dictionary = {
+		"base": Color("9f3921"),
+		"band": Color("d96b38"),
+		"cap": Color("e99f5c"),
+	}
 
-	# Towering stratified red-rock mesas framing the horizon & central canyon basin
-	var mesa_sites: Array[Dictionary] = [
-		{"pos": Vector3(114.0, 0.0, 108.0), "w": 30.0, "d": 26.0, "h": 22.0, "yaw": 0.22},
-		{"pos": Vector3(152.0, 0.0, -42.0), "w": 54.0, "d": 28.0, "h": 30.0, "yaw": 0.08},
-		{"pos": Vector3(322.0, 0.0, 72.0), "w": 38.0, "d": 46.0, "h": 32.0, "yaw": -0.22},
-		{"pos": Vector3(324.0, 0.0, 184.0), "w": 36.0, "d": 38.0, "h": 26.0, "yaw": 0.35},
-		{"pos": Vector3(-36.0, 0.0, 108.0), "w": 34.0, "d": 56.0, "h": 30.0, "yaw": 0.12},
-		{"pos": Vector3(152.0, 0.0, 304.0), "w": 58.0, "d": 30.0, "h": 27.0, "yaw": -0.10},
-		{"pos": Vector3(24.0, 0.0, 258.0), "w": 34.0, "d": 30.0, "h": 22.0, "yaw": 0.42},
-		{"pos": Vector3(276.0, 0.0, 268.0), "w": 36.0, "d": 32.0, "h": 24.0, "yaw": -0.34},
-	]
-	for site: Dictionary in mesa_sites:
-		var base_pos: Vector3 = site["pos"]
-		var w: float = float(site["w"])
-		var d: float = float(site["d"])
-		var h: float = float(site["h"])
-		var yaw: float = float(site["yaw"])
-		var col_size := Vector3(w * 0.9, h, d * 0.9)
-		if not _box_clears_all(spline, left_path, right_path,
-				base_pos + Vector3.UP * (h * 0.5), yaw, col_size,
-				SOLID_SPLINE_CLEARANCE, SOLID_PATH_CLEARANCE):
+	# Irregular multi-tiered mesas & wind-carved spires ringing the horizon + infield
+	for i in 16:
+		var ang: float = TAU * float(i) / 16.0 + 0.12
+		var r: float = span * 0.56 + rng.randf_range(38.0, 92.0)
+		var pos := Vector3(centre.x + cos(ang) * r, 0.0, centre.z + sin(ang) * r)
+		var rad: float = rng.randf_range(22.0, 38.0)
+		var h: float = rng.randf_range(26.0, 58.0)
+		if TileKit.spline_distance(spline, pos) < rad + 18.0:
 			continue
-		var half_diag: float = Vector2(w, d).length() * 0.5
-		if Vector2(base_pos.x - oasis_centre.x, base_pos.z - oasis_centre.z).length() < half_diag + 20.0:
-			continue
-		var tiers: int = 4
-		var cur_y: float = 0.0
-		for t in tiers:
-			var shrink: float = 1.0 - float(t) * 0.14
-			var tier_h: float = h / float(tiers)
-			var size := Vector3(w * shrink, tier_h, d * shrink)
-			var xf := Transform3D(Basis(Vector3.UP, yaw + float(t) * 0.04),
-				base_pos + Vector3.UP * (cur_y + tier_h * 0.5))
-			_box_verts(verts, normals, colors, xf, size,
-				layer_colors[t % layer_colors.size()])
-			cur_y += tier_h
-		_add_box_collider(body, Transform3D(Basis(Vector3.UP, yaw),
-			base_pos + Vector3.UP * (h * 0.5)), col_size)
+		if i % 3 == 0:
+			LandscapeSculptor.add_canyon_spire(sculptor_batch, pos, rad * 0.55, h * 1.05, rng)
+		else:
+			LandscapeSculptor.add_stratified_mesa(sculptor_batch, pos, rad, h, 4, rng, mesa_pal)
 		stats["mesas"] = int(stats["mesas"]) + 1
 
-	# Twin monumental red-rock canyon arches over flat 0.0 m canyon straights:
-	#   * lowest_y = 4.90 m (>= 4.5 m overhead clearance!)
-	#   * side piers at +-20.8 m (inner face >= 11.4 m from clearance_path!)
+	# Inner canyon basin butte overlooking the north infield (away from oasis)
+	var infield_butte: Vector3 = centre + Vector3(-24.0, 0.0, -34.0)
+	if TileKit.spline_distance(spline, infield_butte) >= 34.0 \
+			and infield_butte.distance_to(oasis_centre) >= 42.0:
+		LandscapeSculptor.add_stratified_mesa(sculptor_batch, infield_butte,
+			16.0, 24.0, 3, rng, mesa_pal)
+		var butte_sz := Vector3(24.0, 24.0, 24.0)
+		if _box_clears_all(spline, left_path, right_path,
+				infield_butte + Vector3.UP * 12.0, 0.25, butte_sz,
+				SOLID_SPLINE_CLEARANCE + 2.0, SOLID_PATH_CLEARANCE):
+			_add_box_collider(body, Transform3D(Basis(Vector3.UP, 0.25),
+				infield_butte + Vector3.UP * 12.0), butte_sz)
+		stats["mesas"] = int(stats["mesas"]) + 1
+
+	# Sculpted Oasis waterfall ledge feeding turquoise spring water into oasis pond
+	var spring_pos: Vector3 = oasis_centre + Vector3(0.0, 0.0, -24.0)
+	if TileKit.spline_distance(spline, spring_pos) >= 26.0:
+		LandscapeSculptor.add_stratified_mesa(sculptor_batch, spring_pos,
+			12.0, 14.0, 3, rng, mesa_pal)
+		for fall_i in 3:
+			sculptor_batch.add_box(Transform3D(Basis.IDENTITY,
+				spring_pos + Vector3(0.0, 2.0 + float(fall_i) * 3.8, 7.5)),
+				Vector3(3.6, 4.2, 1.8), Color("46d8eb") if fall_i % 2 == 0 else Color("daf9ff"))
+
+	# Twin sculpted Natural Rock Arches spanning flat desert straightaways:
+	# span_width = 25.0 m => piers at +-14.3 m (inner collider +-12.2 m >> 8.09 m!)
 	var total: float = maxf(float(spline.total_length), 1.0)
-	for arch_s: float in [total * 0.487, total * 0.787]:
+	var arch_s_placed: Array[float] = []
+	for step_i in 48:
+		if int(stats["arches"]) >= 2:
+			break
+		var arch_s: float = total * float(step_i) / 48.0
+		var too_close: bool = false
+		for prev_s: float in arch_s_placed:
+			if absf(fposmod(arch_s - prev_s + total * 0.5, total) - total * 0.5) < total * 0.22:
+				too_close = true
+				break
+		if too_close:
+			continue
 		var f: Dictionary = spline.sample(arch_s)
 		var origin: Vector3 = f["position"]
-		if origin.y > 0.25:
+		if origin.y > 1.5 or absf(angle_difference(spline.yaw_at(arch_s + 12.0), spline.yaw_at(arch_s - 12.0))) > 0.14:
 			continue
 		var right: Vector3 = f["right"]
 		var forward: Vector3 = f["forward"]
 		var yaw: float = atan2(-forward.x, -forward.z)
-		var pier_size := Vector3(2.6, 6.8, 3.4)
-		var left_pier: Vector3 = origin - right * 20.8
-		var right_pier: Vector3 = origin + right * 20.8
+		var pier_offset: float = 15.6
+		var pier_size := Vector3(4.2, 6.8, 4.6)
+		var left_pier: Vector3 = origin - right * pier_offset
+		var right_pier: Vector3 = origin + right * pier_offset
 		left_pier.y = origin.y
 		right_pier.y = origin.y
 		if not _box_clears_all(spline, left_path, right_path,
-				left_pier + Vector3.UP * 3.4, yaw, pier_size,
-				19.0, ARCH_PIER_PATH_CLEARANCE):
+				left_pier + Vector3.UP * 2.0, yaw, pier_size,
+				TileKit.ROAD_HALF + 3.5, ARCH_PIER_PATH_CLEARANCE):
 			continue
 		if not _box_clears_all(spline, left_path, right_path,
-				right_pier + Vector3.UP * 3.4, yaw, pier_size,
-				19.0, ARCH_PIER_PATH_CLEARANCE):
+				right_pier + Vector3.UP * 2.0, yaw, pier_size,
+				TileKit.ROAD_HALF + 3.5, ARCH_PIER_PATH_CLEARANCE):
 			continue
-		for pier_base: Vector3 in [left_pier, right_pier]:
-			var pier_xf := Transform3D(Basis(Vector3.UP, yaw),
-				pier_base + Vector3.UP * 3.4)
-			_box_verts(verts, normals, colors, pier_xf,
-				pier_size, layer_colors[1])
-			_box_verts(verts, normals, colors,
-				Transform3D(Basis(Vector3.UP, yaw), pier_base + Vector3.UP * 1.4),
-				Vector3(3.1, 2.8, 3.9), layer_colors[0])
-			_add_box_collider(body, pier_xf, pier_size)
-		# Overhead sandstone arch lintel + crown (lowest_y = 5.75 - 0.85 = 4.90 m >= 4.5 m!)
-		var span_xf := Transform3D(Basis(Vector3.UP, yaw),
-			origin + Vector3.UP * 5.75)
-		_box_verts(verts, normals, colors, span_xf,
-			Vector3(44.2, 1.7, 3.2), layer_colors[2])
-		_box_verts(verts, normals, colors,
-			Transform3D(Basis(Vector3.UP, yaw), origin + Vector3.UP * 6.95),
-			Vector3(34.0, 0.95, 2.6), layer_colors[3])
-		_add_box_collider(body, span_xf, Vector3(44.2, 1.7, 3.2))
+		LandscapeSculptor.add_natural_arch(sculptor_batch, body, origin, yaw,
+			27.6, 6.6, 3.8, layer_colors[1], layer_colors[2])
+		arch_s_placed.append(arch_s)
 		stats["arches"] = int(stats["arches"]) + 1
 
-	# Cartoon saguaro cacti accents (visual vertex mesh, >= 8.5 m from clearance_path)
-	var rng := RandomNumberGenerator.new()
-	rng.seed = SEED + 77
+	sculptor_batch.flush_to(holder, "CanyonMesasAndArchesMesh", true)
+	stats["draws"] = int(stats["draws"]) + 1
+
+	# Spinning Desert Windmill overlooking the southern oasis basin
+	var windmill_pos: Vector3 = oasis_centre + Vector3(26.0, 0.0, -18.0)
+	if TileKit.spline_distance(spline, windmill_pos) >= 20.0:
+		LandscapeSculptor.build_windmill(holder, windmill_pos, -0.45, 1.15,
+			"canyon", AmbientWorld.anim_of(holder))
+		stats["props"] = int(stats["props"]) + 1
+
+	# Cartoon saguaro cacti accents (vertex mesh along desert verges)
 	var cactus_green := Color("3b8c47")
 	var cactus_dark := Color("2d6e37")
-	for idx in 60:
-		var s: float = total * float(idx) / 60.0
+	for idx in 76:
+		var s: float = total * float(idx) / 76.0
 		var f: Dictionary = spline.sample(s)
 		var side: float = -1.0 if idx % 2 == 0 else 1.0
-		var lat: float = rng.randf_range(17.5, 34.0)
+		var lat: float = rng.randf_range(TileKit.ROAD_HALF + 8.5, TileKit.ROAD_HALF + 26.0)
 		var pos: Vector3 = (f["position"] as Vector3) + (f["right"] as Vector3) * (lat * side)
 		pos.y = 0.0
-		if (f["position"] as Vector3).y > 1.6 and lat < 22.0:
+		if (f["position"] as Vector3).y > 1.6 and lat < TileKit.ROAD_HALF + 14.0:
 			continue
 		if not _point_clears_all(spline, left_path, right_path, pos,
 				PLANT_MIN_CLEARANCE, SOLID_PATH_CLEARANCE):
 			continue
-		if Vector2(pos.x - oasis_centre.x, pos.z - oasis_centre.z).length() < 19.0:
+		if Vector2(pos.x - oasis_centre.x, pos.z - oasis_centre.z).length() < 24.0:
 			continue
 		var h: float = rng.randf_range(2.8, 4.8)
 		var c_yaw: float = rng.randf() * TAU
 		var base_b := Basis(Vector3.UP, c_yaw)
-		_box_verts(verts, normals, colors,
-			Transform3D(base_b, pos + Vector3.UP * (h * 0.5)),
+		cacti_batch.add_box(Transform3D(base_b, pos + Vector3.UP * (h * 0.5)),
 			Vector3(0.52, h, 0.52), cactus_green)
-		_box_verts(verts, normals, colors,
-			Transform3D(base_b, pos + base_b * Vector3(0.55, h * 0.56, 0.0)),
+		cacti_batch.add_box(Transform3D(base_b, pos + base_b * Vector3(0.55, h * 0.56, 0.0)),
 			Vector3(0.65, 0.36, 0.38), cactus_dark)
-		_box_verts(verts, normals, colors,
-			Transform3D(base_b, pos + base_b * Vector3(0.76, h * 0.72, 0.0)),
+		cacti_batch.add_box(Transform3D(base_b, pos + base_b * Vector3(0.76, h * 0.72, 0.0)),
 			Vector3(0.38, h * 0.36, 0.38), cactus_green)
-		_box_verts(verts, normals, colors,
-			Transform3D(base_b, pos + base_b * Vector3(-0.52, h * 0.46, 0.0)),
+		cacti_batch.add_box(Transform3D(base_b, pos + base_b * Vector3(-0.52, h * 0.46, 0.0)),
 			Vector3(0.60, 0.34, 0.36), cactus_dark)
-		_box_verts(verts, normals, colors,
-			Transform3D(base_b, pos + base_b * Vector3(-0.72, h * 0.60, 0.0)),
+		cacti_batch.add_box(Transform3D(base_b, pos + base_b * Vector3(-0.72, h * 0.60, 0.0)),
 			Vector3(0.36, h * 0.30, 0.36), cactus_green)
 		stats["cacti"] = int(stats["cacti"]) + 1
 
-	_emit_vertex_mesh(holder, "CanyonMesasArchesCactiMesh", verts, normals, colors)
+	cacti_batch.flush_to(holder, "CanyonSaguaroCactiMesh", false)
 	stats["draws"] = int(stats["draws"]) + 1
 
 
@@ -356,25 +385,25 @@ static func _build_canyon_cliffs_and_stands(holder: Node3D, spline: RefCounted,
 	var total: float = maxf(float(spline.total_length), 1.0)
 	TileKit.gantry(holder, spline, 0.0)
 	stats["props"] = int(stats["props"]) \
-		+ TileKit.grandstand(holder, spline, 32.0, -1.0, true) \
+		+ TileKit.grandstand(holder, spline, 36.0, -1.0, true) \
 		+ TileKit.grandstand(holder, spline, total * 0.640, -1.0, false)
 
 	var body := _world_body(holder, "CanyonCliffProps")
 	var cliff_models: Array[String] = _available_models(CLIFF_CANDIDATES, true)
 	var batches: Dictionary = {}
 	if not cliff_models.is_empty():
-		var steps: int = 48
+		var steps: int = 56
 		for i in steps:
 			var s: float = total * float(i) / float(steps)
 			var f: Dictionary = spline.sample(s)
 			var side: float = -1.0 if i % 3 != 0 else 1.0
-			var lat: float = 24.0 + float(i % 3) * 5.0
+			var lat: float = TileKit.ROAD_HALF + 16.5 + float(i % 3) * 6.0
 			var pos: Vector3 = (f["position"] as Vector3) + (f["right"] as Vector3) * (lat * side)
 			pos.y = 0.0
-			if Vector2(pos.x - oasis_centre.x, pos.z - oasis_centre.z).length() < 25.0:
+			if Vector2(pos.x - oasis_centre.x, pos.z - oasis_centre.z).length() < 28.0:
 				continue
 			var model: String = cliff_models[i % cliff_models.size()]
-			var sc: float = TileKit.NATURE_SCALE * (0.70 + 0.25 * float(i % 3))
+			var sc: float = TileKit.NATURE_SCALE * (0.68 + 0.25 * float(i % 3))
 			var yaw: float = spline.yaw_at(s) + float(i) * 0.7
 			var sz: Vector3 = TileKit._scaled_size(model, Vector3.ONE * sc, true)
 			var col_sz: Vector3 = sz * 0.85
@@ -393,14 +422,12 @@ static func _build_canyon_cliffs_and_stands(holder: Node3D, spline: RefCounted,
 		TileKit._batch_model(holder, model, batches[model] as Array,
 			"CanyonCliff_" + model, false, true)
 
-	# Desert racing flags: snap to 16 m cell centre FIRST and verify >= 9.0 m
-	# from clearance_path (>= 17.5 m from spline) BEFORE calling TileKit.flags!
 	var flags: Array = []
 	var used_cells: Dictionary = {}
-	for frac: float in [0.04, 0.15, 0.30, 0.48, 0.63, 0.78, 0.90]:
+	for frac: float in [0.04, 0.14, 0.29, 0.46, 0.62, 0.77, 0.90]:
 		var s: float = total * frac
 		var f: Dictionary = spline.sample(s)
-		var raw_pos: Vector3 = (f["position"] as Vector3) - (f["right"] as Vector3) * 19.5
+		var raw_pos: Vector3 = (f["position"] as Vector3) - (f["right"] as Vector3) * (TileKit.ROAD_HALF + 11.5)
 		var snapped: Vector3 = TileKit._snap_point(raw_pos)
 		snapped.y = (f["position"] as Vector3).y if (f["position"] as Vector3).y > 0.5 else 0.0
 		var cell_key := Vector2i(int(round(snapped.x)), int(round(snapped.z)))
@@ -409,7 +436,7 @@ static func _build_canyon_cliffs_and_stands(holder: Node3D, spline: RefCounted,
 		var flag_box := Vector3(2.2, 5.0, 2.2)
 		if _box_clears_all(spline, left_path, right_path,
 				snapped + Vector3.UP * 2.5, 0.0, flag_box,
-				SOLID_SPLINE_CLEARANCE + 1.0, SOLID_PATH_CLEARANCE + 0.5):
+				SOLID_SPLINE_CLEARANCE + 1.0, SOLID_PATH_CLEARANCE):
 			used_cells[cell_key] = true
 			flags.append({
 				"position": snapped,
@@ -432,11 +459,11 @@ static func _build_oasis_palms_and_cacti(holder: Node3D, spline: RefCounted,
 	var brush_models: Array[String] = _available_models(DESERT_BRUSH, true)
 
 	if not palm_models.is_empty():
-		var palm_count: int = 34
+		var palm_count: int = 38
 		for i in palm_count:
 			var ang: float = TAU * float(i) / float(palm_count) + rng.randf_range(-0.08, 0.08)
-			var rx: float = rng.randf_range(18.5, 25.5)
-			var rz: float = rng.randf_range(14.0, 19.5)
+			var rx: float = rng.randf_range(19.5, 29.0)
+			var rz: float = rng.randf_range(15.5, 23.0)
 			var pos := oasis_centre + Vector3(cos(ang) * rx, 0.0, sin(ang) * rz)
 			pos.y = 0.0
 			if not _point_clears_all(spline, left_path, right_path, pos,
@@ -445,7 +472,7 @@ static func _build_oasis_palms_and_cacti(holder: Node3D, spline: RefCounted,
 			var model: String = palm_models[i % palm_models.size()]
 			var info: Dictionary = TileCatalog.model_info(model, true)
 			var h_base: float = maxf((info["aabb"] as AABB).size.y, 0.01)
-			var sc: float = rng.randf_range(8.5, 14.5) / h_base
+			var sc: float = rng.randf_range(9.0, 15.0) / h_base
 			var xf: Transform3D = TileKit._fit_transform(model, pos,
 				rng.randf() * TAU, Vector3.ONE * sc, true)
 			_push_batch(batches, model, xf)
@@ -453,44 +480,44 @@ static func _build_oasis_palms_and_cacti(holder: Node3D, spline: RefCounted,
 
 	var total: float = maxf(float(spline.total_length), 1.0)
 	if not cactus_models.is_empty():
-		for i in 76:
+		for i in 96:
 			var s: float = total * rng.randf()
 			var f: Dictionary = spline.sample(s)
 			var side: float = -1.0 if rng.randf() < 0.5 else 1.0
 			var pos: Vector3 = (f["position"] as Vector3) \
-				+ (f["right"] as Vector3) * (side * rng.randf_range(17.5, 38.0))
+				+ (f["right"] as Vector3) * (side * rng.randf_range(TileKit.ROAD_HALF + 8.5, TileKit.ROAD_HALF + 32.0))
 			pos.y = 0.0
 			if not _point_clears_all(spline, left_path, right_path, pos,
 					PLANT_MIN_CLEARANCE, SOLID_PATH_CLEARANCE):
 				continue
-			if Vector2(pos.x - oasis_centre.x, pos.z - oasis_centre.z).length() < 19.5:
+			if Vector2(pos.x - oasis_centre.x, pos.z - oasis_centre.z).length() < 22.0:
 				continue
 			var model: String = cactus_models[i % cactus_models.size()]
 			var info: Dictionary = TileCatalog.model_info(model, true)
 			var h_base: float = maxf((info["aabb"] as AABB).size.y, 0.01)
-			var sc: float = rng.randf_range(2.6, 5.2) / h_base
+			var sc: float = rng.randf_range(2.8, 5.4) / h_base
 			var xf: Transform3D = TileKit._fit_transform(model, pos,
 				rng.randf() * TAU, Vector3.ONE * sc, true)
 			_push_batch(batches, model, xf)
 			stats["cacti"] = int(stats["cacti"]) + 1
 
 	if not brush_models.is_empty():
-		for i in 240:
+		for i in 280:
 			var s: float = total * rng.randf()
 			var f: Dictionary = spline.sample(s)
 			var side: float = -1.0 if rng.randf() < 0.55 else 1.0
 			var pos: Vector3 = (f["position"] as Vector3) \
-				+ (f["right"] as Vector3) * (side * rng.randf_range(16.2, 46.0))
+				+ (f["right"] as Vector3) * (side * rng.randf_range(TileKit.ROAD_HALF + 3.5, TileKit.ROAD_HALF + 36.0))
 			pos.y = 0.0
 			if not _point_clears_all(spline, left_path, right_path, pos,
 					PLANT_MIN_CLEARANCE, SOLID_PATH_CLEARANCE):
 				continue
-			if Vector2(pos.x - oasis_centre.x, pos.z - oasis_centre.z).length() < 18.0:
+			if Vector2(pos.x - oasis_centre.x, pos.z - oasis_centre.z).length() < 20.0:
 				continue
 			var model: String = brush_models[i % brush_models.size()]
 			var info: Dictionary = TileCatalog.model_info(model, true)
 			var h_base: float = maxf((info["aabb"] as AABB).size.y, 0.01)
-			var sc: float = rng.randf_range(0.45, 1.25) / h_base
+			var sc: float = rng.randf_range(0.50, 1.35) / h_base
 			var xf: Transform3D = TileKit._fit_transform(model, pos,
 				rng.randf() * TAU, Vector3.ONE * sc, true)
 			_push_batch(batches, model, xf)

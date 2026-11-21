@@ -17,7 +17,7 @@ const NODE_NAME: String = "GlacierSnowGround"
 ## The meadow mesh grass_race builds for every map. It is hidden only when the
 ## node exists, so a race scene that already stopped building it is untouched.
 const MEADOW_NODE: String = "MeadowGround"
-const SIZE: float = 1600.0
+const SIZE: float = 2800.0
 const HEIGHT: float = 0.005
 
 
@@ -32,7 +32,7 @@ static func build(race: Node3D, preset: Dictionary) -> int:
 	var node := MeshInstance3D.new()
 	node.name = NODE_NAME
 	node.mesh = plane
-	node.position = Vector3(0.0, HEIGHT, 0.0)
+	node.position = Vector3(240.0, HEIGHT, 180.0)
 	node.material_override = _material(preset)
 	node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	race.add_child(node)

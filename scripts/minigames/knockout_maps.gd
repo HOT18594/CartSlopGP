@@ -22,6 +22,7 @@ const SceneryKit := preload("res://scripts/minigames/scenery/scenery_kit.gd")
 const PropBatch := preload("res://scripts/minigames/scenery/prop_batch.gd")
 const TileCatalog := preload("res://scripts/minigames/tiles/tile_catalog.gd")
 const UiPalette := preload("res://scripts/ui/ui_palette.gd")
+const LandscapeSculptor := preload("res://scripts/minigames/scenery/landscape_sculptor.gd")
 const AmbientWorld := preload("res://scripts/minigames/scenery/ambient_world.gd")
 
 const DEFAULT_ID: String = "ko_rooftop"
@@ -61,7 +62,7 @@ const ARENA_META: Dictionary = {
 		"ground_bottom": Color("16527a"),
 		"fog_color": Color("d0effc"),
 		"fog_density": 0.0011,
-		"sun_color": Color("f4faff"),
+		"sun_color": Color("fff2d8"),
 		"sun_energy": 1.16,
 	},
 }
@@ -150,7 +151,47 @@ static func build_arena(host: Node3D, arena_id: String) -> Dictionary:
 			ambient = {"style": "iceberg", "floor_y": -3.0,
 				"radius_in": 50.0, "radius_out": 78.0}
 	AmbientWorld.build_arena(host, clean_id, 36.0, ambient)
+	_add_dynamic_landmarks(host, clean_id)
 	return arena
+
+
+static func _add_dynamic_landmarks(host: Node3D, clean_id: String) -> void:
+	var anim: Dictionary = AmbientWorld.anim_of(host)
+	var holder := Node3D.new()
+	holder.name = "DynamicLandmarks_" + clean_id
+	host.add_child(holder)
+	match clean_id:
+		"ko_rooftop":
+			LandscapeSculptor.build_blimp(holder, Vector3.ZERO, 88.0, 14.0,
+				Color("ff595e"), Color("ffd22e"), anim)
+			# Spinning radar sweep dish atop the central dome plateau (visual only, well above karts)
+			var radar_pivot := Node3D.new()
+			radar_pivot.position = Vector3(0.0, 5.2, 0.0)
+			holder.add_child(radar_pivot)
+			var rb := PropBatch.new()
+			rb.add_box(Transform3D(Basis.IDENTITY, Vector3.ZERO),
+				Vector3(3.6, 0.42, 0.55), Color("ffd22e"))
+			rb.add_box(Transform3D(Basis.IDENTITY, Vector3(1.85, 0.15, 0.0)),
+				Vector3(0.45, 0.85, 1.35), Color("38d6f0"))
+			rb.flush_to(radar_pivot, "RadarBar", false, SceneryKit.vertex_material())
+			if not anim.has("rotators_y"):
+				anim["rotators_y"] = []
+			(anim["rotators_y"] as Array).append({"node": radar_pivot, "speed": 1.35})
+			LandscapeSculptor.add_biome_particles(holder, "stadium", Vector3.ZERO, 55.0)
+		"ko_foundry":
+			LandscapeSculptor.build_port_crane(holder, Vector3(-64.0, -3.5, -52.0),
+				-0.75, 21.0, Color("5c3224"), anim)
+			LandscapeSculptor.build_port_crane(holder, Vector3(64.0, -3.5, 52.0),
+				2.35, 21.0, Color("4a2a24"), anim)
+			LandscapeSculptor.add_biome_particles(holder, "ko_foundry", Vector3.ZERO, 65.0)
+		"ko_iceberg":
+			LandscapeSculptor.build_lighthouse(holder, Vector3(-76.0, -2.5, -72.0),
+				17.0, anim)
+			LandscapeSculptor.build_cargo_ship(holder, Vector3(88.0, -3.2, 46.0),
+				-0.45, 1.25, anim)
+			LandscapeSculptor.build_cargo_ship(holder, Vector3(-96.0, -3.2, 54.0),
+				1.9, 1.15, anim)
+			LandscapeSculptor.add_biome_particles(holder, "ko_iceberg", Vector3.ZERO, 65.0)
 
 
 static func is_point_safe(arena_data: Dictionary, point: Vector3,
@@ -300,10 +341,20 @@ static func _build_rooftop(host: Node3D) -> Dictionary:
 	for i: int in 4:
 		var ang: float = TAU * float(i) / 4.0 + PI * 0.25
 		var dir := Vector3(cos(ang), 0.0, sin(ang))
+		var radial_yaw: float = atan2(dir.x, dir.z)
 		var post_spot: Vector3 = dir * 44.5 + Vector3.UP * (-1.4)
-		truss_batch.add_box(Transform3D(Basis(Vector3.UP, -ang),
-			dir * 31.0 + Vector3.UP * (-1.7)),
-			Vector3(1.4, 0.8, 28.0), trim_steel)
+		# Horizontal steel cantilever truss from central core (r = 16 m) to pod (r = 44.5 m)
+		truss_batch.add_box(Transform3D(Basis(Vector3.UP, radial_yaw),
+			dir * 30.25 + Vector3.UP * (-1.7)),
+			Vector3(1.4, 0.85, 29.0), trim_steel)
+		# Angled underside brace strut tying cantilever back down into the shaft
+		var brace_start: Vector3 = dir * 18.0 + Vector3.UP * (-10.5)
+		var brace_end: Vector3 = dir * 42.5 + Vector3.UP * (-1.8)
+		var brace_mid: Vector3 = (brace_start + brace_end) * 0.5
+		var brace_len: float = brace_start.distance_to(brace_end)
+		var brace_pitch: float = atan2(brace_end.y - brace_start.y, 24.5)
+		truss_batch.add_box(Transform3D(Basis(Vector3.UP, radial_yaw) * Basis(Vector3.RIGHT, -brace_pitch),
+			brace_mid), Vector3(0.75, 0.65, brace_len), trim_steel.darkened(0.1))
 		truss_batch.add_cylinder(Transform3D(Basis.IDENTITY, post_spot + Vector3.UP * 0.35),
 			2.1, 0.7, 10, deck_mid)
 		light_xforms.append(_fit_model("lightPostModern",
@@ -412,11 +463,23 @@ static func _build_rooftop_skyline(root: Node3D) -> void:
 			center + Vector3(-6.0, -0.5, 3.5)), 8.8, 2.2, 9, cloud_shade)
 	_emit_batch_mesh(root, cloud_batch, "CloudDeck", false, true)
 
-	# Deep city floor haze plate far below (-66 m) so looking straight down reads cleanly.
+	# Deep city floor haze plate far below (-64 m) + outer tiered skyscrapers.
+	var sky_rng := RandomNumberGenerator.new()
+	sky_rng.seed = 81921
+	for j: int in 24:
+		var ang2: float = TAU * float(j) / 24.0 + 0.08
+		var dist2: float = 165.0 + float((j * 5) % 4) * 24.0
+		var sw: float = 18.0 + float(j % 3) * 6.0
+		var sh: float = 64.0 + float((j * 7) % 5) * 14.0
+		LandscapeSculptor.add_skyscraper(horizon,
+			Vector3(cos(ang2) * dist2, -64.0, sin(ang2) * dist2),
+			float(j) * 0.42, sw, sw * 0.9, sh,
+			palette[(j + 2) % palette.size()], window_glow, sky_rng)
+
 	var abyss := MeshInstance3D.new()
 	abyss.name = "CityAbyssPlane"
 	var abyss_plane := PlaneMesh.new()
-	abyss_plane.size = Vector2(680.0, 680.0)
+	abyss_plane.size = Vector2(1150.0, 1150.0)
 	abyss.mesh = abyss_plane
 	abyss.position = Vector3(0.0, -64.0, 0.0)
 	abyss.material_override = _flat_material(Color("223954"), true)
@@ -446,11 +509,11 @@ static func _build_foundry(host: Node3D) -> Dictionary:
 	var magma_bright := Color("ff5e1a")
 	var magma_gold := Color("ffbe2e")
 
-	# Glowing cartoon magma sea at y = -3.5 m.
+	# Glowing cartoon magma sea at y = -3.5 m (1100 m seamless horizon).
 	var lava := MeshInstance3D.new()
 	lava.name = "MagmaSea"
 	var lava_plane := PlaneMesh.new()
-	lava_plane.size = Vector2(640.0, 640.0)
+	lava_plane.size = Vector2(1100.0, 1100.0)
 	lava.mesh = lava_plane
 	lava.position = Vector3(0.0, -3.5, 0.0)
 	var lava_mat := StandardMaterial3D.new()
@@ -619,8 +682,10 @@ static func _build_foundry_scenery(root: Node3D) -> void:
 		# the islands instead of cutting across the camera view.
 		var gz: float = side_z * 78.0
 		for sx: float in [-1.0, 1.0]:
-			near_batch.add_box(Transform3D(Basis.IDENTITY, Vector3(sx * 30.0, 4.0, gz)),
-				Vector3(2.4, 12.0, 2.4), dark_iron)
+			# Pillars stand flush in the magma sea (y = -3.5): 13.5 m tall
+			# centered at 2.75 so the base is buried, not floating.
+			near_batch.add_box(Transform3D(Basis.IDENTITY, Vector3(sx * 30.0, 2.75, gz)),
+				Vector3(2.4, 13.5, 2.4), dark_iron)
 		near_batch.add_box(Transform3D(Basis.IDENTITY, Vector3(0.0, 10.2, gz)),
 			Vector3(42.0, 1.8, 2.8), rust_steel)
 		# Suspended pouring crucible over the central lava chasm!
@@ -629,8 +694,8 @@ static func _build_foundry_scenery(root: Node3D) -> void:
 		near_batch.add_cylinder(Transform3D(Basis.IDENTITY, Vector3(0.0, 11.0, gz)),
 			2.4, 0.7, 12, molten_core)
 		# Glowing molten stream pouring straight down into the magma sea!
-		near_batch.add_cylinder(Transform3D(Basis.IDENTITY, Vector3(0.0, 2.4, gz * 0.96)),
-			0.7, 10.0, 10, molten_orange)
+		near_batch.add_cylinder(Transform3D(Basis.IDENTITY, Vector3(0.0, 1.9, gz * 0.96)),
+			0.7, 11.5, 10, molten_orange)
 		near_batch.add_cylinder(Transform3D(Basis.IDENTITY, Vector3(0.0, -3.35, gz * 0.96)),
 			3.2, 0.25, 12, molten_core)
 	_emit_batch_mesh(root, near_batch, "FoundryCrucibles", false)
@@ -648,24 +713,30 @@ static func _build_foundry_scenery(root: Node3D) -> void:
 	_batch_model(root, "lightPostLarge", light_xforms, "FoundryLights", false, false)
 	_batch_model(root, "pylon", pylon_xforms, "FoundryPylons", false, false)
 
-	# Distant smelter walls, giant pipes & blast furnaces (> 260 m span) pushed
-	# back so the low preview camera reads them as a hazy industrial skyline
-	# rather than a ring of giant pillars.
+	# Ring of sculpted volcanic caldera peaks + industrial smelter chimneys.
 	var far_batch := PropBatch.new()
 	var cavern_rock := Color("3a221e")
 	var pipe_grey := Color("554a50")
-	for i: int in 20:
-		var ang: float = TAU * float(i) / 20.0
-		var dist: float = 200.0 + float((i * 3) % 4) * 22.0
+	var volc_rng := RandomNumberGenerator.new()
+	volc_rng.seed = 66109
+	for v: int in 14:
+		var vang: float = TAU * float(v) / 14.0 + 0.17
+		var vdist: float = 128.0 + float(v % 3) * 32.0
+		LandscapeSculptor.add_volcanic_peak(far_batch,
+			Vector3(cos(vang) * vdist, -3.5, sin(vang) * vdist),
+			28.0 + float(v % 4) * 7.5, 34.0 + float(v % 3) * 14.0, volc_rng)
+	for i: int in 14:
+		var ang: float = TAU * float(i) / 14.0
+		var dist: float = 195.0 + float((i * 3) % 4) * 24.0
 		var px: float = cos(ang) * dist
 		var pz: float = sin(ang) * dist
-		var h: float = 24.0 + float((i * 7) % 5) * 5.0
+		var h: float = 28.0 + float((i * 7) % 5) * 5.0
 		far_batch.add_cylinder(Transform3D(Basis.IDENTITY,
 			Vector3(px, h * 0.5 - 4.0, pz)),
-			8.0, h, 8, pipe_grey if i % 2 == 0 else cavern_rock)
+			7.5, h, 8, pipe_grey if i % 2 == 0 else cavern_rock)
 		if i % 2 == 0:
 			far_batch.add_cylinder(Transform3D(Basis.IDENTITY,
-				Vector3(px, h - 3.6, pz)), 8.6, 1.2, 8, molten_orange)
+				Vector3(px, h - 3.6, pz)), 8.2, 1.2, 8, molten_orange)
 	_emit_batch_mesh(root, far_batch, "FoundryCavernHorizon", false)
 
 
@@ -689,11 +760,11 @@ static func _build_iceberg(host: Node3D) -> Dictionary:
 	var ice_deep := Color("2b7aa3")
 	var kicker_accent := Color("2994c4")
 
-	# Bright Arctic Ocean Basin at y = -3.0 m.
+	# Bright Arctic Ocean Basin at y = -3.0 m (1100 m seamless sea horizon).
 	var ocean := MeshInstance3D.new()
 	ocean.name = "ArcticOcean"
 	var ocean_plane := PlaneMesh.new()
-	ocean_plane.size = Vector2(680.0, 680.0)
+	ocean_plane.size = Vector2(1100.0, 1100.0)
 	ocean.mesh = ocean_plane
 	ocean.position = Vector3(0.0, -3.0, 0.0)
 	ocean.material_override = _flat_material(Color("1c84b8"), false)
@@ -726,11 +797,13 @@ static func _build_iceberg(host: Node3D) -> Dictionary:
 			Vector3(0.28, 0.012, 26.0), ice_highlight)
 
 	# 0.90-grip Packed Snow Ridge visual bolsters around the permanent rim (r = 15.4 .. 20.0 m).
+	# Offset by half a segment so the 8 bolsters sit BETWEEN the 4 diagonal
+	# kickers instead of slicing through their decks.
 	for seg: int in 8:
-		var s_ang: float = TAU * float(seg) / 8.0
-		var r_pos := Vector3(cos(s_ang) * 18.2, 0.02, sin(s_ang) * 18.2)
+		var s_ang: float = TAU * float(seg) / 8.0 + PI / 8.0
+		var r_pos := Vector3(cos(s_ang) * 18.6, 0.02, sin(s_ang) * 18.6)
 		core_batch.add_box(Transform3D(Basis(Vector3.UP, -s_ang), r_pos),
-			Vector3(2.8, 0.04, 6.8), snow_ridge)
+			Vector3(2.6, 0.04, 6.0), snow_ridge)
 
 	# 4 Angled Inward Jump Ramps (Corner Kickers) at the 4 diagonal corners
 	# (r = 16.5 m, angled INWARD so karts launch toward (0,0,0) across the ice!).
@@ -848,12 +921,20 @@ static func _build_iceberg_scenery(root: Node3D) -> void:
 			rock_xforms.append(_fit_model("rock_tallA", Vector3(ix, -0.2, iz),
 				float(i) * 0.8, Vector3.ONE * 8.0, true))
 		else:
-			# Towering faceted cartoon iceberg spire.
-			var peak_h: float = 22.0 + float((i * 7) % 5) * 6.5
-			_add_cone(far_batch, Transform3D(Basis(Vector3.UP, float(i) * 0.5),
-				Vector3(ix, -0.3, iz)),
-				island_r * 0.78, peak_h, 6,
-				ice_side.lightened(0.28) if i % 2 == 0 else snow_col)
+			# Asymmetric faceted alpine glacier peak (explicit cartoon-blue
+			# palette so the horizon reads ice-blue, not flat grey).
+			var ice_rng := RandomNumberGenerator.new()
+			ice_rng.seed = 44200 + i
+			LandscapeSculptor.add_alpine_mountain(far_batch,
+				Vector3(ix, -2.0, iz),
+				island_r * 1.45, 28.0 + float((i * 7) % 5) * 9.0, ice_rng,
+				{
+					"base": Color("2f6d9e"),
+					"rock": Color("3f9fd0"),
+					"cliff": Color("6fc6e8"),
+					"snow_lo": Color("c4eafb"),
+					"snow_hi": Color("f0fbff"),
+				})
 	_emit_batch_mesh(root, far_batch, "ArcticHorizonPeaks", false)
 	_batch_model(root, "tree_pineTallA", pine_xforms, "ArcticPines", false, true)
 	_batch_model(root, "rock_tallA", rock_xforms, "ArcticRocks", false, true)

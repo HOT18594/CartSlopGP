@@ -18,6 +18,8 @@ const UI_THEME: Theme = preload("res://assets/ui/theme.tres")
 const TITLE_FONT: Font = preload("res://assets/ui/fonts/LuckiestGuy-Regular.ttf")
 const CART_SYNC_INTERVAL: float = 0.05
 const PROP_SYNC_INTERVAL: float = 0.10
+const CART_IDLE_SPEED: float = 1.0
+const CART_IDLE_INTERVAL: float = 0.20
 ## Painted paddock grid slots, row-major, mirrored from sandbox_park.gd. Slot 5
 ## (index 4) is the authored single-player marker.
 const GRID_SLOTS: Array[Vector3] = [
@@ -43,7 +45,7 @@ const GRID_OVERFLOW: Array[Vector3] = [
 ## a prop below the slab or past the fence has tunnelled or been thrown out and
 ## goes back to the pose it was authored with.
 const PROP_FLOOR: float = -0.6
-const PROP_BOUNDS: float = 74.0
+const PROP_BOUNDS: float = 122.0
 const PROP_RECOVER_INTERVAL: float = 0.5
 const PROP_KICK_MS: int = 400
 const PROP_KICK_RETRY_MS: int = 150
@@ -79,11 +81,23 @@ var _bots: Array[SandboxBot] = []
 var _traffic: Array[CartPlayer] = [] ## local player first, then every bot cart
 var _bot_time: float = 0.0
 var _bot_homes: Array[Transform3D] = [] ## fallback seat per bot, index-parallel
+## Consecutive-no-progress watchdog: window-start seat and stalled-window count
+## per bot, index-parallel to _bots. Net displacement (not speed) reseats a bot
+## that oscillates in place, which keeps moving enough to decay bot.stuck.
+const BOT_PROGRESS_WINDOW: float = 1.0
+const BOT_PROGRESS_MIN: float = 1.5
+const BOT_NO_PROGRESS_LIMIT: int = 4
+var _bot_progress_pos: Array[Vector3] = []
+var _bot_no_progress: Array[int] = []
+var _bot_progress_timer: float = 0.0
 ## Authored spawn anchor from the scene marker; grid slots reuse its height and
 ## facing so single- and multiplayer start on the same transforms.
 var _spawn_anchor: Transform3D = Transform3D(Basis.IDENTITY,
 	Vector3(0.0, 0.25, 0.0))
 var _cart_relay_ms: Dictionary = {} ## peer id -> last host relay (anti-amplification)
+var _cart_idle_ms: Dictionary = {} ## peer id -> last cart send (deadband)
+var _cart_idle_pos: Dictionary = {} ## peer id -> last sent position
+var _cart_idle_yaw: Dictionary = {} ## peer id -> last sent yaw
 ## Client-side prediction for a pushed frozen prop.
 var _prop_kick_until: Dictionary = {}
 ## Paddock seat allocation: peer id -> grid index, and every claimed index. A
@@ -164,7 +178,7 @@ func _setup_multiplayer() -> void:
 			" host=", _host_mode, " peers=", multiplayer.get_peers())
 	if _host_mode:
 		_broadcast_vehicle(multiplayer.get_unique_id(), GameSettings.selected_vehicle)
-	else:
+	elif Network.is_scene_ready(1):
 		rpc_id(1, "_net_client_ready", GameSettings.selected_vehicle)
 
 
@@ -236,6 +250,8 @@ func _setup_bots() -> void:
 		node.setup_ai(vehicle_id)
 		node.set_spawn_transform(node.global_transform)
 		_bot_homes.append(node.global_transform)
+		_bot_progress_pos.append(node.global_transform.origin)
+		_bot_no_progress.append(0)
 		var label := Label3D.new()
 		label.text = "BOT %d" % (i + 1)
 		label.font = TITLE_FONT
@@ -251,6 +267,7 @@ func _setup_bots() -> void:
 		var difficulty: int = Network.bot_difficulty()
 		var bot: SandboxBot = SandboxBot.new()
 		bot.setup(node, i, rng, difficulty)
+		bot.allow_tag = true
 		_bots.append(bot)
 	# The traffic list is rebuilt once, not every tick: every driver reads the
 	# local player and the other bots from this shared array.
@@ -266,15 +283,41 @@ func _update_bots(delta: float) -> void:
 	if _bots.is_empty():
 		return
 	_bot_time += delta
+	_bot_progress_timer += delta
+	var close_window: bool = _bot_progress_timer >= BOT_PROGRESS_WINDOW
+	if close_window:
+		_bot_progress_timer = 0.0
 	for i in _bots.size():
 		var bot: SandboxBot = _bots[i]
 		if not is_instance_valid(bot.cart):
 			continue
 		bot.tick(delta, _bot_time, _traffic)
-		# The hard reset is the last resort: a bot that is still stuck after its
-		# reverse attempt (or has left the park) gets put back on its lane.
-		if bot.stuck > 4.0 or bot.stranded > 1.5:
+		if close_window:
+			_track_bot_progress(i, bot)
+		var stalled: int = int(_bot_no_progress[i]) if i < _bot_no_progress.size() else 0
+		# The hard reset is the last resort: a bot with no net progress across
+		# consecutive windows (or that has left the park) gets put back on its
+		# lane. Displacement — not the speed-decayed stuck timer — catches a bot
+		# oscillating in place.
+		if stalled >= BOT_NO_PROGRESS_LIMIT or bot.stranded > 1.5:
 			_respawn_bot(bot, i)
+
+
+func _track_bot_progress(i: int, bot: SandboxBot) -> void:
+	## Close one progress window: net planar displacement since the window
+	## opened counts as progress, anything less extends the stall streak.
+	while _bot_progress_pos.size() <= i:
+		_bot_progress_pos.append(bot.cart.global_position)
+	while _bot_no_progress.size() <= i:
+		_bot_no_progress.append(0)
+	var last: Vector3 = _bot_progress_pos[i]
+	var here: Vector3 = bot.cart.global_position
+	var moved: float = Vector2(here.x - last.x, here.z - last.z).length()
+	if moved < BOT_PROGRESS_MIN:
+		_bot_no_progress[i] = int(_bot_no_progress[i]) + 1
+	else:
+		_bot_no_progress[i] = 0
+	_bot_progress_pos[i] = here
 
 
 func _respawn_bot(bot: SandboxBot, index: int) -> void:
@@ -286,6 +329,10 @@ func _respawn_bot(bot: SandboxBot, index: int) -> void:
 	var cart: CartPlayer = bot.cart
 	if not is_instance_valid(cart):
 		return
+	if index < _bot_no_progress.size():
+		_bot_no_progress[index] = 0
+	if index < _bot_progress_pos.size():
+		_bot_progress_pos[index] = cart.global_position
 	if not _cart_slot_blocked(cart):
 		return
 	var home: Transform3D = _bot_homes[index] \
@@ -296,6 +343,8 @@ func _respawn_bot(bot: SandboxBot, index: int) -> void:
 	cart.set_spawn_transform(cart.global_transform)
 	cart.reset_for_respawn()
 	cart.velocity = Vector3.ZERO
+	if index < _bot_progress_pos.size():
+		_bot_progress_pos[index] = cart.global_position
 
 
 func _cart_slot_blocked(cart: CartPlayer) -> bool:
@@ -677,8 +726,33 @@ func _prune_props() -> void:
 	_prop_kick_until.clear()
 
 
+func _cart_idle_skip(peer_id: int, position: Vector3, yaw: float, velocity: Vector3) -> bool:
+	if Vector2(velocity.x, velocity.z).length() >= CART_IDLE_SPEED:
+		_cart_idle_ms[peer_id] = Time.get_ticks_msec()
+		_cart_idle_pos[peer_id] = position
+		_cart_idle_yaw[peer_id] = yaw
+		return false
+	var now: int = Time.get_ticks_msec()
+	var last_ms: int = int(_cart_idle_ms.get(peer_id, -100000))
+	var last_pos: Vector3 = _cart_idle_pos.get(peer_id, position)
+	var last_yaw: float = float(_cart_idle_yaw.get(peer_id, yaw))
+	if position.distance_squared_to(last_pos) > 0.0004 or absf(angle_difference(last_yaw, yaw)) > 0.01:
+		_cart_idle_ms[peer_id] = now
+		_cart_idle_pos[peer_id] = position
+		_cart_idle_yaw[peer_id] = yaw
+		return false
+	if now - last_ms < int(CART_IDLE_INTERVAL * 1000.0):
+		return true
+	_cart_idle_ms[peer_id] = now
+	_cart_idle_pos[peer_id] = position
+	_cart_idle_yaw[peer_id] = yaw
+	return false
+
+
 func _broadcast_cart_state(peer_id: int, position: Vector3, yaw: float,
 		sent_ms: int = 0, velocity: Vector3 = Vector3.ZERO) -> void:
+	if _cart_idle_skip(peer_id, position, yaw, velocity):
+		return
 	if sent_ms <= 0:
 		sent_ms = Time.get_ticks_msec()
 	for target: int in multiplayer.get_peers():
@@ -755,7 +829,8 @@ func _on_local_push_requested(prop: Node, direction: Vector3, kick: float) -> vo
 	# Predict locally so the box moves on this screen immediately; the host
 	# remains authoritative and the next snapshot corrects the pose.
 	_kick_prop(prop as RigidBody3D, direction, kick)
-	rpc_id(1, "_net_request_push", index, direction, kick)
+	if Network.is_scene_ready(1):
+		rpc_id(1, "_net_request_push", index, direction, kick)
 
 
 func _kick_prop(prop: RigidBody3D, direction: Vector3, kick: float) -> void:

@@ -38,7 +38,13 @@ $G --headless --path godot_project --script res://scripts/tools/preview_verify.g
 $G --headless --path godot_project --script res://scripts/tools/hud_smoke.gd
 $G --headless --path godot_project --script res://scripts/minigames/maps/stadium/stadium_smoke.gd
 $G --headless --path godot_project --script res://scripts/minigames/maps/dockyard/dockyard_selftest.gd
+$G --headless --path godot_project --script res://scripts/minigames/maps/dockyard/dockyard_smoke.gd
 $G --headless --path godot_project --script res://scripts/minigames/maps/glacier/glacier_selftest.gd
+$G --headless --path godot_project --script res://scripts/tools/vehicle_roster_smoke.gd
+$G --headless --path godot_project res://scripts/tools/mode_rules_smoke.tscn
+$G --headless --path godot_project res://scripts/tools/driving_smoke.tscn
+$G --headless --path godot_project --script res://scripts/tools/update_smoke.gd
+$G --headless --path godot_project res://scripts/tools/net_mac_smoke.tscn
 
 # build a release (PowerShell, from the repo root)
 powershell -ExecutionPolicy Bypass -File pi_setup\build_0_8_2.ps1

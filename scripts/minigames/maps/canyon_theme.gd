@@ -11,7 +11,7 @@ const AmbientWorld := preload("res://scripts/minigames/scenery/ambient_world.gd"
 const THEME_ID: String = "canyon"
 const HOLDER_NAME: String = "CanyonDressing"
 const META_STATS: String = "canyon_stats"
-const HOARDING_DENSITY: float = 0.22
+const HOARDING_DENSITY: float = 0.0
 
 
 static func build(race: Node3D, spline) -> void:
@@ -29,12 +29,14 @@ static func build(race: Node3D, spline) -> void:
 	TileKit.dress_track(race, track, {
 		"id": THEME_ID,
 		"hoarding_density": HOARDING_DENSITY,
+		"kerb_a": Color("f3dec0"),
+		"kerb_b": Color("c23a2c"),
 	})
 	var holder := Node3D.new()
 	holder.name = HOLDER_NAME
 	race.add_child(holder)
-	var stats: Dictionary = CanyonScenery.build(holder, track)
 	AmbientWorld.build_track(holder, track, THEME_ID)
+	var stats: Dictionary = CanyonScenery.build(holder, track)
 	race.set_meta(META_STATS, stats)
 	print("SUNSET CANYON: %d objects, %d draw nodes, %d barriers, %d mesas, %d arches, %d cliffs, %d palms, %d cacti" % [
 		int(stats.get("objects", 0)), int(stats.get("draws", 0)),
@@ -55,4 +57,10 @@ static func _apply_sunset_atmosphere(race: Node3D) -> void:
 		env.fog_light_color = Color("f6bf8a")
 		env.fog_density = 0.0014
 		env.fog_sky_affect = 0.22
+		if env.sky != null and env.sky.sky_material is ProceduralSkyMaterial:
+			var sky: ProceduralSkyMaterial = env.sky.sky_material as ProceduralSkyMaterial
+			sky.sky_top_color = Color("2f8fe0")
+			sky.sky_horizon_color = Color("ffcf9e")
+			sky.ground_horizon_color = Color("d99a5b")
+			sky.ground_bottom_color = Color("6b3f22")
 		world_env.environment = env

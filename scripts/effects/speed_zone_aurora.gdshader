@@ -1,19 +1,19 @@
 shader_type spatial;
-render_mode unshaded, blend_add, depth_draw_never, cull_disabled, shadows_disabled, fog_disabled;
+render_mode unshaded, depth_draw_never, cull_disabled, shadows_disabled, fog_disabled;
 
-// Cart Slop GP: holographic arcade aurora speed zone with 3 forward-rushing
-// chevron waves and glowing lateral rails. Unmistakable from 100 m away on
-// tarmac, dirt, and bright glacier ice.
+// Cart Slop GP: high-contrast arcade speed pad with a deep navy energy bed,
+// 3 forward-rushing neon cyan-gold chevron waves and glowing lateral rails.
+// Pops vividly on bright snow, desert sand, concrete, and dark asphalt.
 
-uniform vec4 deep_color : source_color = vec4(0.039, 0.133, 0.659, 1.0); // #0a22a8
-uniform vec4 glow_color : source_color = vec4(0.078, 0.722, 1.000, 1.0); // #14b8ff
-uniform vec4 crest_color : source_color = vec4(0.580, 1.000, 1.000, 1.0); // #94ffff
-uniform vec4 edge_color : source_color = vec4(0.847, 0.361, 1.000, 1.0); // #d85cff
-uniform float intensity : hint_range(0.0, 4.0) = 1.9;
-uniform float pulse_speed : hint_range(0.0, 4.0) = 0.85;
-uniform float drift_speed : hint_range(0.0, 1.0) = 0.12;
-uniform float curtain_speed : hint_range(0.0, 4.0) = 0.65;
-uniform float chevron_speed : hint_range(0.0, 6.0) = 2.15;
+uniform vec4 deep_color : source_color = vec4(0.035, 0.090, 0.380, 1.0); // deep electric navy
+uniform vec4 glow_color : source_color = vec4(0.060, 0.800, 1.000, 1.0); // vivid cyan
+uniform vec4 crest_color : source_color = vec4(1.000, 0.910, 0.360, 1.0); // solar gold crest
+uniform vec4 edge_color : source_color = vec4(0.240, 0.960, 0.920, 1.0); // aqua rail glow
+uniform float intensity : hint_range(0.0, 5.0) = 2.6;
+uniform float pulse_speed : hint_range(0.0, 4.0) = 1.05;
+uniform float drift_speed : hint_range(0.0, 1.0) = 0.16;
+uniform float curtain_speed : hint_range(0.0, 4.0) = 0.85;
+uniform float chevron_speed : hint_range(0.0, 6.0) = 2.65;
 
 float hash21(vec2 p) {
 	p = fract(p * vec2(123.34, 456.21));
@@ -64,44 +64,41 @@ void fragment() {
 	float flow = sin(forward_uv * 6.2 - t * 2.8 + low * 4.2) * 0.5 + 0.5;
 	float shimmer = 0.78 + 0.22 * flow;
 
-	// 3 soft, luminous forward-scrolling speed chevrons pointing toward -Z.
-	float lane_mask = (1.0 - smoothstep(0.64, 0.86, abs_x)) * end_fade;
-	float chev_coord = (forward_uv + abs_x * 0.28 + warp * 0.05) * 3.0 - t * chevron_speed;
+	// 3 crisp, luminous forward-scrolling speed chevrons pointing toward -Z.
+	float lane_mask = (1.0 - smoothstep(0.68, 0.88, abs_x)) * end_fade;
+	float chev_coord = (forward_uv + abs_x * 0.34 + warp * 0.03) * 3.0 - t * chevron_speed;
 	float chev_f = fract(chev_coord);
-	float chev_wake = smoothstep(0.14, 0.68, chev_f) * smoothstep(0.88, 0.68, chev_f);
-	float chev_core = exp(-pow((chev_f - 0.68) / 0.092, 2.0));
-	float chevron = (chev_wake * 0.68 + chev_core * 0.96) * lane_mask;
+	float chev_wake = smoothstep(0.16, 0.66, chev_f) * smoothstep(0.90, 0.66, chev_f);
+	float chev_core = exp(-pow((chev_f - 0.66) / 0.095, 2.0));
+	float chevron = (chev_wake * 0.75 + chev_core * 1.15) * lane_mask;
 
-	// Sleek holographic edge rails at x ~ 0.08 and x ~ 0.92 (abs(uv.x - 0.5) = 0.42).
-	float rail_dist = abs(abs(uv.x - 0.5) - 0.42);
-	float rail_pulse = 0.72 + 0.28 * sin(forward_uv * 10.0 - t * chevron_speed * 2.6);
-	float rail_core = exp(-pow(rail_dist / 0.015, 2.0)) * end_fade;
-	float rail_glow = exp(-pow(rail_dist / 0.045, 2.0)) * end_fade * rail_pulse;
-	float edge_aura = exp(-pow(rail_dist / 0.085, 2.0)) * end_fade;
+	// High-contrast holographic edge rails at x ~ 0.08 and x ~ 0.92.
+	float rail_dist = abs(abs(uv.x - 0.5) - 0.43);
+	float rail_pulse = 0.75 + 0.25 * sin(forward_uv * 11.0 - t * chevron_speed * 2.8);
+	float rail_core = exp(-pow(rail_dist / 0.017, 2.0)) * end_fade;
+	float rail_glow = exp(-pow(rail_dist / 0.048, 2.0)) * end_fade * rail_pulse;
+	float edge_aura = exp(-pow(rail_dist / 0.090, 2.0)) * end_fade;
 
-	// Compose electric indigo -> vivid cyan -> neon aqua-white + magenta edge shimmer.
-	vec3 plasma = mix(deep_color.rgb, glow_color.rgb, curtain);
-	plasma = mix(plasma, crest_color.rgb, pow(curtain, 3.0) * 0.52);
-	plasma = mix(plasma, edge_color.rgb, edge_aura * (0.42 + 0.26 * sin(t * 2.4 + forward_uv * 5.0)));
-	plasma *= shimmer;
+	// Compose deep navy energy bed + cyan plasma + golden-white chevrons.
+	vec3 bed = deep_color.rgb * (0.48 + 0.45 * curtain) * shimmer;
+	vec3 plasma = mix(bed, glow_color.rgb * 0.85, curtain * 0.55);
+	plasma = mix(plasma, edge_color.rgb, edge_aura * (0.45 + 0.25 * sin(t * 2.4 + forward_uv * 5.0)));
 
-	vec3 chev_col = mix(glow_color.rgb, crest_color.rgb, clamp(chev_core * 0.85 + 0.25, 0.0, 1.0));
-	vec3 rail_col = mix(glow_color.rgb, crest_color.rgb, clamp(rail_core * 0.9 + 0.2, 0.0, 1.0))
-			+ edge_color.rgb * edge_aura * 0.35;
+	vec3 chev_col = mix(glow_color.rgb, crest_color.rgb, clamp(chev_core * 0.92 + 0.18, 0.0, 1.0));
+	vec3 rail_col = mix(glow_color.rgb, crest_color.rgb, clamp(rail_core * 0.85 + 0.2, 0.0, 1.0))
+			+ edge_color.rgb * edge_aura * 0.38;
 
-	float surge_boost = max(intensity - 1.9, 0.0) * 0.55;
-	vec3 color = plasma * (0.65 + 0.45 * curtain)
-			+ chev_col * chevron * (1.28 + surge_boost)
-			+ rail_col * (rail_glow * 0.95 + rail_core * 1.15);
-	color *= (0.78 + 0.28 * clamp(intensity / 1.9, 0.0, 2.0));
+	float surge_boost = max(intensity - 2.6, 0.0) * 0.65;
+	vec3 color = plasma
+			+ chev_col * chevron * (1.35 + surge_boost)
+			+ rail_col * (rail_glow * 1.05 + rail_core * 1.35);
+	color *= (0.85 + 0.25 * clamp(intensity / 2.6, 0.0, 2.0));
 
-	float pulse = 0.92 + 0.08 * sin(t * pulse_speed * TAU);
-	float field_alpha = falloff * (0.30 + 0.52 * curtain)
-			+ chevron * 0.62
-			+ rail_glow * 0.58
-			+ rail_core * 0.42;
-	float alpha = field_alpha * (intensity / 1.9) * pulse;
+	float pulse = 0.94 + 0.06 * sin(t * pulse_speed * TAU);
+	float bed_alpha = falloff * (0.76 + 0.14 * curtain);
+	float fx_alpha = clamp(chevron * 0.85 + rail_glow * 0.65 + rail_core * 0.55, 0.0, 1.0);
+	float alpha = max(bed_alpha, fx_alpha) * clamp(intensity / 2.2, 0.6, 1.3) * pulse;
 
 	ALBEDO = color;
-	ALPHA = clamp(alpha, 0.0, 0.90);
+	ALPHA = clamp(alpha, 0.0, 0.95);
 }

@@ -53,46 +53,38 @@ const BACKDROP_LATERALS: Array[float] = [43.0, 48.5, 54.0, 59.5]
 const BRUSH_LATERALS: Array[float] = [12.6, 14.8, 17.0, 19.6, 23.0, 27.0]
 ## Ridge rings around the lap centre, in metres and metres between trees.
 const RIDGE_RINGS: Array[Dictionary] = [
-	{"radius": 152.0, "spacing": 13.0},
-	{"radius": 188.0, "spacing": 16.0},
-	{"radius": 224.0, "spacing": 19.0},
+	{"radius": 280.0, "spacing": 16.0},
+	{"radius": 340.0, "spacing": 19.0},
+	{"radius": 410.0, "spacing": 22.0},
 ]
 
-## Species tables. Height is the target tree height in metres and stretch widens
-## or narrows the model's authored plan silhouette: alpine stands are famously
-## uneven, so both ranges are wide. Weight is the relative share of the mix.
-## `_dark` stems are the only colour variation the kit offers - the nature kit's
-## materials are a baked atlas, so a per-instance tint would mean replacing the
-## textured material on every trunk.
 const SCREEN_SPECIES: Array[Dictionary] = [
-	{"model": "tree_pineTallD", "height_min": 13.0, "height_max": 25.0,
-		"stretch_min": 0.78, "stretch_max": 1.22, "weight": 5},
-	{"model": "tree_pineTallB", "height_min": 11.0, "height_max": 23.0,
-		"stretch_min": 0.80, "stretch_max": 1.28, "weight": 5},
-	{"model": "tree_pineTallA", "height_min": 8.0, "height_max": 18.0,
-		"stretch_min": 0.85, "stretch_max": 1.35, "weight": 4},
-	{"model": "tree_pineTallC", "height_min": 10.0, "height_max": 20.0,
-		"stretch_min": 0.85, "stretch_max": 1.30, "weight": 3},
-	{"model": "tree_cone", "height_min": 5.0, "height_max": 13.0,
-		"stretch_min": 0.90, "stretch_max": 1.45, "weight": 3},
-	{"model": "tree_cone_dark", "height_min": 5.0, "height_max": 13.0,
-		"stretch_min": 0.90, "stretch_max": 1.45, "weight": 2},
-	{"model": "tree_pineSmallA", "height_min": 4.0, "height_max": 10.0,
-		"stretch_min": 0.90, "stretch_max": 1.45, "weight": 2},
+	{"model": "tree_pineTallD", "height_min": 13.0, "height_max": 26.0,
+		"stretch_min": 0.78, "stretch_max": 1.24, "weight": 6},
+	{"model": "tree_pineTallB", "height_min": 11.0, "height_max": 24.0,
+		"stretch_min": 0.80, "stretch_max": 1.28, "weight": 6},
+	{"model": "tree_pineTallA", "height_min": 9.0, "height_max": 19.0,
+		"stretch_min": 0.85, "stretch_max": 1.35, "weight": 5},
+	{"model": "tree_pineTallC", "height_min": 10.0, "height_max": 21.0,
+		"stretch_min": 0.85, "stretch_max": 1.30, "weight": 4},
+	{"model": "tree_pineRoundA", "height_min": 8.0, "height_max": 16.0,
+		"stretch_min": 0.90, "stretch_max": 1.35, "weight": 4},
+	{"model": "tree_pineSmallA", "height_min": 4.5, "height_max": 10.5,
+		"stretch_min": 0.90, "stretch_max": 1.40, "weight": 3},
 ]
 const BACKDROP_SPECIES: Array[Dictionary] = [
-	{"model": "tree_pineTallD", "height_min": 16.0, "height_max": 30.0,
-		"stretch_min": 0.75, "stretch_max": 1.15, "weight": 4},
-	{"model": "tree_pineTallB", "height_min": 15.0, "height_max": 28.0,
-		"stretch_min": 0.78, "stretch_max": 1.20, "weight": 3},
-	{"model": "tree_default", "height_min": 12.0, "height_max": 22.0,
-		"stretch_min": 0.85, "stretch_max": 1.25, "weight": 1},
+	{"model": "tree_pineTallD", "height_min": 16.0, "height_max": 32.0,
+		"stretch_min": 0.75, "stretch_max": 1.15, "weight": 5},
+	{"model": "tree_pineTallB", "height_min": 15.0, "height_max": 29.0,
+		"stretch_min": 0.78, "stretch_max": 1.20, "weight": 4},
+	{"model": "tree_pineRoundA", "height_min": 12.0, "height_max": 24.0,
+		"stretch_min": 0.85, "stretch_max": 1.25, "weight": 2},
 ]
 const RIDGE_SPECIES: Array[Dictionary] = [
 	{"model": "tree_pineTallD", "height_min": 24.0, "height_max": 42.0,
-		"stretch_min": 0.85, "stretch_max": 1.15, "weight": 4},
-	{"model": "tree_cone", "height_min": 20.0, "height_max": 34.0,
-		"stretch_min": 0.90, "stretch_max": 1.20, "weight": 1},
+		"stretch_min": 0.85, "stretch_max": 1.15, "weight": 5},
+	{"model": "tree_pineTallB", "height_min": 20.0, "height_max": 36.0,
+		"stretch_min": 0.88, "stretch_max": 1.18, "weight": 2},
 ]
 ## Low cover for the fence line, then the taller edge plants for the treeline.
 const BRUSH_LOW: Array[Dictionary] = [
@@ -470,9 +462,9 @@ static func _sites(spline: RefCounted) -> Dictionary:
 		var road: Vector3 = site["road"] as Vector3
 		clearings.append({"at": at, "radius": STAND_CLEARING})
 		clearings.append({"at": road.lerp(at, 0.55), "radius": STAND_LANE})
-	# Open sightline and basin for the frozen turquoise alpine lake south of the valley straight
-	clearings.append({"at": Vector3(164.0, 0.0, 248.0), "radius": 38.0})
-	clearings.append({"at": Vector3(164.0, 0.0, 222.0), "radius": 24.0})
+	# Open sightline and basin for the dynamic frozen turquoise alpine lake
+	clearings.append({"at": Vector3(centre.x, 0.0, centre.z + 115.0), "radius": 46.0})
+	clearings.append({"at": Vector3(centre.x, 0.0, centre.z + 82.0), "radius": 28.0})
 	return {"centre": centre, "max_deck": max_deck, "clearings": clearings,
 		"hairpin": hairpin}
 

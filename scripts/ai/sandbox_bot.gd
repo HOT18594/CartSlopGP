@@ -23,8 +23,8 @@ const OBSTACLE_MASK: int = CollisionLayers.WORLD | CollisionLayers.SOLID_PROP \
 ## they must not read as a ramp in the ground probe.
 const GROUND_MASK: int = CollisionLayers.WORLD
 
-## Keep every destination and every steer target inside the perimeter wall.
-const PARK_LIMIT: float = 64.0
+## Keep every destination and every steer target inside the expanded perimeter wall.
+const PARK_LIMIT: float = 96.0
 ## Ground lookahead is re-probed at 10 Hz, not every tick.
 const PROBE_INTERVAL: float = 0.1
 const STUCK_SPEED: float = 1.5
@@ -80,12 +80,14 @@ const LOOP_STALL_TIME: float = 6.0
 const LOOP_SPEED_CAP: float = 0.68
 ## Paved link gate between the paddock and the loop's armco gap.
 const LOOP_GATE := Vector3(0.0, 0.0, -6.0)
-const LANE_X: float = -52.0
+const LANE_X: float = -56.0
 const LANE_HALF: float = 4.5
 const LANE_START_Z: float = 32.0
 const LANE_END_Z: float = -44.0
-const JUMP_ENTRY := Vector3(-52.0, 0.0, 34.0)
-const JUMP_LAUNCH := Vector3(-52.0, 0.0, -18.0)
+## Aligned to the physical kicker centre (sandbox_park JUMP_X = -56) so bots
+## launch straight down the lane instead of clipping the east curb.
+const JUMP_ENTRY := Vector3(-56.0, 0.0, 34.0)
+const JUMP_LAUNCH := Vector3(-56.0, 0.0, -18.0)
 ## Straight-line run-up from the far side of the lane, clear of the pit block.
 const JUMP_RUNUP := Vector3(-42.0, 0.0, 56.0)
 ## After the landing, shed speed before committing to the next line.
@@ -108,11 +110,16 @@ const ZONE_SKIDPAD: int = 2
 const ZONE_JUMP: int = 3
 const ZONE_DIRT: int = 4
 
-## Destination kinds: point, two-point ramp run, circuit and slalom.
+## Destination kinds: point, two-point ramp run, circuit, slalom and tag.
 const DEST_OPEN: int = 0
 const DEST_RAMP: int = 1
 const DEST_LOOP: int = 2
 const DEST_WEAVE: int = 3
+const DEST_TAG: int = 4
+## Tag distance: close enough to bump the chased kart (metres).
+const TAG_TOUCH_RADIUS: float = 4.0
+## Seconds between tag-target position refreshes.
+const TAG_REFRESH_TIME: float = 0.5
 ## How close (metres) counts as reaching a destination or a ramp entry.
 const ARRIVE_RADIUS: float = 6.5
 ## Slalom points sit closer together, so they need a tighter arrival test.
@@ -201,6 +208,7 @@ var _probe_timer: float = 0.0
 var _ground_grade: float = 0.0
 var _ramp_timer: float = 0.0
 var _cliff_timer: float = 0.0
+var _air_time: float = 0.0
 var _reverse_timer: float = 0.0
 var _reverse_steer: float = 0.0
 var _reverse_cooldown: float = 0.0
@@ -243,6 +251,14 @@ var _loop_laps: int = 0
 var _loop_active: bool = false
 var _loop_exit: bool = false
 var _weave_index: int = 0
+## Live traffic list from the latest tick; tag mode chases karts, not points.
+var _traffic: Array[CartPlayer] = []
+## Current tag-chase target (null when not chasing).
+var _tag_target: CartPlayer = null
+var _tag_refresh: float = 0.0
+## Tag chase is a Sandbox free-roam game. Deliver reuses this driver for
+## crate relays and must never chase karts instead of presents.
+var allow_tag: bool = false
 
 
 func setup(p_cart: CartPlayer, index: int, rng: RandomNumberGenerator,
@@ -285,6 +301,7 @@ func setup(p_cart: CartPlayer, index: int, rng: RandomNumberGenerator,
 func tick(delta: float, time: float, traffic: Array[CartPlayer]) -> void:
 	## Drive one physics frame. `traffic` is the scene's live cart list (the local
 	## player first, then every bot) and is reused, never rebuilt here.
+	_traffic = traffic
 	if not is_instance_valid(cart):
 		return
 	var xf: Transform3D = cart.global_transform
@@ -323,6 +340,16 @@ func tick(delta: float, time: float, traffic: Array[CartPlayer]) -> void:
 		stranded += delta
 	else:
 		stranded = 0.0
+	# ---- air-time timeout: a roof-perched bot never touches ground again ----
+	if grounded:
+		_air_time = 0.0
+	elif _dest_kind == DEST_RAMP and _dest_phase == 1:
+		_air_time = 0.0
+	else:
+		_air_time += delta
+		if _air_time > RESPAWN_STUCK:
+			respawn()
+			return
 	# ---- stuck recovery: reverse with opposite steer before the hard reset ----
 	if _reverse_timer > 0.0:
 		_reverse_timer -= delta
@@ -357,10 +384,12 @@ func tick(delta: float, time: float, traffic: Array[CartPlayer]) -> void:
 			_pick_destination()
 		cart.set_ai_controls(0.45, 0.0, 0.0, false)
 		return
-	# ---- destination: circuit, slalom, ramp run or open landmark ----
-	if _dest_index < 0:
+	# ---- destination: circuit, slalom, ramp run, tag chase or open landmark ----
+	if _dest_index < 0 and _dest_kind != DEST_TAG:
 		_pick_destination()
 	_dest_timer += delta
+	if _dest_kind == DEST_TAG:
+		_update_tag(pos, delta)
 	if _loop_active:
 		_update_loop(pos, delta)
 	else:
@@ -408,8 +437,9 @@ func tick(delta: float, time: float, traffic: Array[CartPlayer]) -> void:
 			target += side_dir * wander
 	var target_speed: float = cart.max_speed \
 		* lerpf(0.62, 0.92, clampf(skill, 0.0, 1.12))
-	if dest_dist < 20.0 and _dest_phase == 0:
-		# Arrive, do not orbit: shed speed well before the waypoint.
+	if dest_dist < 20.0 and _dest_phase == 0 and _dest_kind != DEST_TAG:
+		# Arrive, do not orbit: shed speed well before the waypoint. Tag mode
+		# keeps full pace so the chase ends in a bump, not a polite stop.
 		target_speed *= lerpf(0.42, 1.0, clampf(dest_dist / 20.0, 0.0, 1.0))
 	var space: PhysicsDirectSpaceState3D = cart.get_world_3d().direct_space_state
 	var avoid: float = 0.0
@@ -465,6 +495,9 @@ func tick(delta: float, time: float, traffic: Array[CartPlayer]) -> void:
 	# ---- separation from the player and the other bots ----
 	for other: CartPlayer in traffic:
 		if other == cart or not is_instance_valid(other):
+			continue
+		# Never dodge the tag-chase target: the whole point is to bump it.
+		if _dest_kind == DEST_TAG and other == _tag_target:
 			continue
 		var offset: Vector3 = other.global_position - pos
 		offset.y = 0.0
@@ -610,6 +643,7 @@ func respawn() -> void:
 	cart.velocity = Vector3.ZERO
 	stuck = 0.0
 	stranded = 0.0
+	_air_time = 0.0
 	_reverse_timer = 0.0
 	_reverse_cooldown = 0.0
 	_settle_timer = 0.0
@@ -875,6 +909,25 @@ func _zone_speed_cap(pos: Vector3) -> float:
 	return 1.0
 
 
+func _update_tag(pos: Vector3, delta: float) -> void:
+	## Chase the tagged kart: refresh the moving target twice a second and
+	## count a touch as a finished visit. The drive, avoid and recovery code
+	## below treats it like any other destination, so all limits still apply.
+	if _tag_target == null or not is_instance_valid(_tag_target):
+		_tag_target = null
+		_pick_destination()
+		return
+	_tag_refresh -= delta
+	if _tag_refresh <= 0.0:
+		_tag_refresh = TAG_REFRESH_TIME
+		_dest_target = _tag_target.global_position
+		_dest_entry = _dest_target
+	if pos.distance_to(_tag_target.global_position) < TAG_TOUCH_RADIUS:
+		destinations_visited += 1
+		_tag_target = null
+		_pick_destination()
+
+
 func _record_visit() -> void:
 	## Bounded diagnostics: one packed counter per destination and a bitmask for
 	## the distinct count, both updated only when a destination is reached.
@@ -891,6 +944,34 @@ func _record_visit() -> void:
 func _pick_destination() -> void:
 	## Weighted random facility pick with a per-bot appetite for the kickers. The
 	## previous destination is skipped so the bots keep moving between zones.
+	_tag_target = null
+	_via_active = false
+	if allow_tag and _traffic.size() > 1 and _rng.randf() < 0.16:
+		# Playful tag chase: pick the nearest other kart instead of a place.
+		# Same physics and speed rules; the drive code just aims at a kart.
+		var best: CartPlayer = null
+		var best_d: float = 70.0
+		for other: CartPlayer in _traffic:
+			if other == cart or not is_instance_valid(other):
+				continue
+			var d: float = _cart_position().distance_to(other.global_position)
+			if d < best_d:
+				best_d = d
+				best = other
+		if best != null:
+			_tag_target = best
+			_dest_kind = DEST_TAG
+			_dest_index = -1
+			_dest_phase = 0
+			_dest_timer = 0.0
+			_near_timer = 0.0
+			_tag_refresh = 0.0
+			_loop_active = false
+			_loop_exit = false
+			_ramp_launch = Vector3.ZERO
+			destination_name = "tag chase"
+			_update_tag(_cart_position(), 0.0)
+			return
 	var want_ramp: bool = _rng.randf() < _ramp_chance
 	var chosen: int = _weighted_pick(want_ramp, _dest_index)
 	if chosen < 0:

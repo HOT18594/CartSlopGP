@@ -6,10 +6,10 @@
 [ext_resource type="Font" path="res://assets/ui/fonts/Fredoka-Bold.ttf" id="5"]
 
 [sub_resource type="StyleBoxEmpty" id="empty_pill"]
-content_margin_left = 22.0
-content_margin_top = 8.0
-content_margin_right = 22.0
-content_margin_bottom = 8.0
+content_margin_left = 0.0
+content_margin_top = 0.0
+content_margin_right = 0.0
+content_margin_bottom = 0.0
 
 [node name="HUD" type="Control"]
 layout_mode = 3
@@ -29,10 +29,10 @@ layout_mode = 1
 anchors_preset = 5
 anchor_left = 0.5
 anchor_right = 0.5
-offset_left = -108.0
+offset_left = -124.0
 offset_top = 18.0
-offset_right = 108.0
-offset_bottom = 58.0
+offset_right = 124.0
+offset_bottom = 64.0
 grow_horizontal = 2
 mouse_filter = 2
 theme_override_styles/panel = SubResource("empty_pill")
@@ -62,12 +62,12 @@ offset_right = 316.0
 offset_bottom = -22.0
 grow_vertical = 0
 mouse_filter = 2
-theme_override_constants/separation = 4
+theme_override_constants/separation = 6
 
 [node name="BoostHeader" type="HBoxContainer" parent="BoostBox"]
 layout_mode = 2
 mouse_filter = 2
-theme_override_constants/separation = 8
+theme_override_constants/separation = 10
 
 [node name="BoostCaption" type="Label" parent="BoostBox/BoostHeader"]
 unique_name_in_owner = true

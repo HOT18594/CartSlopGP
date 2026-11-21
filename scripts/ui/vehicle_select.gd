@@ -278,7 +278,7 @@ func _make_stat_bar(color: Color) -> StatBar:
 
 func _build_stats() -> void:
 	_stats_box.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	_stats_box.add_theme_constant_override("separation", 6)
+	_stats_box.add_theme_constant_override("separation", 10)
 
 	for stat: Dictionary in STATS:
 		var key: String = str(stat["key"])
@@ -305,7 +305,7 @@ func _build_stats() -> void:
 
 func _build_racing_stats() -> void:
 	_stats_box.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	_stats_box.add_theme_constant_override("separation", 6)
+	_stats_box.add_theme_constant_override("separation", 10)
 
 	for stat: Dictionary in RACING_STATS:
 		var key: String = str(stat["key"])

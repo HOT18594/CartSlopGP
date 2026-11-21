@@ -139,18 +139,18 @@ func _build_ui() -> void:
 		UiKit.flat_card(Color(1.0, 1.0, 1.0, 0.38)))
 	main.add_child(card)
 	var margin := MarginContainer.new()
-	margin.add_theme_constant_override("margin_left", 20)
-	margin.add_theme_constant_override("margin_right", 20)
-	margin.add_theme_constant_override("margin_top", 14)
-	margin.add_theme_constant_override("margin_bottom", 14)
+	margin.add_theme_constant_override("margin_left", 26)
+	margin.add_theme_constant_override("margin_right", 26)
+	margin.add_theme_constant_override("margin_top", 20)
+	margin.add_theme_constant_override("margin_bottom", 20)
 	card.add_child(margin)
 	_content = VBoxContainer.new()
-	_content.add_theme_constant_override("separation", 12)
+	_content.add_theme_constant_override("separation", 16)
 	margin.add_child(_content)
 
 	for _section: String in SECTIONS:
 		var page := VBoxContainer.new()
-		page.add_theme_constant_override("separation", 10)
+		page.add_theme_constant_override("separation", 14)
 		page.size_flags_vertical = Control.SIZE_EXPAND_FILL
 		page.visible = false
 		_content.add_child(page)
@@ -341,6 +341,7 @@ func _describe(row: Control, control: Control, description: String) -> void:
 	row.mouse_entered.connect(_show_description.bind(description))
 	row.mouse_exited.connect(_clear_description)
 	control.focus_entered.connect(_show_description.bind(description))
+	control.focus_exited.connect(_clear_description)
 
 
 func _show_description(description: String) -> void:

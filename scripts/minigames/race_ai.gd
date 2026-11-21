@@ -491,6 +491,14 @@ func update(delta: float, node: CartPlayer, progress: float,
 		if _speed_at(progress + 14.0) > _speed_cap * 0.80 \
 				and _speed_at(progress + 28.0) > _speed_cap * 0.70:
 			boost = true
+	if _skill > 1.0 and not boost and speed > max_speed * 0.70 \
+			and brake <= 0.0 and node.boost_amount > 30.0:
+		# Map-aware jump boost: confident drivers hold boost over the launch
+		# ramp they are about to hit flat-out, stretching the jump.
+		if _spline != null and _spline.has_method("tile_at"):
+			var ahead_t: Variant = _spline.call("tile_at", progress + 12.0)
+			if ahead_t is Dictionary and str((ahead_t as Dictionary).get("tile", "")) == "J":
+				boost = true
 	if _skill > 0.9 and speed > max_speed * 0.62 and brake <= 0.0:
 		drift = absf(_curvature_at(progress + 5.0)) > 0.045 \
 			and target_speed > speed * 0.72

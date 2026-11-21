@@ -394,16 +394,18 @@ static func _is_straight(tile: Dictionary) -> bool:
 ## between two wall pieces cannot reach inside the corner arc, so the ring is
 ## unbroken and stays outside BARRIER_CLEARANCE everywhere.
 static func _barrier_ring(holder: Node3D, spline: RefCounted,
-		plan: Dictionary) -> int:
-	var total: float = maxf(float(plan["total"]), 1.0)
-	var seam: float = _seam_distance(spline, total)
-	var placed: int = 0
-	for side: float in [-1.0, 1.0]:
-		placed += TileKit.barrier_line(holder, spline, 0.0, seam, side,
-			BARRIER_KIND)
-		placed += TileKit.barrier_line(holder, spline, seam, total, side,
-			BARRIER_KIND)
-	return placed
+		_plan: Dictionary) -> int:
+	# Open-view stadium: selective guardrails only on elevated bridges/sky-decks
+	# and tight outer turns, plus an invisible far outer valley boundary.
+	var rails: int = TileKit.selective_safety_rails(holder, spline, {
+		"bridge_y": 1.6,
+		"curve_min": 0.030,
+		"rail_color": Color("9fb9d6"),
+		"accent_color": Color("e03c2b"),
+		"post_color": Color("33415c"),
+	})
+	TileKit.build_outer_soft_containment(holder, spline, 12.5)
+	return rails
 
 
 ## Lap distance of a straight tile boundary near the middle of the lap.

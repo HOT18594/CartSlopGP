@@ -20,28 +20,27 @@ extends RefCounted
 
 const GlacierProps := preload("res://scripts/minigames/maps/glacier/glacier_props.gd")
 const TileCatalog := preload("res://scripts/minigames/tiles/tile_catalog.gd")
+const TileKit := preload("res://scripts/minigames/tile_kit.gd")
+const LandscapeSculptor := preload("res://scripts/minigames/scenery/landscape_sculptor.gd")
+const PropBatch := preload("res://scripts/minigames/scenery/prop_batch.gd")
+const AmbientWorld := preload("res://scripts/minigames/scenery/ambient_world.gd")
 
 const TILE: float = TileCatalog.TILE_SIZE
 const NATURE: float = TileCatalog.NATURE_SCALE
 
-## Cliff faces hugging the road: just outside the barrier't outer face, so the
-## 5 m wide collider still starts well beyond BARRIER_CLEARANCE.
-const CLIFF_LATERAL: float = 18.6
-const CLIFF_STEP: float = 8.0
-## A deck lower than this is not worth a rock face.
-const CLIFF_MIN_DECK: float = 1.2
+const CLIFF_LATERAL: float = 25.5
+const CLIFF_STEP: float = 9.0
+const CLIFF_MIN_DECK: float = 1.6
 const MAX_CLIFFS: int = 44
 const CLIFF_MODELS: Array[String] = [
-	"cliff_large_rock", "cliff_block_rock", "cliff_half_rock",
+	"cliff_large_rock", "cliff_half_rock",
 ]
 
-## Boulder clusters further out.
-const OUTCROP_LATERAL: float = 21.5
+const OUTCROP_LATERAL: float = 30.5
 const OUTCROP_STEP: float = 19.0
 const MAX_OUTCROPS: int = 38
 const OUTCROP_MODELS: Array[String] = [
-	"rock_tallA", "rock_tallC", "rock_largeA", "rock_largeB", "rock_largeD",
-	"cliff_block_rock",
+	"rock_largeA", "rock_largeB", "rock_largeD",
 ]
 
 ## Distant ridges: rings of oversized blocks. They are outside the playable
@@ -132,7 +131,7 @@ static func _cliffs(holder: Node3D, spline: RefCounted) -> int:
 			var width: float = minf(footprint.x * 0.72, 4.8)
 			var base := Vector3(at.x, 0.0, at.z) \
 				+ Vector3.UP * GlacierProps.LAYER_FOOT
-			if GlacierProps.clearance(spline, base) < 18.5:
+			if GlacierProps.clearance(spline, base) < 17.0:
 				continue
 			if not GlacierProps.site_clear(holder, base, width * 0.5):
 				continue
@@ -181,7 +180,7 @@ static func _outcrops(holder: Node3D, spline: RefCounted) -> int:
 				rng.randf_range(-4.0, 4.0))
 			var base := Vector3(at.x + jitter.x, 0.0, at.z + jitter.z) \
 				+ Vector3.UP * GlacierProps.LAYER_FOOT
-			if GlacierProps.clearance(spline, base) < 19.8:
+			if GlacierProps.clearance(spline, base) < 21.0:
 				continue
 			var model: String = OUTCROP_MODELS[rng.randi_range(0,
 				OUTCROP_MODELS.size() - 1)]
@@ -213,42 +212,37 @@ static func _outcrops(holder: Node3D, spline: RefCounted) -> int:
 ## Three rings of oversized cliff blocks, so every camera angle has a mountain
 ## horizon behind the pine band.
 static func _ridges(holder: Node3D, spline: RefCounted) -> int:
-	var centre: Vector3 = _map_centre(spline)
+	# 360-degree jagged snow-capped alpine mountain ring around the pass,
+	# replacing flat background cuboids.
+	var bounds: Rect2 = _map_bounds(spline)
+	var centre := Vector3(bounds.position.x + bounds.size.x * 0.5, 0.0,
+		bounds.position.y + bounds.size.y * 0.5)
+	var span: float = maxf(bounds.size.x, bounds.size.y)
+	var batch := PropBatch.new()
 	var rng := RandomNumberGenerator.new()
 	rng.seed = SEED + 7
-	var entries: Array = []
-	var points: Array = []
-	var body: StaticBody3D = GlacierProps.body(holder, "GlacierRidges")
-	for ring: Dictionary in RIDGE_RINGS:
-		var radius: float = float(ring["radius"])
-		var count: int = int(ring["count"])
-		var height: float = float(ring["height"])
-		for index in count:
-			var angle: float = TAU * (float(index) + 0.5) / float(count) \
-				+ rng.randf_range(-0.10, 0.10)
-			var base := Vector3(centre.x + cos(angle) * radius, 0.0,
-				centre.z + sin(angle) * radius) + Vector3.UP * GlacierProps.LAYER_FOOT
-			if GlacierProps.clearance(spline, base) < 40.0:
-				continue
-			var model: String = RIDGE_MODELS[rng.randi_range(0,
-				RIDGE_MODELS.size() - 1)]
-			if not bool(TileCatalog.model_info(model, true).get("ok", false)):
-				model = "cliff_large_rock"
-			var scale: float = GlacierProps.scale_for_height(model,
-				height * rng.randf_range(0.8, 1.15), true)
-			var yaw: float = -angle + rng.randf_range(-0.35, 0.35)
-			entries.append({"model": model, "nature": true,
-				"transform": GlacierProps.fit(model, base, yaw, scale, true)})
-			points.append(base)
-			var plan: Vector2 = GlacierProps.footprint(model, scale, true)
-			var ridge_height: float = GlacierProps.height(model, scale, true)
-			GlacierProps.box(body, base + Vector3.UP * (ridge_height * 0.5),
-				Vector3(plan.x * 0.8, ridge_height, plan.y * 0.8))
-	if entries.is_empty():
-		body.free()
-		return 0
-	GlacierProps.batch(holder, entries, "GlacierRidges", true)
-	return entries.size()
+	var alpine_pal: Dictionary = {
+		"base": Color("3f6d9e"),
+		"rock": Color("4d8fc4"),
+		"cliff": Color("6fb6de"),
+		"snow_lo": Color("bfe6f7"),
+		"snow_hi": Color("e8f8ff"),
+	}
+	var count: int = 0
+	for i in 18:
+		var ang: float = TAU * float(i) / 18.0 + 0.08
+		var mrad: float = rng.randf_range(40.0, 62.0)
+		var rad: float = span * 0.56 + rng.randf_range(48.0, 125.0)
+		var pos := Vector3(centre.x + cos(ang) * rad, 0.0, centre.z + sin(ang) * rad)
+		# Mountain feet spread ~1.5x base radius: keep the whole mass clear
+		# of the road or a peak lands on the track and karts phase through it.
+		if GlacierProps.clearance(spline, pos) < mrad * 1.5 + 24.0:
+			continue
+		LandscapeSculptor.add_alpine_mountain(batch, pos,
+			mrad, rng.randf_range(52.0, 102.0), rng, alpine_pal)
+		count += 1
+	batch.flush_to(holder, "AlpineMountainHorizon", false)
+	return count
 
 
 # --------------------------------------------------------------------------
@@ -297,9 +291,9 @@ static func _ski_lift(holder: Node3D, spline: RefCounted) -> int:
 	for index in LIFT_PYLONS:
 		var offset: float = (float(index) - float(LIFT_PYLONS - 1) * 0.5) \
 			* LIFT_SPACING
-		var base: Vector3 = centre + forward * offset \
-			+ right * (chosen_offset * chosen) \
-			+ Vector3.UP * GlacierProps.LAYER_FOOT
+		var raw_base: Vector3 = centre + forward * offset \
+			+ right * (chosen_offset * chosen)
+		var base := Vector3(raw_base.x, GlacierProps.LAYER_FOOT, raw_base.z)
 		if GlacierProps.clearance(spline, base) < 24.0:
 			continue
 		if not GlacierProps.site_clear(holder, base, 1.2):
@@ -328,6 +322,19 @@ static func _ski_lift(holder: Node3D, spline: RefCounted) -> int:
 # --------------------------------------------------------------------------
 # helpers
 # --------------------------------------------------------------------------
+
+
+static func _map_bounds(spline: RefCounted) -> Rect2:
+	var total: float = maxf(float(spline.total_length), 1.0)
+	var lo := Vector2(INF, INF)
+	var hi := Vector2(-INF, -INF)
+	for i in 64:
+		var p: Vector3 = spline.sample(total * float(i) / 64.0)["position"]
+		lo.x = minf(lo.x, p.x)
+		lo.y = minf(lo.y, p.z)
+		hi.x = maxf(hi.x, p.x)
+		hi.y = maxf(hi.y, p.z)
+	return Rect2(lo, hi - lo)
 
 
 ## Centre of the lap's plan bounds, used to ring the ridges around the map.
@@ -366,37 +373,35 @@ static func _draw_estimate(stats: Dictionary) -> int:
 
 static func _alpine_lake_and_peaks(holder: Node3D,
 		spline: RefCounted) -> int:
+	var bounds: Rect2 = _map_bounds(spline)
+	var centre := Vector3(bounds.position.x + bounds.size.x * 0.5, 0.0,
+		bounds.position.y + bounds.size.y * 0.5)
 	var verts := PackedVector3Array()
 	var normals := PackedVector3Array()
 	var colors := PackedColorArray()
 
 	var snow_drift := Color("f2f7fc")
-	var snow_shade := Color("d6e4f0")
 	var ice_rim := Color("69d8ea")
 	var ice_mid := Color("39b8d4")
 	var ice_deep := Color("1f95b5")
 	var frost_line := Color("eefbff")
-	var granite := Color("63768a")
-	var granite_dark := Color("4c5c6e")
-	var snow_cap := Color("f7fbff")
 
-	# Two frozen turquoise alpine lakes: valley vista tarn + NE summit vista lake
+	# Two dynamically placed frozen turquoise alpine lakes
 	var lakes: Array[Dictionary] = [
-		{"pos": Vector3(164.0, 0.014, 248.0), "rx": 31.0, "rz": 21.0},
-		{"pos": Vector3(322.0, 0.014, -24.0), "rx": 36.0, "rz": 26.0},
+		{"pos": Vector3(centre.x + 12.0, 0.014, bounds.end.y + 52.0), "rx": 34.0, "rz": 22.0},
+		{"pos": Vector3(bounds.end.x + 64.0, 0.014, bounds.position.y - 30.0), "rx": 38.0, "rz": 26.0},
 	]
 	var count: int = 0
 	for lk: Dictionary in lakes:
 		var lp: Vector3 = lk["pos"]
 		var rx: float = float(lk["rx"])
 		var rz: float = float(lk["rz"])
-		if GlacierProps.clearance(spline, lp) < maxf(rx, rz) + 12.0:
+		if GlacierProps.clearance(spline, lp) < maxf(rx, rz) + 14.0:
 			continue
-		_gl_disc(verts, normals, colors, lp, rx + 4.5, rz + 4.0, 26, snow_drift)
+		_gl_disc(verts, normals, colors, lp, rx + 5.0, rz + 4.5, 26, snow_drift)
 		_gl_disc(verts, normals, colors, lp + Vector3.UP * 0.005, rx, rz, 26, ice_rim)
 		_gl_disc(verts, normals, colors, lp + Vector3.UP * 0.010, rx * 0.80, rz * 0.80, 24, ice_mid)
 		_gl_disc(verts, normals, colors, lp + Vector3.UP * 0.014, rx * 0.52, rz * 0.52, 20, ice_deep)
-		# Crisp cartoon frost fracture lines across the frozen lake sheet
 		for f_idx in 4:
 			var ang: float = 0.4 + float(f_idx) * 0.72
 			var dir := Vector3(cos(ang), 0.0, sin(ang))
@@ -406,70 +411,99 @@ static func _alpine_lake_and_peaks(holder: Node3D,
 			_gl_quad(verts, normals, colors, a - perp, a + perp, b + perp, b - perp, frost_line)
 		count += 1
 
-	# Ploughed snowbank berms along the lower valley pass & supporting the 1.5 m base road
+	if not verts.is_empty():
+		var mesh := ArrayMesh.new()
+		var arrays: Array = []
+		arrays.resize(Mesh.ARRAY_MAX)
+		arrays[Mesh.ARRAY_VERTEX] = verts
+		arrays[Mesh.ARRAY_NORMAL] = normals
+		arrays[Mesh.ARRAY_COLOR] = colors
+		mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+		var mat := StandardMaterial3D.new()
+		mat.vertex_color_use_as_albedo = true
+		mat.albedo_color = Color.WHITE
+		mat.roughness = 0.92
+		mat.metallic = 0.0
+		mat.specular_mode = BaseMaterial3D.SPECULAR_DISABLED
+		mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+		mesh.surface_set_material(0, mat)
+		var inst := MeshInstance3D.new()
+		inst.name = "GlacierAlpineLakes"
+		inst.mesh = mesh
+		inst.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		holder.add_child(inst)
+
+	# Watertight sculpted snow embankments, ice arches over valley straight, & ski chalets
+	var em_batch := PropBatch.new()
+	LandscapeSculptor.add_road_embankment(em_batch, spline, {
+		"road_half": TileKit.ROAD_HALF + 0.6,
+		"inner_offset": TileKit.ROAD_HALF + 0.55,
+		"outer_offset": TileKit.ROAD_HALF + 16.0,
+		"ground_y": 0.0,
+		"hill_rise": 1.6,
+		"shoulder": Color("d8ecf7"),
+		"slope": Color("8fc3e4"),
+		"cliff": Color("4a6a8c"),
+		"steps": 160,
+	})
+	var arch_body: StaticBody3D = GlacierProps.body(holder, "GlacierIceArches")
 	var total: float = maxf(float(spline.total_length), 1.0)
-	var steps: int = 84
-	for i in steps:
-		var s0: float = total * float(i) / float(steps)
-		var s1: float = total * float(i + 1) / float(steps)
-		var f0: Dictionary = spline.sample(s0)
-		var f1: Dictionary = spline.sample(s1)
-		var p0: Vector3 = f0["position"]
-		var p1: Vector3 = f1["position"]
-		var r0: Vector3 = f0["right"]
-		var r1: Vector3 = f1["right"]
-		for side: float in [-1.0, 1.0]:
-			var in0: Vector3 = p0 + r0 * (8.5 * side)
-			var in1: Vector3 = p1 + r1 * (8.5 * side)
-			var out0: Vector3 = p0 + r0 * (15.5 * side)
-			var out1: Vector3 = p1 + r1 * (15.5 * side)
-			in0.y = p0.y + 0.35
-			in1.y = p1.y + 0.35
-			out0.y = 0.01
-			out1.y = 0.01
-			_gl_quad(verts, normals, colors, in0, in1, out1, out0,
-				snow_drift if side < 0.0 else snow_shade)
-
-	# Jagged snow-capped alpine peaks framing the frozen lakes & summit horizon
-	var peaks: Array[Dictionary] = [
-		{"pos": Vector3(164.0, 0.0, 306.0), "r": 34.0, "h": 56.0},
-		{"pos": Vector3(84.0, 0.0, 286.0), "r": 28.0, "h": 46.0},
-		{"pos": Vector3(244.0, 0.0, 288.0), "r": 30.0, "h": 50.0},
-		{"pos": Vector3(348.0, 0.0, -56.0), "r": 38.0, "h": 64.0},
-		{"pos": Vector3(248.0, 0.0, -80.0), "r": 32.0, "h": 52.0},
-		{"pos": Vector3(-56.0, 0.0, 48.0), "r": 36.0, "h": 60.0},
-	]
-	for pk: Dictionary in peaks:
-		var pp: Vector3 = pk["pos"]
-		var rad: float = float(pk["r"])
-		var h: float = float(pk["h"])
-		if GlacierProps.clearance(spline, pp) < rad + 18.0:
+	var ice_arches_placed: Array[float] = []
+	for step_i in 48:
+		if ice_arches_placed.size() >= 2:
+			break
+		var arch_s: float = total * float(step_i) / 48.0
+		if arch_s < 80.0 or arch_s > total - 80.0:
 			continue
-		_gl_peak(verts, normals, colors, pp, rad, h, granite, granite_dark, snow_cap)
+		var too_close: bool = false
+		for prev_s: float in ice_arches_placed:
+			if absf(fposmod(arch_s - prev_s + total * 0.5, total) - total * 0.5) < total * 0.18:
+				too_close = true
+				break
+		if too_close:
+			continue
+		var af: Dictionary = spline.sample(arch_s)
+		var origin: Vector3 = af["position"]
+		if origin.y > 2.2 or absf(angle_difference(spline.yaw_at(arch_s + 12.0), spline.yaw_at(arch_s - 12.0))) > 0.12:
+			continue
+		var ar: Vector3 = (af["right"] as Vector3).normalized()
+		var afwd: Vector3 = (af["forward"] as Vector3).normalized()
+		var ayaw: float = atan2(-afwd.x, -afwd.z)
+		var left_pier: Vector3 = origin - ar * 15.6
+		var right_pier: Vector3 = origin + ar * 15.6
+		if GlacierProps.clearance(spline, left_pier) < TileKit.ROAD_HALF + 5.5 \
+				or GlacierProps.clearance(spline, right_pier) < TileKit.ROAD_HALF + 5.5:
+			continue
+		# Piers are 4.2 m wide on 5.6 m foundations: refuse sites where the
+		# avalanche fence band (16.4 m) or any solid already stands.
+		if not GlacierProps.site_clear(holder, Vector3(left_pier.x, 0.0, left_pier.z), 3.2) \
+				or not GlacierProps.site_clear(holder, Vector3(right_pier.x, 0.0, right_pier.z), 3.2):
+			continue
+		LandscapeSculptor.add_natural_arch(em_batch, arch_body, origin, ayaw,
+			27.6, 6.6, 3.8, Color("3fb9d8"), Color("b8ecfa"))
+		ice_arches_placed.append(arch_s)
 		count += 1
+	if arch_body.get_child_count() == 0:
+		arch_body.free()
 
-	if verts.is_empty():
-		return 0
-	var mesh := ArrayMesh.new()
-	var arrays: Array = []
-	arrays.resize(Mesh.ARRAY_MAX)
-	arrays[Mesh.ARRAY_VERTEX] = verts
-	arrays[Mesh.ARRAY_NORMAL] = normals
-	arrays[Mesh.ARRAY_COLOR] = colors
-	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
-	var mat := StandardMaterial3D.new()
-	mat.vertex_color_use_as_albedo = true
-	mat.albedo_color = Color.WHITE
-	mat.roughness = 0.92
-	mat.metallic = 0.0
-	mat.specular_mode = BaseMaterial3D.SPECULAR_DISABLED
-	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
-	mesh.surface_set_material(0, mat)
-	var inst := MeshInstance3D.new()
-	inst.name = "GlacierLakeAndSnowpeaks"
-	inst.mesh = mesh
-	inst.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	holder.add_child(inst)
+	for chalet_pos: Vector3 in [
+			Vector3(centre.x - 42.0, 0.0, bounds.end.y + 38.0),
+			Vector3(centre.x + 56.0, 0.0, bounds.end.y + 42.0),
+			Vector3(centre.x + 18.0, 0.0, centre.z + 18.0)]:
+		if GlacierProps.clearance(spline, chalet_pos) >= 24.0:
+			LandscapeSculptor.add_ski_chalet(em_batch, chalet_pos, 0.3, 1.25)
+			count += 1
+	em_batch.flush_to(holder, "GlacierSnowbanksAndChalets", true)
+
+	# Gliding animated ski-lift gondola cable line spanning the alpine bowl
+	var lift_a := Vector3(centre.x - 48.0, 0.0, centre.z - 22.0)
+	var lift_b := Vector3(centre.x + 48.0, 0.0, centre.z + 28.0)
+	if GlacierProps.clearance(spline, lift_a) >= 22.0 \
+			and GlacierProps.clearance(spline, lift_b) >= 22.0:
+		LandscapeSculptor.build_ski_lift_system(holder,
+			lift_a + Vector3.UP * 8.0, lift_b + Vector3.UP * 14.0,
+			4, 4, AmbientWorld.anim_of(holder))
+		count += 1
 	return count
 
 

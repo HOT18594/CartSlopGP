@@ -2201,10 +2201,10 @@ func reset_at(spawn_transform: Transform3D, restore_props: bool = false) -> void
 
 func reset_for_respawn() -> void:
 	## Clear tumble/boost/crash state without teleporting to the grid spawn.
-	## Preserves existing boost (minimum 25%) instead of refilling to 100%, so
-	## driving off-track cannot be exploited for a free full boost bar.
+	## Preserves the exact pre-reset boost amount, so a respawn never grants
+	## free boost.
 	var keep: Transform3D = global_transform
-	var preserved_boost: float = clampf(maxf(boost_amount, max_boost * 0.25), 0.0, max_boost)
+	var preserved_boost: float = clampf(boost_amount, 0.0, max_boost)
 	_reset_cart(false)
 	boost_amount = preserved_boost
 	global_transform = keep

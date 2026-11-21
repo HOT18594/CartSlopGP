@@ -52,23 +52,27 @@ extends Node3D
 const TileKit := preload("res://scripts/minigames/tile_kit.gd")
 const TileCatalog := preload("res://scripts/minigames/tiles/tile_catalog.gd")
 const CollisionLayers := preload("res://scripts/systems/collision_layers.gd")
+const LandscapeSculptor := preload("res://scripts/minigames/scenery/landscape_sculptor.gd")
+const PropBatch := preload("res://scripts/minigames/scenery/prop_batch.gd")
+const AmbientWorldScript := preload("res://scripts/minigames/scenery/ambient_world.gd")
 const BOOST_PAD_SCENE := preload("res://scenes/track/boost_pad.tscn")
 const PYLON_SCENE := preload("res://assets/models/kenney_racing_kit/Models/GLTF format/pylon.glb")
 const CRATE_SCENE := preload("res://assets/models/kenney_car-kit/Models/GLB format/box.glb")
 const TITLE_FONT_RES: Font = preload("res://assets/ui/fonts/LuckiestGuy-Regular.ttf")
 
-# Grid. TILE is the race maps' measured 16 m module.
-const TILE: float = TileCatalog.TILE_SIZE
+# Grid. Sandbox arena uses its 16 m module (independent of wider race circuits).
+const TILE: float = 16.0
 const HALF_TILE: float = TILE * 0.5
+const PARK_ROAD_HALF: float = TILE * TileCatalog.ROAD_LANE_UNITS * 0.5
 const ROAD_TOP: float = 0.045
 const ZONE_Y: float = 0.015
 const PAINT_Y: float = 0.03
 
-# World boundary: barriers stand outside the expanded +/-72 m perimeter.
-const FIELD: float = 80.0
+# World boundary: barriers stand outside the expanded +/-120 m perimeter.
+const FIELD: float = 128.0
 const BARRIER_IN: float = 8.0
 const PERIMETER_HALF: float = FIELD - BARRIER_IN
-const CORNER_RADIUS: float = 16.0
+const CORNER_RADIUS: float = 18.0
 const ENTRY_GAP: float = 16.0
 
 # Authored spawn: grid slot 5 (index 4), facing -Z. sandbox.tscn's SpawnPoint is
@@ -170,7 +174,7 @@ const GRID_HALF := Vector2(2.1, 2.7)
 # Clearance audit. A solid may never come inside SOLID_LIMIT of a racing
 # centreline; the kit's own run-off furniture (tyre stacks at ROAD_HALF + 2 m)
 # is reported separately as "tight" rather than as a failure.
-const SOLID_LIMIT: float = TileCatalog.ROAD_HALF + 1.0
+const SOLID_LIMIT: float = PARK_ROAD_HALF + 1.0
 ## Bodies that ARE the racing surface, so they are not audited against it.
 const SOLID_SKIP: Array[String] = [
 	"GroundPlane", "LoopRoadCollision", "JumpLaneCollision",
@@ -473,9 +477,11 @@ func _ready() -> void:
 	_zone_signs()
 	_pushable_props()
 	_grip_zone()
+	_expanded_zones()
 	_commit_layers()
 	_audit_facility()
-	preload("res://scripts/minigames/scenery/ambient_world.gd").build_arena(self, "sandbox", 112.0)
+	AmbientWorldScript.build_arena(self, "sandbox", 132.0)
+	_scenic_horizon()
 	if OS.get_environment("CART_DEBUG_PARK") == "1":
 		_report_stats()
 		_bot_probe.call_deferred()
@@ -500,13 +506,13 @@ func _make_vertex_material() -> StandardMaterial3D:
 ## This is the one ground mesh and the one flat collision plane.
 func _ground_plane() -> void:
 	var cell: float = 8.0
-	for ix in 28:
-		for iz in 28:
+	for ix in 34:
+		for iz in 34:
 			var tint: Color = GRASS_A if (ix + iz) % 2 == 0 else GRASS_B
-			_ground.rect(Rect2(-112.0 + float(ix) * cell,
-				-112.0 + float(iz) * cell, cell, cell), 0.0, tint)
-	var outer: float = 600.0
-	var inner: float = 112.0
+			_ground.rect(Rect2(-136.0 + float(ix) * cell,
+				-136.0 + float(iz) * cell, cell, cell), 0.0, tint)
+	var outer: float = 900.0
+	var inner: float = 136.0
 	_ground.rect(Rect2(-outer, -outer, outer * 2.0, outer - inner), -0.02,
 		OUTFIELD)
 	_ground.rect(Rect2(-outer, inner, outer * 2.0, outer - inner), -0.02,
@@ -591,8 +597,8 @@ func _zone_paint() -> void:
 		PAINT_CREAM)
 	_paint.line(Vector2(8.0, 24.0), Vector2(12.0, 24.0), 0.4, PAINT_Y,
 		PAINT_CREAM)
-	# Dirt service lane through the perimeter gap in the south fence.
-	_paint.rect(Rect2(16.0, 68.0, 16.0, 44.0), ZONE_Y + 0.002, DIRT_TAN)
+	# Dirt service lane through the perimeter gap in the south fence (out to +/-120 m gate).
+	_paint.rect(Rect2(16.0, 68.0, 16.0, 80.0), ZONE_Y + 0.002, DIRT_TAN)
 	_paint.line(Vector2(16.8, 68.0), Vector2(16.8, 112.0), 0.3, PAINT_Y,
 		PAINT_CREAM)
 	_paint.line(Vector2(31.2, 68.0), Vector2(31.2, 112.0), 0.3, PAINT_Y,
@@ -1115,7 +1121,7 @@ func _loop_start_band() -> void:
 	var pa: Vector3 = after["position"]
 	var rb: Vector3 = before["right"]
 	var ra: Vector3 = after["right"]
-	var half: float = TileCatalog.ROAD_HALF
+	var half: float = PARK_ROAD_HALF
 	for i in 12:
 		var t0: float = -half + 2.0 * half * float(i) / 12.0
 		var t1: float = -half + 2.0 * half * float(i + 1) / 12.0
@@ -1138,7 +1144,7 @@ func _loop_barrier() -> void:
 	var half_gap: float = LOOP_GATE_WIDTH * 0.5
 	_loop_barriers = _holder("LoopBarriers")
 	TileKit.barrier_line(_loop_barriers, _loop_spline, gate + half_gap,
-		gate - half_gap, 1.0, "barrierRed")
+		gate - half_gap, 1.0, "barrierRed", TileKit.SANDBOX_BARRIER_CLEARANCE)
 
 
 ## Cartoon tyre stacks, backstretch speed-trap gantry + boost pad, north
@@ -1200,17 +1206,18 @@ func _jump_lane() -> void:
 	var batches: Dictionary = {}
 	for piece: Dictionary in JUMP_PIECES:
 		var model: String = str(piece["model"])
-		var scale := Vector3(TILE, TILE * float(piece["yscale"]), TILE)
 		var at := Vector3(JUMP_X, 0.0, float(piece["z"]))
-		var xform: Transform3D = _fit_road(model, at, 0.0, scale,
-			bool(piece["flat"]))
-		if not batches.has(model):
-			batches[model] = []
-		(batches[model] as Array).append(xform)
 		if bool(piece["flat"]):
+			var scale := Vector3(TILE, TILE * float(piece["yscale"]), TILE)
+			var xform: Transform3D = _fit_road(model, at, 0.0, scale, true)
+			if not batches.has(model):
+				batches[model] = []
+			(batches[model] as Array).append(xform)
 			_add_road_box(body, at, Vector3(TILE, 0.3, TILE))
 		else:
-			_add_ramp_collider(body, at, scale, model)
+			var ramp_h: float = 2.65 if float(piece["z"]) > 0.0 else 3.35
+			_add_solid_stunt_ramp(body, at, 0.0, PARK_ROAD_HALF * 2.0,
+				15.6, ramp_h, TARMAC, PAD_WALL, PAINT_ORANGE, PAINT_YELLOW)
 	for model: String in batches:
 		_batch_road("JumpLane", model, batches[model] as Array)
 	_spawn_boost_pad("JumpBoostApproach",
@@ -1302,7 +1309,7 @@ func _barrier_line() -> void:
 		side = -1.0
 	_perimeter_barriers = _holder("PerimeterBarriers")
 	TileKit.barrier_line(_perimeter_barriers, _perimeter_spline, gap + half_gap,
-		gap - half_gap, side, "barrierRed")
+		gap - half_gap, side, "barrierRed", TileKit.SANDBOX_BARRIER_CLEARANCE)
 
 
 ## One grouping node for a barrier run, so the clearance audit can measure that
@@ -1347,12 +1354,14 @@ func _grandstand() -> void:
 		0.012)
 
 
-## Six tall floodlights on the grass, clear of tarmac, drift bowl and jump lane.
+## Tall stadium floodlights around the expanded +/-120 m test park.
 func _lights() -> void:
 	TileKit.lights(self, [
-		Vector3(-66.0, 0.0, 64.0), Vector3(64.0, 0.0, 62.0),
-		Vector3(64.0, 0.0, -14.0), Vector3(-66.0, 0.0, -64.0),
-		Vector3(-40.0, 0.0, 64.0), Vector3(44.0, 0.0, -64.0),
+		Vector3(-114.0, 0.0, 112.0), Vector3(114.0, 0.0, 112.0),
+		Vector3(114.0, 0.0, -112.0), Vector3(-114.0, 0.0, -112.0),
+		Vector3(-72.0, 0.0, -114.0), Vector3(72.0, 0.0, -114.0),
+		Vector3(-74.0, 0.0, 112.0), Vector3(114.0, 0.0, -24.0),
+		Vector3(56.0, 0.0, -64.0), Vector3(-114.0, 0.0, 12.0),
 	])
 
 
@@ -1433,24 +1442,27 @@ func _cone_row(body: StaticBody3D, from: Vector2, to: Vector2,
 	_batch_road("YardCones", "pylon", transforms)
 
 
-## Cartoon tree line outside the expanded 80 m barriers, plus east grass clumps.
+## Cartoon tree ring framing the expanded +/-120 m park, plus safe corner groves.
 func _trees() -> void:
 	var spots: Array = []
-	for x: float in [-104.0, -88.0, -56.0, -24.0, 8.0, 40.0, 72.0, 104.0]:
-		# The dirt service lane leaves the south fence at x = 24; keep it clear.
-		if x > 8.0 and x < 40.0:
-			spots.append(Vector3(x, 0.0, -88.0))
-			spots.append(Vector3(x, 0.0, -104.0))
-			continue
-		spots.append(Vector3(x, 0.0, 88.0))
-		spots.append(Vector3(x, 0.0, 104.0))
-		spots.append(Vector3(x, 0.0, -88.0))
-		spots.append(Vector3(x, 0.0, -104.0))
-	for z: float in [-72.0, -40.0, -8.0, 24.0, 56.0]:
-		spots.append(Vector3(-92.0, 0.0, z))
-		spots.append(Vector3(92.0, 0.0, z))
-	for spot: Vector3 in [Vector3(56.0, 0.0, -56.0), Vector3(56.0, 0.0, -24.0),
-			Vector3(56.0, 0.0, 56.0)]:
+	for x: float in [-148.0, -116.0, -84.0, -52.0, -20.0, 52.0, 84.0, 116.0, 148.0]:
+		spots.append(Vector3(x, 0.0, 132.0))
+		spots.append(Vector3(x, 0.0, 148.0))
+		spots.append(Vector3(x, 0.0, -132.0))
+		spots.append(Vector3(x, 0.0, -148.0))
+	for x_north: float in [-4.0, 12.0, 28.0, 40.0]:
+		spots.append(Vector3(x_north, 0.0, -132.0))
+		spots.append(Vector3(x_north, 0.0, -148.0))
+	for z: float in [-112.0, -80.0, -48.0, -16.0, 16.0, 48.0, 80.0, 112.0]:
+		spots.append(Vector3(-134.0, 0.0, z))
+		spots.append(Vector3(134.0, 0.0, z))
+		spots.append(Vector3(-150.0, 0.0, z))
+		spots.append(Vector3(150.0, 0.0, z))
+	for spot: Vector3 in [
+		Vector3(-102.0, 0.0, -104.0), Vector3(-84.0, 0.0, -108.0),
+		Vector3(106.0, 0.0, 96.0), Vector3(84.0, 0.0, 102.0),
+		Vector3(56.0, 0.0, -56.0), Vector3(56.0, 0.0, 62.0),
+	]:
 		spots.append(spot)
 	TileKit.trees(self, spots, _loop_spline)
 
@@ -1973,33 +1985,258 @@ func _add_box_shape(body: StaticBody3D, xform: Transform3D,
 	body.add_child(collision)
 
 
-## Adds the convex wedge of a roadRamp piece, rising toward -Z.
-func _add_ramp_collider(body: StaticBody3D, at: Vector3, scale: Vector3,
-		model: String) -> void:
-	var info: Dictionary = TileCatalog.model_info(model)
-	if not bool(info.get("ok", false)):
-		return
-	var aabb: AABB = info["aabb"]
-	var half_len: float = aabb.size.z * scale.z * 0.5
-	var half_w: float = aabb.size.x * scale.x * 0.5 - 0.2
-	var lip: float = ROAD_TOP + (aabb.end.y - (aabb.position.y + 0.02)) \
-		* scale.y
-	var z_toe: float = at.z + half_len
-	var z_lip: float = at.z - half_len
+## Solid-base sculpted stunt ramp (local -Z rises to `height`): builds both the
+## SolidBuf mesh down to y = 0 and a 1:1 matching ConvexPolygonShape3D (zero
+## hollow underside or phantom rail overhang).
+func _add_solid_stunt_ramp(body: StaticBody3D, at: Vector3, yaw: float,
+		width: float, length: float, height: float, deck_col: Color,
+		side_col: Color, curb_col: Color, lip_col: Color) -> void:
+	var xf := Transform3D(Basis(Vector3.UP, yaw), at)
+	var hw: float = width * 0.5
+	var hl: float = length * 0.5
+	var curb_w: float = minf(0.55, hw * 0.22)
+	var iw: float = hw - curb_w
+	var h: float = maxf(height, ROAD_TOP + 0.15)
+	var crest_len: float = minf(1.35, length * 0.22)
+	var z_split: float = -hl + crest_len
+	var t_split: float = (hl - z_split) / maxf(length, 0.1)
+	var h_split: float = lerpf(ROAD_TOP, h, t_split)
+
+	var p_toe_ol := xf * Vector3(-hw, ROAD_TOP, hl)
+	var p_toe_il := xf * Vector3(-iw, ROAD_TOP, hl)
+	var p_toe_ir := xf * Vector3(iw, ROAD_TOP, hl)
+	var p_toe_or := xf * Vector3(hw, ROAD_TOP, hl)
+
+	var p_spl_ol := xf * Vector3(-hw, h_split, z_split)
+	var p_spl_il := xf * Vector3(-iw, h_split, z_split)
+	var p_spl_ir := xf * Vector3(iw, h_split, z_split)
+	var p_spl_or := xf * Vector3(hw, h_split, z_split)
+
+	var p_lip_ol := xf * Vector3(-hw, h, -hl)
+	var p_lip_il := xf * Vector3(-iw, h, -hl)
+	var p_lip_ir := xf * Vector3(iw, h, -hl)
+	var p_lip_or := xf * Vector3(hw, h, -hl)
+
+	var b_toe_l := xf * Vector3(-hw, 0.0, hl)
+	var b_toe_r := xf * Vector3(hw, 0.0, hl)
+	var b_lip_l := xf * Vector3(-hw, 0.0, -hl)
+	var b_lip_r := xf * Vector3(hw, 0.0, -hl)
+
+	var slope_out: Vector3 = xf.basis * Vector3(0.0, length, h - ROAD_TOP).normalized()
+	# Lower slope: tarmac deck + painted edge curbs.
+	_solid.face(p_toe_il, p_toe_ir, p_spl_ir, p_spl_il, deck_col, slope_out)
+	_solid.face(p_toe_ol, p_toe_il, p_spl_il, p_spl_ol, curb_col, slope_out)
+	_solid.face(p_toe_ir, p_toe_or, p_spl_or, p_spl_ir, curb_col, slope_out)
+	# Crest launch strip: checkered high-visibility band flush on the top slope.
+	_solid.face(p_spl_ol, p_spl_il, p_lip_il, p_lip_ol, curb_col, slope_out)
+	_solid.face(p_spl_ir, p_spl_or, p_lip_or, p_lip_ir, curb_col, slope_out)
+	var cells: int = 6
+	for c in cells:
+		var tx0: float = -iw + (iw * 2.0) * (float(c) / float(cells))
+		var tx1: float = -iw + (iw * 2.0) * (float(c + 1) / float(cells))
+		var c_col: Color = lip_col if c % 2 == 0 else PAINT_DARK
+		_solid.face(
+			xf * Vector3(tx0, h_split, z_split),
+			xf * Vector3(tx1, h_split, z_split),
+			xf * Vector3(tx1, h, -hl),
+			xf * Vector3(tx0, h, -hl),
+			c_col, slope_out)
+
+	# Watertight vertical base walls down to y = 0.
+	_solid.face(p_lip_ol, p_lip_or, b_lip_r, b_lip_l, side_col,
+		xf.basis * Vector3.FORWARD)
+	_solid.face(p_toe_or, p_toe_ol, b_toe_l, b_toe_r, side_col,
+		xf.basis * Vector3.BACK)
+	_solid.face(p_toe_ol, p_lip_ol, b_lip_l, b_toe_l, side_col.darkened(0.08),
+		xf.basis * Vector3.LEFT)
+	_solid.face(p_lip_or, p_toe_or, b_toe_r, b_lip_r, side_col.darkened(0.08),
+		xf.basis * Vector3.RIGHT)
+
 	var shape := ConvexPolygonShape3D.new()
 	shape.points = PackedVector3Array([
-		Vector3(at.x - half_w, ROAD_TOP, z_toe),
-		Vector3(at.x + half_w, ROAD_TOP, z_toe),
-		Vector3(at.x - half_w, 0.0, z_toe),
-		Vector3(at.x + half_w, 0.0, z_toe),
-		Vector3(at.x + half_w, lip, z_lip),
-		Vector3(at.x - half_w, lip, z_lip),
-		Vector3(at.x - half_w, 0.0, z_lip),
-		Vector3(at.x + half_w, 0.0, z_lip),
+		p_toe_ol, p_toe_or, b_toe_l, b_toe_r,
+		p_lip_or, p_lip_ol, b_lip_l, b_lip_r,
 	])
 	var collision := CollisionShape3D.new()
 	collision.shape = shape
 	body.add_child(collision)
+
+
+## Appends a solid raised tabletop deck (visible top + painted border + four
+## vertical skirts to y = 0 + matching BoxShape3D).
+func _add_solid_deck(body: StaticBody3D, center: Vector3, size_xz: Vector2,
+		height: float, top_col: Color, rim_col: Color, wall_col: Color) -> void:
+	var hx: float = size_xz.x * 0.5
+	var hz: float = size_xz.y * 0.5
+	var rim: float = minf(0.85, minf(hx, hz) * 0.25)
+	var x0: float = center.x - hx
+	var x1: float = center.x + hx
+	var z0: float = center.z - hz
+	var z1: float = center.z + hz
+	var ix0: float = x0 + rim
+	var ix1: float = x1 - rim
+	var iz0: float = z0 + rim
+	var iz1: float = z1 - rim
+	# Top deck (inner + 4 flat rim strips, zero overlap).
+	_solid.face(Vector3(ix0, height, iz1), Vector3(ix1, height, iz1),
+		Vector3(ix1, height, iz0), Vector3(ix0, height, iz0), top_col, Vector3.UP)
+	_solid.face(Vector3(x0, height, iz0), Vector3(x1, height, iz0),
+		Vector3(x1, height, z0), Vector3(x0, height, z0), rim_col, Vector3.UP)
+	_solid.face(Vector3(x0, height, z1), Vector3(x1, height, z1),
+		Vector3(x1, height, iz1), Vector3(x0, height, iz1), rim_col, Vector3.UP)
+	_solid.face(Vector3(x0, height, iz1), Vector3(ix0, height, iz1),
+		Vector3(ix0, height, iz0), Vector3(x0, height, iz0), rim_col, Vector3.UP)
+	_solid.face(Vector3(ix1, height, iz1), Vector3(x1, height, iz1),
+		Vector3(x1, height, iz0), Vector3(ix1, height, iz0), rim_col, Vector3.UP)
+	# Four vertical walls to y = 0.
+	_solid.face(Vector3(x0, height, z0), Vector3(x1, height, z0),
+		Vector3(x1, 0.0, z0), Vector3(x0, 0.0, z0), wall_col, Vector3.FORWARD)
+	_solid.face(Vector3(x1, height, z1), Vector3(x0, height, z1),
+		Vector3(x0, 0.0, z1), Vector3(x1, 0.0, z1), wall_col, Vector3.BACK)
+	_solid.face(Vector3(x0, height, z1), Vector3(x0, height, z0),
+		Vector3(x0, 0.0, z0), Vector3(x0, 0.0, z1), wall_col.darkened(0.08), Vector3.LEFT)
+	_solid.face(Vector3(x1, height, z0), Vector3(x1, height, z1),
+		Vector3(x1, 0.0, z1), Vector3(x1, 0.0, z0), wall_col.darkened(0.08), Vector3.RIGHT)
+	_add_box_shape(body, Transform3D(Basis.IDENTITY,
+		Vector3(center.x, height * 0.5, center.z)),
+		Vector3(size_xz.x, height, size_xz.y))
+
+
+## Expanded playground zones outside the core +/-72 m bot zones:
+## North Mega Stunt Pyramid, East Lakeside Pond & Tabletop Run, and SW Funbox Park.
+func _expanded_zones() -> void:
+	var body := _static_body("ExpandedStuntBodies")
+	# 1. North Mega Stunt Pyramid & Tabletop Plaza (z in [-112..-76], x in [-26..26])
+	_paint.rect(Rect2(-26.0, -114.0, 52.0, 36.0), ZONE_Y + 0.002, TARMAC)
+	_paint.outline(Rect2(-25.2, -113.2, 50.4, 34.4), 0.55, PAINT_Y, PAINT_YELLOW)
+	_add_solid_deck(body, Vector3(0.0, 0.0, -96.0), Vector2(14.0, 12.0), 2.7,
+		TARMAC, PAINT_YELLOW, PAD_WALL)
+	_add_solid_stunt_ramp(body, Vector3(0.0, 0.0, -84.0), 0.0, 13.0, 12.0, 2.7,
+		TARMAC, PAD_WALL, PAINT_BLUE, PAINT_YELLOW)
+	_add_solid_stunt_ramp(body, Vector3(0.0, 0.0, -108.0), PI, 13.0, 12.0, 2.7,
+		TARMAC, PAD_WALL, PAINT_BLUE, PAINT_YELLOW)
+	_add_solid_stunt_ramp(body, Vector3(-13.0, 0.0, -96.0), -PI * 0.5, 11.2, 12.0, 2.7,
+		TARMAC, PAD_WALL, PAINT_PINK, PAINT_YELLOW)
+	_add_solid_stunt_ramp(body, Vector3(13.0, 0.0, -96.0), PI * 0.5, 11.2, 12.0, 2.7,
+		TARMAC, PAD_WALL, PAINT_PINK, PAINT_YELLOW)
+	_spawn_boost_pad("NorthPlazaBoost", Vector3(0.0, ROAD_TOP + 0.02, -74.0), 0.0)
+	_billboard_label("STUNT PLAZA", Vector3(-28.0, 0.0, -82.0), 0.35)
+
+	# 2. East Scenic Duck Pond & Lakeside Jump Causeway (x in [76..114])
+	_paint.rect(Rect2(80.0, -68.0, 22.0, 68.0), ZONE_Y + 0.002, TARMAC)
+	_paint.outline(Rect2(80.8, -67.2, 20.4, 66.4), 0.45, PAINT_Y, PAINT_CREAM)
+	_add_solid_stunt_ramp(body, Vector3(91.0, 0.0, -24.0), 0.0, 11.5, 12.0, 2.3,
+		TARMAC, PAD_WALL, PAINT_BLUE, PAINT_YELLOW)
+	_add_solid_stunt_ramp(body, Vector3(91.0, 0.0, -48.0), PI, 11.5, 12.0, 2.3,
+		TARMAC, PAD_WALL, PAINT_ORANGE, PAINT_YELLOW)
+	_spawn_boost_pad("EastCausewayBoost", Vector3(91.0, ROAD_TOP + 0.02, -10.0), 0.0)
+
+	# Scenic Duck Pond south-east of skidpad (sandy rim + turquoise water + pier).
+	_paint.rect(Rect2(78.0, 8.0, 32.0, 42.0), ZONE_Y + 0.001, DIRT_TAN)
+	var pond := Node3D.new()
+	pond.name = "EastDuckPond"
+	add_child(pond)
+	var pond_batch := PropBatch.new()
+	pond_batch.add_cylinder(Transform3D(Basis.IDENTITY, Vector3(94.0, 0.025, 29.0)),
+		12.5, 0.03, 18, Color("29b8cf"))
+	pond_batch.add_cylinder(Transform3D(Basis.IDENTITY, Vector3(94.0, 0.038, 29.0)),
+		6.8, 0.02, 14, Color("4ee0f0"))
+	# Decorative wooden boardwalk dock overhanging west bank (non-blocking flush height).
+	pond_batch.add_box(Transform3D(Basis.IDENTITY, Vector3(82.5, 0.14, 29.0)),
+		Vector3(6.8, 0.24, 4.2), Color("b57b4a"))
+	for pz: float in [27.3, 30.7]:
+		pond_batch.add_cylinder(Transform3D(Basis.IDENTITY, Vector3(85.4, 0.48, pz)),
+			0.22, 0.95, 6, Color("8a5832"))
+	# Shore boulders around east bank.
+	for i in 7:
+		var ang: float = lerpf(-0.95, 0.95, float(i) / 6.0)
+		var rx: float = 94.0 + cos(ang) * 13.8
+		var rz: float = 29.0 + sin(ang) * 14.5
+		var rad: float = 1.15 + float(i % 3) * 0.45
+		pond_batch.add_box(Transform3D(Basis(Vector3.UP, ang * 1.3),
+			Vector3(rx, rad * 0.35, rz)),
+			Vector3(rad * 1.4, rad * 0.85, rad * 1.1), Color("8c939e"))
+	pond_batch.flush_to(pond, "PondMesh", false, _vertex_mat)
+	for i in 4:
+		var bang: float = -0.6 + float(i) * 0.4
+		_add_box_shape(body, Transform3D(Basis.IDENTITY,
+			Vector3(94.0 + cos(bang) * 13.8, 0.5, 29.0 + sin(bang) * 14.5)),
+			Vector3(1.8, 1.0, 1.8))
+
+	# 3. Southwest Freestyle Funbox & Crate Plaza (x in [-112..-76], z in [44..108])
+	_paint.rect(Rect2(-112.0, 48.0, 34.0, 58.0), ZONE_Y + 0.002, TARMAC)
+	_paint.outline(Rect2(-111.2, 48.8, 32.4, 56.4), 0.45, PAINT_Y, PAINT_PINK)
+	_add_solid_deck(body, Vector3(-95.0, 0.0, 77.0), Vector2(11.0, 8.0), 1.9,
+		TARMAC, PAINT_PINK, PAD_WALL)
+	_add_solid_stunt_ramp(body, Vector3(-95.0, 0.0, 86.0), 0.0, 11.0, 10.0, 1.9,
+		TARMAC, PAD_WALL, PAINT_PINK, PAINT_YELLOW)
+	_add_solid_stunt_ramp(body, Vector3(-95.0, 0.0, 68.0), PI, 11.0, 10.0, 1.9,
+		TARMAC, PAD_WALL, PAINT_PINK, PAINT_YELLOW)
+	# Crates sit on the tarmac beside the deck, not on it: a pyramid on the
+	# 11x8 landing deck blocked every crossing line over the funbox.
+	_crate_pyramid("SwFunboxCrates", Vector3(-82.0, 0.0, 77.0), 0.0)
+
+
+## 360-degree rolling green hills, mountain ridges, Ferris wheel, windmills,
+## lighthouse, hot-air balloons, airship and drifting pollen outside the fence.
+func _scenic_horizon() -> void:
+	var horizon := Node3D.new()
+	horizon.name = "SandboxHorizon"
+	add_child(horizon)
+
+	var hill_batch := PropBatch.new()
+	var sc_rng := RandomNumberGenerator.new()
+	sc_rng.seed = 40771
+	var hill_palette := {
+		"skirt": Color("478a34"),
+		"mid": Color("5da842"),
+		"top": Color("74c450"),
+	}
+	var mtn_palette := {
+		"base": Color("3f6d9e"),
+		"rock": Color("4a7fa5"),
+		"cliff": Color("5f8fb4"),
+		"snow_lo": Color("b8dcf2"),
+		"snow_hi": Color("e8f6ff"),
+	}
+	for i in 14:
+		var ang: float = TAU * float(i) / 14.0 + 0.14
+		var dist: float = 195.0 + float(i % 3) * 28.0
+		LandscapeSculptor.add_woodland_hill(hill_batch,
+			Vector3(cos(ang) * dist, 0.0, sin(ang) * dist),
+			44.0 + float(i % 4) * 9.0, 36.0 + float((i + 1) % 3) * 10.0,
+			16.0 + float(i % 3) * 7.5, sc_rng, hill_palette)
+	for j in 10:
+		var mang: float = TAU * float(j) / 10.0 + 0.31
+		var mdist: float = 310.0 + float(j % 2) * 55.0
+		LandscapeSculptor.add_alpine_mountain(hill_batch,
+			Vector3(cos(mang) * mdist, 0.0, sin(mang) * mdist),
+			56.0 + float(j % 3) * 14.0, 62.0 + float(j % 4) * 15.0,
+			sc_rng, mtn_palette)
+	hill_batch.flush_to(horizon, "ScenicHills", false, _vertex_mat)
+
+	var anim: Dictionary = AmbientWorldScript.anim_of(self)
+	LandscapeSculptor.build_ferris_wheel(horizon,
+		Vector3(162.0, 0.0, -148.0), -0.65, 24.0, anim)
+	LandscapeSculptor.build_lighthouse(horizon,
+		Vector3(148.0, 0.0, 28.0), 18.0, anim)
+	for wm: Dictionary in [
+		{"pos": Vector3(-168.0, 4.0, -146.0), "yaw": 0.7, "scale": 1.35},
+		{"pos": Vector3(174.0, 3.0, 144.0), "yaw": -2.3, "scale": 1.4},
+		{"pos": Vector3(-164.0, 3.0, 148.0), "yaw": 2.4, "scale": 1.25},
+	]:
+		LandscapeSculptor.build_windmill(horizon, wm["pos"] as Vector3,
+			float(wm["yaw"]), float(wm["scale"]), "meadow", anim)
+	for b_idx in 4:
+		var ba: float = TAU * float(b_idx) / 4.0 + 0.45
+		var b_col_a: Color = [Color("ff595e"), Color("45b6f0"),
+			Color("ff9f45"), Color("9d6bff")][b_idx]
+		LandscapeSculptor.build_hot_air_balloon(horizon,
+			Vector3(cos(ba) * 152.0, 38.0 + float(b_idx % 2) * 7.0,
+			sin(ba) * 152.0), b_col_a, PAINT_YELLOW, float(b_idx) * 1.4, anim)
+	LandscapeSculptor.build_blimp(horizon, Vector3.ZERO, 185.0, 72.0,
+		Color("38b6ff"), PAINT_YELLOW, anim)
+	LandscapeSculptor.add_biome_particles(horizon, "meadow", Vector3.ZERO, 145.0)
 
 
 ## Adds a terrace ramp wedge: level at the deck from `high_x`, dropping to 0 at
@@ -2112,7 +2349,7 @@ func _audit_clearance() -> void:
 			if distance < closest:
 				closest = distance
 				closest_name = body_name
-			if distance < TileKit.BARRIER_CLEARANCE - 0.02:
+			if distance < TileKit.SANDBOX_BARRIER_CLEARANCE - 0.02:
 				tight += 1
 			if distance < SOLID_LIMIT:
 				offenders += 1
@@ -2122,7 +2359,7 @@ func _audit_clearance() -> void:
 		closest = 0.0
 	print("SOLID CLEARANCE solids=%d shapes=%d closest=%.2f m at %s (hard limit %.2f, barrier clearance %.2f) tight=%d offenders=%d -> %s" % [
 		solids, shapes, closest, closest_name if closest_name != "" else "-",
-		SOLID_LIMIT, TileKit.BARRIER_CLEARANCE, tight, offenders,
+		SOLID_LIMIT, TileKit.SANDBOX_BARRIER_CLEARANCE, tight, offenders,
 		"CLEARS" if offenders == 0 else "ON THE ROAD"])
 	if offenders > 0:
 		push_error("sandbox_park: %d solid collider(s) inside %.2f m of a racing centreline (closest %.2f m at %s)." % [
@@ -2260,8 +2497,9 @@ func _report_stats() -> void:
 	print("SANDBOX ZONES signs=%s spawn=%s" % [", ".join(signs),
 		zone_at(_spawn_transform().origin)])
 	TileKit.assert_barrier_clearance(_perimeter_barriers, _perimeter_spline,
-		"PERIMETER")
-	TileKit.assert_barrier_clearance(_loop_barriers, _loop_spline, "LOOP")
+		"PERIMETER", TileKit.SANDBOX_BARRIER_CLEARANCE)
+	TileKit.assert_barrier_clearance(_loop_barriers, _loop_spline, "LOOP",
+		TileKit.SANDBOX_BARRIER_CLEARANCE)
 
 
 ## Debug-only bot sanity probe. CART_DEBUG_PARK=1 prints how far each free-roam
