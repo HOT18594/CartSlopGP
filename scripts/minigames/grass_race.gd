@@ -205,6 +205,9 @@ var _go_shown: bool = false
 var _race_time: float = 0.0
 var _lap: int = 1
 var _lap_start: float = 0.0
+## Consecutive implausible crossings rejected by the min-lap guard. Capped so
+## a heuristic can never block race progress forever (see _complete_lap).
+var _rejected_crossings: int = 0
 var _lap_times: Array[float] = []
 var _unwrapped: float = START_DISTANCE
 var _prev_s: float = START_DISTANCE
@@ -3758,6 +3761,7 @@ func _reset_race_progress(force: bool = false) -> void:
 	_race_time = 0.0
 	_lap = 1
 	_lap_start = 0.0
+	_rejected_crossings = 0
 	_lap_times.clear()
 	_sector_flags = 0
 	_last_sector = -1
@@ -4399,20 +4403,31 @@ func _respawn(s: float) -> void:
 func _complete_lap() -> void:
 	var min_speed: float = maxf(_base_max_speed, 1.0)
 	var total_len: float = maxf(_spline.total_length, 1.0)
-	var min_lap: float = maxf(5.0, total_len / min_speed)
+	# Boost pads, manual boost (1.35x), mini-turbos and downhill runs can hold
+	# a lap well above flat-out top speed, so the physical floor allows heavy
+	# overspeed. It only rejects teleport/physics-glitch crossings (~seconds).
+	var min_lap: float = maxf(5.0, total_len / (min_speed * 1.6))
 	var lap_time: float = _race_time - _lap_start
 	if lap_time < min_lap:
-		# Implausibly quick crossing (reset/teleport/physics glitch): ignore it
-		# without banking the time or advancing the lap, and require full
-		# sectors again before the next crossing can count.
-		_lap_start = _race_time
-		_sector_flags = 0
-		return
+		_rejected_crossings += 1
+		if _rejected_crossings < 3:
+			# Implausibly quick crossing (reset/teleport/physics glitch):
+			# ignore it without banking the time or advancing the lap, and
+			# require full sectors again before the next crossing can count.
+			_lap_start = _race_time
+			_sector_flags = 0
+			return
+		# Fail-safe: three straight rejections means the player keeps driving
+		# full valid laps (e.g. an exceptional boost line), so accept this one
+		# rather than block race progress forever. Best-lap integrity is
+		# secondary to the race actually finishing.
+		_rejected_crossings = 0
 	var completed_lap: int = _lap
 	var previous_lap: float = _lap_times[_lap_times.size() - 1] \
 		if not _lap_times.is_empty() else -1.0
 	var previous_best: float = _best_lap_time()
 	_lap_times.append(lap_time)
+	_rejected_crossings = 0
 	_lap_start = _race_time
 	_sector_flags = 0
 	if _server_race_active:

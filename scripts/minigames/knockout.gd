@@ -1192,7 +1192,11 @@ func _tick_round_clock(delta: float) -> void:
 	_round_elapsed += delta
 	_round_remaining = maxf(_round_duration - _round_elapsed, 0.0)
 	var alive_keys: Array[int] = _alive_contestant_keys()
-	if alive_keys.size() <= 1 and _contestants.size() >= 2:
+	if alive_keys.is_empty():
+		# Everybody is out (e.g. solo self ring-out): conclude immediately
+		# instead of staring at an empty arena until the timer expires.
+		_conclude_round(alive_keys, false)
+	elif alive_keys.size() <= 1 and _contestants.size() >= 2:
 		_conclude_round(alive_keys, false)
 	elif _round_remaining <= 0.0:
 		_conclude_round(alive_keys, true)
@@ -2998,6 +3002,13 @@ func _on_peer_disconnected(peer_id: int) -> void:
 	_peer_vehicles.erase(peer_id)
 	_cart_relay_ms.erase(peer_id)
 	_refresh_hud_immediate()
+	if peer_id == 1 and not _is_host and _multiplayer \
+			and (_phase == Phase.COUNTDOWN or _phase == Phase.BRAWL \
+			or _phase == Phase.INTERMISSION):
+		# Host (only round clock/collision/transition authority) is gone:
+		# conclude locally from the current standings instead of idling in
+		# COUNTDOWN/BRAWL/INTERMISSION forever with no results.
+		_finish_match()
 
 
 func _on_net_identity_changed() -> void:
@@ -3463,6 +3474,7 @@ func _net_round_transition(phase_id: int, round_idx: int, remaining: float,
 				_round_elapsed = maxf(_round_duration - _round_remaining, 0.0)
 		Phase.INTERMISSION:
 			_phase = Phase.INTERMISSION
+			_intermission_timer = INTERMISSION_SECONDS
 			if banner_title != "":
 				_show_intermission_banner(banner_title, banner_sub)
 			for raw_k: Variant in _contestants.keys():
@@ -3485,10 +3497,17 @@ func _net_round_clock(phase_id: int, round_idx: int, remaining: float,
 		elapsed: float) -> void:
 	if _is_host or not _multiplayer or _phase == Phase.FINISHED:
 		return
-	if round_idx == _round_index and phase_id == int(_phase):
+	# A client that missed a phase transition (late join, packet gap) used to
+	# drop this clock forever and drift; snap to the authoritative timer so it
+	# re-syncs. Phase itself is still owned by _net_round_transition.
+	if round_idx != _round_index or phase_id != int(_phase):
 		if is_finite(remaining) and is_finite(elapsed):
 			_round_remaining = clampf(remaining, 0.0, _round_duration)
 			_round_elapsed = clampf(elapsed, 0.0, _round_duration)
+		return
+	if is_finite(remaining) and is_finite(elapsed):
+		_round_remaining = clampf(remaining, 0.0, _round_duration)
+		_round_elapsed = clampf(elapsed, 0.0, _round_duration)
 
 
 # ==========================================================================

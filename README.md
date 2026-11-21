@@ -18,6 +18,10 @@ Hop-drift shopping carts and street rides across **5 vertical circuits**, brawl 
 
 ---
 
+## Highlights in v0.8.3
+
+- **Races always finish.** Fixed the 3-laps-no-finish bug (boosted laps vs the lap timer), plus host-loss and late-join endings that could freeze Blast Tag, Deliver, and Knockout — see the changelog.
+
 ## Highlights in v0.8.2
 
 ![Glacier Pass](assets/ui/art/preview_glacier.png)
@@ -88,10 +92,10 @@ Grab the latest self-contained release from the [**Releases page**](https://gith
 
 | Platform | Package | How to Run |
 | :--- | :--- | :--- |
-| **Windows** (x64) | `CartSlopGP_v0.8.2_windows.zip` | Extract and run `CartSlopGP.exe` (single self-contained executable with embedded data pack). If SmartScreen warns on unsigned builds: **More info → Run anyway**. |
-| **macOS** (Universal) | `CartSlopGP_v0.8.2_macos.zip` | Extract and open `Cart Slop GP.app`. If Gatekeeper blocks the ad-hoc build, right-click **Open** or run `xattr -dr com.apple.quarantine "/path/to/Cart Slop GP.app"`. **LAN multiplayer:** on first launch macOS 14/15 asks to allow **Local Network** access — click **Allow** (if you missed it: **System Settings → Privacy & Security → Local Network**). Without that permission macOS silently blocks LAN discovery and LAN joins. |
-| **Linux** (x86_64) | `CartSlopGP_v0.8.2_linux.zip` | Extract and run `./CartSlopGP.x86_64` (`0755` executable bit preserved in zip; data pack embedded). |
-| **Web** (HTML5) | `CartSlopGP_v0.8.2_web.zip` | Serve over HTTP (e.g. `python3 -m http.server 8000`) and open in a modern browser. Solo modes only (browsers lack raw UDP sockets). |
+| **Windows** (x64) | `CartSlopGP_v0.8.3_windows.zip` | Extract and run `CartSlopGP.exe` (single self-contained executable with embedded data pack). If SmartScreen warns on unsigned builds: **More info → Run anyway**. |
+| **macOS** (Universal) | `CartSlopGP_v0.8.3_macos.zip` | Extract and open `Cart Slop GP.app`. If Gatekeeper blocks the ad-hoc build, right-click **Open** or run `xattr -dr com.apple.quarantine "/path/to/Cart Slop GP.app"`. **LAN multiplayer:** on first launch macOS 14/15 asks to allow **Local Network** access — click **Allow** (if you missed it: **System Settings → Privacy & Security → Local Network**). Without that permission macOS silently blocks LAN discovery and LAN joins. |
+| **Linux** (x86_64) | `CartSlopGP_v0.8.3_linux.zip` | Extract and run `./CartSlopGP.x86_64` (`0755` executable bit preserved in zip; data pack embedded). |
+| **Web** (HTML5) | `CartSlopGP_v0.8.3_web.zip` | Serve over HTTP (e.g. `python3 -m http.server 8000`) and open in a modern browser. Solo modes only (browsers lack raw UDP sockets). |
 
 ### Automatic Updates & Save Data
 Desktop builds check for new releases automatically (or via **SETTINGS → CHECK FOR UPDATES**), verify the download's **SHA-256** digest, swap the binary in place, and relaunch with one click. Local settings and lap records are stored in:

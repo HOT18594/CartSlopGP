@@ -3391,6 +3391,11 @@ func _on_peer_disconnected(peer_id: int) -> void:
 	for index in _presents.size():
 		if int(_presents[index]["carrier"]) == peer_id:
 			_release_present(index)
+	if peer_id == 1 and not _is_host and _multiplayer \
+			and (_phase == Phase.RACING or _phase == Phase.OVERTIME):
+		# Host (only match-clock authority) is gone: conclude locally from the
+		# current score instead of racing a frozen clock forever.
+		_finish_match()
 
 
 func _spawn_remote_cart(peer_id: int) -> void:
@@ -3700,7 +3705,12 @@ func _net_cargo_state(remaining: float, score_a: int, score_b: int,
 		2:
 			_phase = Phase.OVERTIME
 		_:
-			_phase = Phase.FINISHED
+			# FINISHED arrives via the reliable _net_match_end (scores + result
+			# card). This unreliable snapshot must never set it first: the
+			# state packet routinely wins the race, and the real match end is
+			# then dropped as a duplicate, freezing the client at 0:00 with no
+			# results and a still-drivable kart.
+			pass
 
 
 func _broadcast_delivery(team: int, key: int) -> void:
@@ -3741,6 +3751,13 @@ func _net_match_end(score_a: int, score_b: int, winner: int) -> void:
 	_score[0] = clampi(score_a, 0, 99)
 	_score[1] = clampi(score_b, 0, 99)
 	_phase = Phase.FINISHED
+	# Mirror the host's whistle cleanup so carried-crate glows and hold rings
+	# don't stick on top of the result card on clients.
+	_hold_state.clear()
+	_hold_owner.clear()
+	for index in _presents.size():
+		if int(_presents[index]["state"]) == PRESENT_CARRIED:
+			_release_present(index)
 	_set_cart_active(false)
 	for entry: Dictionary in _bots:
 		var cart: CartPlayer = entry.get("cart") as CartPlayer

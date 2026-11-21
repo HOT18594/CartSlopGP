@@ -2,6 +2,16 @@
 
 Player-facing notes, newest first.
 
+## [0.8.3] - 2026-11-21
+
+### Races always finish now
+
+![Stadium Circuit](assets/ui/art/preview_stadium.png)
+
+- **Fixed: 3 laps with no finish.** The anti-cheat lap timer compared your lap against a flat-out top-speed ideal — but boost pads, mini-turbos, and downhill runs can hold a whole lap above top speed, so fast legal laps were thrown out and the race never ended. The floor now allows heavy overspeed, and a fail-safe accepts the lap after repeated full valid crossings: a heuristic can never block progress again.
+- **Host loss no longer hangs a match.** If the host disconnects mid-game, Blast Tag, Deliver, and Knockout now conclude locally from the current standings and show results instead of freezing the clock forever.
+- **Clients always see the ending.** Deliver no longer drops the reliable match-end when a state snapshot wins the race (late joiners included), carried-crate effects clear on the result card, and Knockout clients re-sync a missed round clock instead of drifting.
+
 ## [0.8.2] - 2026-11-20
 
 ### macOS multiplayer, LAN discovery and relay

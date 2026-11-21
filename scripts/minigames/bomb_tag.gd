@@ -2214,6 +2214,12 @@ func _on_peer_disconnected(peer_id: int) -> void:
 	_cart_relay_ms.erase(peer_id)
 	_shield_rigs.erase(peer_id)
 	_contestants.erase(peer_id)
+	if peer_id == 1 and not _is_host and _multiplayer \
+			and (_phase == Phase.PLAYING or _phase == Phase.COUNTDOWN):
+		# Host (ENet server id 1, the only bomb/clock/results authority) is
+		# gone: nobody will tick the fuse or conclude the match, so conclude
+		# locally from the last known state instead of hanging forever.
+		_finish_match()
 
 
 func _spawn_remote_cart(peer_id: int) -> void:
