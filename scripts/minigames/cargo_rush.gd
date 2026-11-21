@@ -408,6 +408,8 @@ var _present_sync_timer: float = 0.0
 var _state_sync_timer: float = 0.0
 var _cart_sync_timer: float = 0.0
 var _bot_sync_timer: float = 0.0
+var _ready_retry_timer: float = 0.0
+var _net_config_received: bool = false
 var _bot_sync_positions: Dictionary = {}
 
 var _selftest: bool = false
@@ -3366,7 +3368,7 @@ func _setup_multiplayer() -> void:
 		Network.tag_colors_changed.connect(_refresh_name_labels)
 	if not Network.teams_changed.is_connected(_on_teams_changed):
 		Network.teams_changed.connect(_on_teams_changed)
-	Network.notify_scene_ready()
+	Network.notify_scene_ready(self, Network.CARGO_SCENE)
 	if _is_host:
 		_broadcast_state()
 		_broadcast_bot_states()
@@ -3440,6 +3442,11 @@ func _refresh_name_labels() -> void:
 func _net_tick(delta: float) -> void:
 	if not _multiplayer or not Network.is_session_active():
 		return
+	if not _is_host and not _net_config_received and Network.is_scene_ready(1):
+		_ready_retry_timer += delta
+		if _ready_retry_timer >= 0.8:
+			_ready_retry_timer = 0.0
+			rpc_id(1, "_net_cargo_ready", _theme_id, _bot_vehicle())
 	if _cart != null and is_instance_valid(_cart):
 		_cart_sync_timer += delta
 		if _cart_sync_timer >= CART_SYNC_INTERVAL:
@@ -3639,6 +3646,7 @@ func _net_cargo_ready(theme_id: String, vehicle_id: String) -> void:
 func _net_cargo_config(theme_id: String, bot_count: int, target: int) -> void:
 	if _is_host:
 		return
+	_net_config_received = true
 	if CargoTheme.ids().has(theme_id) and theme_id != _theme_id:
 		_theme_id = theme_id
 		_theme = CargoTheme.get_theme(theme_id)

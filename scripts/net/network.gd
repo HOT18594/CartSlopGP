@@ -129,8 +129,8 @@ const VehicleCatalog := preload("res://scripts/vehicles/vehicle_catalog.gd")
 # A reliable scene-start message can land before the client has finished
 # changing scenes. Retry for any peer that has not announced ready, but keep
 # the retry bounded: a peer stuck in the lobby must not be spammed forever.
-const SCENE_RETRY_INTERVAL: float = 5.0
-const SCENE_RETRY_MAX: int = 6
+const SCENE_RETRY_INTERVAL: float = 1.0
+const SCENE_RETRY_MAX: int = 16
 const WORLD_BOUND_SQ: float = 5000.0 * 5000.0
 ## Maximum believable body speed for solver input. The game's boost cap is
 ## ~26 m/s; a larger finite value is corruption/desync and is clamped rather
@@ -218,6 +218,8 @@ var _left_scene_peers: Dictionary = {}
 var _scene_sync_timer: float = 0.0
 var _scene_load_path: String = ""
 var host_scene_ready_path: String = ""
+var _active_scene_node: Node = null
+var _active_scene_path: String = ""
 ## Pair key -> last solver impulse time. Rate-limits resting contact and
 ## duplicate remote impacts while a state packet is still in flight.
 var _separation_ms: Dictionary = {}
@@ -465,6 +467,8 @@ func clear_scene_ready() -> void:
 	_last_good_position.clear()
 	_scene_load_path = ""
 	host_scene_ready_path = ""
+	_active_scene_node = null
+	_active_scene_path = ""
 	if is_host:
 		scene_ready_peers[1] = true
 
@@ -970,14 +974,42 @@ func _resolve_contact_pair(local_cart: Node, id_a: int, cart_a: Node,
 		local_cart.rpc_id(id_b, "_net_apply_car_impulse", delta_b)
 
 
-func notify_scene_ready() -> void:
+func _active_gameplay_scene() -> Node:
+	if is_instance_valid(_active_scene_node) and _active_scene_node.is_inside_tree():
+		return _active_scene_node
+	var tree: SceneTree = get_tree()
+	return tree.current_scene if tree != null else null
+
+
+func _active_gameplay_scene_path(current: Node = null) -> String:
+	if _active_scene_path != "" and is_instance_valid(_active_scene_node) \
+			and _active_scene_node.is_inside_tree():
+		return _active_scene_path
+	var scene_node: Node = current if current != null else _active_gameplay_scene()
+	var path: String = scene_node.scene_file_path if scene_node != null else ""
+	if path == "" and in_game:
+		path = game_scene
+	return path
+
+
+func notify_scene_ready(scene_node: Node = null, explicit_path: String = "") -> void:
 	## Called by every gameplay scene after its networking setup.
-	if not is_session_active() or multiplayer.multiplayer_peer == null:
-		return
-	var current: Node = get_tree().current_scene
-	var scene_path: String = current.scene_file_path if current != null else ""
+	## SceneTree._change_scene sets get_tree().current_scene AFTER add_child()
+	## and _ready() finish, so callers may pass `self` or we resolve from the
+	## active gameplay scene tracking fields.
+	var current: Node = scene_node if (scene_node != null and is_instance_valid(scene_node)) \
+		else (get_tree().current_scene if get_tree() != null else null)
+	var scene_path: String = explicit_path
+	if scene_path == "" and current != null:
+		scene_path = current.scene_file_path
 	if scene_path == "" and in_game:
 		scene_path = game_scene
+	if current != null:
+		_active_scene_node = current
+	if scene_path != "":
+		_active_scene_path = scene_path
+	if not is_session_active() or multiplayer.multiplayer_peer == null:
+		return
 	if is_host:
 		scene_ready_peers[1] = true
 		host_scene_ready_path = scene_path
@@ -999,9 +1031,9 @@ func _net_host_scene_ready(scene_path: String) -> void:
 	if is_host or scene_path == "" or scene_path not in ALLOWED_SCENES:
 		return
 	host_scene_ready_path = scene_path
-	var current: Node = get_tree().current_scene
-	var active_path: String = current.scene_file_path if current != null else ""
-	if active_path == scene_path:
+	var current: Node = _active_gameplay_scene()
+	var active_path: String = _active_gameplay_scene_path(current)
+	if active_path == scene_path and current != null:
 		scene_ready_peers[1] = true
 		host_scene_ready.emit(scene_path)
 		_send_client_scene_ready(current, scene_path)
@@ -1012,17 +1044,17 @@ func _send_client_scene_ready(current: Node, scene_path: String) -> void:
 		return
 	if not is_scene_ready(1):
 		return
-	if scene_path == GAME_SCENE:
+	if scene_path == GAME_SCENE and current.has_method("_net_client_ready"):
 		current.rpc_id(1, "_net_client_ready", GameSettings.selected_vehicle)
-	elif scene_path == RACE_SCENE:
+	elif scene_path == RACE_SCENE and current.has_method("_net_race_ready"):
 		current.rpc_id(1, "_net_race_ready", GameSettings.minigame_vehicle)
-	elif scene_path == CARGO_SCENE:
+	elif scene_path == CARGO_SCENE and current.has_method("_net_cargo_ready"):
 		current.rpc_id(1, "_net_cargo_ready", session_minigame,
 			GameSettings.minigame_vehicle)
-	elif scene_path == KNOCKOUT_SCENE:
+	elif scene_path == KNOCKOUT_SCENE and current.has_method("_net_knockout_ready"):
 		current.rpc_id(1, "_net_knockout_ready", session_minigame,
 			GameSettings.minigame_vehicle)
-	elif scene_path == BOMB_TAG_SCENE:
+	elif scene_path == BOMB_TAG_SCENE and current.has_method("_net_bomb_ready"):
 		current.rpc_id(1, "_net_bomb_ready", session_minigame,
 			GameSettings.minigame_vehicle)
 
@@ -2070,10 +2102,10 @@ func stream_race_state(race_id: String, secret: String, rows: Array) -> void:
 func _extract_scene_track_points() -> Array:
 	## Sample up to 160 3D centreline points from the active race scene's spline
 	## so the Pi server simulates bots and lap validation on the exact grid map.
-	var tree: SceneTree = get_tree()
-	if tree == null or tree.current_scene == null:
+	var scene_node: Node = _active_gameplay_scene()
+	if scene_node == null:
 		return []
-	var spline: Variant = tree.current_scene.get("_spline")
+	var spline: Variant = scene_node.get("_spline")
 	if spline == null or not (spline is Object):
 		return []
 	var raw_pts: Variant = (spline as Object).get("points")
@@ -3470,12 +3502,13 @@ func _net_session_config(mode: String, bots: bool, count: int,
 
 func _sanitize_teams(raw: Dictionary) -> Dictionary:
 	## peer id -> 0/1 only, bounded, so a hostile packet cannot grow the table.
+	## Godot ENet peer IDs are random 31-bit positive integers (1..0x7FFFFFFF).
 	var clean: Dictionary = {}
 	for key: Variant in raw.keys():
 		if clean.size() >= MAX_PLAYERS + 1:
 			break
 		var peer_id: int = int(key)
-		if peer_id <= 0 or peer_id > 4096:
+		if peer_id <= 0 or peer_id > 0x7FFFFFFF:
 			continue
 		var value: Variant = raw[key]
 		if not (value is int or value is float):
@@ -3557,11 +3590,12 @@ func _net_begin_game(scene_path: String, mode: String, bots: bool, count: int,
 	if mode != GameSettings.GAME_SANDBOX and mode != GameSettings.GAME_MINIGAMES:
 		return
 	count = clampi(count, 0, MAX_BOT_COUNT)
-	var current: Node = get_tree().current_scene
-	if current != null and current.scene_file_path == scene_path and in_game:
+	var current: Node = _active_gameplay_scene()
+	var active_path: String = _active_gameplay_scene_path(current)
+	if current != null and active_path == scene_path and in_game:
 		# The first ready RPC can reach the host before its scene exists. On a
 		# retry, announce through the loaded scene again once the host is ready.
-		notify_scene_ready()
+		notify_scene_ready(current, scene_path)
 		if not is_host:
 			_send_client_scene_ready(current, scene_path)
 		return

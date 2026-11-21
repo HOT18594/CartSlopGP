@@ -201,6 +201,7 @@ var _go_time: float = 0.0
 var _last_count: int = 0
 var _waiting_for_peers: bool = false
 var _wait_elapsed: float = 0.0
+var _client_ready_retry_timer: float = 0.0
 var _go_shown: bool = false
 var _race_time: float = 0.0
 var _lap: int = 1
@@ -3095,7 +3096,7 @@ func _setup_multiplayer() -> void:
 	multiplayer.peer_disconnected.connect(_on_net_peer_disconnected)
 	Network.names_changed.connect(_refresh_net_names)
 	Network.tag_colors_changed.connect(_refresh_net_names)
-	Network.notify_scene_ready()
+	Network.notify_scene_ready(self, Network.RACE_SCENE)
 	if Network.server_race_supported() and Network.relay_base != "":
 		Network.sync_server_clock()
 	if _is_host:
@@ -3276,6 +3277,15 @@ func _net_race_ready(vehicle_id: String) -> void:
 	rpc_id(sender, "_net_force_race_vehicle", _race_vehicle)
 	for peer_id: Variant in _peer_vehicles.keys():
 		rpc_id(sender, "_net_race_vehicle", int(peer_id), str(_peer_vehicles[peer_id]))
+	# If this was the last peer we were waiting for, begin the countdown now.
+	if _waiting_for_peers and not _server_race_pending:
+		var all_ready: bool = true
+		for peer_id: int in multiplayer.get_peers():
+			if not Network.is_scene_ready(peer_id):
+				all_ready = false
+				break
+		if all_ready:
+			_begin_race_countdown()
 
 
 @rpc("authority", "reliable")
@@ -3692,6 +3702,12 @@ func _process(delta: float) -> void:
 					break
 			if all_ready or _wait_elapsed >= 8.0:
 				_begin_race_countdown()
+		elif _multiplayer and Network.is_session_active() and Network.is_connected_to_server():
+			_client_ready_retry_timer += delta
+			if _client_ready_retry_timer >= 0.8:
+				_client_ready_retry_timer = 0.0
+				if Network.is_scene_ready(1):
+					rpc_id(1, "_net_race_ready", GameSettings.minigame_vehicle)
 		return
 	if _toast_timer > 0.0:
 		_toast_timer -= delta
@@ -3878,10 +3894,16 @@ func _apply_server_race(race_id: String, secret: String, start_ms: int,
 	_convert_rivals_to_server()
 	var remaining: float = 3.0
 	if _server_clock_ok:
-		# The server starts the race on a fixed wall-clock instant; every peer
-		# derives the same countdown from it instead of running its own timer.
-		remaining = clampf(float(start_ms - Network.server_now_ms()) / 1000.0,
-			0.1, 20.0)
+		var raw_remaining: float = float(start_ms - Network.server_now_ms()) / 1000.0
+		# Guard against wall-clock skew between a client and the Pi: if the
+		# offset puts the countdown outside a plausible [-1.0, 8.0] window,
+		# fall back to the local 3 s timer so the client never freezes on a
+		# huge number or skips the countdown.
+		if raw_remaining >= -1.0 and raw_remaining <= 8.0:
+			remaining = clampf(raw_remaining, 0.1, 5.0)
+		else:
+			_server_clock_ok = false
+			remaining = 3.0
 	_countdown = remaining
 	_last_count = 0
 	_go_shown = false
@@ -4004,8 +4026,9 @@ func _net_race_join_now() -> void:
 func _tick_countdown(delta: float) -> void:
 	if _server_race_active and _server_clock_ok:
 		# Derived from the Pi clock every frame: a slow frame or a late RPC
-		# cannot shift this client's GO.
-		_countdown = maxf(0.0, float(_server_start_ms - Network.server_now_ms()) / 1000.0)
+		# cannot shift this client's GO. Clamp to 5.0 s so a sudden clock step
+		# cannot inflate the countdown.
+		_countdown = clampf(float(_server_start_ms - Network.server_now_ms()) / 1000.0, 0.0, 5.0)
 	else:
 		_countdown -= delta
 	if _countdown > 0.0:

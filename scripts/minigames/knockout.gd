@@ -377,6 +377,8 @@ var _cart_sync_timer: float = 0.0
 var _bot_sync_timer: float = 0.0
 var _damage_sync_timer: float = 0.0
 var _clock_sync_timer: float = 0.0
+var _ready_retry_timer: float = 0.0
+var _net_config_received: bool = false
 
 ## Knockout Slop-Slash HUD nodes.
 var _canvas: CanvasLayer
@@ -2972,7 +2974,7 @@ func _setup_multiplayer() -> void:
 	if not Network.tag_colors_changed.is_connected(_on_net_identity_changed):
 		Network.tag_colors_changed.connect(_on_net_identity_changed)
 
-	Network.notify_scene_ready()
+	Network.notify_scene_ready(self, Network.KNOCKOUT_SCENE)
 	if not _is_host and Network.is_scene_ready(1):
 		rpc_id(1, "_net_knockout_ready", _arena_id, _chosen_vehicle_id())
 
@@ -3059,6 +3061,11 @@ func _rpc_sender() -> int:
 func _net_tick(delta: float) -> void:
 	if not _multiplayer or not Network.is_session_active():
 		return
+	if not _is_host and not _net_config_received and Network.is_scene_ready(1):
+		_ready_retry_timer += delta
+		if _ready_retry_timer >= 0.8:
+			_ready_retry_timer = 0.0
+			rpc_id(1, "_net_knockout_ready", _arena_id, _chosen_vehicle_id())
 	var my_id: int = _local_key()
 	var my_entry: Dictionary = _contestants.get(my_id, {}) as Dictionary
 	if _cart != null and is_instance_valid(_cart) and bool(my_entry.get("alive", false)):
@@ -3122,6 +3129,7 @@ func _net_knockout_config(arena_id: String, bot_count: int, total_rounds: int,
 		peer_vehicles: Dictionary) -> void:
 	if _is_host or not _multiplayer:
 		return
+	_net_config_received = true
 	_total_rounds = clampi(total_rounds, 1, 9)
 	var resolved: String = KnockoutMaps.resolve(arena_id)
 	if resolved != _arena_id:

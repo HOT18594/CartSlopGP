@@ -78,6 +78,57 @@ func _run_unit() -> void:
 	_run_lan_reply_checks()
 	_run_relay_url_checks()
 	_run_platform_checks()
+	_run_multiplayer_sync_checks()
+
+
+func _run_multiplayer_sync_checks() -> void:
+	# 1. RelayTunnel._is_allowed_client must allow Client #2+ even when Network
+	# already has 2+ participants with 32-bit ENet peer IDs.
+	var tunnel := Network.RelayTunnel.new()
+	Network.add_child(tunnel)
+	Network.is_host = true
+	Network.player_names = {1: "Host", 148293012: "Client1"}
+	_check(tunnel._is_allowed_client(1), "RelayTunnel allows client_id=1")
+	_check(tunnel._is_allowed_client(2), "RelayTunnel allows client_id=2 when room has existing ENet peers")
+	_check(tunnel._is_allowed_client(3), "RelayTunnel allows client_id=3 for multi-client / reconnecting peers")
+	_check(not tunnel._is_allowed_client(0), "RelayTunnel rejects client_id=0")
+	_check(not tunnel._is_allowed_client(9999), "RelayTunnel rejects out-of-range client_id")
+	tunnel.queue_free()
+	Network.player_names.clear()
+	Network.is_host = false
+
+	# 2. _sanitize_teams must accept 31-bit random Godot ENet peer IDs.
+	var teams: Dictionary = Network._sanitize_teams({
+		1: 0,
+		148293012: 1,
+		982374123: 0,
+		-5: 1,
+	})
+	_check(teams.has(1) and int(teams[1]) == 0, "_sanitize_teams preserves host peer 1")
+	_check(teams.has(148293012) and int(teams[148293012]) == 1, "_sanitize_teams preserves 31-bit ENet client peer ID")
+	_check(teams.has(982374123) and int(teams[982374123]) == 0, "_sanitize_teams preserves second 31-bit ENet client peer ID")
+	_check(not teams.has(-5), "_sanitize_teams rejects negative peer ID")
+
+	# 3. notify_scene_ready(scene_node, explicit_path) must record the active
+	# gameplay scene even before get_tree().current_scene is assigned.
+	var dummy_scene := Node.new()
+	add_child(dummy_scene)
+	Network.is_client = true
+	Network.in_game = true
+	Network.game_scene = Network.RACE_SCENE
+	Network.host_scene_ready_path = ""
+	Network.notify_scene_ready(dummy_scene, Network.RACE_SCENE)
+	_check(Network._active_gameplay_scene() == dummy_scene,
+		"notify_scene_ready tracks the active scene node during _ready()")
+	_check(Network._active_gameplay_scene_path() == Network.RACE_SCENE,
+		"notify_scene_ready tracks the active scene path during _ready()")
+	Network._net_host_scene_ready(Network.RACE_SCENE)
+	_check(Network.is_scene_ready(1),
+		"_net_host_scene_ready marks peer 1 scene-ready even when current_scene is not race scene")
+	dummy_scene.queue_free()
+	Network.clear_scene_ready()
+	Network.is_client = false
+	Network.in_game = false
 
 
 func _run_address_checks() -> void:

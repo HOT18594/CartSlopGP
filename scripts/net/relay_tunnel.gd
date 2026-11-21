@@ -263,21 +263,14 @@ func _drop_link(force_reconnect: bool = false, reason: String = "dropped") -> vo
 
 
 func _is_allowed_client(client_id: int) -> bool:
+	## Validate a Pi relay client_id (sequential 1..MAX_RELAY_CLIENTS assigned
+	## by the Pi UDP relay, NOT a Godot ENet 32-bit peer ID). Cap total distinct
+	## virtual UDP sockets so a malformed stream cannot allocate unbounded ports.
 	if client_id <= 0 or client_id > 4096:
 		return false
 	if _sockets.has(client_id):
 		return true
-	var parent: Node = get_parent()
-	if parent != null and parent.has_method("participants"):
-		var ids: Array = parent.call("participants")
-		if ids.has(client_id):
-			return true
-		# Lone host has no peer list yet; allow the first allocation so the
-		# initial handshake can populate the ENet peer table.
-		if ids.size() <= 1:
-			return true
-		return false
-	return true
+	return _sockets.size() < 32
 
 
 func _socket_for(client_id: int) -> PacketPeerUDP:

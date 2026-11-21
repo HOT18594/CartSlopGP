@@ -2,6 +2,16 @@
 
 Player-facing notes, newest first.
 
+## [0.8.4] - 2026-11-21
+
+### Multiplayer room sync & controlled drifting
+
+![Grass Circuit](assets/ui/art/preview_grass.png)
+
+- **Fixed: multiplayer racing rooms where only the host loaded.** Fixed a relay tunnel client-ID filter that blocked second and reconnecting clients, fixed scene-ready handshakes during scene transitions so every player enters the grid and starts the countdown together, and added fast 0.8–1.0 s ready/start retries across Race, Knockout, Deliver, Blast Tag, and Sandbox.
+- **Full 31-bit peer ID & server race sync.** Updated the Pi server (`/api/race/pos`, `/api/race/lap`, and race history), team assignments, and direct UDP relay sockets so every client's live positions, lap times, and team colours sync cleanly, and hardened server-race countdowns against wall-clock skew.
+- **Crisp, controlled drifting in Knockout & Racing.** Eliminated excessive sideways drift sliding by tightening committed drift slip angles, capping lateral drift velocity, preventing sideways knockback from feeding into drift speed, improving counter-steer authority, and boosting lateral grip recovery.
+
 ## [0.8.3] - 2026-11-21
 
 ### Races always finish now

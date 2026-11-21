@@ -2193,7 +2193,7 @@ func _setup_multiplayer() -> void:
 		Network.names_changed.connect(_refresh_peer_identities)
 	if not Network.tag_colors_changed.is_connected(_refresh_peer_identities):
 		Network.tag_colors_changed.connect(_refresh_peer_identities)
-	Network.notify_scene_ready()
+	Network.notify_scene_ready(self, Network.BOMB_TAG_SCENE)
 	if _is_host:
 		_broadcast_snapshot()
 	elif Network.is_scene_ready(1):

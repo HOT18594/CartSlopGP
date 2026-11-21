@@ -76,6 +76,8 @@ var _host_mode: bool = false
 var _name_labels: Dictionary = {} ## peer id -> Label3D
 var _cart_sync_timer: float = 0.0
 var _prop_sync_timer: float = 0.0
+var _ready_retry_timer: float = 0.0
+var _net_ready_acked: bool = false
 var _prop_recover_timer: float = 0.0
 var _bots: Array[SandboxBot] = []
 var _traffic: Array[CartPlayer] = [] ## local player first, then every bot cart
@@ -172,7 +174,7 @@ func _setup_multiplayer() -> void:
 	# Vehicle models are exchanged through the scene, not the lobby: tell the
 	# host we are ready, or broadcast ours to everyone if we are the host.
 	_peer_vehicles[multiplayer.get_unique_id()] = GameSettings.selected_vehicle
-	Network.notify_scene_ready()
+	Network.notify_scene_ready(self, Network.GAME_SCENE)
 	if OS.get_environment("CART_DEBUG_NET") == "1":
 		print("SANDBOX_NET ready id=", multiplayer.get_unique_id(),
 			" host=", _host_mode, " peers=", multiplayer.get_peers())
@@ -209,6 +211,11 @@ func _physics_process(delta: float) -> void:
 			_prop_sync_timer = 0.0
 			_broadcast_props()
 	else:
+		if not _net_ready_acked and Network.is_scene_ready(1):
+			_ready_retry_timer += delta
+			if _ready_retry_timer >= 0.8:
+				_ready_retry_timer = 0.0
+				rpc_id(1, "_net_client_ready", GameSettings.selected_vehicle)
 		_expire_prop_kicks()
 		_apply_prop_targets(delta)
 
@@ -556,6 +563,7 @@ func _net_client_ready(vehicle_id: String) -> void:
 
 @rpc("authority", "reliable")
 func _net_peer_vehicle(peer_id: int, vehicle_id: String) -> void:
+	_net_ready_acked = true
 	_store_peer_vehicle(peer_id, vehicle_id)
 
 

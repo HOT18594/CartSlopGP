@@ -40,9 +40,10 @@ const HOP_GRAVITY: float = 49.5 ## Return gravity (m/s^2) pulling the visual hop
 const DRIFT_LOCK_STEER: float = 0.18 ## Stick deflection required to lock committed drift direction.
 const DRIFT_LOCK_SPEED: float = 4.5 ## Forward speed (m/s) required to lock committed drift direction.
 const DRIFT_COMMITTED_SLIP_DRAG: float = 0.14 ## Low forward scrub while holding a committed drift.
-const DRIFT_CARVE_RATE: float = 11.5 ## Rate (1/s) at which horizontal velocity aligns to the drift slip angle.
-const DRIFT_SLIP_ANGLE_MIN_DEG: float = 16.0 ## Outward slip angle (deg) when counter-steering wide.
-const DRIFT_SLIP_ANGLE_MAX_DEG: float = 26.0 ## Outward slip angle (deg) when steering deep into the apex.
+const DRIFT_CARVE_RATE: float = 13.5 ## Rate (1/s) at which horizontal velocity aligns to the drift slip angle.
+const DRIFT_SLIP_ANGLE_MIN_DEG: float = 7.5 ## Outward slip angle (deg) when counter-steering wide.
+const DRIFT_SLIP_ANGLE_MAX_DEG: float = 16.5 ## Outward slip angle (deg) when steering deep into the apex.
+const DRIFT_MAX_LATERAL_SPEED: float = 5.4 ## Hard cap (m/s) on sideways drift velocity so drifts never slide out horizontally.
 const DRIFT_COYOTE_GRACE: float = 0.18 ## Grace window (s) preserving drift charge over bumps or brief low slip.
 const DRIFT_TIER_1_TIME: float = 0.48 ## Weighted charge time (s) for Tier 1 (Cyan) mini-turbo.
 const DRIFT_TIER_2_TIME: float = 1.15 ## Weighted charge time (s) for Tier 2 (Orange) super mini-turbo.
@@ -111,14 +112,14 @@ const FALL_RESET_HEIGHT: float = -4.0
 @export var min_turn_speed: float = 2.2 ## Speed (m/s) at which steering reaches full authority.
 
 @export_group("Grip & Drift")
-@export var lateral_grip: float = 13.5 ## How fast sideways slip is cancelled (m/s^2).
-@export var drift_grip: float = 2.5 ## Lateral grip while the handbrake is held (m/s^2).
+@export var lateral_grip: float = 14.5 ## How fast sideways slip is cancelled (m/s^2).
+@export var drift_grip: float = 5.8 ## Lateral grip while the handbrake is held (m/s^2).
 @export var slip_drag: float = 0.9 ## Forward speed lost per second per m/s of lateral slide.
 @export var drift_detection_threshold: float = 2.0 ## Sideways speed (m/s) that counts as drifting.
-@export var landing_stability_strength: float = 0.6 ## Fraction of sideways speed removed on landing (0-1).
-@export var slip_grip_falloff_start: float = 3.5 ## Sideways speed (m/s) where lateral grip starts to saturate.
-@export var slip_grip_falloff_end: float = 10.0 ## Sideways speed (m/s) where grip falloff bottoms out.
-@export var slip_grip_falloff_min: float = 0.45 ## Fraction of lateral grip left at full slide (0-1).
+@export var landing_stability_strength: float = 0.65 ## Fraction of sideways speed removed on landing (0-1).
+@export var slip_grip_falloff_start: float = 4.2 ## Sideways speed (m/s) where lateral grip starts to saturate.
+@export var slip_grip_falloff_end: float = 11.0 ## Sideways speed (m/s) where grip falloff bottoms out.
+@export var slip_grip_falloff_min: float = 0.78 ## Fraction of lateral grip left at full slide (0-1).
 
 @export_group("Surface")
 @export_range(0.05, 2.0, 0.01) var surface_grip: float = 1.0 ## Grip multiplier from the surface under the cart (1.0 = dry road).
@@ -1234,7 +1235,12 @@ func _update_drive(delta: float, handbrake_held: bool, raw_steer: float) -> void
 	var in_committed_drift: bool = grounded and handbrake_held \
 		and _drift_dir != 0 and fwd_speed > 2.0
 	if in_committed_drift:
-		var planar_vel: Vector3 = Vector3(velocity.x, 0.0, velocity.z)
+		# Cap lateral speed carried into the drift so a sideways bump or
+		# knockback cannot get converted into runaway drift velocity.
+		var max_drift_lat: float = minf(maxf(fwd_speed * 0.36, 2.2), DRIFT_MAX_LATERAL_SPEED)
+		var clamped_in_lat: float = clampf(lat_speed, -max_drift_lat, max_drift_lat)
+		var planar_vel: Vector3 = forward_dir * fwd_speed + right_dir * clamped_in_lat
+		planar_vel.y = 0.0
 		var planar_speed: float = planar_vel.length()
 		if braking > 0.05:
 			planar_speed = move_toward(planar_speed, 0.0,
@@ -1257,15 +1263,15 @@ func _update_drive(delta: float, handbrake_held: bool, raw_steer: float) -> void
 		var into_turn: float = clampf(raw_steer * float(_drift_dir), -1.0, 1.0)
 		var base_slip_deg: float = lerpf(DRIFT_SLIP_ANGLE_MIN_DEG,
 			DRIFT_SLIP_ANGLE_MAX_DEG, (into_turn + 1.0) * 0.5)
-		var slick_scale: float = clampf(1.0 / maxf(surface_grip, 0.45), 0.85, 1.55)
-		var target_slip_rad: float = deg_to_rad(clampf(base_slip_deg * slick_scale, 12.0, 38.0))
+		var slick_scale: float = clampf(1.0 / maxf(surface_grip, 0.65), 0.90, 1.18)
+		var target_slip_rad: float = deg_to_rad(clampf(base_slip_deg * slick_scale, 6.5, 18.5))
 		var target_vel_dir: Vector3 = (
 			forward_dir * cos(target_slip_rad)
 			+ right_dir * (float(_drift_dir) * sin(target_slip_rad))
 		).normalized()
 		var cur_yaw: float = atan2(travel_dir.x, travel_dir.z)
 		var tgt_yaw: float = atan2(target_vel_dir.x, target_vel_dir.z)
-		var carve_blend: float = 1.0 - exp(-DRIFT_CARVE_RATE * clampf(grip_scale, 0.45, 1.25) * delta)
+		var carve_blend: float = 1.0 - exp(-DRIFT_CARVE_RATE * clampf(grip_scale, 0.62, 1.25) * delta)
 		var new_yaw: float = lerp_angle(cur_yaw, tgt_yaw, carve_blend)
 		var carved_dir: Vector3 = Vector3(sin(new_yaw), 0.0, cos(new_yaw))
 		var raw_lat: float = (carved_dir * planar_speed).dot(right_dir)
@@ -1273,9 +1279,11 @@ func _update_drive(delta: float, handbrake_held: bool, raw_steer: float) -> void
 			planar_speed = move_toward(planar_speed, 0.0,
 				DRIFT_COMMITTED_SLIP_DRAG * absf(raw_lat) * delta)
 		var carved_vel: Vector3 = carved_dir * planar_speed
-		fwd_speed = carved_vel.dot(forward_dir)
-		lat_speed = carved_vel.dot(right_dir) \
-			+ gravity * normal.dot(right_dir) * slope_lateral_gravity_scale * delta
+		fwd_speed = maxf(carved_vel.dot(forward_dir), 0.0)
+		var lat_cap: float = minf(maxf(fwd_speed * 0.34, 2.2), DRIFT_MAX_LATERAL_SPEED)
+		lat_speed = clampf(
+			carved_vel.dot(right_dir) + gravity * normal.dot(right_dir) * slope_lateral_gravity_scale * delta,
+			-lat_cap, lat_cap)
 		fwd_speed += _update_drift_boost(delta, grounded, fwd_speed, lat_speed,
 			handbrake_held, raw_steer)
 		if planar_speed <= 2.0:
@@ -1308,14 +1316,15 @@ func _update_drive(delta: float, handbrake_held: bool, raw_steer: float) -> void
 		var release_kick: float = _update_drift_boost(delta, grounded, fwd_speed,
 			lat_speed, handbrake_held, raw_steer)
 		fwd_speed += release_kick
-		var grip: float = lateral_grip * grip_scale
+		var lat_grip_scale: float = maxf(grip_scale, 0.65)
+		var grip: float = lateral_grip * lat_grip_scale
 		if grounded and handbrake_held:
 			# Handbrake lowers lateral grip for drift initiation without applying
 			# any foot-brake deceleration.
-			grip = drift_grip * grip_scale
+			grip = drift_grip * lat_grip_scale
 		elif grounded and _mini_boost_timer > 0.0:
 			# Crisp hook-up when rocketing out of an apex on a mini-turbo.
-			grip *= 1.45
+			grip *= 1.65
 		if grounded and not handbrake_held:
 			var steering_bite: float = clampf(absf(fwd_speed) / maxf(max_speed, 1.0), 0.0, 1.0)
 			grip *= 1.0 + absf(raw_steer) * steering_bite * 0.30
@@ -1458,7 +1467,7 @@ func _apply_steering(steer_input: float, raw_steer: float,
 		authority *= air_control_strength
 	if _drift_dir != 0 and handbrake_held and fwd_speed > 1.5:
 		var into_turn: float = clampf(raw_steer * float(_drift_dir), -1.0, 1.0)
-		var drift_yaw_scale: float = lerpf(0.45, 1.38, (into_turn + 1.0) * 0.5)
+		var drift_yaw_scale: float = lerpf(0.20, 1.18, (into_turn + 1.0) * 0.5)
 		rotate_y(float(_drift_dir) * steering_speed * authority * drift_yaw_scale * delta)
 		return
 	var dir_sign: float = signf(fwd_speed)
