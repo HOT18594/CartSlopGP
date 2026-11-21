@@ -6,6 +6,7 @@ extends Node3D
 const PropBatch := preload("res://scripts/minigames/scenery/prop_batch.gd")
 const SceneryKit := preload("res://scripts/minigames/scenery/scenery_kit.gd")
 const LandscapeSculptor := preload("res://scripts/minigames/scenery/landscape_sculptor.gd")
+const ConceptSpectacle := preload("res://scripts/minigames/scenery/concept_spectacle.gd")
 
 var _theme: String = "meadow"
 var _floor_y: float = -0.1
@@ -86,34 +87,55 @@ func _build_track(track: RefCounted, theme_id: String) -> void:
 	# so the track feels enveloped in a living 360-degree landscape.
 	# Clearance is measured against each landform's real footprint (base radius
 	# x spread + margin): a flat 36 m gate let 80 m-wide peaks land on the road.
-	if _theme != "dockyard":
-		var ring_count: int = 20
-		for i in ring_count:
-			var ang: float = TAU * float(i) / float(ring_count) + rng.randf_range(-0.08, 0.08)
-			var dist: float = radius_est + rng.randf_range(55.0, 145.0)
-			var pos := Vector3(center.x + cos(ang) * dist, -1.0, center.z + sin(ang) * dist)
-			var foot: float = 90.0
-			match _theme:
-				"glacier":
-					foot = 54.0 * 1.5 + 16.0
-				"canyon":
-					foot = 42.0 + 16.0
-				"stadium":
-					foot = 56.0 * 1.2 + 16.0
-			if not _clear_of_track(pos, samples, foot):
-				continue
-			match _theme:
-				"glacier":
+	var ring_count: int = 14 if _theme == "dockyard" else 22
+	for i in ring_count:
+		var ang: float = TAU * float(i) / float(ring_count) + rng.randf_range(-0.08, 0.08)
+		var dist: float = radius_est + rng.randf_range(65.0 if _theme == "dockyard" else 55.0, 155.0)
+		var pos := Vector3(center.x + cos(ang) * dist, -1.0, center.z + sin(ang) * dist)
+		var foot: float = 92.0
+		match _theme:
+			"glacier":
+				foot = 56.0 * 1.55 + 16.0
+			"canyon":
+				foot = 48.0 + 18.0
+			"dockyard":
+				foot = 46.0 + 18.0
+			"stadium":
+				foot = 56.0 * 1.2 + 16.0
+		if not _clear_of_track(pos, samples, foot):
+			continue
+		match _theme:
+			"glacier":
+				if i % 3 == 0:
+					LandscapeSculptor.add_twin_cathedral_peaks(batch, pos,
+						rng.randf_range(34.0, 52.0), rng.randf_range(54.0, 96.0), rng)
+				else:
 					LandscapeSculptor.add_alpine_mountain(batch, pos,
 						rng.randf_range(28.0, 54.0), rng.randf_range(38.0, 86.0), rng)
-				"canyon":
-					if i % 3 == 0:
-						LandscapeSculptor.add_canyon_spire(batch, pos,
-							rng.randf_range(8.0, 15.0), rng.randf_range(24.0, 44.0), rng)
-					else:
-						LandscapeSculptor.add_stratified_mesa(batch, pos,
-							rng.randf_range(22.0, 42.0), rng.randf_range(24.0, 52.0), 4, rng)
-				"stadium":
+			"canyon":
+				if i % 4 == 0:
+					LandscapeSculptor.add_canyon_arch_butte(batch, pos,
+						rng.randf_range(26.0, 38.0), rng.randf_range(30.0, 54.0), rng)
+				elif i % 3 == 0:
+					LandscapeSculptor.add_canyon_spire(batch, pos,
+						rng.randf_range(8.0, 15.0), rng.randf_range(24.0, 44.0), rng)
+				else:
+					LandscapeSculptor.add_stratified_mesa(batch, pos,
+						rng.randf_range(22.0, 42.0), rng.randf_range(24.0, 52.0), 4, rng)
+			"dockyard":
+				LandscapeSculptor.add_coastal_sea_stacks(batch, pos,
+					rng.randf_range(22.0, 38.0), rng.randf_range(18.0, 42.0), rng)
+			"stadium":
+				if i % 4 == 0:
+					LandscapeSculptor.add_twin_cathedral_peaks(batch, pos,
+						rng.randf_range(32.0, 46.0), rng.randf_range(34.0, 58.0), rng, {
+							"base": Color("478440"),
+							"rock": Color("5b9c49"),
+							"cliff": Color("74b857"),
+							"snow_lo": Color("9ad470"),
+							"snow_hi": Color("c2e89c"),
+						})
+				else:
 					LandscapeSculptor.add_woodland_hill(batch, pos,
 						rng.randf_range(30.0, 56.0), rng.randf_range(26.0, 50.0),
 						rng.randf_range(16.0, 34.0), rng, {
@@ -121,7 +143,17 @@ func _build_track(track: RefCounted, theme_id: String) -> void:
 							"mid": Color("67b54a"),
 							"top": Color("7bc759"),
 						})
-				_:
+			_:
+				if i % 4 == 0:
+					LandscapeSculptor.add_twin_cathedral_peaks(batch, pos,
+						rng.randf_range(34.0, 48.0), rng.randf_range(38.0, 64.0), rng, {
+							"base": Color("3d7344"),
+							"rock": Color("4f8a52"),
+							"cliff": Color("68a363"),
+							"snow_lo": Color("b8ccd4"),
+							"snow_hi": Color("eaf4f7"),
+						})
+				else:
 					LandscapeSculptor.add_woodland_hill(batch, pos,
 						rng.randf_range(32.0, 62.0), rng.randf_range(28.0, 54.0),
 						rng.randf_range(22.0, 48.0), rng)
@@ -153,20 +185,67 @@ func _build_track(track: RefCounted, theme_id: String) -> void:
 		mesh.material_override = SceneryKit.vertex_material()
 		add_child(mesh)
 
-	for index in 4:
-		var frame: Dictionary = track.call("sample", total * (0.11 + float(index) * 0.23))
+	# Tier-3 Low-Effort Far-Field Horizon Silhouette Ring for racing maps too!
+	_build_far_horizon_ring(radius_est + 120.0, rng)
+
+	for index in 6:
+		var frame: Dictionary = track.call("sample", total * (0.08 + float(index) * 0.165))
 		var point: Vector3 = frame["position"]
 		var right: Vector3 = frame["right"]
 		right.y = 0.0
 		right = right.normalized()
 		var side: float = 1.0 if index % 2 == 0 else -1.0
-		var offset: Vector3 = right * side * (32.0 + index * 3.0)
+		var offset: Vector3 = right * side * (32.0 + float(index % 3) * 4.5)
 		var position: Vector3 = point + offset
 		if not _clear_of_track(position, samples, 25.0):
 			continue
 		position.y = maxf(point.y, 0.0)
 		var outward: Vector3 = offset.normalized()
 		_add_landmark(position, index, atan2(outward.x, outward.z))
+
+	# Signature orbiting SlopMart Grand Prix Blimp cruising overhead.
+	LandscapeSculptor.build_slop_blimp(self, Vector3(center.x, 0.0, center.z),
+		clampf(radius_est * 0.72, 68.0, 130.0), 46.0, _anim, 0.35)
+
+	# Concept-Art 3D Spectacle Pass per Racing Theme!
+	match _theme:
+		"glacier":
+			ConceptSpectacle.build_northern_lights(self, Vector3(center.x, 0.0, center.z),
+				maxf(radius_est * 1.45, 220.0), 68.0)
+			ConceptSpectacle.build_track_lanterns(self, track, 32.0, 12.6,
+				Color("ffb538"), Color("5e3e29"))
+			ConceptSpectacle.build_glacier_crystals(self, track, 22)
+			ConceptSpectacle.build_track_chevrons(self, track, 16, Color("ffe266"))
+		"canyon":
+			# 3 monumental sandstone sky-arches spanning right over the canyon highway!
+			var arch_batch := PropBatch.new()
+			for frac: float in [0.16, 0.52, 0.80]:
+				var af: Dictionary = track.call("sample", total * frac)
+				var ap: Vector3 = af["position"] as Vector3
+				var afw: Vector3 = af["forward"] as Vector3
+				afw.y = 0.0
+				if afw.length_squared() > 0.001:
+					afw = afw.normalized()
+					LandscapeSculptor.add_natural_arch(arch_batch, null, ap,
+						atan2(-afw.x, -afw.z), 25.0, 15.0, 5.2,
+						Color("b34625"), Color("e38042"))
+			arch_batch.flush_to(self, "CanyonSkyArches", false, SceneryKit.vertex_material())
+			ConceptSpectacle.build_pennant_garlands(self, track, [0.08, 0.34, 0.66, 0.90], 24.5, 11.2)
+			ConceptSpectacle.build_track_lanterns(self, track, 44.0, 13.0,
+				Color("ff9e38"), Color("6e3b24"))
+			ConceptSpectacle.build_track_chevrons(self, track, 14, Color("fff0a8"))
+		"stadium":
+			ConceptSpectacle.build_checkered_arches(self, track, [0.12, 0.44, 0.76], 23.5, 13.5, Color("38d6f0"))
+			ConceptSpectacle.build_pennant_garlands(self, track, [0.26, 0.58, 0.88], 24.0, 11.5)
+		"dockyard":
+			ConceptSpectacle.build_checkered_arches(self, track, [0.18, 0.62], 23.5, 13.5, Color("ffd22e"))
+			ConceptSpectacle.build_track_lanterns(self, track, 42.0, 13.0,
+				Color("ffd052"), Color("334154"))
+		_:
+			ConceptSpectacle.build_checkered_arches(self, track, [0.15, 0.55], 23.5, 13.5, Color("ffd22e"))
+			ConceptSpectacle.build_pennant_garlands(self, track, [0.30, 0.72, 0.90], 24.0, 11.5)
+			ConceptSpectacle.build_track_lanterns(self, track, 40.0, 12.8,
+				Color("ffbf47"), Color("5a3b26"))
 
 	_build_weather(Vector3(center.x, 0.0, center.z))
 	LandscapeSculptor.add_biome_particles(self, _theme,
@@ -211,25 +290,36 @@ func _build_arena(theme_id: String, half: float, context: Dictionary) -> void:
 		_add_cluster(batch, position, -angle + rng.randf_range(-0.25, 0.25), rng, index)
 
 	# Second distant sculpted backdrop ring so no arena sits in an empty void.
-	var backdrop_count: int = 18
+	var backdrop_count: int = 20
 	for index in backdrop_count:
 		var angle: float = TAU * (float(index) + 0.5) / float(backdrop_count)
-		var dist: float = radius_out + rng.randf_range(35.0, 95.0)
+		var dist: float = radius_out + rng.randf_range(38.0, 102.0)
 		var pos := Vector3(cos(angle) * dist, _floor_y, sin(angle) * dist)
 		match _arena_style:
 			"skyline":
 				LandscapeSculptor.add_skyscraper(batch, pos, -angle,
 					rng.randf_range(12.0, 22.0), rng.randf_range(12.0, 22.0),
-					rng.randf_range(42.0, 88.0), Color("364568"), Color("ffdf8a"), rng)
+					rng.randf_range(44.0, 94.0), Color("364568"), Color("ffdf8a"), rng)
 			"foundry":
 				LandscapeSculptor.add_volcanic_peak(batch, pos,
-					rng.randf_range(24.0, 44.0), rng.randf_range(32.0, 62.0), rng)
+					rng.randf_range(24.0, 46.0), rng.randf_range(34.0, 68.0), rng)
 			"iceberg", "glacier":
-				LandscapeSculptor.add_alpine_mountain(batch, pos,
-					rng.randf_range(24.0, 48.0), rng.randf_range(32.0, 74.0), rng)
+				if index % 3 == 0:
+					LandscapeSculptor.add_twin_cathedral_peaks(batch, pos,
+						rng.randf_range(28.0, 44.0), rng.randf_range(44.0, 82.0), rng)
+				else:
+					LandscapeSculptor.add_alpine_mountain(batch, pos,
+						rng.randf_range(24.0, 48.0), rng.randf_range(32.0, 74.0), rng)
 			"canyon":
-				LandscapeSculptor.add_stratified_mesa(batch, pos,
-					rng.randf_range(22.0, 42.0), rng.randf_range(22.0, 48.0), 4, rng)
+				if index % 4 == 0:
+					LandscapeSculptor.add_canyon_arch_butte(batch, pos,
+						rng.randf_range(24.0, 36.0), rng.randf_range(26.0, 48.0), rng)
+				else:
+					LandscapeSculptor.add_stratified_mesa(batch, pos,
+						rng.randf_range(22.0, 42.0), rng.randf_range(22.0, 48.0), 4, rng)
+			"dockyard":
+				LandscapeSculptor.add_coastal_sea_stacks(batch, pos,
+					rng.randf_range(20.0, 34.0), rng.randf_range(18.0, 38.0), rng)
 			_:
 				LandscapeSculptor.add_woodland_hill(batch, pos,
 					rng.randf_range(28.0, 52.0), rng.randf_range(26.0, 48.0),
@@ -243,18 +333,87 @@ func _build_arena(theme_id: String, half: float, context: Dictionary) -> void:
 		mesh.material_override = SceneryKit.vertex_material()
 		add_child(mesh)
 
+	# Tier-3 Low-Effort Far-Field Horizon Silhouette Ring (220..340 m out):
+	# Gives every non-racing arena a massive living world vista at almost zero GPU cost.
+	_build_far_horizon_ring(radius_out, rng)
+
 	for index in 4:
 		var angle: float = TAU * (float(index) + 0.5) / 4.0
-		# Small enclosed arenas (plaza, rooftop...): the old radius_in + 10
-		# planted the 11 m ferris wheel across the corner barriers. Push the
-		# ring out and fly balloons instead of the wide wheel there.
 		var radius: float = radius_in + 10.0 if half > 62.0 else radius_in + 24.0
 		var position := Vector3(cos(angle) * radius, _floor_y, sin(angle) * radius)
 		var landmark_index: int = index if half > 62.0 else index + 1
 		_add_landmark(position, landmark_index, angle)
+	# Sweeping arena festival spotlights & overhead SlopMart blimp for lively atmosphere.
+	if _arena_style in ["skyline", "stadium", "foundry"]:
+		for si in 4:
+			var sa: float = TAU * float(si) / 4.0 + 0.25
+			var s_pos := Vector3(cos(sa) * (radius_in + 14.0), _floor_y, sin(sa) * (radius_in + 14.0))
+			var beam_col: Color = Color("ff8038") if _arena_style == "foundry" else (Color("38d6f0") if si % 2 == 0 else Color("ffd22e"))
+			LandscapeSculptor.build_sky_spotlight(self, s_pos, beam_col, float(si) * 1.3, _anim)
+	LandscapeSculptor.build_slop_blimp(self, Vector3(0.0, 0.0, 0.0),
+		maxf(radius_out * 1.18, 108.0), _floor_y + 56.0, _anim, 2.2)
 	_build_weather(Vector3(0.0, _floor_y, 0.0))
 	LandscapeSculptor.add_biome_particles(self, _arena_style,
 		Vector3(0.0, maxf(_floor_y, 0.0), 0.0), half * 1.45)
+
+
+func _build_far_horizon_ring(inner_r: float, rng: RandomNumberGenerator) -> void:
+	## Ultra-low-poly distant atmospheric mountain / skyline / island silhouette
+	## ring (one cheap single-mesh batch) so every map feels embedded in a huge
+	## cohesive world without costing frame rate or cluttering the arena.
+	var style: String = _arena_style if _arena_style != "" else _theme
+	var far := PropBatch.new()
+	var count: int = 24
+	var base_r: float = maxf(inner_r + 125.0, 210.0)
+	for i in count:
+		var ang: float = TAU * float(i) / float(count) + rng.randf_range(-0.04, 0.04)
+		var dist: float = base_r + rng.randf_range(0.0, 75.0)
+		var pos := Vector3(cos(ang) * dist, _floor_y - 2.0, sin(ang) * dist)
+		match style:
+			"skyline":
+				var h: float = rng.randf_range(44.0, 108.0)
+				var w: float = rng.randf_range(16.0, 30.0)
+				far.add_box(Transform3D(Basis(Vector3.UP, -ang),
+					pos + Vector3(0.0, h * 0.5, 0.0)), Vector3(w, h, w),
+					Color("24264a").lightened(float(i % 3) * 0.04))
+			"foundry":
+				var h: float = rng.randf_range(38.0, 82.0)
+				var r: float = rng.randf_range(26.0, 48.0)
+				far.add_cone(Transform3D(Basis(Vector3.UP, ang),
+					pos + Vector3(0.0, h * 0.5, 0.0)), r, h, 5,
+					Color("3b2220").lightened(float(i % 3) * 0.04))
+			"glacier", "iceberg", "snowfield":
+				var h: float = rng.randf_range(48.0, 96.0)
+				var r: float = rng.randf_range(30.0, 56.0)
+				far.add_cone(Transform3D(Basis(Vector3.UP, ang),
+					pos + Vector3(0.0, h * 0.5, 0.0)), r, h, 5,
+					Color("315285").lightened(float(i % 3) * 0.06))
+			"canyon", "bt_labyrinth":
+				var h: float = rng.randf_range(36.0, 74.0)
+				var w: float = rng.randf_range(28.0, 52.0)
+				far.add_box(Transform3D(Basis(Vector3.UP, ang),
+					pos + Vector3(0.0, h * 0.5, 0.0)), Vector3(w, h, w * 0.72),
+					Color("7c3b36").lightened(float(i % 3) * 0.05))
+			"dockyard", "harbour", "bt_ferries":
+				var h: float = rng.randf_range(24.0, 54.0)
+				var r: float = rng.randf_range(28.0, 54.0)
+				far.add_cone(Transform3D(Basis(Vector3.UP, ang),
+					pos + Vector3(0.0, h * 0.5, 0.0)), r, h, 6,
+					Color("3d6870").lightened(float(i % 3) * 0.05))
+			_:
+				var h: float = rng.randf_range(28.0, 64.0)
+				var r: float = rng.randf_range(34.0, 62.0)
+				far.add_cone(Transform3D(Basis(Vector3.UP, ang),
+					pos + Vector3(0.0, h * 0.5, 0.0)), r, h, 6,
+					Color("4a7c66").lightened(float(i % 3) * 0.05))
+	var mesh := far.build()
+	if mesh != null:
+		var mi := MeshInstance3D.new()
+		mi.name = "FarHorizonSilhouette"
+		mi.mesh = mesh
+		mi.material_override = SceneryKit.vertex_material()
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		add_child(mi)
 
 
 func _normalise_theme(raw: String) -> String:
@@ -424,16 +583,27 @@ func _cactus(batch: PropBatch, base: Transform3D, rng: RandomNumberGenerator) ->
 func _add_landmark(point: Vector3, index: int, yaw: float = 0.0) -> void:
 	match _theme:
 		"meadow":
-			LandscapeSculptor.build_windmill(self, point, yaw, 1.15, "meadow", _anim)
-		"canyon":
-			LandscapeSculptor.build_windmill(self, point, yaw, 1.05, "canyon", _anim)
-		"dockyard":
 			if index % 2 == 0:
-				LandscapeSculptor.build_port_crane(self, point, yaw, 14.0, Color("f0b73e"), _anim)
+				LandscapeSculptor.build_windmill(self, point, yaw, 1.15, "meadow", _anim)
 			else:
+				LandscapeSculptor.build_giant_wind_turbine(self, point, yaw, 22.0, _anim)
+		"canyon":
+			if index % 2 == 0:
+				LandscapeSculptor.build_windmill(self, point, yaw, 1.05, "canyon", _anim)
+			else:
+				LandscapeSculptor.build_giant_wind_turbine(self, point, yaw, 24.0, _anim)
+		"dockyard":
+			if index % 3 == 0:
+				LandscapeSculptor.build_port_crane(self, point, yaw, 14.0, Color("f0b73e"), _anim)
+			elif index % 3 == 1:
 				LandscapeSculptor.build_cargo_ship(self, point + Vector3(0.0, -0.5, 0.0), yaw, 0.78, _anim)
+			else:
+				LandscapeSculptor.build_lighthouse(self, point, 18.0, _anim)
 		"foundry":
-			LandscapeSculptor.build_port_crane(self, point, yaw, 13.0, Color("e36642"), _anim)
+			if index % 2 == 0:
+				LandscapeSculptor.build_port_crane(self, point, yaw, 13.0, Color("e36642"), _anim)
+			else:
+				LandscapeSculptor.build_sky_spotlight(self, point, Color("ff7832"), float(index) * 1.7, _anim)
 		"glacier":
 			var end_pt: Vector3 = point + Vector3(cos(yaw), 0.25, sin(yaw)) * 28.0
 			LandscapeSculptor.build_ski_lift_system(self, point + Vector3.UP * 8.0,
@@ -441,6 +611,8 @@ func _add_landmark(point: Vector3, index: int, yaw: float = 0.0) -> void:
 		_:
 			if index == 0:
 				LandscapeSculptor.build_ferris_wheel(self, point, yaw, 11.0, _anim)
+			elif index % 3 == 2:
+				LandscapeSculptor.build_sky_spotlight(self, point, Color("38d6f0"), float(index) * 1.2, _anim)
 			else:
 				var col_a: Color = Color("ed5d68") if index % 2 == 0 else Color("38d6f0")
 				var col_b: Color = Color("ffd22e") if index % 2 == 0 else Color("f26ca7")

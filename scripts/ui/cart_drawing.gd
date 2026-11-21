@@ -12,8 +12,12 @@ const METAL_SIDE := Color("cbd2e2")
 const METAL_FAR := Color("a8b0c6")
 const RED := Color("dd3b41")
 const RED_DARK := Color("a9242b")
-const TIRE := Color("34324a")
-const HUB := Color("737b93")
+const TIRE := Color("242336")
+const HUB := Color("ffbe26")
+const GOLD_DARK := Color("cc8a00")
+const CYAN := Color("2bd9ff")
+const CYAN_DARK := Color("119ec4")
+const CARBON := Color("22253a")
 const OPENING := Color(0.16, 0.15, 0.29, 0.95)
 
 
@@ -26,8 +30,36 @@ static func draw_cart(ci: CanvasItem, origin: Vector2, scale: float, flip: bool 
 
 	# Far casters first. They sit higher and smaller, which is what sells the
 	# three-quarter view without any extra shading.
-	_draw_wheel(ci, origin, scale, f, -28.0, -17.0, 9.5, METAL_FAR, true)
-	_draw_wheel(ci, origin, scale, f, 38.0, -17.0, 9.5, METAL_FAR, true)
+	_draw_wheel(ci, origin, scale, f, -28.0, -17.0, 10.5, HUB, true)
+	_draw_wheel(ci, origin, scale, f, 38.0, -17.0, 10.5, HUB, true)
+
+	# Rear twin cyan & gold turbo thruster canister + glowing plasma jet!
+	var jet_tip := _pt(origin, scale, f, -124.0, -52.0)
+	var jet_top := _pt(origin, scale, f, -90.0, -64.0)
+	var jet_bot := _pt(origin, scale, f, -88.0, -40.0)
+	ci.draw_colored_polygon(PackedVector2Array([jet_top, jet_bot, jet_tip]), Color(0.20, 0.88, 1.0, 0.72))
+	var turbo_poly := PackedVector2Array([
+		_pt(origin, scale, f, -94.0, -68.0),
+		_pt(origin, scale, f, -52.0, -64.0),
+		_pt(origin, scale, f, -50.0, -40.0),
+		_pt(origin, scale, f, -92.0, -42.0),
+	])
+	ci.draw_colored_polygon(turbo_poly, CYAN)
+	ci.draw_line(_pt(origin, scale, f, -74.0, -67.0), _pt(origin, scale, f, -72.0, -41.0), HUB, maxf(2.4, 5.2 * scale), true)
+	ci.draw_polyline(_closed(turbo_poly), INK, ink_w, true)
+
+	# Front carbon aero splitter + gold lip + LED headlight pod
+	var split_poly := PackedVector2Array([
+		_pt(origin, scale, f, 44.0, -34.0),
+		_pt(origin, scale, f, 88.0, -26.0),
+		_pt(origin, scale, f, 84.0, -16.0),
+		_pt(origin, scale, f, 42.0, -22.0),
+	])
+	ci.draw_colored_polygon(split_poly, CARBON)
+	ci.draw_line(_pt(origin, scale, f, 72.0, -22.0), _pt(origin, scale, f, 88.0, -24.0), HUB, maxf(2.0, 4.0 * scale), true)
+	ci.draw_polyline(_closed(split_poly), INK, ink_w * 0.85, true)
+	ci.draw_circle(_pt(origin, scale, f, 70.0, -42.0), maxf(3.0, 6.2 * scale), INK)
+	ci.draw_circle(_pt(origin, scale, f, 70.0, -42.0), maxf(2.0, 4.2 * scale), Color("fff7c6"))
 
 	# Basket opening. The near and far rails are parallel, so the dark inner
 	# wall reads as real depth instead of a painted stripe along the top.
@@ -46,6 +78,15 @@ static func draw_cart(ci: CanvasItem, origin: Vector2, scale: float, flip: bool 
 	var side := PackedVector2Array([near_tl, near_tr, bottom_r, bottom_l])
 	ci.draw_colored_polygon(side, METAL)
 	_draw_weave(ci, near_tl, near_tr, bottom_r, bottom_l, detail_w)
+	# Red/gold racing stripe plate on basket side
+	var plate := PackedVector2Array([
+		_pt(origin, scale, f, -28.0, -116.0),
+		_pt(origin, scale, f, 26.0, -104.0),
+		_pt(origin, scale, f, 23.0, -86.0),
+		_pt(origin, scale, f, -30.0, -98.0),
+	])
+	ci.draw_colored_polygon(plate, RED)
+	ci.draw_polyline(_closed(plate), INK, detail_w, true)
 	ci.draw_polyline(_closed(side), INK, ink_w, true)
 
 	# Front end panel closes the box. It is wider than a painted lip, so the
@@ -61,6 +102,24 @@ static func draw_cart(ci: CanvasItem, origin: Vector2, scale: float, flip: bool 
 	ci.draw_line(near_tl.lerp(near_tr, 0.05) + Vector2(0.0, -detail_w),
 		near_tl.lerp(near_tr, 0.92) + Vector2(0.0, -detail_w),
 		Color(1, 1, 1, 0.55), maxf(1.4, 2.2 * scale), true)
+
+	# Rear GT Wing Spoiler perched behind push posts
+	var wing_poly := PackedVector2Array([
+		_pt(origin, scale, f, -112.0, -186.0),
+		_pt(origin, scale, f, -76.0, -198.0),
+		_pt(origin, scale, f, -66.0, -184.0),
+		_pt(origin, scale, f, -102.0, -172.0),
+	])
+	ci.draw_colored_polygon(wing_poly, CARBON)
+	ci.draw_polyline(_closed(wing_poly), INK, ink_w * 0.9, true)
+	var endplate := PackedVector2Array([
+		_pt(origin, scale, f, -116.0, -192.0),
+		_pt(origin, scale, f, -98.0, -186.0),
+		_pt(origin, scale, f, -96.0, -166.0),
+		_pt(origin, scale, f, -114.0, -172.0),
+	])
+	ci.draw_colored_polygon(endplate, RED)
+	ci.draw_polyline(_closed(endplate), INK, detail_w, true)
 
 	# Lower rack between the legs.
 	ci.draw_line(_pt(origin, scale, f, -52.0, -38.0),
@@ -92,9 +151,9 @@ static func draw_cart(ci: CanvasItem, origin: Vector2, scale: float, flip: bool 
 	var grip_b: Vector2 = _pt(origin, scale, f, -69.0, -188.0)
 	_draw_grip(ci, grip_a, grip_b, scale)
 
-	# Near casters.
-	_draw_wheel(ci, origin, scale, f, -50.0, -11.0, 11.5, METAL, false)
-	_draw_wheel(ci, origin, scale, f, 52.0, -11.0, 11.5, METAL, false)
+	# Near oversized racing slick wheels with gold rims.
+	_draw_wheel(ci, origin, scale, f, -50.0, -13.0, 14.5, HUB, false)
+	_draw_wheel(ci, origin, scale, f, 52.0, -12.0, 13.0, HUB, false)
 
 
 static func _draw_shadow(ci: CanvasItem, origin: Vector2, scale: float) -> void:

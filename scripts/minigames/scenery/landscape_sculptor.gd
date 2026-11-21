@@ -409,6 +409,73 @@ static func add_canyon_spire(batch: PropBatch, center: Vector3,
 		Vector3(br * 1.1, br * 0.8, br * 0.9), Color("cc6136"))
 
 
+static func add_twin_cathedral_peaks(batch: PropBatch, center: Vector3,
+		base_radius: float, peak_height: float, rng: RandomNumberGenerator,
+		palette: Dictionary = {}) -> void:
+	## Dramatic asymmetric twin jagged alpine horns linked by a curved snow saddle,
+	## giving skylines memorable cathedral silhouettes instead of single cones.
+	var ang: float = rng.randf_range(0.0, TAU)
+	var axis := Vector3(cos(ang), 0.0, sin(ang))
+	var perp := Vector3(-axis.z, 0.0, axis.x)
+	var sep: float = base_radius * 0.56
+	add_alpine_mountain(batch, center - axis * sep, base_radius * 0.82, peak_height, rng, palette)
+	add_alpine_mountain(batch, center + axis * sep + perp * (base_radius * 0.14),
+		base_radius * 0.68, peak_height * rng.randf_range(0.72, 0.88), rng, palette)
+	# Glacial col / saddle ridge joining the twin horns.
+	var col_rock: Color = palette.get("rock", Color("4d8fc4")) as Color
+	var col_snow: Color = palette.get("snow_lo", Color("bfe6f7")) as Color
+	var col_h: float = peak_height * 0.42
+	var col_xf := Transform3D(Basis(Vector3.UP, -ang), center + Vector3(0.0, col_h * 0.5 - 2.0, 0.0))
+	batch.add_box(col_xf, Vector3(sep * 1.65, col_h + 4.0, base_radius * 0.48), col_rock.darkened(0.08))
+	batch.add_box(Transform3D(Basis(Vector3.UP, -ang), center + Vector3(0.0, col_h + 0.4, 0.0)),
+		Vector3(sep * 1.45, 2.2, base_radius * 0.36), col_snow)
+
+
+static func add_canyon_arch_butte(batch: PropBatch, center: Vector3,
+		radius: float, height: float, rng: RandomNumberGenerator,
+		palette: Dictionary = {}) -> void:
+	## Monumental desert landmark: twin stratified sandstone towers bridged by
+	## a sweeping natural sky-arch and flanked by eroded needle spires.
+	var yaw: float = rng.randf_range(0.0, TAU)
+	var axis := Vector3(cos(yaw), 0.0, sin(yaw))
+	var sep: float = radius * 0.72
+	add_stratified_mesa(batch, center - axis * sep, radius * 0.58, height, 4, rng, palette)
+	add_stratified_mesa(batch, center + axis * sep, radius * 0.52, height * 0.86, 3, rng, palette)
+	var col_a: Color = palette.get("band_a", Color("a84426")) as Color
+	var col_b: Color = palette.get("band_b", Color("d46a3b")) as Color
+	add_natural_arch(batch, null, center, -yaw, sep * 1.45, height * 0.74,
+		maxf(radius * 0.24, 4.5), col_a, col_b)
+	var perp := Vector3(-axis.z, 0.0, axis.x)
+	add_canyon_spire(batch, center + perp * (radius * 0.85), radius * 0.24, height * 0.62, rng)
+
+
+static func add_coastal_sea_stacks(batch: PropBatch, center: Vector3,
+		radius: float, height: float, rng: RandomNumberGenerator,
+		palette: Dictionary = {}) -> void:
+	## Layered volcanic basalt sea stacks with pale sea-foam collar & grass cap.
+	var col_base: Color = palette.get("base", Color("2e3a48")) as Color
+	var col_mid: Color = palette.get("mid", Color("495a6b")) as Color
+	var col_top: Color = palette.get("top", Color("609e54")) as Color
+	var col_foam := Color("d6f4fa")
+	var count: int = rng.randi_range(2, 4)
+	for i in count:
+		var ang: float = TAU * float(i) / float(count) + rng.randf_range(-0.3, 0.3)
+		var off_r: float = 0.0 if i == 0 else radius * rng.randf_range(0.55, 0.95)
+		var pos := Vector3(center.x + cos(ang) * off_r, center.y, center.z + sin(ang) * off_r)
+		var sr: float = radius * (0.58 if i == 0 else rng.randf_range(0.28, 0.44))
+		var sh: float = height * (1.0 if i == 0 else rng.randf_range(0.42, 0.78))
+		# White foam ring at waterline
+		batch.add_cylinder(Transform3D(Basis.IDENTITY, Vector3(pos.x, center.y + 0.15, pos.z)),
+			sr * 1.24, 0.45, 9, col_foam)
+		# Lower basalt column + upper tapered crown + grass cap
+		batch.add_cylinder(Transform3D(Basis.IDENTITY, Vector3(pos.x, center.y + sh * 0.30, pos.z)),
+			sr * 0.96, sh * 0.66, 7, col_base)
+		batch.add_cylinder(Transform3D(Basis.IDENTITY, Vector3(pos.x, center.y + sh * 0.76, pos.z)),
+			sr * 0.72, sh * 0.46, 7, col_mid)
+		batch.add_cylinder(Transform3D(Basis.IDENTITY, Vector3(pos.x, center.y + sh + 0.35, pos.z)),
+			sr * 0.68, 0.9, 7, col_top)
+
+
 static func add_natural_arch(batch: PropBatch, body: StaticBody3D,
 		center: Vector3, yaw: float, span_width: float, clear_height: float,
 		depth: float, col_a: Color, col_b: Color) -> void:
@@ -1033,6 +1100,222 @@ static func build_blimp(parent: Node3D, center: Vector3, orbit_radius: float,
 	return root
 
 
+static func build_slop_blimp(parent: Node3D, center: Vector3, orbit_radius: float,
+		altitude: float, anim: Dictionary, phase: float = 0.4) -> Node3D:
+	## Iconic friend-slop SlopMart Grand Prix dirigible with glowing accent band,
+	## red/gold tail fins, underslung VIP gondola, and spinning rear propeller.
+	var root := Node3D.new()
+	root.name = "SlopGrandPrixBlimp"
+	root.position = Vector3(center.x + orbit_radius, altitude, center.z)
+	parent.add_child(root)
+
+	var hull := MeshInstance3D.new()
+	var sm := SphereMesh.new()
+	sm.radius = 5.2
+	sm.height = 10.4
+	sm.radial_segments = 16
+	sm.rings = 8
+	hull.mesh = sm
+	hull.scale = Vector3(1.0, 0.90, 2.75)
+	var hull_mat := StandardMaterial3D.new()
+	hull_mat.albedo_color = Color("ffd22e")
+	hull_mat.roughness = 0.52
+	hull_mat.clearcoat_enabled = true
+	hull_mat.clearcoat = 0.35
+	hull.material_override = hull_mat
+	root.add_child(hull)
+
+	# Glowing cyan racing stripe ring around midsection
+	var stripe := MeshInstance3D.new()
+	var torus := TorusMesh.new()
+	torus.inner_radius = 4.65
+	torus.outer_radius = 5.45
+	stripe.mesh = torus
+	stripe.rotation_degrees.x = 90.0
+	var stripe_mat := StandardMaterial3D.new()
+	stripe_mat.albedo_color = Color("38d6f0")
+	stripe_mat.emission_enabled = true
+	stripe_mat.emission = Color("2ad4ff")
+	stripe_mat.emission_energy_multiplier = 1.6
+	stripe.material_override = stripe_mat
+	root.add_child(stripe)
+
+	var detail := PropBatch.new()
+	# Underslung gondola cabin with warm lit windows
+	detail.add_box(Transform3D(Basis.IDENTITY, Vector3(0.0, -5.2, 0.6)),
+		Vector3(3.0, 2.2, 6.8), Color("1e1b3a"))
+	detail.add_box(Transform3D(Basis.IDENTITY, Vector3(0.0, -5.1, 0.6)),
+		Vector3(3.15, 0.85, 5.2), Color("ffdf7a"))
+	# Crimson & cyan cruciform tail fins
+	detail.add_box(Transform3D(Basis.IDENTITY, Vector3(0.0, 0.0, -11.6)),
+		Vector3(0.5, 8.8, 4.2), Color("e6323c"))
+	detail.add_box(Transform3D(Basis.IDENTITY, Vector3(0.0, 0.0, -11.6)),
+		Vector3(8.8, 0.5, 4.2), Color("e6323c"))
+	# Nose cone cap
+	detail.add_cone(Transform3D(Basis(Vector3.RIGHT, PI * 0.5), Vector3(0.0, 0.0, 14.4)),
+		1.4, 2.2, 10, Color("e6323c"))
+	var dmi := MeshInstance3D.new()
+	dmi.mesh = detail.build()
+	dmi.material_override = SceneryKit.vertex_material()
+	root.add_child(dmi)
+
+	# Spinning rear tail propeller
+	var prop := Node3D.new()
+	prop.position = Vector3(0.0, 0.0, -14.2)
+	root.add_child(prop)
+	var pb := PropBatch.new()
+	pb.add_box(Transform3D(Basis.IDENTITY, Vector3.ZERO), Vector3(4.8, 0.55, 0.18), Color("eef3fb"))
+	pb.add_box(Transform3D(Basis.IDENTITY, Vector3.ZERO), Vector3(0.55, 4.8, 0.18), Color("eef3fb"))
+	var pmi := MeshInstance3D.new()
+	pmi.mesh = pb.build()
+	pmi.material_override = SceneryKit.vertex_material()
+	prop.add_child(pmi)
+
+	if not anim.has("spinners_z"):
+		anim["spinners_z"] = []
+	(anim["spinners_z"] as Array).append({"node": prop, "speed": 6.2})
+	if not anim.has("orbiters"):
+		anim["orbiters"] = []
+	(anim["orbiters"] as Array).append({
+		"node": root,
+		"center": Vector3(center.x, altitude, center.z),
+		"radius": orbit_radius,
+		"speed": 0.12,
+		"phase": phase,
+	})
+	return root
+
+
+static func build_giant_wind_turbine(parent: Node3D, pos: Vector3, yaw: float,
+		height: float, anim: Dictionary) -> Node3D:
+	## Tall modern 3-blade wind turbine with crisp silhouette and smooth spin.
+	var root := Node3D.new()
+	root.name = "WindTurbine"
+	root.position = pos
+	root.rotation.y = yaw
+	parent.add_child(root)
+
+	var tower := PropBatch.new()
+	tower.add_cylinder(Transform3D(Basis.IDENTITY, Vector3(0.0, height * 0.5 - 1.5, 0.0)),
+		1.15, height + 3.0, 10, Color("edf2f7"))
+	tower.add_box(Transform3D(Basis.IDENTITY, Vector3(0.0, height + 0.4, -0.4)),
+		Vector3(1.8, 1.8, 4.4), Color("dce4ef"))
+	tower.add_box(Transform3D(Basis.IDENTITY, Vector3(0.0, height + 1.4, -0.8)),
+		Vector3(0.5, 0.5, 0.5), Color("ff3b4a"))
+	var tmi := MeshInstance3D.new()
+	tmi.mesh = tower.build()
+	tmi.material_override = SceneryKit.vertex_material()
+	root.add_child(tmi)
+
+	var rotor := Node3D.new()
+	rotor.position = Vector3(0.0, height + 0.4, 2.0)
+	root.add_child(rotor)
+	var rb := PropBatch.new()
+	rb.add_cone(Transform3D(Basis(Vector3.RIGHT, PI * 0.5), Vector3(0.0, 0.0, 0.8)),
+		1.0, 2.0, 10, Color("ff4757"))
+	var blade_len: float = height * 0.44
+	for i in 3:
+		var ang: float = TAU * float(i) / 3.0
+		var bxf := Transform3D(Basis(Vector3.BACK, ang),
+			Vector3(-sin(ang), cos(ang), 0.0) * (blade_len * 0.52))
+		rb.add_box(bxf, Vector3(0.75, blade_len, 0.22), Color("f7f9fc"))
+		rb.add_box(Transform3D(Basis(Vector3.BACK, ang),
+			Vector3(-sin(ang), cos(ang), 0.0) * (blade_len * 0.90)),
+			Vector3(0.55, blade_len * 0.18, 0.25), Color("ff4757"))
+	var rmi := MeshInstance3D.new()
+	rmi.mesh = rb.build()
+	rmi.material_override = SceneryKit.vertex_material()
+	rotor.add_child(rmi)
+
+	if not anim.has("spinners_z"):
+		anim["spinners_z"] = []
+	(anim["spinners_z"] as Array).append({"node": rotor, "speed": 1.15})
+	return root
+
+
+static func build_sky_spotlight(parent: Node3D, pos: Vector3, beam_col: Color,
+		phase: float, anim: Dictionary) -> Node3D:
+	## Sweeping Grand Prix / Arena festival spotlight tower with volumetric beam.
+	var root := Node3D.new()
+	root.name = "SkySpotlight"
+	root.position = pos
+	parent.add_child(root)
+
+	var base := PropBatch.new()
+	base.add_box(Transform3D(Basis.IDENTITY, Vector3(0.0, 1.0, 0.0)),
+		Vector3(2.8, 2.4, 2.8), Color("262a3d"))
+	base.add_cylinder(Transform3D(Basis.IDENTITY, Vector3(0.0, 2.6, 0.0)),
+		1.1, 1.4, 10, Color("ffd22e"))
+	var bmi := MeshInstance3D.new()
+	bmi.mesh = base.build()
+	bmi.material_override = SceneryKit.vertex_material()
+	root.add_child(bmi)
+
+	var pivot := Node3D.new()
+	pivot.position = Vector3(0.0, 3.2, 0.0)
+	root.add_child(pivot)
+	var cone := CylinderMesh.new()
+	cone.top_radius = 6.5
+	cone.bottom_radius = 0.85
+	cone.height = 58.0
+	cone.radial_segments = 10
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.albedo_color = Color(beam_col.r, beam_col.g, beam_col.b, 0.16)
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	var cmi := MeshInstance3D.new()
+	cmi.mesh = cone
+	cmi.material_override = mat
+	cmi.position = Vector3(0.0, 29.0, 0.0)
+	cmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	pivot.add_child(cmi)
+
+	if not anim.has("swayers"):
+		anim["swayers"] = []
+	(anim["swayers"] as Array).append({
+		"node": pivot,
+		"amp_x": 0.42,
+		"amp_z": 0.36,
+		"speed": 0.65,
+		"phase": phase,
+	})
+	return root
+
+
+static func build_stunt_hoop(parent: Node3D, pos: Vector3, yaw: float,
+		radius: float, color: Color, anim: Dictionary) -> Node3D:
+	## Floating glowing neon stunt / beacon ring rotating smoothly in place.
+	var root := Node3D.new()
+	root.name = "StuntHoop"
+	root.position = pos
+	root.rotation.y = yaw
+	parent.add_child(root)
+
+	var ring := MeshInstance3D.new()
+	var torus := TorusMesh.new()
+	torus.inner_radius = maxf(radius - 0.32, 0.4)
+	torus.outer_radius = radius
+	torus.rings = 24
+	torus.ring_segments = 12
+	ring.mesh = torus
+	ring.rotation_degrees.x = 90.0
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = color
+	mat.emission_enabled = true
+	mat.emission = color
+	mat.emission_energy_multiplier = 2.4
+	mat.roughness = 0.2
+	ring.material_override = mat
+	ring.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	root.add_child(ring)
+
+	if not anim.has("spinners_z"):
+		anim["spinners_z"] = []
+	(anim["spinners_z"] as Array).append({"node": ring, "speed": 1.35})
+	return root
+
+
 static func build_hot_air_balloon(parent: Node3D, pos: Vector3,
 		col_a: Color, col_b: Color, phase: float, anim: Dictionary) -> Node3D:
 	var root := Node3D.new()
@@ -1167,6 +1450,21 @@ static func step_animations(anim: Dictionary, time: float, delta: float) -> void
 			if sp < 0.0:
 				ping = 1.0 - ping
 			node.position = p0.lerp(p1, ping)
+	for item: Dictionary in anim.get("swayers", []):
+		var node := item.get("node") as Node3D
+		if is_instance_valid(node):
+			var sp: float = float(item.get("speed", 0.6))
+			var ph: float = float(item.get("phase", 0.0))
+			node.rotation.x = sin(time * sp + ph) * float(item.get("amp_x", 0.35))
+			node.rotation.z = cos(time * sp * 0.82 + ph) * float(item.get("amp_z", 0.30))
+	for item: Dictionary in anim.get("pulsers", []):
+		var node := item.get("node") as Node3D
+		if is_instance_valid(node):
+			var sp: float = float(item.get("speed", 2.4))
+			var ph: float = float(item.get("phase", 0.0))
+			var amp: float = float(item.get("amp", 0.08))
+			var s_val: float = 1.0 + sin(time * sp + ph) * amp
+			node.scale = Vector3(s_val, 1.0, s_val)
 
 
 static func add_biome_particles(parent: Node3D, biome: String, center: Vector3,

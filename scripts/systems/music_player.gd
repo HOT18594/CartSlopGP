@@ -1,24 +1,58 @@
 extends Node
-## Optional background music with crossfades.
+## Background music manager with equal-power crossfades, seamless DJ-style
+## self-loop blending, transitional warmth filtering, and pause muffling.
 ##
-## Drop OGG Vorbis files into `res://assets/audio/music/` using the names
-## documented in that folder's README. If a track is missing the game stays
-## silent instead of erroring, so builds work before the music is added.
+## Drop OGG Vorbis (or MP3/WAV) files into `res://assets/audio/music/` using
+## the track names below. Missing tracks stay silent or fall back cleanly so
+## builds work even if optional mode tracks are not yet installed.
 
 const MUSIC_DIR: String = "res://assets/audio/music/"
 const MENU_TRACK: String = "menu_loop"
 const SANDBOX_TRACK: String = "sandbox_loop"
 const RACE_TRACK: String = "race_loop"
-const POLL_INTERVAL: float = 0.5
-const FADE_TIME: float = 1.4
-const MUSIC_LEVEL_DB: float = -7.0 ## Leaves headroom above SFX and engines.
+const KNOCKOUT_TRACK: String = "knockout_loop"
+const CARGO_TRACK: String = "cargo_loop"
+const BOMB_TAG_TRACK: String = "bomb_tag_loop"
+
+const POLL_INTERVAL: float = 0.15
+const FADE_TIME: float = 2.0 ## Smooth equal-power crossfade between tracks.
+const BOOT_FADE_IN: float = 1.4 ## Gentle initial bloom on startup.
+const LOOP_BLEND_SEC: float = 4.0 ## Overlap crossfade when a song wraps around.
+const MUSIC_LEVEL_DB: float = -6.5 ## Balanced headroom under SFX and engines.
+const SILENT_DB: float = -72.0
+
+const FILTER_OPEN_HZ: float = 20500.0
+const FILTER_TRANSITION_HZ: float = 4600.0
+const FILTER_PAUSE_HZ: float = 1450.0
+const PAUSE_DUCK_DB: float = -4.5
 
 var current_track: String = ""
 
 var _players: Array[AudioStreamPlayer] = []
 var _active: int = 0
-var _tween: Tween
 var _poll: float = 0.0
+
+## Equal-power crossfade state driven smoothly in _process() so deck levels,
+## self-loop wraps, and filter sweeps never fight or snap.
+var _xfading: bool = false
+var _xfade_elapsed: float = 0.0
+var _xfade_duration: float = FADE_TIME
+var _xfade_from: int = -1
+var _xfade_to: int = -1
+var _xfade_is_loop: bool = false
+var _xfade_has_outgoing: bool = false
+var _fading_out_only: bool = false
+
+## Remember menu playback offset so returning from races feels fresh rather
+## than hearing the first 5 seconds of the menu theme every time.
+var _saved_positions: Dictionary = {}
+
+## Low-pass filter on the Music bus for buttery transitions & pause muffling.
+var _lowpass: AudioEffectLowPassFilter
+var _filter_hz: float = FILTER_OPEN_HZ
+var _duck_db: float = 0.0
+var _transition_target_track: String = ""
+var _transition_lock_timer: float = 0.0
 
 
 func _enter_tree() -> void:
@@ -28,11 +62,12 @@ func _enter_tree() -> void:
 
 func _ready() -> void:
 	_ensure_music_bus()
+	_ensure_music_filter()
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	for _index in 2:
 		var player := AudioStreamPlayer.new()
 		player.bus = "Music"
-		player.volume_db = -60.0
+		player.volume_db = SILENT_DB
 		player.process_mode = Node.PROCESS_MODE_ALWAYS
 		add_child(player)
 		_players.append(player)
@@ -48,6 +83,22 @@ func _ensure_music_bus() -> void:
 	AudioServer.set_bus_send(index, "Master")
 
 
+func _ensure_music_filter() -> void:
+	var bus_idx: int = AudioServer.get_bus_index("Music")
+	if bus_idx == -1:
+		return
+	for i in AudioServer.get_bus_effect_count(bus_idx):
+		var fx: AudioEffect = AudioServer.get_bus_effect(bus_idx, i)
+		if fx is AudioEffectLowPassFilter:
+			_lowpass = fx as AudioEffectLowPassFilter
+			return
+	_lowpass = AudioEffectLowPassFilter.new()
+	_lowpass.cutoff_hz = FILTER_OPEN_HZ
+	_lowpass.resonance = 0.52
+	_lowpass.db = AudioEffectFilter.FILTER_12DB
+	AudioServer.add_bus_effect(bus_idx, _lowpass)
+
+
 func _reroute_players() -> void:
 	if AudioServer.get_bus_index("Music") == -1:
 		return
@@ -57,18 +108,34 @@ func _reroute_players() -> void:
 
 
 func _process(delta: float) -> void:
-	_poll += delta
+	var dt: float = minf(delta, 0.1)
+	if _transition_lock_timer > 0.0:
+		_transition_lock_timer = maxf(_transition_lock_timer - dt, 0.0)
+		if _transition_lock_timer <= 0.0:
+			_transition_target_track = ""
+
+	_update_crossfade(dt)
+	_update_loop_blend()
+	_update_bus_filter_and_duck(dt)
+
+	_poll += dt
 	if _poll < POLL_INTERVAL:
 		return
 	_poll = 0.0
+
+	# While a scene transition is actively pre-blending the target scene's music,
+	# let that transition hold instead of bouncing back to the outgoing scene.
+	if _transition_lock_timer > 0.0 and _transition_target_track != "":
+		return
+
 	# change_scene_to_file() leaves current_scene null for a moment. That is a
-	# transition, not a scene that wants silence: treating it as one faded the
-	# track out and restarted it on every screen change.
+	# transition, not a scene that wants silence.
 	if get_tree().current_scene == null:
 		return
 	var wanted: String = _track_for_current_scene()
 	if wanted != current_track:
 		play_track(wanted)
+
 
 func _track_for_current_scene() -> String:
 	var scene: Node = get_tree().current_scene
@@ -81,13 +148,35 @@ func _track_for_current_scene() -> String:
 func track_for_path(path: String) -> String:
 	if path.ends_with("sandbox.tscn"):
 		return SANDBOX_TRACK
-	if path.ends_with("grass_race.tscn") or path.ends_with("meadow_lobby.tscn") \
-			or path.ends_with("cargo_rush.tscn") or path.ends_with("knockout.tscn") \
-			or path.ends_with("bomb_tag.tscn"):
+	if path.ends_with("knockout.tscn"):
+		return KNOCKOUT_TRACK if _track_exists(KNOCKOUT_TRACK) else RACE_TRACK
+	if path.ends_with("cargo_rush.tscn"):
+		return CARGO_TRACK if _track_exists(CARGO_TRACK) else RACE_TRACK
+	if path.ends_with("bomb_tag.tscn"):
+		return BOMB_TAG_TRACK if _track_exists(BOMB_TAG_TRACK) else RACE_TRACK
+	if path.ends_with("grass_race.tscn") or path.ends_with("meadow_lobby.tscn"):
 		return RACE_TRACK
 	if path.contains("/ui/"):
 		return MENU_TRACK
 	return ""
+
+
+## Called by SceneLoader right as a transition begins so the next mode's track
+## starts blending during the loading screen and blooms in as the world appears.
+func transition_to_scene(scene_path: String) -> void:
+	var wanted: String = track_for_path(scene_path)
+	if wanted == "" or wanted == current_track:
+		return
+	_transition_target_track = wanted
+	_transition_lock_timer = 3.0
+	play_track(wanted, FADE_TIME + 0.4)
+
+
+func _track_exists(track_name: String) -> bool:
+	for ext: String in [".ogg", ".mp3", ".wav"]:
+		if ResourceLoader.exists(MUSIC_DIR + track_name + ext):
+			return true
+	return false
 
 
 func play_menu() -> void:
@@ -99,61 +188,221 @@ func play_sandbox() -> void:
 
 
 func stop_music(fade: float = FADE_TIME) -> void:
+	_remember_active_position()
 	current_track = ""
-	_fade_out(_players[_active], fade)
+	if _players.is_empty():
+		return
+	var active_player: AudioStreamPlayer = _players[_active]
+	if not active_player.playing:
+		return
+	_xfading = true
+	_fading_out_only = true
+	_xfade_is_loop = false
+	_xfade_elapsed = 0.0
+	_xfade_duration = maxf(fade, 0.08)
+	_xfade_from = _active
+	_xfade_to = -1
+	_xfade_has_outgoing = true
 
 
 func play_track(track_name: String, fade: float = FADE_TIME) -> void:
 	if track_name == current_track:
 		return
+	_remember_active_position()
+	var prev_track: String = current_track
 	current_track = track_name
+	if _players.size() < 2:
+		return
 
-	if _tween != null and _tween.is_valid():
-		_tween.kill()
-
-	var old: AudioStreamPlayer = _players[_active]
+	var old_index: int = _active
+	var old: AudioStreamPlayer = _players[old_index]
 	if track_name == "":
-		_fade_out(old, fade)
+		stop_music(fade)
 		return
 
 	var stream: AudioStream = _load_stream(track_name)
 	if stream == null:
-		# No MP3 yet: fade out rather than blasting the previous context's music.
-		_fade_out(old, fade)
+		stop_music(fade)
 		return
 
 	var next_index: int = 1 - _active
 	var next: AudioStreamPlayer = _players[next_index]
 	next.stop()
 	next.stream = stream
-	next.volume_db = -60.0
-	next.play()
+	next.volume_db = SILENT_DB
+
+	# Resume menu track smoothly from where we left off so returning to menus
+	# feels continuous and never replays the opening bars endlessly.
+	var start_pos: float = 0.0
+	if track_name == MENU_TRACK and _saved_positions.has(MENU_TRACK):
+		var saved: float = float(_saved_positions[MENU_TRACK])
+		var length: float = _stream_length(stream)
+		if length > LOOP_BLEND_SEC * 2.5 and saved > 1.0 and saved < length - LOOP_BLEND_SEC - 4.0:
+			start_pos = saved
+
+	next.play(start_pos)
 	_active = next_index
 
-	_tween = create_tween().set_parallel(true)
-	if old.playing:
-		_tween.tween_property(old, "volume_db", -60.0, fade)
-	_tween.tween_property(next, "volume_db", MUSIC_LEVEL_DB, fade)
-	_tween.chain().tween_callback(old.stop)
+	var had_outgoing: bool = old.playing and prev_track != ""
+	var dur: float = fade if had_outgoing else minf(fade, BOOT_FADE_IN)
+	_xfading = true
+	_fading_out_only = false
+	_xfade_is_loop = false
+	_xfade_elapsed = 0.0
+	_xfade_duration = maxf(dur, 0.08)
+	_xfade_from = old_index if had_outgoing else -1
+	_xfade_to = next_index
+	_xfade_has_outgoing = had_outgoing
+
+
+func _trigger_self_loop_blend() -> void:
+	if _players.size() < 2 or current_track == "":
+		return
+	var old_index: int = _active
+	var old: AudioStreamPlayer = _players[old_index]
+	if old.stream == null or not old.playing:
+		return
+
+	var next_index: int = 1 - _active
+	var next: AudioStreamPlayer = _players[next_index]
+	next.stop()
+	next.stream = old.stream
+	next.volume_db = SILENT_DB
+	next.play(0.0)
+	_active = next_index
+
+	_xfading = true
+	_fading_out_only = false
+	_xfade_is_loop = true
+	_xfade_elapsed = 0.0
+	_xfade_duration = LOOP_BLEND_SEC
+	_xfade_from = old_index
+	_xfade_to = next_index
+	_xfade_has_outgoing = true
+
+
+func _update_crossfade(dt: float) -> void:
+	if _players.size() < 2:
+		return
+	var target_db: float = MUSIC_LEVEL_DB + _duck_db
+	if not _xfading:
+		var active_p: AudioStreamPlayer = _players[_active]
+		if active_p.playing:
+			active_p.volume_db = target_db
+		return
+
+	_xfade_elapsed += dt
+	var t: float = clampf(_xfade_elapsed / _xfade_duration, 0.0, 1.0)
+	# Smoothstep S-curve into equal-power sin/cos gains for velvety loudness continuity.
+	var s: float = t * t * (3.0 - 2.0 * t)
+	var angle: float = s * (PI * 0.5)
+	var out_gain: float = cos(angle)
+	var in_gain: float = sin(angle)
+
+	if _xfade_from != -1:
+		var out_p: AudioStreamPlayer = _players[_xfade_from]
+		if out_p.playing:
+			out_p.volume_db = _gain_to_db(out_gain, target_db)
+
+	if not _fading_out_only and _xfade_to != -1:
+		var in_p: AudioStreamPlayer = _players[_xfade_to]
+		if in_p.playing:
+			in_p.volume_db = _gain_to_db(in_gain, target_db)
+
+	if t >= 1.0:
+		if _xfade_from != -1 and _xfade_from != _active:
+			_players[_xfade_from].stop()
+			_players[_xfade_from].volume_db = SILENT_DB
+		if _fading_out_only and _xfade_from != -1:
+			_players[_xfade_from].stop()
+			_players[_xfade_from].volume_db = SILENT_DB
+		elif _xfade_to != -1:
+			_players[_xfade_to].volume_db = target_db
+		_xfading = false
+		_fading_out_only = false
+		_xfade_is_loop = false
+		_xfade_from = -1
+		_xfade_to = -1
+
+
+func _update_loop_blend() -> void:
+	if _xfading or _players.size() < 2 or current_track == "":
+		return
+	var active_p: AudioStreamPlayer = _players[_active]
+	if not active_p.playing or active_p.stream == null:
+		return
+	var length: float = _stream_length(active_p.stream)
+	if length <= LOOP_BLEND_SEC * 2.5:
+		return
+	var pos: float = active_p.get_playback_position()
+	if pos >= length - LOOP_BLEND_SEC:
+		_trigger_self_loop_blend()
+
+
+func _update_bus_filter_and_duck(dt: float) -> void:
+	var paused: bool = get_tree().paused
+	var target_hz: float = FILTER_OPEN_HZ
+	var target_duck: float = 0.0
+
+	if paused:
+		target_hz = FILTER_PAUSE_HZ
+		target_duck = PAUSE_DUCK_DB
+	elif _xfading and not _xfade_is_loop and _xfade_has_outgoing:
+		# Gentle warm low-pass dip across the midpoint of a track swap so two
+		# different keys/tempos melt together without jarring high-end clash.
+		var t: float = clampf(_xfade_elapsed / _xfade_duration, 0.0, 1.0)
+		var dip: float = sin(t * PI) # 0 -> 1 at midpoint -> 0 at end
+		target_hz = lerpf(FILTER_OPEN_HZ, FILTER_TRANSITION_HZ, dip * 0.85)
+
+	var hz_rate: float = 1.0 - exp(-dt * (7.0 if paused else 4.5))
+	var duck_rate: float = 1.0 - exp(-dt * 6.5)
+	_filter_hz = lerpf(_filter_hz, target_hz, hz_rate)
+	_duck_db = lerpf(_duck_db, target_duck, duck_rate)
+
+	if _lowpass != null:
+		_lowpass.cutoff_hz = clampf(_filter_hz, 400.0, FILTER_OPEN_HZ)
+
+
+func _gain_to_db(gain: float, peak_db: float) -> float:
+	if gain <= 0.0003:
+		return SILENT_DB
+	return maxf(SILENT_DB, peak_db + linear_to_db(gain))
+
+
+func _remember_active_position() -> void:
+	if current_track == "" or _players.is_empty():
+		return
+	var p: AudioStreamPlayer = _players[_active]
+	if is_instance_valid(p) and p.playing:
+		_saved_positions[current_track] = p.get_playback_position()
+
+
+func _stream_length(stream: AudioStream) -> float:
+	if stream == null:
+		return 0.0
+	return stream.get_length()
 
 
 func _load_stream(track_name: String) -> AudioStream:
-	# OGG Vorbis keeps the four-minute loops at ~112 kbps and loops without
-	# the MP3 encoder padding that made the old tracks click at the seam.
-	var path: String = MUSIC_DIR + track_name + ".ogg"
-	if not ResourceLoader.exists(path):
-		return null
-	var stream: AudioStream = load(path) as AudioStream
-	if stream is AudioStreamOggVorbis:
-		(stream as AudioStreamOggVorbis).loop = true
-	return stream
-
-
-func _fade_out(player: AudioStreamPlayer, fade: float) -> void:
-	if not player.playing:
-		return
-	if _tween != null and _tween.is_valid():
-		_tween.kill()
-	_tween = create_tween()
-	_tween.tween_property(player, "volume_db", -60.0, fade)
-	_tween.tween_callback(player.stop)
+	# Prefer OGG Vorbis (clean streaming & small footprint), also accept MP3/WAV.
+	for ext: String in [".ogg", ".mp3", ".wav"]:
+		var path: String = MUSIC_DIR + track_name + ext
+		if not ResourceLoader.exists(path):
+			continue
+		var stream: AudioStream = load(path) as AudioStream
+		if stream == null:
+			continue
+		# Long songs use our smooth DJ-style overlap crossfade instead of a hard
+		# jump back to 0:00; short loops still enable native stream looping.
+		var use_native_loop: bool = _stream_length(stream) <= LOOP_BLEND_SEC * 2.5
+		if stream is AudioStreamOggVorbis:
+			(stream as AudioStreamOggVorbis).loop = use_native_loop
+		elif stream is AudioStreamMP3:
+			(stream as AudioStreamMP3).loop = use_native_loop
+		elif stream is AudioStreamWAV:
+			(stream as AudioStreamWAV).loop_mode = (
+				AudioStreamWAV.LOOP_FORWARD if use_native_loop
+				else AudioStreamWAV.LOOP_DISABLED
+			)
+		return stream
+	return null

@@ -10,7 +10,7 @@ const UiAnim := preload("res://scripts/ui/ui_anim.gd")
 ##   Right column shows the Room Code bar + Players list (or ALPHA vs BETA teams
 ##   in DELIVER); pinned footer holds [LEAVE ROOM] + [START MATCH].
 
-const PLAY_MENU_SCENE: String = "res://scenes/ui/play_menu.tscn"
+const PLAY_MENU_SCENE: String = "res://scenes/ui/main_menu.tscn"
 const MINIGAMES_SCENE: String = "res://scenes/ui/minigames_menu.tscn"
 const VEHICLE_SCENE: String = "res://scenes/ui/vehicle_select.tscn"
 const LOBBY_SCENE: String = "res://scenes/ui/lobby_menu.tscn"
@@ -59,6 +59,68 @@ const TAG_COLORS: Array[Dictionary] = [
 	{"name": "ORANGE", "hex": "ff9f43"},
 	{"name": "PURPLE", "hex": "a06cff"},
 ]
+
+
+class _AnimatedBanner extends Control:
+	## Animated Ken Burns preview banner with colored top accent strip.
+	var texture: Texture2D = null
+	var accent: Color = Color("ffd22e")
+	var _time: float = 0.0
+	var _phase: float = 0.0
+
+	func _ready() -> void:
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+		clip_contents = true
+		_phase = randf_range(0.0, TAU)
+		resized.connect(queue_redraw)
+
+	func _process(delta: float) -> void:
+		if not is_visible_in_tree():
+			return
+		var gs: Node = get_node_or_null("/root/GameSettings")
+		if gs != null and bool(gs.get("reduce_motion")):
+			return
+		_time += delta
+		queue_redraw()
+
+	func _draw() -> void:
+		var w: float = size.x
+		var h: float = size.y
+		if w < 12.0 or h < 12.0:
+			return
+		var sk: float = minf(14.0, w * 0.08)
+		var bw: float = maxf(w - sk - 4.0, 8.0)
+		var bh: float = maxf(h - 4.0, 8.0)
+		var x0: float = 2.0
+		var y0: float = 2.0
+		var pts := PackedVector2Array([
+			Vector2(x0 + sk, y0),
+			Vector2(x0 + sk + bw, y0),
+			Vector2(x0 + bw, y0 + bh),
+			Vector2(x0, y0 + bh),
+		])
+		draw_colored_polygon(pts, Color(0.06, 0.08, 0.16, 1.0))
+		if texture != null:
+			var src: Vector2 = texture.get_size()
+			if src.x > 0.0 and src.y > 0.0:
+				var card_aspect: float = (bw + sk) / maxf(bh, 1.0)
+				var tex_aspect: float = src.x / src.y
+				var zoom: float = 1.08 + 0.03 * sin(_time * 0.65 + _phase)
+				var uv_w: float = (1.0 / zoom) * minf(card_aspect / tex_aspect, 1.0)
+				var uv_h: float = (1.0 / zoom) * minf(tex_aspect / card_aspect, 1.0)
+				var u0: float = clampf(0.5 - uv_w * 0.5 + sin(_time * 0.45 + _phase) * 0.02, 0.0, 1.0 - uv_w)
+				var v0: float = clampf(0.5 - uv_h * 0.5 + cos(_time * 0.35 + _phase) * 0.015, 0.0, 1.0 - uv_h)
+				var skew_u: float = uv_w * (sk / maxf(bw + sk, 1.0)) * 0.5
+				var uvs := PackedVector2Array([
+					Vector2(clampf(u0 + skew_u, 0.0, 1.0), v0),
+					Vector2(clampf(u0 + uv_w, 0.0, 1.0), v0),
+					Vector2(clampf(u0 + uv_w - skew_u, 0.0, 1.0), v0 + uv_h),
+					Vector2(clampf(u0, 0.0, 1.0), v0 + uv_h),
+				])
+				draw_polygon(pts, PackedColorArray([Color.WHITE, Color.WHITE, Color.WHITE, Color.WHITE]), uvs, texture)
+		var cl := pts.duplicate()
+		cl.append(pts[0])
+		draw_polyline(cl, UiPalette.INK, 3.0, true)
 
 
 class _LobbyArtFallback extends Control:
@@ -127,6 +189,7 @@ var _game_pill: Button
 var _change_mode_button: Button
 var _map_button: Button
 var _vehicle_button: Button
+var _vehicle_mode_pill: Button
 var _room_bots_pill: Button
 var _difficulty_pill: Button
 var _visibility_pill: Button
@@ -173,6 +236,8 @@ func _ready() -> void:
 	Network.names_changed.connect(_refresh_players)
 	Network.names_changed.connect(_refresh_teams)
 	Network.tag_colors_changed.connect(_refresh_players)
+	Network.vehicles_changed.connect(_refresh_config)
+	Network.vehicles_changed.connect(_refresh_players)
 	Network.ping_table_changed.connect(_refresh_players)
 	Network.teams_changed.connect(_refresh_teams)
 	Network.latency_changed.connect(func(_ms: int) -> void: _refresh_players())
@@ -196,14 +261,27 @@ func _ready() -> void:
 
 func _tune_shell_chrome() -> void:
 	if _panel != null:
-		var base: StyleBox = _panel.get_theme_stylebox("panel")
-		if base is StyleBoxFlat:
-			var style: StyleBoxFlat = (base as StyleBoxFlat).duplicate() as StyleBoxFlat
-			style.content_margin_left = 32.0
-			style.content_margin_right = 32.0
-			style.content_margin_top = 24.0
-			style.content_margin_bottom = 24.0
-			_panel.add_theme_stylebox_override("panel", style)
+		var style := StyleBoxFlat.new()
+		style.bg_color = Color(0.052, 0.062, 0.142, 0.88)
+		style.border_color = Color(0.22, 0.84, 0.94, 0.42)
+		style.border_width_top = 4
+		style.border_width_bottom = 4
+		style.border_width_left = 4
+		style.border_width_right = 4
+		style.set_corner_radius_all(6)
+		style.shadow_color = Color(0.02, 0.02, 0.08, 0.65)
+		style.shadow_size = 14
+		style.shadow_offset = Vector2(0, 10)
+		style.content_margin_left = 30.0
+		style.content_margin_right = 30.0
+		style.content_margin_top = 20.0
+		style.content_margin_bottom = 20.0
+		style.anti_aliasing = true
+		_panel.add_theme_stylebox_override("panel", style)
+	if _title != null:
+		_title.add_theme_color_override("font_color", UiPalette.YELLOW)
+		_title.add_theme_color_override("font_outline_color", UiPalette.INK)
+		_title.add_theme_constant_override("outline_size", 8)
 	if _shell != null:
 		_shell.add_theme_constant_override("separation", 12)
 	if _body != null:
@@ -211,10 +289,10 @@ func _tune_shell_chrome() -> void:
 		_body.add_theme_constant_override("separation", 12)
 	var content_pad := get_node_or_null("Frame/Panel/Shell/Content/ContentPad") as MarginContainer
 	if content_pad != null:
-		content_pad.add_theme_constant_override("margin_left", 12)
-		content_pad.add_theme_constant_override("margin_right", 12)
-		content_pad.add_theme_constant_override("margin_top", 8)
-		content_pad.add_theme_constant_override("margin_bottom", 12)
+		content_pad.add_theme_constant_override("margin_left", 8)
+		content_pad.add_theme_constant_override("margin_right", 8)
+		content_pad.add_theme_constant_override("margin_top", 6)
+		content_pad.add_theme_constant_override("margin_bottom", 10)
 
 
 func _fit_panel() -> void:
@@ -237,7 +315,16 @@ func _report_layout() -> void:
 
 
 func _enter() -> void:
-	UiAnim.pop($Frame/Panel)
+	UiAnim.modal_open($Frame/Panel)
+	if _idle_box != null and _idle_box.visible:
+		var scroll := _idle_box.get_node_or_null("IdleCardsScroll")
+		if scroll != null and scroll.get_child_count() > 0:
+			var cards_row := scroll.get_child(0)
+			var nodes: Array[Control] = []
+			for c in cards_row.get_children():
+				if c is Control:
+					nodes.append(c as Control)
+			UiAnim.stagger_slide(nodes, Vector2(0.0, 22.0), 0.26, 0.055)
 	MenuNav.refresh()
 	match _state:
 		"host":
@@ -285,7 +372,7 @@ func _caption(text: String) -> Label:
 	label.text = text
 	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	label.add_theme_font_size_override("font_size", 13)
-	label.add_theme_color_override("font_color", UiPalette.BLUE_DARK)
+	label.add_theme_color_override("font_color", UiPalette.CYAN)
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return label
 
@@ -294,7 +381,7 @@ func _section(text: String) -> Label:
 	var label := Label.new()
 	label.text = text
 	label.add_theme_font_size_override("font_size", 15)
-	label.add_theme_color_override("font_color", UiPalette.INK)
+	label.add_theme_color_override("font_color", UiPalette.YELLOW)
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return label
 
@@ -305,51 +392,62 @@ func _hint(text: String) -> Label:
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	label.add_theme_font_size_override("font_size", 12)
-	label.add_theme_color_override("font_color", UiPalette.MUTED)
+	label.add_theme_color_override("font_color", Color(0.76, 0.82, 0.94, 0.86))
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return label
 
 
-func _card_panel(parent: Node, pad_h: int = 14, pad_v: int = 12,
-		tint: Color = Color(1.0, 1.0, 1.0, 0.54)) -> PanelContainer:
+func _style_dark_input(field: LineEdit) -> void:
+	field.set_meta("skip_kit", true)
+	field.add_theme_color_override("font_color", UiPalette.CREAM)
+	field.add_theme_color_override("font_placeholder_color", Color(0.62, 0.72, 0.88, 0.55))
+	field.add_theme_color_override("caret_color", UiPalette.YELLOW)
+	field.add_theme_color_override("selection_color", Color(UiPalette.CYAN, 0.35))
+	var normal := StyleBoxFlat.new()
+	normal.bg_color = Color(0.05, 0.06, 0.13, 0.94)
+	normal.border_color = Color(0.32, 0.78, 0.95, 0.45)
+	normal.set_border_width_all(3)
+	normal.set_corner_radius_all(4)
+	normal.content_margin_left = 12.0
+	normal.content_margin_right = 12.0
+	normal.content_margin_top = 8.0
+	normal.content_margin_bottom = 8.0
+	field.add_theme_stylebox_override("normal", normal)
+	var focus_st: StyleBoxFlat = normal.duplicate() as StyleBoxFlat
+	focus_st.border_color = UiPalette.YELLOW
+	field.add_theme_stylebox_override("focus", focus_st)
+	var ro_st: StyleBoxFlat = normal.duplicate() as StyleBoxFlat
+	ro_st.bg_color = Color(0.08, 0.09, 0.16, 0.65)
+	ro_st.border_color = Color(1.0, 1.0, 1.0, 0.14)
+	field.add_theme_stylebox_override("read_only", ro_st)
+
+
+func _card_panel(parent: Node, pad_h: int = 16, pad_v: int = 14,
+		tint: Color = Color(0.075, 0.088, 0.195, 0.92),
+		_accent: Color = Color(0.22, 0.84, 0.94, 0.50)) -> PanelContainer:
 	var panel := PanelContainer.new()
 	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var style := StyleBoxFlat.new()
 	style.bg_color = tint
-	style.set_corner_radius_all(UiKit.CORNER_RADIUS)
+	style.set_corner_radius_all(4)
 	style.set_border_width_all(2)
-	style.border_color = Color(0.12, 0.11, 0.23, 0.16)
+	style.border_color = Color(1.0, 1.0, 1.0, 0.16)
 	style.content_margin_left = pad_h
 	style.content_margin_right = pad_h
 	style.content_margin_top = pad_v
 	style.content_margin_bottom = pad_v
+	style.shadow_color = Color(0.02, 0.02, 0.08, 0.48)
+	style.shadow_size = 6
+	style.shadow_offset = Vector2(3, 5)
 	style.anti_aliasing = true
 	panel.add_theme_stylebox_override("panel", style)
 	parent.add_child(panel)
 	return panel
 
 
-func _apply_soft_disabled(button: Button) -> void:
-	if button == null:
-		return
-	var style := StyleBoxFlat.new()
-	style.bg_color = Color("d8d3e4")
-	style.set_corner_radius_all(UiKit.CORNER_RADIUS)
-	style.set_border_width_all(4)
-	style.border_color = Color(0.32, 0.30, 0.42, 0.55)
-	var normal: StyleBox = button.get_theme_stylebox("normal")
-	if normal != null:
-		style.content_margin_left = normal.get_margin(SIDE_LEFT)
-		style.content_margin_right = normal.get_margin(SIDE_RIGHT)
-		style.content_margin_top = normal.get_margin(SIDE_TOP)
-		style.content_margin_bottom = normal.get_margin(SIDE_BOTTOM)
-	else:
-		style.content_margin_left = 26.0
-		style.content_margin_right = 26.0
-		style.content_margin_top = 10.0
-		style.content_margin_bottom = 10.0
-	style.anti_aliasing = true
-	button.add_theme_stylebox_override("disabled", style)
+func _apply_soft_disabled(_button: Button) -> void:
+	## Slanted CandyButton already renders its own muted parallelogram when disabled.
+	pass
 
 
 func _texture_at(path: String) -> Texture2D:
@@ -391,9 +489,8 @@ func _build_profile() -> void:
 	_name_input.max_length = 16
 	_name_input.alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_name_input.custom_minimum_size = Vector2(188, 42)
-	_name_input.set_meta("skip_kit", true)
-	UiKit.apply_focus_ring(_name_input, 14)
 	_name_input.add_theme_font_size_override("font_size", 18)
+	_style_dark_input(_name_input)
 	_name_input.text_submitted.connect(func(_t: String) -> void: _commit_name())
 	_name_input.focus_exited.connect(_commit_name)
 	_profile_row.add_child(_name_input)
@@ -496,33 +593,29 @@ func _build_idle() -> void:
 	_idle_box.add_child(idle_scroll)
 
 	var cards_row := HBoxContainer.new()
-	cards_row.add_theme_constant_override("separation", 16)
+	cards_row.add_theme_constant_override("separation", 18)
 	cards_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	cards_row.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	cards_row.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	idle_scroll.add_child(cards_row)
 
 	# 1. CREATE ONLINE ROOM card
 	var online_panel: PanelContainer = _card_panel(cards_row, 16, 14,
-		Color(1.0, 0.96, 0.84, 0.72))
+		Color(0.088, 0.100, 0.212, 0.92), UiPalette.YELLOW)
 	var online_col := VBoxContainer.new()
 	online_col.add_theme_constant_override("separation", 10)
 	online_col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	online_panel.add_child(online_col)
 	online_col.add_child(_idle_art_banner(
-		_first_texture([ART_DIR + "bg_arena.png", ART_DIR + "preview_stadium.png"]),
+		_first_texture([ART_DIR + "bg_hero_arena.png", ART_DIR + "bg_arena.png", ART_DIR + "preview_stadium.png"]),
 		UiPalette.YELLOW))
 	var online_title := Label.new()
-	online_title.text = "ONLINE ROOM"
+	online_title.text = "ONLINE"
 	online_title.theme_type_variation = &"TitleLabel"
 	online_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	online_title.add_theme_font_size_override("font_size", 24)
-	online_title.add_theme_color_override("font_color", UiPalette.INK)
+	online_title.add_theme_font_size_override("font_size", 26)
+	online_title.add_theme_color_override("font_color", UiPalette.YELLOW)
 	online_col.add_child(online_title)
-	var online_desc := UiKit.caption("Host online and share a 5-letter room code.")
-	online_desc.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	online_desc.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	online_col.add_child(online_desc)
-	_host_pi_button = _candy("CREATE ONLINE ROOM", UiPalette.YELLOW, 56, 17)
+	_host_pi_button = _candy("CREATE ONLINE", UiPalette.YELLOW, 56, 17)
 	_host_pi_button.name = "CreateOnlineButton"
 	_host_pi_button.set_meta("nav_default", true)
 	_host_pi_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -533,26 +626,22 @@ func _build_idle() -> void:
 
 	# 2. CREATE LAN ROOM card
 	var lan_panel: PanelContainer = _card_panel(cards_row, 16, 14,
-		Color(0.90, 0.96, 1.0, 0.72))
+		Color(0.088, 0.100, 0.212, 0.92), UiPalette.CYAN)
 	var lan_col := VBoxContainer.new()
 	lan_col.add_theme_constant_override("separation", 10)
 	lan_col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	lan_panel.add_child(lan_col)
 	lan_col.add_child(_idle_art_banner(
-		_first_texture([ART_DIR + "bg_parking.png", ART_DIR + "preview_sandbox.png"]),
-		UiPalette.BLUE))
+		_first_texture([ART_DIR + "bg_hero_paddock.png", ART_DIR + "bg_parking.png", ART_DIR + "preview_sandbox.png"]),
+		UiPalette.CYAN))
 	var lan_title := Label.new()
-	lan_title.text = "LAN ROOM"
+	lan_title.text = "LAN"
 	lan_title.theme_type_variation = &"TitleLabel"
 	lan_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	lan_title.add_theme_font_size_override("font_size", 24)
-	lan_title.add_theme_color_override("font_color", UiPalette.INK)
+	lan_title.add_theme_font_size_override("font_size", 26)
+	lan_title.add_theme_color_override("font_color", UiPalette.CYAN)
 	lan_col.add_child(lan_title)
-	var lan_desc := UiKit.caption("Zero-lag local play on the same Wi-Fi.")
-	lan_desc.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	lan_desc.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	lan_col.add_child(lan_desc)
-	_lan_button = _candy("CREATE LAN ROOM", UiPalette.BLUE, 56, 17)
+	_lan_button = _candy("CREATE LAN", UiPalette.BLUE, 56, 17)
 	_lan_button.name = "CreateLanButton"
 	_lan_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_lan_button.pressed.connect(_on_host_lan)
@@ -561,7 +650,7 @@ func _build_idle() -> void:
 
 	# 3. JOIN ROOM card
 	var join_panel: PanelContainer = _card_panel(cards_row, 16, 14,
-		Color(0.94, 0.98, 1.0, 0.78))
+		Color(0.088, 0.100, 0.212, 0.92), UiPalette.PINK)
 	var join_col := VBoxContainer.new()
 	join_col.add_theme_constant_override("separation", 10)
 	join_col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -571,8 +660,8 @@ func _build_idle() -> void:
 	join_title.text = "JOIN ROOM"
 	join_title.theme_type_variation = &"TitleLabel"
 	join_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	join_title.add_theme_font_size_override("font_size", 24)
-	join_title.add_theme_color_override("font_color", UiPalette.INK)
+	join_title.add_theme_font_size_override("font_size", 26)
+	join_title.add_theme_color_override("font_color", UiPalette.PINK)
 	join_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	join_col.add_child(join_title)
 
@@ -583,8 +672,7 @@ func _build_idle() -> void:
 	_join_input.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_join_input.custom_minimum_size = Vector2(0, 50)
 	_join_input.add_theme_font_size_override("font_size", 22)
-	_join_input.set_meta("skip_kit", true)
-	UiKit.apply_focus_ring(_join_input, 14)
+	_style_dark_input(_join_input)
 	_join_input.text_changed.connect(_on_code_typed)
 	_join_input.text_submitted.connect(func(_t: String) -> void: _on_join_pressed())
 	join_col.add_child(_join_input)
@@ -616,25 +704,23 @@ func _build_idle() -> void:
 
 func _idle_art_banner(texture: Texture2D, accent: Color) -> PanelContainer:
 	var frame := PanelContainer.new()
-	frame.custom_minimum_size = Vector2(0.0, 128.0)
+	frame.custom_minimum_size = Vector2(0.0, 186.0)
 	frame.clip_contents = true
 	frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var style := StyleBoxFlat.new()
 	style.bg_color = UiPalette.OUTLINE
-	style.set_corner_radius_all(14)
-	style.content_margin_left = 4.0
-	style.content_margin_right = 4.0
-	style.content_margin_top = 4.0
-	style.content_margin_bottom = 4.0
+	style.set_corner_radius_all(4)
+	style.content_margin_left = 3.0
+	style.content_margin_right = 3.0
+	style.content_margin_top = 3.0
+	style.content_margin_bottom = 3.0
 	style.anti_aliasing = true
 	frame.add_theme_stylebox_override("panel", style)
 	if texture != null:
-		var tex_rect := TextureRect.new()
-		tex_rect.texture = texture
-		tex_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-		tex_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
-		tex_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		frame.add_child(tex_rect)
+		var anim_banner := _AnimatedBanner.new()
+		anim_banner.texture = texture
+		anim_banner.accent = accent
+		frame.add_child(anim_banner)
 	else:
 		var fb := _LobbyArtFallback.new()
 		fb.accent = accent
@@ -658,26 +744,19 @@ func _build_room() -> void:
 
 	# --- LEFT COLUMN: Selected Game & Map Card ---
 	var left_panel: PanelContainer = _card_panel(columns, 14, 12,
-		Color(1.0, 1.0, 1.0, 0.58))
+		Color(0.082, 0.095, 0.205, 0.90), UiPalette.CYAN)
 	left_panel.size_flags_stretch_ratio = 1.08
 	var left_col := VBoxContainer.new()
 	left_col.add_theme_constant_override("separation", 8)
 	left_col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	left_panel.add_child(left_col)
 
-	# Live 16:9 screenshot frame with overlaid mode badge & map title
+	# Live 16:9 screenshot frame clipped cleanly to a true slanted parallelogram!
 	var shot_frame := PanelContainer.new()
-	shot_frame.custom_minimum_size = Vector2(0.0, 162.0)
-	shot_frame.clip_contents = true
+	shot_frame.custom_minimum_size = Vector2(0.0, 174.0)
+	shot_frame.clip_contents = false
 	shot_frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var shot_style := StyleBoxFlat.new()
-	shot_style.bg_color = UiPalette.OUTLINE
-	shot_style.set_corner_radius_all(14)
-	shot_style.content_margin_left = 4.0
-	shot_style.content_margin_right = 4.0
-	shot_style.content_margin_top = 4.0
-	shot_style.content_margin_bottom = 4.0
-	shot_style.anti_aliasing = true
+	var shot_style := StyleBoxEmpty.new()
 	shot_frame.add_theme_stylebox_override("panel", shot_style)
 	left_col.add_child(shot_frame)
 
@@ -689,10 +768,16 @@ func _build_room() -> void:
 	_lobby_preview_fallback.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	shot_stack.add_child(_lobby_preview_fallback)
 
+	var para_mat := ShaderMaterial.new()
+	para_mat.shader = preload("res://assets/materials/parallelogram_clip.gdshader")
+	para_mat.set_shader_parameter("skew_uv", 0.065)
+	para_mat.set_shader_parameter("border_px", 3.0)
+	para_mat.set_shader_parameter("border_color", UiPalette.INK)
 	_lobby_preview_tex = TextureRect.new()
 	_lobby_preview_tex.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	_lobby_preview_tex.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
 	_lobby_preview_tex.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_lobby_preview_tex.material = para_mat
 	_lobby_preview_tex.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	shot_stack.add_child(_lobby_preview_tex)
 
@@ -793,12 +878,25 @@ func _build_room() -> void:
 	_map_button.pressed.connect(_on_choose_map)
 	mode_btn_row.add_child(_map_button)
 
-	# [GARAGE: <vehicle>]
-	_vehicle_button = _candy("GARAGE: SHOPPING CART", Color("8ed8f6"), 44, 15)
+	# [GARAGE: <vehicle>] + [PICK OWN | SHARED] room vehicle policy
+	var veh_row := HBoxContainer.new()
+	veh_row.add_theme_constant_override("separation", 10)
+	veh_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	left_col.add_child(veh_row)
+
+	_vehicle_button = _candy("GARAGE: SHOPPING CART", Color("8ed8f6"), 44, 14)
 	_vehicle_button.name = "GarageButton"
 	_vehicle_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_vehicle_button.pressed.connect(_on_change_vehicle)
-	left_col.add_child(_vehicle_button)
+	veh_row.add_child(_vehicle_button)
+
+	_vehicle_mode_pill = _pill(PackedStringArray(["PICK OWN", "SHARED"]),
+		[Network.VEHICLE_MODE_PICK_OWN, Network.VEHICLE_MODE_SHARED],
+		1 if GameSettings.multiplayer_vehicle_mode == Network.VEHICLE_MODE_SHARED else 0,
+		74.0, 44.0)
+	_vehicle_mode_pill.name = "VehicleModePill"
+	_vehicle_mode_pill.connect("option_changed", _on_vehicle_mode_changed)
+	veh_row.add_child(_vehicle_mode_pill)
 
 	# Compact row: BOTS [0..5] + ROOM [PRIVATE / PUBLIC]
 	var bottom_opts := HBoxContainer.new()
@@ -844,7 +942,7 @@ func _build_room() -> void:
 	columns.add_child(right_col)
 
 	var code_card: PanelContainer = _card_panel(right_col, 16, 10,
-		Color(1.0, 0.97, 0.88, 0.72))
+		Color(0.110, 0.112, 0.235, 0.94), UiPalette.YELLOW)
 	var code_outer := VBoxContainer.new()
 	code_outer.add_theme_constant_override("separation", 2)
 	code_card.add_child(code_outer)
@@ -867,7 +965,7 @@ func _build_room() -> void:
 	_code_label.text = "-----"
 	_code_label.theme_type_variation = &"TitleLabel"
 	_code_label.add_theme_font_size_override("font_size", 32)
-	_code_label.add_theme_color_override("font_color", UiPalette.INK)
+	_code_label.add_theme_color_override("font_color", UiPalette.YELLOW)
 	code_stack.add_child(_code_label)
 
 	_copy_button = _candy("COPY CODE", UiPalette.CYAN, 42, 14)
@@ -883,7 +981,7 @@ func _build_room() -> void:
 	code_outer.add_child(_host_hint)
 
 	# Players Roster Card (FFA modes)
-	_players_card = _card_panel(right_col, 14, 12, Color(1.0, 1.0, 1.0, 0.56))
+	_players_card = _card_panel(right_col, 14, 12, Color(0.082, 0.095, 0.205, 0.90), UiPalette.CYAN)
 	_players_card.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	var players_col := VBoxContainer.new()
 	players_col.add_theme_constant_override("separation", 6)
@@ -902,7 +1000,7 @@ func _build_room() -> void:
 
 
 func _build_teams(parent: VBoxContainer) -> void:
-	_teams_card = _card_panel(parent, 14, 10, Color(1.0, 1.0, 1.0, 0.56))
+	_teams_card = _card_panel(parent, 14, 10, Color(0.082, 0.095, 0.205, 0.90), UiPalette.PINK)
 	_teams_card.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	var teams_vbox := VBoxContainer.new()
 	teams_vbox.add_theme_constant_override("separation", 6)
@@ -967,10 +1065,10 @@ func _build_room_footer() -> void:
 	_room_footer.add_child(spacer)
 
 	_client_wait_label = Label.new()
-	_client_wait_label.text = "WAITING FOR HOST TO START..."
+	_client_wait_label.text = "WAITING FOR HOST..."
 	_client_wait_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	_client_wait_label.add_theme_font_size_override("font_size", 16)
-	_client_wait_label.add_theme_color_override("font_color", UiPalette.BODY_BLUE)
+	_client_wait_label.add_theme_color_override("font_color", UiPalette.CYAN)
 	_client_wait_label.visible = false
 	_room_footer.add_child(_client_wait_label)
 
@@ -1510,18 +1608,24 @@ func _refresh_config() -> void:
 		_map_button.text = "PICK TRACK" if kind == KIND_RACE else "PICK MAP"
 		_map_button.fit_text()
 
-	var vehicle_id: String = GameSettings.selected_vehicle
-	if kind == KIND_RACE:
-		vehicle_id = GameSettings.racing_vehicle_id()
-	elif _is_party_kind(kind):
-		vehicle_id = GameSettings.minigame_vehicle
+	var channel: String = "racing" if kind == KIND_RACE \
+		else ("minigame" if _is_party_kind(kind) else "sandbox")
+	var shared_mode: bool = (Network.session_vehicle_mode == Network.VEHICLE_MODE_SHARED) \
+		if active else (GameSettings.multiplayer_vehicle_mode == Network.VEHICLE_MODE_SHARED)
+	if _vehicle_mode_pill != null:
+		_vehicle_mode_pill.call("set_index", 1 if shared_mode else 0)
+		_vehicle_mode_pill.disabled = not host
+
+	var my_id: int = multiplayer.get_unique_id() if (active and multiplayer.multiplayer_peer != null) else 0
+	var vehicle_id: String = Network.effective_vehicle_for(my_id, channel) if active \
+		else GameSettings.vehicle_for_channel(channel)
 	var vehicle: Dictionary = Catalog.find(vehicle_id)
-	var vehicle_text: String = "GARAGE: " + str(vehicle.get("name", "SHOPPING CART"))
-	if _state == "client" and kind != KIND_SANDBOX:
-		vehicle_text = "CAR: HOST CHOICE"
+	var car_name: String = str(vehicle.get("name", "SHOPPING CART"))
+	var locked_to_host: bool = _state == "client" and shared_mode
+	var vehicle_text: String = ("HOST CAR: " if locked_to_host else ("SHARED: " if shared_mode else "GARAGE: ")) + car_name
 	if _vehicle_button != null:
 		_vehicle_button.text = vehicle_text
-		_vehicle_button.disabled = _state == "client" and kind != KIND_SANDBOX
+		_vehicle_button.disabled = locked_to_host
 		if _vehicle_button.disabled:
 			_apply_soft_disabled(_vehicle_button)
 		_vehicle_button.fit_text()
@@ -1570,9 +1674,9 @@ func _refresh_tag_swatches() -> void:
 			var style: StyleBoxFlat = button.get_theme_stylebox(state) as StyleBoxFlat
 			if style == null:
 				continue
-			style.set_border_width_all(5 if chosen else 3)
-			style.border_color = UiPalette.INK
-		button.scale = Vector2.ONE * (1.14 if chosen else 1.0)
+			style.set_border_width_all(4 if chosen else 2)
+			style.border_color = Color.WHITE if chosen else Color(0.08, 0.09, 0.18, 0.90)
+		button.scale = Vector2.ONE * (1.16 if chosen else 1.0)
 
 
 func _on_code_typed(text: String) -> void:
@@ -1870,9 +1974,18 @@ func _on_choose_map() -> void:
 		"Choose a map for the room")
 
 
+func _on_vehicle_mode_changed(value: Variant) -> void:
+	if not Network.is_host:
+		_refresh_config()
+		return
+	Network.set_session_vehicle_mode(str(value))
+	_refresh_config()
+	_refresh_players()
+
+
 func _on_change_vehicle() -> void:
 	var kind: String = _current_kind()
-	if _state == "client" and kind != KIND_SANDBOX:
+	if _state == "client" and Network.is_shared_vehicle_mode():
 		return
 	GameSettings.vehicle_return_scene = LOBBY_SCENE
 	GameSettings.vehicle_return_title = "MULTIPLAYER"
@@ -1919,11 +2032,13 @@ func _refresh_players() -> void:
 		var is_local: bool = peer_id == multiplayer.get_unique_id()
 		var row_panel := PanelContainer.new()
 		var row_style := StyleBoxFlat.new()
-		row_style.bg_color = Color(UiPalette.CYAN, 0.18) if is_local \
-			else Color(1.0, 1.0, 1.0, 0.55)
-		row_style.set_corner_radius_all(10)
-		row_style.content_margin_left = 16.0
-		row_style.content_margin_right = 16.0
+		row_style.bg_color = Color(0.14, 0.28, 0.42, 0.85) if is_local \
+			else Color(0.11, 0.13, 0.25, 0.82)
+		row_style.border_color = UiPalette.CYAN if is_local else Color(1.0, 1.0, 1.0, 0.14)
+		row_style.set_border_width_all(2)
+		row_style.set_corner_radius_all(4)
+		row_style.content_margin_left = 14.0
+		row_style.content_margin_right = 14.0
 		row_style.content_margin_top = 8.0
 		row_style.content_margin_bottom = 8.0
 		row_style.anti_aliasing = true
@@ -1947,7 +2062,7 @@ func _refresh_players() -> void:
 		name_label.clip_text = true
 		name_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 		name_label.add_theme_font_size_override("font_size", 15)
-		name_label.add_theme_color_override("font_color", UiPalette.INK)
+		name_label.add_theme_color_override("font_color", UiPalette.YELLOW if is_local else UiPalette.CREAM)
 		var label_text: String = Network.name_of(peer_id)
 		if is_local:
 			label_text += "  (YOU)"
@@ -1955,6 +2070,18 @@ func _refresh_players() -> void:
 			label_text = "HOST · " + label_text
 		name_label.text = label_text
 		row.add_child(name_label)
+
+		var p_kind: String = _current_kind()
+		var p_channel: String = "racing" if p_kind == KIND_RACE \
+			else ("minigame" if _is_party_kind(p_kind) else "sandbox")
+		var p_vid: String = Network.effective_vehicle_for(peer_id, p_channel)
+		var p_entry: Dictionary = Catalog.find(p_vid)
+		var p_car_lbl := Label.new()
+		p_car_lbl.text = str(p_entry.get("name", "CART")).to_upper()
+		p_car_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		p_car_lbl.add_theme_font_size_override("font_size", 11)
+		p_car_lbl.add_theme_color_override("font_color", Color(0.76, 0.86, 1.0, 0.84))
+		row.add_child(p_car_lbl)
 
 		if Network.is_session_active() and Network.is_connected_to_server():
 			var ms: int = int(Network.ping_table.get(peer_id, 0))
@@ -1967,7 +2094,7 @@ func _refresh_players() -> void:
 				ping_label.text = "%d ms" % ms
 				ping_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 				ping_label.add_theme_font_size_override("font_size", 12)
-				ping_label.add_theme_color_override("font_color", UiPalette.BLUE_DARK)
+				ping_label.add_theme_color_override("font_color", UiPalette.CYAN)
 				row.add_child(ping_label)
 		_players_box.add_child(row_panel)
 
@@ -1976,7 +2103,7 @@ func _refresh_players() -> void:
 		var open_label := Label.new()
 		open_label.text = "%d OPEN SLOT%s" % [open_slots, "" if open_slots == 1 else "S"]
 		open_label.add_theme_font_size_override("font_size", 12)
-		open_label.add_theme_color_override("font_color", UiPalette.MUTED)
+		open_label.add_theme_color_override("font_color", Color(0.68, 0.74, 0.88, 0.72))
 		_players_box.add_child(open_label)
 
 

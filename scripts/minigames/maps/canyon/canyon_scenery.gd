@@ -142,19 +142,34 @@ static func _build_desert_ground_and_oasis(holder: Node3D, spline: RefCounted,
 		Vector3(cx + half_ext, gy, cz - half_ext),
 		Vector3(cx + half_ext, gy, cz + half_ext),
 		Vector3(cx - half_ext, gy, cz + half_ext), sand_outer)
-	_quad(verts, normals, colors,
-		Vector3(bmin.x - 52.0, gy + 0.005, bmin.y - 52.0),
-		Vector3(bmax.x + 52.0, gy + 0.005, bmin.y - 52.0),
-		Vector3(bmax.x + 52.0, gy + 0.005, bmax.y + 52.0),
-		Vector3(bmin.x - 52.0, gy + 0.005, bmax.y + 52.0), sand_basin)
 
-	# Lush turquoise oasis pond in canyon pocket (bounded to never touch tracks)
+	# Smooth fluid desert basin blending warm canyon sand <-> red outer clay <-> oasis greenery!
 	var pond_r: float = clampf(TileKit.spline_distance(spline, oasis_centre) - 14.0,
 		16.0, 30.0)
-	_disc(verts, normals, colors, oasis_centre + Vector3.UP * (gy + 0.009),
-		pond_r * 1.16, pond_r * 0.94, 28, oasis_grass)
-	_disc(verts, normals, colors, oasis_centre + Vector3.UP * (gy + 0.012),
-		pond_r * 0.98, pond_r * 0.78, 28, oasis_sand)
+	var SceneryKitRes := preload("res://scripts/minigames/scenery/scenery_kit.gd")
+	var pad_m: float = 115.0
+	var fluid_basin := MeshInstance3D.new()
+	fluid_basin.name = "CanyonFluidBasin"
+	fluid_basin.mesh = SceneryKitRes.build_blended_ground(
+		Vector2(bmin.x - pad_m, bmin.y - pad_m),
+		Vector2(bmax.x + pad_m, bmax.y + pad_m),
+		44, gy + 0.005, func(wx: float, wz: float) -> Color:
+			var dx_b: float = maxf(maxf(bmin.x - 28.0 - wx, wx - (bmax.x + 28.0)), 0.0)
+			var dz_b: float = maxf(maxf(bmin.y - 28.0 - wz, wz - (bmax.y + 28.0)), 0.0)
+			var out_t: float = smoothstep(0.0, 72.0, sqrt(dx_b * dx_b + dz_b * dz_b))
+			var dune: float = 0.5 + 0.5 * sin(wx * 0.042 + wz * 0.021) * cos(wz * 0.036)
+			var base: Color = sand_basin.lerp(sand_outer, clampf(out_t + dune * 0.25, 0.0, 1.0))
+			var od: float = Vector2(wx - oasis_centre.x, wz - oasis_centre.z).length()
+			var grass_t: float = 1.0 - smoothstep(pond_r * 0.92, pond_r * 1.55, od)
+			var shore_t: float = 1.0 - smoothstep(pond_r * 0.72, pond_r * 1.05, od)
+			return base.lerp(oasis_grass, grass_t).lerp(oasis_sand, shore_t)
+	)
+	fluid_basin.material_override = SceneryKitRes.fluid_ground_material(
+		Color(1.04, 0.97, 0.90), Color(0.95, 0.91, 0.85), 0.030, 0.14, 0.90)
+	fluid_basin.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	holder.add_child(fluid_basin)
+
+	# Lush turquoise oasis pond water sitting smoothly inside the blended shore
 	_disc(verts, normals, colors, oasis_centre + Vector3.UP * (gy + 0.017),
 		pond_r * 0.80, pond_r * 0.64, 28, water_rim)
 	_disc(verts, normals, colors, oasis_centre + Vector3.UP * (gy + 0.021),

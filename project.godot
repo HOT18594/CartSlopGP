@@ -11,10 +11,10 @@ config_version=5
 [application]
 
 config/name="Cart Slop GP"
-config/version="0.8.4"
+config/version="0.8.5"
 run/main_scene="res://scenes/ui/main_menu.tscn"
 config/features=PackedStringArray("4.7", "Mobile")
-boot_splash/bg_color=Color(0.18, 0.62, 0.91, 1)
+boot_splash/bg_color=Color(0.055, 0.067, 0.141, 1)
 boot_splash/image="res://assets/ui/boot_splash.png"
 config/icon="res://assets/ui/cart_icon.png"
 boot_splash/minimum_display_time=500

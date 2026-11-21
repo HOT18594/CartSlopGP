@@ -255,6 +255,8 @@ var _base_stats: Dictionary = {} ## Pristine export values for vehicle re-applic
 ## The catalog id currently on the mesh, kept so a tag-colour change can rebuild
 ## only the paint without re-reading the selection.
 var _current_vehicle_id: String = ""
+var custom_paint_hex: String = ""
+var custom_allocation: Dictionary = {}
 
 var _boost_regen_timer: float = 0.0
 var _pad_burst_timer: float = 0.0
@@ -660,15 +662,22 @@ func _move_ghost_towards(target: Vector3, blend: float) -> void:
 	collision_mask = saved_mask
 
 
-func set_vehicle_id(vehicle_id: String) -> void:
+func set_vehicle_id(vehicle_id: String, paint_hex: String = "", allocation: Dictionary = {}) -> void:
 	## Rebuild the visual for a remote player's chosen vehicle and remember its
-	## mass so car-to-car impacts use the right inertia. The mass must come
-	## from the composed entry, not the bare chassis: a racing ghost carries
-	## the session's stat build (the host relays it with the map id), and
-	## without it the host resolved that client's contacts 72-144 kg light.
-	var entry: Dictionary = VehicleCatalog.find(vehicle_id)
+	## mass so car-to-car impacts use the right inertia. Supports per-player
+	## custom paint color (PRO RACER) and per-player racing stat allocation.
+	var norm_id: String = VehicleCatalog.normalize_id(vehicle_id)
+	var entry: Dictionary = VehicleCatalog.find(norm_id)
 	if entry.is_empty():
 		return
+	if paint_hex != "":
+		custom_paint_hex = paint_hex
+	elif remote_mode and remote_peer_id > 0 and Network.is_session_active():
+		custom_paint_hex = Network.effective_racer_color_for(remote_peer_id)
+	if not allocation.is_empty():
+		custom_allocation = allocation.duplicate()
+	elif remote_mode and remote_peer_id > 0 and Network.is_session_active():
+		custom_allocation = Network.effective_racing_allocation_for(remote_peer_id)
 	var visual: Dictionary = _visual_entry(entry)
 	_current_vehicle_id = str(entry.get("id", ""))
 	_profile_mass = maxf(float(visual.get("mass", REFERENCE_MASS)), 1.0)
@@ -681,13 +690,22 @@ func set_vehicle_id(vehicle_id: String) -> void:
 	_resize_collision(visual)
 
 
-func reapply_vehicle(vehicle_id: String) -> void:
-	## Switch this LOCAL cart to another catalog vehicle at runtime. Used when
-	## the race host assigns one car to everyone. Rebuilds visuals, collider,
-	## derived stats and feedback (audio/skid width) from pristine values.
-	var base: Dictionary = VehicleCatalog.find(vehicle_id)
+func reapply_vehicle(vehicle_id: String, paint_hex: String = "", allocation: Dictionary = {}) -> void:
+	## Switch this LOCAL cart to another catalog vehicle at runtime. Rebuilds
+	## visuals, collider, derived stats and feedback (audio/skid width) from
+	## pristine values, honoring custom PRO RACER paint and racing tune.
+	var norm_id: String = VehicleCatalog.normalize_id(vehicle_id)
+	var base: Dictionary = VehicleCatalog.find(norm_id)
 	if base.is_empty():
 		return
+	if paint_hex != "":
+		custom_paint_hex = paint_hex
+	elif not ai_mode and not remote_mode and Network.is_session_active():
+		custom_paint_hex = Network.effective_racer_color_for(multiplayer.get_unique_id())
+	if not allocation.is_empty():
+		custom_allocation = allocation.duplicate()
+	elif not ai_mode and not remote_mode and Network.is_session_active():
+		custom_allocation = Network.effective_racing_allocation_for(multiplayer.get_unique_id())
 	_current_vehicle_id = str(base.get("id", ""))
 	var entry: Dictionary = _visual_entry(base)
 	_apply_vehicle_stats(entry)
@@ -935,21 +953,40 @@ func _visual_entry(base: Dictionary) -> Dictionary:
 	## Turn a catalog chassis into the entry this cart actually renders. Racing
 	## choices (including the Shopping Cart inside a racing scene) are composed
 	## with the active stat build; sandbox, cargo and minigame carts keep their
-	## untouched catalog entry. Body paint is always the factory livery.
+	## untouched catalog entry. Custom-paint cars (PRO RACER) get their owner's
+	## chosen paint hex.
 	var vehicle_id: String = str(base.get("id", ""))
 	var compose_in_race: bool = VehicleCatalog.is_racing_id(vehicle_id) \
 		or (GameSettings.racing_scene_active() and VehicleCatalog.is_racing_choice(vehicle_id))
-	if not compose_in_race:
-		return base
-	return VehicleCatalog.compose_racing_entry(vehicle_id, _racing_allocation())
+	var out: Dictionary = VehicleCatalog.compose_racing_entry(vehicle_id, _racing_allocation()) \
+		if compose_in_race else base.duplicate()
+	if bool(out.get("custom_paint", false)):
+		var hex: String = custom_paint_hex
+		if hex == "":
+			if remote_mode and remote_peer_id > 0 and Network.is_session_active():
+				hex = Network.effective_racer_color_for(remote_peer_id)
+			elif ai_mode:
+				var idx: int = absi(get_instance_id()) % VehicleCatalog.RACER_COLORS.size()
+				hex = str(VehicleCatalog.RACER_COLORS[idx].get("hex", "e63946"))
+			elif Network.is_session_active() and multiplayer.multiplayer_peer != null:
+				hex = Network.effective_racer_color_for(multiplayer.get_unique_id())
+			else:
+				hex = GameSettings.racer_color
+		out["paint_color"] = Color.from_string(hex, Color("e63946"))
+	return out
 
 
 func _racing_allocation() -> Dictionary:
-	## The local human player always runs their own saved Racing Garage build
-	## instead of being overwritten by the host's session build. AI bots and
-	## remote ghosts fall back to the session build when present.
+	## Honors explicit allocation, else Network's per-peer policy (PICK OWN vs
+	## SHARED), else local saved Racing Garage build.
+	if not custom_allocation.is_empty():
+		return VehicleCatalog.sanitize_allocation(custom_allocation)
 	if not ai_mode and not remote_mode:
+		if Network.is_session_active() and multiplayer.multiplayer_peer != null:
+			return Network.effective_racing_allocation_for(multiplayer.get_unique_id())
 		return GameSettings.racing_allocation()
+	if remote_mode and remote_peer_id > 0 and Network.is_session_active():
+		return Network.effective_racing_allocation_for(remote_peer_id)
 	if Network.is_session_active() \
 			and not Network.session_racing_allocation.is_empty():
 		return Network.session_racing_allocation

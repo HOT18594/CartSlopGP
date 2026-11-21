@@ -151,11 +151,30 @@ static func _build_ground_and_water(holder: Node3D, spline: RefCounted,
 		Vector3(cx + half_ext, gy, cz - half_ext),
 		Vector3(cx + half_ext, gy, cz + half_ext),
 		Vector3(cx - half_ext, gy, cz + half_ext), grass_deep)
-	_quad(verts, normals, colors,
-		Vector3(bmin.x - 42.0, gy + 0.005, bmin.y - 42.0),
-		Vector3(bmax.x + 42.0, gy + 0.005, bmin.y - 42.0),
-		Vector3(bmax.x + 42.0, gy + 0.005, bmax.y + 42.0),
-		Vector3(bmin.x - 42.0, gy + 0.005, bmax.y + 42.0), grass_meadow)
+
+	# Smooth fluid meadow ground blending rich forest green <-> sunlit meadow <-> warm sandy lakeshore!
+	var SceneryKitRes := preload("res://scripts/minigames/scenery/scenery_kit.gd")
+	var pad_m: float = 110.0
+	var fluid_meadow := MeshInstance3D.new()
+	fluid_meadow.name = "MeadowFluidGround"
+	fluid_meadow.mesh = SceneryKitRes.build_blended_ground(
+		Vector2(bmin.x - pad_m, bmin.y - pad_m),
+		Vector2(bmax.x + pad_m, bmax.y + pad_m),
+		44, gy + 0.005, func(wx: float, wz: float) -> Color:
+			var dx_b: float = maxf(maxf(bmin.x - 24.0 - wx, wx - (bmax.x + 24.0)), 0.0)
+			var dz_b: float = maxf(maxf(bmin.y - 24.0 - wz, wz - (bmax.y + 24.0)), 0.0)
+			var out_t: float = smoothstep(0.0, 68.0, sqrt(dx_b * dx_b + dz_b * dz_b))
+			var wave: float = 0.5 + 0.5 * sin(wx * 0.048) * cos(wz * 0.044)
+			var base: Color = grass_meadow.lerp(grass_deep, clampf(out_t + wave * 0.30, 0.0, 1.0))
+			var ld: float = Vector2(wx - lake_centre.x, wz - lake_centre.z).length()
+			var sd: float = Vector2((wx - south_basin.x) * 0.85, wz - south_basin.z).length()
+			var shore_t: float = maxf(1.0 - smoothstep(26.0, 42.0, ld), 1.0 - smoothstep(32.0, 50.0, sd))
+			return base.lerp(sand_bank, shore_t * 0.82)
+	)
+	fluid_meadow.material_override = SceneryKitRes.fluid_ground_material(
+		Color(0.95, 1.02, 0.90), Color(1.05, 0.98, 0.86), 0.032, 0.14, 0.90)
+	fluid_meadow.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	holder.add_child(fluid_meadow)
 
 	# Central infield turquoise lake
 	_disc(verts, normals, colors, lake_centre + Vector3.UP * (gy + 0.010),

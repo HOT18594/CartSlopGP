@@ -14,13 +14,13 @@ extends Node
 ## focus navigation and MenuNav's explicit neighbour map are always visible,
 ## including on yellow candy buttons where the old white ring disappeared.
 
-const BUTTON_HEIGHT: float = 56.0
-const BUTTON_MIN_HEIGHT: float = 40.0 ## Floor: below this an action reads as a tag.
-const BUTTON_MAX_WIDTH: float = 440.0 ## Cap: a longer label shrinks instead of widening.
-const LABEL_MIN_FONT: int = 13 ## Floor for the shrink-to-fit type ramp.
-const FIELD_HEIGHT: float = 48.0
-const BUTTON_FONT: int = 20
-const FIELD_FONT: int = 18
+const BUTTON_HEIGHT: float = 60.0
+const BUTTON_MIN_HEIGHT: float = 44.0 ## Floor: roomy enough for crisp slanted typography.
+const BUTTON_MAX_WIDTH: float = 460.0 ## Cap: a longer label shrinks instead of widening.
+const LABEL_MIN_FONT: int = 14 ## Floor for the shrink-to-fit type ramp.
+const FIELD_HEIGHT: float = 50.0
+const BUTTON_FONT: int = 22
+const FIELD_FONT: int = 19
 const CORNER_RADIUS: int = 16 ## One radius for every tile, control and row.
 const SPACING: int = 18 ## Gap between form rows / screen blocks.
 const SPACING_TIGHT: int = 10 ## Gap inside one row or card.
@@ -37,13 +37,115 @@ const FOCUS_RING_DARK: Color = Color("1e1b3a")
 const CANDY_BUTTON: String = "res://scripts/ui/candy_button.gd"
 const OPTION_TILES: String = "res://scripts/ui/pill_cycler.gd"
 const UiPalette := preload("res://scripts/ui/ui_palette.gd")
+const SFX_HOVER_PATH: String = "res://assets/audio/sfx/ui/ui_hover.wav"
+const SFX_CLICK_PATH: String = "res://assets/audio/sfx/ui/ui_click.wav"
+const SFX_CONFIRM_PATH: String = "res://assets/audio/sfx/ui/ui_confirm.ogg"
 
 var _focus_styles: Dictionary = {} ## corner radius -> StyleBoxFlat
+var _sfx_players: Array[AudioStreamPlayer] = []
+var _sfx_cursor: int = 0
+var _sfx_hover: AudioStream
+var _sfx_click: AudioStream
+var _sfx_confirm: AudioStream
+var _last_hover_ms: int = -1000
+var _boot_ms: int = 0
 
 
 func _ready() -> void:
+	process_mode = Node.PROCESS_MODE_ALWAYS
+	_boot_ms = Time.get_ticks_msec()
+	_init_ui_sfx()
 	get_tree().node_added.connect(_on_node_added)
 	call_deferred("_normalize_tree", get_tree().root)
+
+
+func _init_ui_sfx() -> void:
+	if ResourceLoader.exists(SFX_HOVER_PATH):
+		_sfx_hover = load(SFX_HOVER_PATH) as AudioStream
+	if ResourceLoader.exists(SFX_CLICK_PATH):
+		_sfx_click = load(SFX_CLICK_PATH) as AudioStream
+	if ResourceLoader.exists(SFX_CONFIRM_PATH):
+		_sfx_confirm = load(SFX_CONFIRM_PATH) as AudioStream
+	for _i in 4:
+		var p := AudioStreamPlayer.new()
+		p.bus = "SFX" if AudioServer.get_bus_index("SFX") != -1 else "Master"
+		p.process_mode = Node.PROCESS_MODE_ALWAYS
+		add_child(p)
+		_sfx_players.append(p)
+
+
+func _play_sfx(stream: AudioStream, volume_db: float, pitch: float) -> void:
+	if stream == null or _sfx_players.is_empty():
+		return
+	if DisplayServer.get_name() == "headless":
+		return
+	var p: AudioStreamPlayer = _sfx_players[_sfx_cursor % _sfx_players.size()]
+	_sfx_cursor = (_sfx_cursor + 1) % _sfx_players.size()
+	if not is_instance_valid(p):
+		return
+	p.bus = "SFX" if AudioServer.get_bus_index("SFX") != -1 else "Master"
+	p.stream = stream
+	p.volume_db = volume_db
+	p.pitch_scale = pitch
+	p.play()
+
+
+func play_hover() -> void:
+	var now: int = Time.get_ticks_msec()
+	if now - _boot_ms < 250 or now - _last_hover_ms < 42:
+		return
+	_last_hover_ms = now
+	_play_sfx(_sfx_hover, -14.0, randf_range(0.97, 1.06))
+
+
+func play_click() -> void:
+	_play_sfx(_sfx_click, -8.5, randf_range(0.98, 1.04))
+
+
+func play_confirm() -> void:
+	_play_sfx(_sfx_confirm if _sfx_confirm != null else _sfx_click, -7.0, 1.02)
+
+
+func play_back() -> void:
+	_play_sfx(_sfx_click, -9.5, 0.78)
+
+
+func wire_button_sfx(button: BaseButton) -> void:
+	if button == null or not is_instance_valid(button) or button.has_meta("ui_sfx_wired"):
+		return
+	button.set_meta("ui_sfx_wired", true)
+	button.mouse_entered.connect(func() -> void:
+		if is_instance_valid(button) and not button.disabled:
+			play_hover())
+	button.pressed.connect(func() -> void:
+		if not is_instance_valid(button):
+			return
+		if button.has_meta("sfx_confirm"):
+			play_confirm()
+			return
+		var label_up: String = ""
+		if button is Button:
+			label_up = (button as Button).text.strip_edges().to_upper()
+		if label_up in ["BACK", "CANCEL", "QUIT", "CLOSE", "LEAVE ROOM", "QUIT TO MENU"]:
+			play_back()
+		elif label_up in ["PLAY", "SOLO", "MULTIPLAYER", "START", "START MATCH", "DRIVE", "LET'S DRIVE", "SAVE & RETURN", "LAUNCH"]:
+			play_confirm()
+		else:
+			play_click())
+
+
+func glass_panel(bg: Color = UiPalette.SURFACE_GLASS, border: Color = UiPalette.OUTLINE,
+		radius: int = CORNER_RADIUS, border_w: int = 4) -> StyleBoxFlat:
+	var style := StyleBoxFlat.new()
+	style.bg_color = bg
+	style.border_color = border
+	style.set_border_width_all(border_w)
+	style.set_corner_radius_all(radius)
+	style.shadow_color = Color(0.03, 0.03, 0.10, 0.52)
+	style.shadow_size = 8
+	style.shadow_offset = Vector2(0, 8)
+	style.anti_aliasing = true
+	return style
 
 
 func _on_node_added(node: Node) -> void:
@@ -60,10 +162,18 @@ func _normalize_tree(root: Node) -> void:
 func _style_node(node: Node) -> void:
 	if not is_instance_valid(node) or not node.is_inside_tree():
 		return
+	if node is BaseButton:
+		wire_button_sfx(node as BaseButton)
 	if node is Button or node is CheckButton:
 		var focusable := node as Control
 		if not focusable.has_meta("nav_skip"):
 			focusable.focus_mode = Control.FOCUS_ALL
+	# Controls that draw their own slanted parallelogram focus outline opt out of
+	# the rounded-rectangle focus ring completely.
+	if node.has_meta("custom_focus"):
+		if node is Control:
+			(node as Control).add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+		return
 	# Small colour swatches and custom LineEdits opt out of size tokens but still need a ring.
 	if node.has_meta("skip_kit"):
 		if node is Button:

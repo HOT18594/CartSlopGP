@@ -24,6 +24,7 @@ const TileCatalog := preload("res://scripts/minigames/tiles/tile_catalog.gd")
 const UiPalette := preload("res://scripts/ui/ui_palette.gd")
 const LandscapeSculptor := preload("res://scripts/minigames/scenery/landscape_sculptor.gd")
 const AmbientWorld := preload("res://scripts/minigames/scenery/ambient_world.gd")
+const ConceptSpectacle := preload("res://scripts/minigames/scenery/concept_spectacle.gd")
 
 const DEFAULT_ID: String = "ko_rooftop"
 const ARENA_IDS: PackedStringArray = ["ko_rooftop", "ko_foundry", "ko_iceberg"]
@@ -33,13 +34,13 @@ const ARENA_META: Dictionary = {
 		"id": "ko_rooftop",
 		"name": "SKYTOP HELIPAD",
 		"subtitle": "RADAR DOME  ·  DROP DECKS",
-		"sky_top": Color("1f7ed4"),
-		"sky_horizon": Color("bfe6ff"),
-		"ground_bottom": Color("243852"),
-		"fog_color": Color("b8e2fc"),
-		"fog_density": 0.0009,
-		"sun_color": Color("fff5e0"),
-		"sun_energy": 1.18,
+		"sky_top": Color("1a1548"),
+		"sky_horizon": Color("d46b78"),
+		"ground_bottom": Color("1b1838"),
+		"fog_color": Color("6a3b68"),
+		"fog_density": 0.0010,
+		"sun_color": Color("ffdcb4"),
+		"sun_energy": 1.12,
 	},
 	"ko_foundry": {
 		"id": "ko_foundry",
@@ -57,13 +58,13 @@ const ARENA_META: Dictionary = {
 		"id": "ko_iceberg",
 		"name": "FRACTURED ICEBERG",
 		"subtitle": "SLICK ICE  ·  CORNER KICKERS",
-		"sky_top": Color("2b7ec7"),
-		"sky_horizon": Color("dff4ff"),
-		"ground_bottom": Color("16527a"),
-		"fog_color": Color("d0effc"),
+		"sky_top": Color("0a1438"),
+		"sky_horizon": Color("345a92"),
+		"ground_bottom": Color("102242"),
+		"fog_color": Color("29477a"),
 		"fog_density": 0.0011,
-		"sun_color": Color("fff2d8"),
-		"sun_energy": 1.16,
+		"sun_color": Color("d4ebff"),
+		"sun_energy": 1.02,
 	},
 }
 
@@ -103,6 +104,10 @@ static func apply_environment(world: WorldEnvironment, sun: DirectionalLight3D,
 		env.fog_enabled = true
 		env.fog_light_color = meta.get("fog_color", env.fog_light_color) as Color
 		env.fog_density = float(meta.get("fog_density", 0.0012))
+		env.glow_enabled = true
+		env.glow_intensity = 0.48
+		env.glow_bloom = 0.16
+		env.glow_hdr_threshold = 1.05
 	if sun != null:
 		sun.light_color = meta.get("sun_color", Color("fff5e0")) as Color
 		sun.light_energy = float(meta.get("sun_energy", 1.15))
@@ -162,8 +167,10 @@ static func _add_dynamic_landmarks(host: Node3D, clean_id: String) -> void:
 	host.add_child(holder)
 	match clean_id:
 		"ko_rooftop":
-			LandscapeSculptor.build_blimp(holder, Vector3.ZERO, 88.0, 14.0,
-				Color("ff595e"), Color("ffd22e"), anim)
+			# Neon Twilight Octagon Perimeter Lights + 4 Towering Multi-Bulb Floodlights (bg_hero_arena!)
+			ConceptSpectacle.build_neon_arena_ring(holder, 22.8, 0.0, 8,
+				Color("ff3ec9"), Color("ffd22e"))
+			LandscapeSculptor.build_slop_blimp(holder, Vector3.ZERO, 96.0, 26.0, anim, 0.25)
 			# Spinning radar sweep dish atop the central dome plateau (visual only, well above karts)
 			var radar_pivot := Node3D.new()
 			radar_pivot.position = Vector3(0.0, 5.2, 0.0)
@@ -177,14 +184,38 @@ static func _add_dynamic_landmarks(host: Node3D, clean_id: String) -> void:
 			if not anim.has("rotators_y"):
 				anim["rotators_y"] = []
 			(anim["rotators_y"] as Array).append({"node": radar_pivot, "speed": 1.35})
+			# Well-planned mid-field skybridge towers + distant low-poly skyline horizon ring
+			_add_rooftop_extensive_world(holder)
 			LandscapeSculptor.add_biome_particles(holder, "stadium", Vector3.ZERO, 55.0)
 		"ko_foundry":
+			ConceptSpectacle.build_neon_arena_ring(holder, 30.0, -0.4, 8,
+				Color("ff6422"), Color("ffd22e"))
 			LandscapeSculptor.build_port_crane(holder, Vector3(-64.0, -3.5, -52.0),
 				-0.75, 21.0, Color("5c3224"), anim)
 			LandscapeSculptor.build_port_crane(holder, Vector3(64.0, -3.5, 52.0),
 				2.35, 21.0, Color("4a2a24"), anim)
+			LandscapeSculptor.build_sky_spotlight(holder, Vector3(-42.0, -3.5, 42.0),
+				Color("ff6a28"), 0.5, anim)
+			LandscapeSculptor.build_sky_spotlight(holder, Vector3(42.0, -3.5, -42.0),
+				Color("ffd22e"), 2.1, anim)
+			_add_foundry_extensive_world(holder)
 			LandscapeSculptor.add_biome_particles(holder, "ko_foundry", Vector3.ZERO, 65.0)
 		"ko_iceberg":
+			# Aurora Borealis Northern Lights + Glowing Ice Crystals + Warm Arctic Outpost!
+			ConceptSpectacle.build_northern_lights(holder, Vector3.ZERO, 195.0, 52.0)
+			var cry_batch := PropBatch.new()
+			var cry_rng := RandomNumberGenerator.new()
+			cry_rng.seed = 40881
+			for ci in 8:
+				var cang: float = TAU * float(ci) / 8.0 + 0.35
+				var cpos := Vector3(cos(cang) * 56.0, -2.8, sin(cang) * 56.0)
+				ConceptSpectacle.add_crystal_cluster(cry_batch, cpos, 1.5, cry_rng)
+			var cry_mi := MeshInstance3D.new()
+			cry_mi.name = "IcebergCrystals"
+			cry_mi.mesh = cry_batch.build()
+			cry_mi.material_override = ConceptSpectacle.crystal_material()
+			holder.add_child(cry_mi)
+			_add_iceberg_extensive_world(holder)
 			LandscapeSculptor.build_lighthouse(holder, Vector3(-76.0, -2.5, -72.0),
 				17.0, anim)
 			LandscapeSculptor.build_cargo_ship(holder, Vector3(88.0, -3.2, 46.0),
@@ -192,6 +223,110 @@ static func _add_dynamic_landmarks(host: Node3D, clean_id: String) -> void:
 			LandscapeSculptor.build_cargo_ship(holder, Vector3(-96.0, -3.2, 54.0),
 				1.9, 1.15, anim)
 			LandscapeSculptor.add_biome_particles(holder, "ko_iceberg", Vector3.ZERO, 65.0)
+
+
+static func _add_rooftop_extensive_world(holder: Node3D) -> void:
+	## Planned mid-field skybridge towers + ultra-cheap far-field city horizon
+	## silhouette ring so the helipad feels high above a sprawling metropolis.
+	var mid := PropBatch.new()
+	var glow := PropBatch.new()
+	var far := PropBatch.new()
+	var bridge_col := Color("2b375c")
+	var pad_col := Color("3b4970")
+	for i in 6:
+		var ang: float = TAU * float(i) / 6.0 + 0.25
+		var dist: float = 82.0
+		var pos := Vector3(cos(ang) * dist, -64.0, sin(ang) * dist)
+		var h: float = 52.0 + float(i % 3) * 14.0
+		mid.add_box(Transform3D(Basis(Vector3.UP, -ang), pos + Vector3(0.0, h * 0.5, 0.0)),
+			Vector3(18.0, h, 18.0), pad_col)
+		# Glowing rooftop beacon trim & window crown
+		glow.add_box(Transform3D(Basis(Vector3.UP, -ang), pos + Vector3(0.0, h - 1.2, 0.0)),
+			Vector3(18.4, 0.75, 18.4), Color("38d6f0") if i % 2 == 0 else Color("ffd22e"))
+		# Elevated skybridge linking adjacent district towers
+		var next_a: float = TAU * float(i + 1) / 6.0 + 0.25
+		if i % 2 == 0:
+			var p2 := Vector3(cos(next_a) * dist, -64.0, sin(next_a) * dist)
+			var mid_p: Vector3 = (pos + p2) * 0.5 + Vector3(0.0, 36.0, 0.0)
+			var span: Vector3 = p2 - pos
+			mid.add_box(Transform3D(Basis(Vector3.UP, atan2(-span.z, span.x)), mid_p),
+				Vector3(span.length() * 0.86, 3.2, 4.4), bridge_col)
+			glow.add_box(Transform3D(Basis(Vector3.UP, atan2(-span.z, span.x)), mid_p + Vector3(0.0, 0.4, 0.0)),
+				Vector3(span.length() * 0.80, 0.8, 4.6), Color("ffe699"))
+	# Low-effort distant twilight city skyline ring (200..310 m out)
+	for i in 28:
+		var ang: float = TAU * float(i) / 28.0
+		var dist: float = 215.0 + float((i * 11) % 4) * 24.0
+		var h: float = 48.0 + float((i * 17) % 6) * 22.0
+		var w: float = 16.0 + float(i % 3) * 8.0
+		far.add_box(Transform3D(Basis(Vector3.UP, -ang),
+			Vector3(cos(ang) * dist, -64.0 + h * 0.5, sin(ang) * dist)),
+			Vector3(w, h, w), Color("242246").lightened(float(i % 3) * 0.05))
+	mid.flush_to(holder, "RooftopDistrictMid", false, SceneryKit.vertex_material())
+	glow.flush_to(holder, "RooftopDistrictGlow", false, ConceptSpectacle._emissive_mat(Color("ffe082"), 1.8))
+	far.flush_to(holder, "RooftopHorizonFar", false, SceneryKit.vertex_material())
+
+
+static func _add_foundry_extensive_world(holder: Node3D) -> void:
+	## Planned industrial smelter viaducts + distant low-poly volcanic caldera rim.
+	var mid := PropBatch.new()
+	var glow := PropBatch.new()
+	var far := PropBatch.new()
+	for i in 4:
+		var ang: float = TAU * float(i) / 4.0 + PI * 0.25
+		var pos := Vector3(cos(ang) * 94.0, -3.5, sin(ang) * 94.0)
+		var xf := Transform3D(Basis(Vector3.UP, -ang), pos)
+		# Towering blast furnace silhouette with glowing molten core band
+		mid.add_cylinder(xf * Transform3D(Basis.IDENTITY, Vector3(0.0, 16.0, 0.0)),
+			6.5, 32.0, 8, Color("382a2c"))
+		mid.add_cylinder(xf * Transform3D(Basis.IDENTITY, Vector3(0.0, 36.0, 0.0)),
+			3.2, 14.0, 8, Color("292124"))
+		glow.add_cylinder(xf * Transform3D(Basis.IDENTITY, Vector3(0.0, 10.0, 0.0)),
+			6.8, 2.2, 8, Color("ff6e22"))
+	# Low-effort distant dark obsidian caldera ridge (210..290 m out)
+	for i in 22:
+		var ang: float = TAU * float(i) / 22.0
+		var dist: float = 215.0 + float((i * 7) % 3) * 28.0
+		var h: float = 42.0 + float((i * 13) % 5) * 18.0
+		var r: float = 26.0 + float(i % 4) * 10.0
+		far.add_cone(Transform3D(Basis(Vector3.UP, ang),
+			Vector3(cos(ang) * dist, -4.0 + h * 0.5, sin(ang) * dist)),
+			r, h, 6, Color("361e1c").lightened(float(i % 3) * 0.04))
+	mid.flush_to(holder, "FoundryRefineryMid", false, SceneryKit.vertex_material())
+	glow.flush_to(holder, "FoundryMoltenGlow", false, ConceptSpectacle._emissive_mat(Color("ff6e22"), 2.4))
+	far.flush_to(holder, "FoundryCalderaFar", false, SceneryKit.vertex_material())
+
+
+static func _add_iceberg_extensive_world(holder: Node3D) -> void:
+	## Cozy warm-lit arctic research cabins on mid-field floes + low-poly polar range.
+	var mid := PropBatch.new()
+	var glow := PropBatch.new()
+	var far := PropBatch.new()
+	for i in 4:
+		var ang: float = TAU * float(i) / 4.0 + 0.65
+		var pos := Vector3(cos(ang) * 76.0, -2.2, sin(ang) * 76.0)
+		var xf := Transform3D(Basis(Vector3.UP, -ang + PI * 0.5), pos)
+		# Snow-topped ice floe + red/timber research cabin with warm glowing window
+		mid.add_cylinder(xf * Transform3D(Basis.IDENTITY, Vector3(0.0, -0.4, 0.0)),
+			11.5, 2.2, 8, Color("e8f6ff"))
+		mid.add_box(xf * Transform3D(Basis.IDENTITY, Vector3(0.0, 2.8, 0.0)),
+			Vector3(7.4, 4.2, 5.4), Color("c4473d") if i % 2 == 0 else Color("5c4230"))
+		mid.add_cone(xf * Transform3D(Basis(Vector3.UP, PI * 0.25), Vector3(0.0, 6.2, 0.0)),
+			5.6, 3.0, 4, Color("f0f8ff"))
+		glow.add_box(xf * Transform3D(Basis.IDENTITY, Vector3(0.0, 2.9, 2.75)),
+			Vector3(4.6, 1.5, 0.2), Color("ffcf58"))
+	# Low-effort distant polar mountain silhouettes (215..310 m out)
+	for i in 24:
+		var ang: float = TAU * float(i) / 24.0
+		var dist: float = 220.0 + float((i * 5) % 4) * 24.0
+		var h: float = 44.0 + float((i * 11) % 5) * 18.0
+		var r: float = 28.0 + float(i % 3) * 12.0
+		far.add_cone(Transform3D(Basis(Vector3.UP, ang),
+			Vector3(cos(ang) * dist, -3.5 + h * 0.5, sin(ang) * dist)),
+			r, h, 5, Color("294878").lightened(float(i % 3) * 0.06))
+	mid.flush_to(holder, "ArcticOutpostsMid", false, SceneryKit.vertex_material())
+	glow.flush_to(holder, "ArcticCabinWindows", false, ConceptSpectacle._emissive_mat(Color("ffcf58"), 2.8))
+	far.flush_to(holder, "ArcticPolarHorizonFar", false, SceneryKit.vertex_material())
 
 
 static func is_point_safe(arena_data: Dictionary, point: Vector3,

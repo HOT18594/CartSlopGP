@@ -27,13 +27,21 @@ static func build(race: Node3D, preset: Dictionary) -> int:
 	if race == null or race.has_node(NODE_NAME):
 		return 0
 	_hide_meadow(race)
-	var plane := PlaneMesh.new()
-	plane.size = Vector2(SIZE, SIZE)
+	var SceneryKitRes := preload("res://scripts/minigames/scenery/scenery_kit.gd")
+	var base_snow: Color = GlacierSurface.ground_color(preset)
+	var cool_drift: Color = base_snow.lerp(Color("b8dff5"), 0.36)
+	var warm_frost: Color = base_snow.lightened(0.06)
 	var node := MeshInstance3D.new()
 	node.name = NODE_NAME
-	node.mesh = plane
+	node.mesh = SceneryKitRes.build_blended_ground(
+		Vector2(-SIZE * 0.5, -SIZE * 0.5), Vector2(SIZE * 0.5, SIZE * 0.5),
+		42, 0.0, func(wx: float, wz: float) -> Color:
+			var drift: float = 0.5 + 0.5 * sin(wx * 0.018 + wz * 0.012) * cos(wz * 0.015 - wx * 0.01)
+			return cool_drift.lerp(warm_frost, smoothstep(0.18, 0.82, drift))
+	)
 	node.position = Vector3(240.0, HEIGHT, 180.0)
-	node.material_override = _material(preset)
+	node.material_override = SceneryKitRes.fluid_ground_material(
+		Color(0.92, 0.97, 1.04), Color(1.02, 1.00, 0.98), 0.022, 0.14, 0.84)
 	node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	race.add_child(node)
 	return 1

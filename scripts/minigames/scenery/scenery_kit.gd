@@ -7,6 +7,59 @@ extends RefCounted
 ## layer of posts, rails and panels costs a single draw call.
 
 
+const FLUID_GROUND_SHADER := preload("res://assets/materials/biome_blend_ground.gdshader")
+
+
+## Smooth fluid vertex-colored ground material with organic multi-octave biome
+## noise blending and subtle ground micro-grain (zero boxy colour seams!).
+static func fluid_ground_material(tint_a: Color = Color(0.95, 1.0, 0.92),
+		tint_b: Color = Color(1.04, 0.98, 0.90), noise_scale: float = 0.038,
+		blend_strength: float = 0.14, roughness: float = 0.88) -> ShaderMaterial:
+	var mat := ShaderMaterial.new()
+	mat.shader = FLUID_GROUND_SHADER
+	mat.set_shader_parameter("tint_a", tint_a)
+	mat.set_shader_parameter("tint_b", tint_b)
+	mat.set_shader_parameter("noise_scale", noise_scale)
+	mat.set_shader_parameter("blend_strength", blend_strength)
+	mat.set_shader_parameter("roughness_val", roughness)
+	return mat
+
+
+## Builds a continuous shared-vertex ground grid where every vertex samples
+## `color_fn.call(x, z) -> Color` so adjacent ground regions transition smoothly
+## and organically instead of showing hard tile edges.
+static func build_blended_ground(min_xz: Vector2, max_xz: Vector2,
+		subdivs: int, y: float, color_fn: Callable) -> ArrayMesh:
+	var n: int = clampi(subdivs, 4, 80)
+	var verts := PackedVector3Array()
+	var cols := PackedColorArray()
+	var indices := PackedInt32Array()
+	var stride: int = n + 1
+	verts.resize(stride * stride)
+	cols.resize(stride * stride)
+	for iz in stride:
+		var tz: float = float(iz) / float(n)
+		var wz: float = lerpf(min_xz.y, max_xz.y, tz)
+		for ix in stride:
+			var tx: float = float(ix) / float(n)
+			var wx: float = lerpf(min_xz.x, max_xz.x, tx)
+			var idx: int = iz * stride + ix
+			verts[idx] = Vector3(wx, y, wz)
+			cols[idx] = color_fn.call(wx, wz) as Color
+	indices.resize(n * n * 6)
+	var ptr: int = 0
+	for iz in n:
+		for ix in n:
+			var a: int = iz * stride + ix
+			var b: int = a + 1
+			var c: int = a + stride
+			var d: int = c + 1
+			indices[ptr] = a; indices[ptr + 1] = b; indices[ptr + 2] = d
+			indices[ptr + 3] = a; indices[ptr + 4] = d; indices[ptr + 5] = c
+			ptr += 6
+	return mesh_from(verts, cols, indices, false)
+
+
 ## Opaque vertex-coloured surface shared by every merged structure.
 static func vertex_material() -> StandardMaterial3D:
 	var mat := StandardMaterial3D.new()

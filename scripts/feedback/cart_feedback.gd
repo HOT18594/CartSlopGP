@@ -236,16 +236,16 @@ func _spawn_drift_sparks() -> void:
 
 	_drift_spark_mat = ParticleProcessMaterial.new()
 	_drift_spark_mat.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_BOX
-	_drift_spark_mat.emission_box_extents = Vector3(0.10, 0.04, 0.08)
-	_drift_spark_mat.direction = Vector3(0.0, 0.42, 1.0)
-	_drift_spark_mat.spread = 32.0
-	_drift_spark_mat.initial_velocity_min = 4.2
-	_drift_spark_mat.initial_velocity_max = 8.0
-	_drift_spark_mat.gravity = Vector3(0.0, -9.5, 0.0)
-	_drift_spark_mat.damping_min = 0.8
-	_drift_spark_mat.damping_max = 1.8
-	_drift_spark_mat.scale_min = 0.85
-	_drift_spark_mat.scale_max = 1.40
+	_drift_spark_mat.emission_box_extents = Vector3(0.08, 0.03, 0.06)
+	_drift_spark_mat.direction = Vector3(0.0, 0.36, 1.0)
+	_drift_spark_mat.spread = 24.0
+	_drift_spark_mat.initial_velocity_min = 5.4
+	_drift_spark_mat.initial_velocity_max = 10.2
+	_drift_spark_mat.gravity = Vector3(0.0, -11.0, 0.0)
+	_drift_spark_mat.damping_min = 1.2
+	_drift_spark_mat.damping_max = 2.4
+	_drift_spark_mat.scale_min = 0.65
+	_drift_spark_mat.scale_max = 1.15
 	_drift_spark_mat.color_ramp = _drift_spark_ramps[0]
 
 	var draw_mat := StandardMaterial3D.new()
@@ -260,24 +260,60 @@ func _spawn_drift_sparks() -> void:
 		draw_mat.albedo_texture = load(SPARK_STREAK_PATH) as Texture2D
 
 	var spark_quad := QuadMesh.new()
-	spark_quad.size = Vector2(0.13, 0.30)
+	spark_quad.size = Vector2(0.09, 0.34)
 	spark_quad.material = draw_mat
 
 	for side: float in [-1.0, 1.0]:
 		var emitter := GPUParticles3D.new()
 		emitter.name = "DriftSparksL" if side < 0.0 else "DriftSparksR"
 		emitter.position = Vector3(_skid_side_cached * side, 0.12, _skid_back_cached)
-		emitter.amount = 28
-		emitter.lifetime = 0.28
+		emitter.amount = 36
+		emitter.lifetime = 0.24
 		emitter.emitting = false
-		emitter.local_coords = true
+		emitter.local_coords = false
 		emitter.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		emitter.visibility_aabb = AABB(Vector3(-3, -1, -2), Vector3(6, 4, 6))
+		emitter.visibility_aabb = AABB(Vector3(-4, -1, -4), Vector3(8, 4, 8))
 		emitter.process_material = _drift_spark_mat
 		emitter.draw_pass_1 = spark_quad
 		emitter.set_meta("wheel_side", side)
 		add_child(emitter)
 		_drift_sparks.append(emitter)
+
+	# Sleek non-distracting Nitro Boost Ember Trail streaming behind nozzles during boost!
+	var nitro_mat := ParticleProcessMaterial.new()
+	nitro_mat.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_BOX
+	nitro_mat.emission_box_extents = Vector3(0.28, 0.06, 0.05)
+	nitro_mat.direction = Vector3(0.0, 0.12, 1.0)
+	nitro_mat.spread = 14.0
+	nitro_mat.initial_velocity_min = 6.5
+	nitro_mat.initial_velocity_max = 12.5
+	nitro_mat.gravity = Vector3(0.0, 1.2, 0.0)
+	nitro_mat.scale_min = 0.45
+	nitro_mat.scale_max = 0.95
+	var n_grad := Gradient.new()
+	n_grad.offsets = PackedFloat32Array([0.0, 0.30, 1.0])
+	n_grad.colors = PackedColorArray([Color(1.0, 0.98, 0.85, 0.90), Color(0.28, 0.90, 1.0, 0.72), Color(1.0, 0.48, 0.12, 0.0)])
+	var n_ramp := GradientTexture1D.new()
+	n_ramp.gradient = n_grad
+	nitro_mat.color_ramp = n_ramp
+
+	var nitro_quad := QuadMesh.new()
+	nitro_quad.size = Vector2(0.08, 0.28)
+	nitro_quad.material = draw_mat
+
+	var nitro_trail := GPUParticles3D.new()
+	nitro_trail.name = "NitroEmberTrail"
+	nitro_trail.position = Vector3(0.0, 0.42, _skid_back_cached + 0.35)
+	nitro_trail.amount = 28
+	nitro_trail.lifetime = 0.26
+	nitro_trail.emitting = false
+	nitro_trail.local_coords = false
+	nitro_trail.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	nitro_trail.visibility_aabb = AABB(Vector3(-4, -1, -4), Vector3(8, 4, 8))
+	nitro_trail.process_material = nitro_mat
+	nitro_trail.draw_pass_1 = nitro_quad
+	add_child(nitro_trail)
+	set_meta("nitro_ember_trail", nitro_trail)
 
 
 func _spawn_exhaust_flames() -> void:
@@ -485,11 +521,34 @@ func apply_vehicle_profile(entry: Dictionary) -> void:
 			var spark_side: float = float(spark.get_meta("wheel_side", 1.0))
 			spark.position = Vector3(side * spark_side, 0.12, back)
 	var nozzle_x: float = clampf(side * 0.52, 0.18, 0.42)
+	var nozzle_y: float = 0.22
 	var nozzle_z: float = back + 0.26
-	for nozzle: Node3D in _exhaust_nozzles:
-		if is_instance_valid(nozzle):
-			var nozzle_side: float = float(nozzle.get_meta("nozzle_side", 1.0))
-			nozzle.position = Vector3(nozzle_x * nozzle_side, 0.22, nozzle_z)
+	var nozzle_pitch: float = 0.0
+	var custom_tips: Array = []
+	if _mesh_root != null and is_instance_valid(_mesh_root):
+		for child: Node in _mesh_root.get_children():
+			if child.has_meta("exhaust_nozzles"):
+				custom_tips = child.get_meta("exhaust_nozzles") as Array
+				break
+	if custom_tips.size() >= 2:
+		for idx in mini(_exhaust_nozzles.size(), 2):
+			var nozzle: Node3D = _exhaust_nozzles[idx]
+			if is_instance_valid(nozzle):
+				nozzle.position = custom_tips[idx] as Vector3
+				nozzle.rotation = Vector3(deg_to_rad(-6.0), 0.0, 0.0)
+	else:
+		var vid: String = str(entry.get("id", ""))
+		if vid == "shopping_cart":
+			var scale_k: float = float(entry.get("length", 1.8)) / 1.80
+			nozzle_x = 0.24 * scale_k
+			nozzle_y = 0.608 * scale_k
+			nozzle_z = 0.985 * scale_k
+			nozzle_pitch = deg_to_rad(-6.0)
+		for nozzle: Node3D in _exhaust_nozzles:
+			if is_instance_valid(nozzle):
+				var nozzle_side: float = float(nozzle.get_meta("nozzle_side", 1.0))
+				nozzle.position = Vector3(nozzle_x * nozzle_side, nozzle_y, nozzle_z)
+				nozzle.rotation = Vector3(nozzle_pitch, 0.0, 0.0)
 
 
 static func _profile_skid_width(entry: Dictionary) -> float:
@@ -700,6 +759,9 @@ func _update_exhaust_flames(delta: float) -> void:
 		_exhaust_pivot.position = _mesh_root.position - Vector3(0.0, 0.32, 0.0)
 		_exhaust_pivot.rotation = _mesh_root.rotation
 	var want_flame: bool = enable_speed_feedback and _cart.boost_active
+	var ember_trail: GPUParticles3D = get_meta("nitro_ember_trail", null) as GPUParticles3D
+	if ember_trail != null and is_instance_valid(ember_trail):
+		ember_trail.emitting = want_flame and DisplayServer.get_name() != "headless"
 	var target_blend: float = 1.0 if want_flame else 0.0
 	var rate: float = 22.0 if want_flame else 14.0
 	_exhaust_flame_blend = lerpf(_exhaust_flame_blend, target_blend, 1.0 - exp(-rate * delta))

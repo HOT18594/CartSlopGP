@@ -207,6 +207,44 @@ class _DialCanvas extends Control:
 			gauge.get_parent().call("_draw_gauge_canvas", self)
 
 
+class _SpeedLinesOverlay extends Control:
+	## Radial anime/arcade speed streaks around viewport margins at high speed
+	## or while boosting. Stays invisible below threshold and respects reduce_motion.
+	var intensity: float = 0.0
+	var boost_mix: float = 0.0
+	var phase: float = 0.0
+
+	func _init() -> void:
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+		visible = false
+
+	func _draw() -> void:
+		if intensity < 0.02 or size.x < 40.0 or size.y < 40.0:
+			return
+		var center: Vector2 = size * 0.5
+		var outer_r: float = center.length() * 1.06
+		var inner_base: float = minf(size.x, size.y) * lerpf(0.46, 0.34, intensity)
+		var rays: int = 26
+		for i in rays:
+			var ang: float = TAU * float(i) / float(rays) + sin(float(i) * 3.1) * 0.05
+			var pulse: float = 0.5 + 0.5 * sin(phase * 18.0 + float(i) * 2.3)
+			var dir := Vector2(cos(ang), sin(ang))
+			var perp := Vector2(-dir.y, dir.x)
+			var r_in: float = inner_base + pulse * 48.0
+			var tip: Vector2 = center + dir * r_in
+			var base_p: Vector2 = center + dir * outer_r
+			var half_w: float = (1.6 + 2.8 * intensity) * (0.65 + 0.5 * pulse)
+			var col: Color = Color(1.0, 1.0, 1.0, 0.24 * intensity * (0.55 + 0.45 * pulse))
+			if boost_mix > 0.15:
+				var boost_col: Color = UiPalette.CYAN if i % 2 == 0 else UiPalette.YELLOW
+				col = col.lerp(Color(boost_col.r, boost_col.g, boost_col.b, 0.36 * intensity), boost_mix)
+			draw_colored_polygon(PackedVector2Array([
+				tip,
+				base_p + perp * half_w,
+				base_p - perp * half_w,
+			]), col)
+
+
 var _dial_canvas: _DialCanvas
 var _state_plate: _SlashPlate
 var _debug_visible: bool = false
@@ -284,6 +322,15 @@ var _dial_ratio: float = 0.0
 var _dial_boost: float = 0.0
 var _dial_max_kmh: float = 120.0
 var _hud_scale_factor: float = 1.0
+var _speed_lines: _SpeedLinesOverlay
+var _callout_panel: PanelContainer
+var _callout_plate: _SlashPlate
+var _callout_label: Label
+var _callout_tween: Tween
+var _air_seconds: float = 0.0
+var _was_airborne: bool = false
+var _prev_drift_tier_for_callout: int = 0
+var _callout_cooldown_ms: int = 0
 
 
 func _ready() -> void:
@@ -292,6 +339,7 @@ func _ready() -> void:
 	if _boost_percent != null:
 		_boost_percent.visible = false
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_build_speed_lines()
 	_build_state_plate()
 	_build_dial_canvas()
 	_build_net_block()
@@ -307,6 +355,7 @@ func _ready() -> void:
 	_build_gear_badge()
 	_build_drift_badge()
 	_build_wrong_way_banner()
+	_build_callout_banner()
 	_state_pill.visible = false
 	for child: Node in get_children():
 		if child is Control:
@@ -413,6 +462,75 @@ func _build_state_plate() -> void:
 	_state_plate = _attach_slash(_state_pill, 12.0, UiPalette.INK, UiPalette.CREAM, 3.5)
 
 
+func _build_speed_lines() -> void:
+	_speed_lines = _SpeedLinesOverlay.new()
+	_speed_lines.name = "SpeedLinesOverlay"
+	_speed_lines.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	add_child(_speed_lines)
+	move_child(_speed_lines, 0)
+
+
+func _build_callout_banner() -> void:
+	_callout_panel = PanelContainer.new()
+	_callout_panel.name = "StuntCallout"
+	_callout_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_callout_panel.anchor_left = 0.5
+	_callout_panel.anchor_right = 0.5
+	_callout_panel.anchor_top = 0.0
+	_callout_panel.anchor_bottom = 0.0
+	_callout_panel.offset_left = -165.0
+	_callout_panel.offset_right = 165.0
+	_callout_panel.offset_top = 86.0
+	_callout_panel.offset_bottom = 132.0
+	_callout_panel.visible = false
+	add_child(_callout_panel)
+	var margin := _slash_margin(_callout_panel, 28, 8, 28, 10)
+	_callout_plate = _attach_slash(_callout_panel, 12.0, Color(0.07, 0.09, 0.18, 0.90), UiPalette.YELLOW, 2.5)
+	_callout_plate.accent_width = 14.0
+	_callout_plate.accent_color = UiPalette.YELLOW
+	_callout_label = _label("TURBO!", 22, UiPalette.YELLOW, 3, true)
+	_callout_label.add_theme_font_override("font", TITLE_FONT)
+	_callout_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	margin.add_child(_callout_label)
+
+
+func show_callout(text: String, accent: Color = UiPalette.YELLOW) -> void:
+	if _callout_panel == null or _callout_label == null:
+		return
+	var now: int = Time.get_ticks_msec()
+	if now < _callout_cooldown_ms:
+		return
+	_callout_cooldown_ms = now + 450
+	_callout_label.text = text.to_upper()
+	_callout_label.add_theme_color_override("font_color", accent)
+	if _callout_plate != null:
+		_callout_plate.border_color = accent
+		_callout_plate.accent_color = accent
+		_callout_plate.queue_redraw()
+	if _callout_tween != null and _callout_tween.is_valid():
+		_callout_tween.kill()
+	_callout_panel.visible = true
+	_callout_panel.modulate = Color(1.0, 1.0, 1.0, 1.0)
+	_callout_panel.pivot_offset = _callout_panel.size * 0.5
+	var base_scale: Vector2 = Vector2.ONE * _hud_scale_factor
+	if GameSettings.reduce_motion:
+		_callout_panel.scale = base_scale
+		_callout_tween = create_tween()
+		_callout_tween.tween_interval(1.1)
+		_callout_tween.tween_callback(func() -> void: _callout_panel.visible = false)
+		return
+	_callout_panel.scale = base_scale * 0.72
+	_callout_tween = create_tween()
+	_callout_tween.tween_property(_callout_panel, "scale", base_scale * 1.08, 0.14) \
+		.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	_callout_tween.tween_property(_callout_panel, "scale", base_scale, 0.12)
+	_callout_tween.tween_interval(0.78)
+	_callout_tween.tween_property(_callout_panel, "modulate:a", 0.0, 0.28)
+	_callout_tween.tween_callback(func() -> void:
+		_callout_panel.visible = false
+		_callout_panel.modulate.a = 1.0)
+
+
 func _build_dial_canvas() -> void:
 	_dial_canvas = _DialCanvas.new()
 	_dial_canvas.name = "DialCanvas"
@@ -464,6 +582,10 @@ func _apply_display_settings() -> void:
 		if not (child is Control):
 			continue
 		var control := child as Control
+		if control == _speed_lines:
+			control.scale = Vector2.ONE
+			control.pivot_offset = Vector2.ZERO
+			continue
 		control.scale = Vector2.ONE * _hud_scale_factor
 		control.pivot_offset = _hud_pivot(control)
 	if _dial_canvas != null:
@@ -1045,9 +1167,15 @@ func _show_position(place: int, _field_size: int = 0) -> void:
 	if _last_place > 0 and place != _last_place and not GameSettings.reduce_motion:
 		if _position_tween != null and _position_tween.is_valid():
 			_position_tween.kill()
+		_plaque_pos.pivot_offset = _plaque_pos.size * 0.5
+		_plaque_pos.scale = Vector2.ONE * (1.24 if place < _last_place else 0.90)
 		_plaque_pos.modulate = UiPalette.CYAN if place < _last_place else UiPalette.PINK
-		_position_tween = create_tween()
+		_position_tween = create_tween().set_parallel(true)
 		_position_tween.tween_property(_plaque_pos, "modulate", Color.WHITE, 0.42)
+		_position_tween.tween_property(_plaque_pos, "scale", Vector2.ONE, 0.30) \
+			.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+		if place < _last_place and show_position_badge:
+			show_callout("OVERTAKE!  %s" % _plaque_pos.text, UiPalette.YELLOW if place == 1 else UiPalette.CYAN)
 	_last_place = place
 
 
@@ -1292,8 +1420,46 @@ func _process(delta: float) -> void:
 	_drift_arc_ratio = next_drift
 	_drift_active = drifting_now
 	if raw_drift_tier != _drift_tier:
+		if raw_drift_tier == 0 and _prev_drift_tier_for_callout > 0 and cart.boost_active:
+			match _prev_drift_tier_for_callout:
+				3:
+					show_callout("ULTRA DRIFT!", Color("ff3ec9"))
+				2:
+					show_callout("BLAZE DRIFT!", UiPalette.ORANGE)
+				1:
+					show_callout("TURBO DRIFT!", UiPalette.CYAN)
+		_prev_drift_tier_for_callout = raw_drift_tier
 		_drift_tier = raw_drift_tier
 		_update_drift_badge()
+
+	# Airtime stunt detection for satisfying landing callouts!
+	var airborne_now: bool = not cart.is_on_floor() and cart.global_position.y > 0.35
+	if airborne_now:
+		_air_seconds += delta
+		_was_airborne = true
+	else:
+		if _was_airborne and _air_seconds >= 0.65 and cart.current_state == CartPlayer.CartState.DRIVING:
+			if _air_seconds >= 1.75:
+				show_callout("MEGA AIR!  %.1fs" % _air_seconds, UiPalette.PINK)
+			elif _air_seconds >= 1.15:
+				show_callout("BIG AIR!  %.1fs" % _air_seconds, UiPalette.YELLOW)
+			else:
+				show_callout("AIRTIME!  %.1fs" % _air_seconds, UiPalette.CYAN)
+		_air_seconds = 0.0
+		_was_airborne = false
+
+	# Dynamic anime speed lines at high speed / boost (respects reduce_motion).
+	if _speed_lines != null:
+		var reduce: bool = GameSettings.reduce_motion
+		var speed_factor: float = clampf((target_ratio - 0.68) / 0.32, 0.0, 1.0)
+		var line_target: float = 0.0 if reduce else maxf(speed_factor * 0.72, 0.95 if cart.boost_active else 0.0)
+		_speed_lines.intensity = lerpf(_speed_lines.intensity, line_target, 1.0 - exp(-delta * 10.0))
+		_speed_lines.boost_mix = lerpf(_speed_lines.boost_mix, 1.0 if cart.boost_active else 0.0, 1.0 - exp(-delta * 10.0))
+		_speed_lines.phase += delta
+		var show_lines: bool = not reduce and _speed_lines.intensity >= 0.03
+		_speed_lines.visible = show_lines
+		if show_lines:
+			_speed_lines.queue_redraw()
 
 	_update_gear(cart, speed_kmh)
 

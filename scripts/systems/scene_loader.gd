@@ -159,8 +159,10 @@ func go_to(path: String, title: String = "LOADING", message: String = "") -> voi
 	if not _needs_overlay(path):
 		# Menus are cheap. A direct swap avoids the overlay's fixed
 		# MIN_SHOW + fade cost, which was longer than the load itself.
+		_notify_music_transition(path)
 		_go_direct(path)
 		return
+	_notify_music_transition(path)
 	get_tree().paused = false
 	_busy = true
 	_path = path
@@ -187,6 +189,12 @@ func go_to(path: String, title: String = "LOADING", message: String = "") -> voi
 		_finish(started)
 		return
 	_poll(started)
+
+
+func _notify_music_transition(path: String) -> void:
+	var music: Node = get_node_or_null("/root/Music")
+	if music != null and music.has_method("transition_to_scene"):
+		music.call("transition_to_scene", path)
 
 
 func _change_scene_to_file(path: String) -> void:

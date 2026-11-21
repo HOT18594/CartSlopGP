@@ -20,11 +20,22 @@ func _ready() -> void:
 	_display = load(DISPLAY_FONT)
 	resized.connect(queue_redraw)
 	_art = ART_BACKDROP.new()
-	_art.set("texture_names", PackedStringArray(["bg_parking.png", "bg_arena.png"]))
-	_art.set("slide_seconds", 9.0)
-	_art.set("fade_seconds", 1.4)
-	_art.set("dim", 0.14)
+	_art.set("texture_names", PackedStringArray([
+		"bg_hero_paddock.png",
+		"bg_hero_canyon.png",
+		"bg_hero_arena.png",
+		"bg_hero_glacier.png",
+	]))
+	_art.set("slide_seconds", 8.5)
+	_art.set("fade_seconds", 1.1)
+	_art.set("dim", 0.08)
+	_art.set("left_scrim", 0.46)
 	add_child(_art)
+
+
+func focus_art(file_name: String) -> void:
+	if _art != null and _art.has_method("crossfade_to"):
+		_art.call("crossfade_to", file_name)
 
 
 func _draw() -> void:

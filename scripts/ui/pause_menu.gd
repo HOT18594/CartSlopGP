@@ -34,14 +34,13 @@ func _ready() -> void:
 	_mode_hint.name = "ModeHint"
 	_mode_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_mode_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_mode_hint.add_theme_font_size_override("font_size", 15)
-	_mode_hint.add_theme_color_override("font_color", UiPalette.MUTED)
-	_mode_hint.text = SINGLE_HINT
+	_mode_hint.add_theme_font_size_override("font_size", 14)
+	_mode_hint.add_theme_color_override("font_color", UiPalette.RED)
+	_mode_hint.text = ""
 	_mode_hint.visible = false
 	_mode_hint.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_title.get_parent().add_child(_mode_hint)
 	_title.get_parent().move_child(_mode_hint, _title.get_index() + 1)
-	_add_close_hint()
 	hide()
 	_resume_button.pressed.connect(close)
 	_settings_button.pressed.connect(_on_settings_pressed)
@@ -104,7 +103,9 @@ func open() -> void:
 	Network.input_locked = _multiplayer
 	get_tree().paused = not _multiplayer
 	CursorController.set_menu_mode(true)
-	UiAnim.pop($Center/Panel)
+	UiAnim.modal_open($Center/Panel, get_node_or_null("Dim"))
+	UiAnim.stagger_slide([_resume_button, _settings_button, _quit_button],
+		Vector2(-24.0, 0.0), 0.045, 0.22)
 	MenuNav.refresh()
 	MenuNav.focus(_resume_button)
 
@@ -180,13 +181,11 @@ func _on_quit_pressed() -> void:
 func _reset_quit_button() -> void:
 	_quit_armed = false
 	if _quit_button != null:
-		_quit_button.text = "QUIT TO MENU"
+		_quit_button.text = "QUIT"
 		_fit(_quit_button)
 	if _mode_hint != null:
-		# The mode line is part of the menu, not a multiplayer-only warning:
-		# single player says plainly that the race is paused.
-		_mode_hint.text = MULTIPLAYER_HINT if _multiplayer else SINGLE_HINT
-		_mode_hint.visible = true
+		_mode_hint.text = ""
+		_mode_hint.visible = false
 
 
 func _fit(button: Button) -> void:

@@ -452,10 +452,13 @@ var _result_primary: Button
 
 func _enter_tree() -> void:
 	# CartPlayer reads GameSettings.selected_vehicle in its own _ready, which
-	# runs before this script's _ready. Swap in the minigame kart and put the
-	# sandbox choice back when the arena is left (memory only, never saved).
+	# runs before this script's _ready. Swap in the effective minigame kart and
+	# put the sandbox choice back when the arena is left (memory only, not saved).
 	_saved_vehicle = GameSettings.selected_vehicle
-	GameSettings.selected_vehicle = GameSettings.minigame_vehicle
+	if Network.is_session_active() and multiplayer.multiplayer_peer != null:
+		GameSettings.selected_vehicle = Network.effective_vehicle_for(multiplayer.get_unique_id(), "minigame")
+	else:
+		GameSettings.selected_vehicle = GameSettings.minigame_vehicle
 
 
 func _exit_tree() -> void:
@@ -786,7 +789,8 @@ func _build_grandstands() -> void:
 	var body: StaticBody3D = CargoTheme.solid_root(self, "GrandstandCollision")
 	for index in GRANDSTAND_SPOTS.size():
 		var spot: Vector3 = GRANDSTAND_SPOTS[index]
-		var yaw: float = -PI * 0.5 if spot.x < 0.0 else PI * 0.5
+		# Kenney grandStand seats face +Z: +PI/2 on west (-X) faces east (+X) inward!
+		var yaw: float = PI * 0.5 if spot.x < 0.0 else -PI * 0.5
 		if CargoTheme.place_model(self, GRANDSTAND_MODEL, spot, yaw,
 				Vector3.ONE * GRANDSTAND_SCALE,
 				"Grandstand_%d" % index) == null:
@@ -2786,10 +2790,23 @@ func _build_hud() -> void:
 	_prompt_slash.anchor_bottom = 1.0
 	_prompt_slash.offset_left = -256.0
 	_prompt_slash.offset_right = 256.0
-	_prompt_slash.offset_top = -SPACE_MARGIN - PROMPT_HEIGHT - 2.0
-	_prompt_slash.offset_bottom = -SPACE_MARGIN + 2.0
+	_prompt_slash.offset_top = -SPACE_MARGIN - PROMPT_HEIGHT - 22.0
+	_prompt_slash.offset_bottom = -SPACE_MARGIN - 18.0
 	_prompt_slash.visible = false
 	_hud_root.add_child(_prompt_slash)
+
+	var controls_hint := _label("WASD DRIVE  ·  SPACE DRIFT  ·  SHIFT BOOST", 13, Color(0.92, 0.94, 0.98, 0.85), 3)
+	controls_hint.name = "CargoControlsHint"
+	controls_hint.anchor_left = 0.5
+	controls_hint.anchor_right = 0.5
+	controls_hint.anchor_top = 1.0
+	controls_hint.anchor_bottom = 1.0
+	controls_hint.offset_left = -240.0
+	controls_hint.offset_right = 240.0
+	controls_hint.offset_top = -28.0
+	controls_hint.offset_bottom = -6.0
+	controls_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_hud_root.add_child(controls_hint)
 
 	_prompt_label = _label("", 19, UiPalette.YELLOW, 7)
 	_prompt_label.anchor_left = 0.5
@@ -3408,20 +3425,22 @@ func _spawn_remote_cart(peer_id: int) -> void:
 	cart.position = Vector3(0.0, 0.35, BASE_Z[0] - 3.5)
 	add_child(cart)
 	cart.setup_remote(peer_id)
+	cart.set_vehicle_id(Network.effective_vehicle_for(peer_id, "minigame"),
+		Network.effective_racer_color_for(peer_id))
 	cart.net_position = cart.global_position
 	cart.net_yaw = cart.rotation.y
 	var label := Label3D.new()
 	label.name = "NameTag"
 	label.text = Network.name_of(peer_id)
 	label.font = TITLE_FONT
-	label.font_size = 56
-	label.pixel_size = 0.010
-	label.outline_size = 16
+	label.font_size = 42
+	label.pixel_size = 0.0062
+	label.outline_size = 13
 	label.outline_modulate = UiPalette.OUTLINE
 	label.modulate = Network.color_of(peer_id)
 	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 	label.no_depth_test = true
-	label.position = Vector3(0.0, 2.2, 0.0)
+	label.position = Vector3(0.0, 2.05, 0.0)
 	cart.add_child(label)
 	_name_labels[peer_id] = label
 	_remote_carts[peer_id] = cart
@@ -3634,6 +3653,11 @@ func _net_cargo_ready(theme_id: String, vehicle_id: String) -> void:
 		return
 	Network.mark_peer_scene_ready(sender)
 	_spawn_remote_cart(sender)
+	var rcart: CartPlayer = _remote_carts.get(sender) as CartPlayer
+	if rcart != null and is_instance_valid(rcart):
+		var clean_vid: String = Network.effective_vehicle_for(sender, "minigame") \
+			if Network.is_shared_vehicle_mode() else GameSettings.sanitize_vehicle_id(vehicle_id)
+		rcart.set_vehicle_id(clean_vid, Network.effective_racer_color_for(sender))
 	rpc_id(sender, "_net_cargo_config", _theme_id, _bots.size(), _target)
 	if _phase == Phase.FINISHED:
 		rpc_id(sender, "_net_match_end", _score[0], _score[1], _winner())

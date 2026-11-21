@@ -321,10 +321,13 @@ func _rpc_sender() -> int:
 
 func _enter_tree() -> void:
 	# CartPlayer reads GameSettings.selected_vehicle in its own _ready, which
-	# runs before this node's _ready. Swap in the minigame vehicle here and put
-	# the sandbox choice back when the scene is left (memory only, not saved).
+	# runs before this node's _ready. Swap in the effective racing vehicle here
+	# (honoring PICK OWN vs SHARED in multiplayer) and put sandbox back on exit.
 	_saved_vehicle = GameSettings.selected_vehicle
-	GameSettings.selected_vehicle = GameSettings.minigame_vehicle
+	if Network.is_session_active() and multiplayer.multiplayer_peer != null:
+		GameSettings.selected_vehicle = Network.effective_vehicle_for(multiplayer.get_unique_id(), "racing")
+	else:
+		GameSettings.selected_vehicle = GameSettings.minigame_vehicle
 
 
 func _exit_tree() -> void:
@@ -2049,14 +2052,14 @@ func _build_rivals() -> void:
 		var label := Label3D.new()
 		label.text = str(names[i % names.size()])
 		label.font = load(TITLE_FONT)
-		label.font_size = 56
-		label.pixel_size = 0.011
-		label.outline_size = 16
+		label.font_size = 42
+		label.pixel_size = 0.0062
+		label.outline_size = 13
 		label.outline_modulate = UiPalette.OUTLINE
 		label.modulate = BOT_COLORS[i % BOT_COLORS.size()]
 		label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 		label.no_depth_test = true
-		label.position = Vector3(0.0, 2.2, 0.0)
+		label.position = Vector3(0.0, 2.05, 0.0)
 		rival.add_child(label)
 		rival.set_spawn_transform(spawn)
 		rival.surface_grip = _surface_grip_for(progress)
@@ -3082,12 +3085,15 @@ func _setup_multiplayer() -> void:
 	_is_host = Network.is_host
 	if OS.get_environment("CART_DEBUG_NET") == "1":
 		print("RACE_NET setup peers=", multiplayer.get_peers(), " host=", _is_host)
+	var my_id: int = multiplayer.get_unique_id()
+	var my_vehicle: String = Network.effective_vehicle_for(my_id, "racing")
 	if _is_host:
-		# Race rule: the host picks ONE car for the whole field. Only the name
-		# tag (and its colour) tells players apart.
-		_race_vehicle = GameSettings.minigame_vehicle
-	_peer_vehicles[multiplayer.get_unique_id()] = \
-		_race_vehicle if _is_host else GameSettings.minigame_vehicle
+		_race_vehicle = my_vehicle
+	_peer_vehicles[my_id] = my_vehicle
+	if _cart != null:
+		_cart.reapply_vehicle(my_vehicle, Network.effective_racer_color_for(my_id),
+			Network.effective_racing_allocation_for(my_id))
+		_base_max_speed = _cart.max_speed
 	_place_local_on_grid()
 	_setup_props_net()
 	for peer_id: int in multiplayer.get_peers():
@@ -3100,14 +3106,13 @@ func _setup_multiplayer() -> void:
 	if Network.server_race_supported() and Network.relay_base != "":
 		Network.sync_server_clock()
 	if _is_host:
-		# Push the forced car to peers already in the scene. Peers that have
-		# not loaded the scene yet receive it in _net_race_ready.
-		for target: int in multiplayer.get_peers():
-			if Network.is_scene_ready(target):
-				rpc_id(target, "_net_force_race_vehicle", _race_vehicle)
-		_broadcast_race_vehicle(multiplayer.get_unique_id(), _race_vehicle)
+		if Network.is_shared_vehicle_mode():
+			for target: int in multiplayer.get_peers():
+				if Network.is_scene_ready(target):
+					rpc_id(target, "_net_force_race_vehicle", _race_vehicle)
+		_broadcast_race_vehicle(my_id, _race_vehicle)
 	elif Network.is_scene_ready(1):
-		rpc_id(1, "_net_race_ready", GameSettings.minigame_vehicle)
+		rpc_id(1, "_net_race_ready", my_vehicle)
 
 
 func _place_local_on_grid() -> void:
@@ -3169,22 +3174,24 @@ func _spawn_remote(peer_id: int) -> void:
 	cart.setup_remote(peer_id)
 	cart.net_position = cart.global_position
 	cart.net_yaw = cart.rotation.y
-	if _peer_vehicles.has(peer_id):
-		cart.set_vehicle_id(str(_peer_vehicles[peer_id]))
-	elif peer_id == 1 and _race_vehicle != "":
-		# The host's vehicle table can arrive after its ghost is created.
-		cart.set_vehicle_id(_race_vehicle)
+	var init_vid: String = str(_peer_vehicles.get(peer_id,
+		Network.effective_vehicle_for(peer_id, "racing")))
+	if init_vid == "" and peer_id == 1 and _race_vehicle != "":
+		init_vid = _race_vehicle
+	if init_vid != "":
+		cart.set_vehicle_id(init_vid, Network.effective_racer_color_for(peer_id),
+			Network.effective_racing_allocation_for(peer_id))
 	var label := Label3D.new()
 	label.text = Network.name_of(peer_id)
 	label.font = load(TITLE_FONT)
-	label.font_size = 56
-	label.pixel_size = 0.011
-	label.outline_size = 16
+	label.font_size = 42
+	label.pixel_size = 0.0062
+	label.outline_size = 13
 	label.outline_modulate = UiPalette.OUTLINE
 	label.modulate = Network.color_of(peer_id)
 	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 	label.no_depth_test = true
-	label.position = Vector3(0.0, 2.2, 0.0)
+	label.position = Vector3(0.0, 2.05, 0.0)
 	cart.add_child(label)
 	_name_labels[peer_id] = label
 	_remote_carts[peer_id] = cart
@@ -3256,9 +3263,9 @@ func _net_race_ready(vehicle_id: String) -> void:
 	if sender <= 1 or sender == multiplayer.get_unique_id():
 		return
 	Network.mark_peer_scene_ready(sender)
-	# The host's car is everyone's car, so the client's own pick is ignored in
-	# a race (the sandbox keeps per-peer choices).
-	_store_net_vehicle(sender, _race_vehicle if _is_host else vehicle_id)
+	var clean_vid: String = _race_vehicle if (_is_host and Network.is_shared_vehicle_mode()) \
+		else GameSettings.sanitize_racing_vehicle_id(vehicle_id)
+	_store_net_vehicle(sender, clean_vid)
 	if _is_host and not _waiting_for_peers:
 		if _server_race_active:
 			rpc_id(sender, "_net_server_race_start", _server_race_id,
@@ -3272,9 +3279,10 @@ func _net_race_ready(vehicle_id: String) -> void:
 			rpc_id(sender, "_net_race_join_now")
 	if not _is_host:
 		return
-	# Re-send the forced car in case the broadcast landed before this peer's
-	# scene existed, then reply with the whole vehicle map.
-	rpc_id(sender, "_net_force_race_vehicle", _race_vehicle)
+	if Network.is_shared_vehicle_mode():
+		rpc_id(sender, "_net_force_race_vehicle", _race_vehicle)
+	else:
+		_broadcast_race_vehicle(sender, clean_vid)
 	for peer_id: Variant in _peer_vehicles.keys():
 		rpc_id(sender, "_net_race_vehicle", int(peer_id), str(_peer_vehicles[peer_id]))
 	# If this was the last peer we were waiting for, begin the countdown now.
@@ -3298,45 +3306,46 @@ func _store_net_vehicle(peer_id: int, vehicle_id: String) -> void:
 		print("RACE_NET store peer=", peer_id, " vehicle=", vehicle_id)
 	if vehicle_id.length() > 64:
 		return
-	if VehicleCatalog.find(vehicle_id).is_empty():
+	var norm_id: String = VehicleCatalog.normalize_id(vehicle_id)
+	if VehicleCatalog.find(norm_id).is_empty():
 		return
 	if peer_id == 1 and not _is_host:
-		# The host's car is the car everyone drives. Remember it for the host's
-		# ghost too, or that ghost renders with the client's local pick.
-		_peer_vehicles[1] = vehicle_id
+		_peer_vehicles[1] = norm_id
 		var host_cart: CartPlayer = _remote_carts.get(1)
 		if host_cart != null:
-			host_cart.set_vehicle_id(vehicle_id)
-		_apply_forced_vehicle(vehicle_id)
+			host_cart.set_vehicle_id(norm_id, Network.effective_racer_color_for(1),
+				Network.effective_racing_allocation_for(1))
+		if Network.is_shared_vehicle_mode():
+			_apply_forced_vehicle(norm_id)
 		return
-	_peer_vehicles[peer_id] = vehicle_id
+	_peer_vehicles[peer_id] = norm_id
 	var cart: CartPlayer = _remote_carts.get(peer_id)
 	if cart != null:
-		cart.set_vehicle_id(vehicle_id)
+		cart.set_vehicle_id(norm_id, Network.effective_racer_color_for(peer_id),
+			Network.effective_racing_allocation_for(peer_id))
 
 
 func _apply_forced_vehicle(vehicle_id: String) -> void:
-	## Client side: switch the LOCAL race cart to the host's car.
-	if _race_vehicle == vehicle_id \
-			and str(_peer_vehicles.get(multiplayer.get_unique_id(), "")) == vehicle_id:
+	## Client side (SHARED mode only): switch the LOCAL race cart to the host's car.
+	var norm_id: String = VehicleCatalog.normalize_id(vehicle_id)
+	if _race_vehicle == norm_id \
+			and str(_peer_vehicles.get(multiplayer.get_unique_id(), "")) == norm_id:
 		return
-	_race_vehicle = vehicle_id
-	_peer_vehicles[multiplayer.get_unique_id()] = vehicle_id
+	_race_vehicle = norm_id
+	_peer_vehicles[multiplayer.get_unique_id()] = norm_id
 	if _cart != null:
-		_cart.reapply_vehicle(vehicle_id)
-		# The off-track slowdown resets max_speed to _base_max_speed every
-		# frame; re-capture it or the forced car silently reverts to the old
-		# stats one frame after the swap.
+		_cart.reapply_vehicle(norm_id, Network.effective_racer_color_for(1),
+			Network.effective_racing_allocation_for(1))
 		_base_max_speed = _cart.max_speed
 	for rival: Dictionary in _rivals:
 		var node: CartPlayer = rival["node"]
-		node.reapply_vehicle(vehicle_id)
-		rival["vehicle"] = vehicle_id
+		node.reapply_vehicle(norm_id)
+		rival["vehicle"] = norm_id
 
 
 @rpc("authority", "call_local", "reliable")
 func _net_force_race_vehicle(vehicle_id: String) -> void:
-	if _is_host:
+	if _is_host or not Network.is_shared_vehicle_mode():
 		return
 	_apply_forced_vehicle(vehicle_id)
 
@@ -3707,7 +3716,7 @@ func _process(delta: float) -> void:
 			if _client_ready_retry_timer >= 0.8:
 				_client_ready_retry_timer = 0.0
 				if Network.is_scene_ready(1):
-					rpc_id(1, "_net_race_ready", GameSettings.minigame_vehicle)
+					rpc_id(1, "_net_race_ready", Network.effective_vehicle_for(multiplayer.get_unique_id(), "racing"))
 		return
 	if _toast_timer > 0.0:
 		_toast_timer -= delta

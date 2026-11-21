@@ -95,7 +95,7 @@ var _bot_progress_timer: float = 0.0
 ## Authored spawn anchor from the scene marker; grid slots reuse its height and
 ## facing so single- and multiplayer start on the same transforms.
 var _spawn_anchor: Transform3D = Transform3D(Basis.IDENTITY,
-	Vector3(0.0, 0.25, 0.0))
+	Vector3(0.0, 0.45, 0.0))
 var _cart_relay_ms: Dictionary = {} ## peer id -> last host relay (anti-amplification)
 var _cart_idle_ms: Dictionary = {} ## peer id -> last cart send (deadband)
 var _cart_idle_pos: Dictionary = {} ## peer id -> last sent position
@@ -141,8 +141,11 @@ func _ready() -> void:
 		# slot. Single player returns to the authored marker so a session that
 		# did not start still feels like the solo Sandbox.
 		if marker != null:
-			_local_cart.global_position = marker.global_position
-			_local_cart.set_spawn_transform(marker.global_transform)
+			var safe_xf: Transform3D = marker.global_transform
+			safe_xf.origin.y = maxf(safe_xf.origin.y, 0.45)
+			_local_cart.global_transform = safe_xf
+			_local_cart.velocity = Vector3.ZERO
+			_local_cart.set_spawn_transform(safe_xf)
 	_build_zone_hint()
 	_setup_bots()
 
@@ -171,20 +174,27 @@ func _setup_multiplayer() -> void:
 	multiplayer.peer_disconnected.connect(_on_peer_disconnected)
 	Network.names_changed.connect(_refresh_name_labels)
 	Network.tag_colors_changed.connect(_refresh_name_labels)
-	# Vehicle models are exchanged through the scene, not the lobby: tell the
-	# host we are ready, or broadcast ours to everyone if we are the host.
-	_peer_vehicles[multiplayer.get_unique_id()] = GameSettings.selected_vehicle
+	var my_id: int = multiplayer.get_unique_id()
+	var my_vid: String = Network.effective_vehicle_for(my_id, "sandbox")
+	if _local_cart != null:
+		_local_cart.reapply_vehicle(my_vid, Network.effective_racer_color_for(my_id))
+	_peer_vehicles[my_id] = my_vid
 	Network.notify_scene_ready(self, Network.GAME_SCENE)
 	if OS.get_environment("CART_DEBUG_NET") == "1":
-		print("SANDBOX_NET ready id=", multiplayer.get_unique_id(),
+		print("SANDBOX_NET ready id=", my_id,
 			" host=", _host_mode, " peers=", multiplayer.get_peers())
 	if _host_mode:
-		_broadcast_vehicle(multiplayer.get_unique_id(), GameSettings.selected_vehicle)
+		_broadcast_vehicle(my_id, my_vid)
 	elif Network.is_scene_ready(1):
-		rpc_id(1, "_net_client_ready", GameSettings.selected_vehicle)
+		rpc_id(1, "_net_client_ready", my_vid)
 
 
 func _physics_process(delta: float) -> void:
+	# Floor-phasing safety guard: if a cart ever falls beneath the park slab on a
+	# slow frame or physics spike, instantly snap it cleanly back onto the apron.
+	if _local_cart != null and _local_cart.global_position.y < -1.0:
+		_local_cart.global_position = Vector3(_local_cart.global_position.x, 0.55, _local_cart.global_position.z)
+		_local_cart.velocity.y = 0.0
 	_update_bots(delta)
 	_recover_props(delta)
 	_probe_zone(delta)
@@ -215,7 +225,7 @@ func _physics_process(delta: float) -> void:
 			_ready_retry_timer += delta
 			if _ready_retry_timer >= 0.8:
 				_ready_retry_timer = 0.0
-				rpc_id(1, "_net_client_ready", GameSettings.selected_vehicle)
+				rpc_id(1, "_net_client_ready", Network.effective_vehicle_for(multiplayer.get_unique_id(), "sandbox"))
 		_expire_prop_kicks()
 		_apply_prop_targets(delta)
 
@@ -262,14 +272,14 @@ func _setup_bots() -> void:
 		var label := Label3D.new()
 		label.text = "BOT %d" % (i + 1)
 		label.font = TITLE_FONT
-		label.font_size = 48
-		label.pixel_size = 0.007
-		label.outline_size = 14
+		label.font_size = 40
+		label.pixel_size = 0.0056
+		label.outline_size = 12
 		label.outline_modulate = Color(0.118, 0.106, 0.227)
 		label.modulate = Color(1.0, 0.83, 0.35)
 		label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 		label.no_depth_test = true
-		label.position = Vector3(0.0, 2.4, 0.0)
+		label.position = Vector3(0.0, 2.1, 0.0)
 		node.add_child(label)
 		var difficulty: int = Network.bot_difficulty()
 		var bot: SandboxBot = SandboxBot.new()
@@ -419,8 +429,10 @@ func _spawn_remote(peer_id: int) -> void:
 		if local_camera != null:
 			local_camera.current = true
 	cart.net_position = cart.global_position
-	if _peer_vehicles.has(peer_id):
-		cart.set_vehicle_id(str(_peer_vehicles[peer_id]))
+	var init_vid: String = str(_peer_vehicles.get(peer_id,
+		Network.effective_vehicle_for(peer_id, "sandbox")))
+	if init_vid != "":
+		cart.set_vehicle_id(init_vid, Network.effective_racer_color_for(peer_id))
 	_add_name_label(cart, peer_id)
 	_remote_carts[peer_id] = cart
 
@@ -485,14 +497,14 @@ func _add_name_label(cart: CartPlayer, peer_id: int) -> void:
 	var label := Label3D.new()
 	label.text = Network.name_of(peer_id)
 	label.font = TITLE_FONT
-	label.font_size = 64
-	label.pixel_size = 0.006
-	label.outline_size = 18
+	label.font_size = 42
+	label.pixel_size = 0.0060
+	label.outline_size = 13
 	label.outline_modulate = Color(0.118, 0.106, 0.227)
 	label.modulate = Network.color_of(peer_id)
 	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 	label.no_depth_test = true
-	label.position = Vector3(0, 2.5, 0)
+	label.position = Vector3(0, 2.1, 0)
 	cart.add_child(label)
 	_name_labels[peer_id] = label
 
@@ -570,12 +582,14 @@ func _net_peer_vehicle(peer_id: int, vehicle_id: String) -> void:
 func _store_peer_vehicle(peer_id: int, vehicle_id: String) -> void:
 	if vehicle_id.length() > 64:
 		return
-	if VehicleCatalog.find(vehicle_id).is_empty():
+	var clean_vid: String = Network.effective_vehicle_for(peer_id, "sandbox") \
+		if Network.is_shared_vehicle_mode() else VehicleCatalog.normalize_id(vehicle_id)
+	if VehicleCatalog.find(clean_vid).is_empty():
 		return
-	_peer_vehicles[peer_id] = vehicle_id
+	_peer_vehicles[peer_id] = clean_vid
 	var cart: CartPlayer = _remote_carts.get(peer_id)
 	if cart != null:
-		cart.set_vehicle_id(vehicle_id)
+		cart.set_vehicle_id(clean_vid, Network.effective_racer_color_for(peer_id))
 
 
 @rpc("authority", "unreliable")

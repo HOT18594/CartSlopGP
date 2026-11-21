@@ -5,10 +5,10 @@ render_mode unshaded, depth_draw_never, cull_disabled, shadows_disabled, fog_dis
 // 3 forward-rushing neon cyan-gold chevron waves and glowing lateral rails.
 // Pops vividly on bright snow, desert sand, concrete, and dark asphalt.
 
-uniform vec4 deep_color : source_color = vec4(0.035, 0.090, 0.380, 1.0); // deep electric navy
-uniform vec4 glow_color : source_color = vec4(0.060, 0.800, 1.000, 1.0); // vivid cyan
-uniform vec4 crest_color : source_color = vec4(1.000, 0.910, 0.360, 1.0); // solar gold crest
-uniform vec4 edge_color : source_color = vec4(0.240, 0.960, 0.920, 1.0); // aqua rail glow
+uniform vec4 deep_color : source_color = vec4(0.320, 0.075, 0.015, 1.0); // deep molten ember bed
+uniform vec4 glow_color : source_color = vec4(1.000, 0.460, 0.050, 1.0); // vivid blazing orange
+uniform vec4 crest_color : source_color = vec4(1.000, 0.960, 0.560, 1.0); // solar yellow-white crest
+uniform vec4 edge_color : source_color = vec4(1.000, 0.740, 0.120, 1.0); // hot amber rail glow
 uniform float intensity : hint_range(0.0, 5.0) = 2.6;
 uniform float pulse_speed : hint_range(0.0, 4.0) = 1.05;
 uniform float drift_speed : hint_range(0.0, 1.0) = 0.16;

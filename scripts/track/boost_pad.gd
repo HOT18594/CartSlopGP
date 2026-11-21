@@ -71,17 +71,17 @@ func _build_pad_hardware() -> void:
 	frame_mat.metallic = 0.25
 
 	var trim_mat := StandardMaterial3D.new()
-	trim_mat.albedo_color = Color("36e3ff")
+	trim_mat.albedo_color = Color("ff8c1a")
 	trim_mat.emission_enabled = true
-	trim_mat.emission = Color("1ec8ff")
-	trim_mat.emission_energy_multiplier = 2.0
+	trim_mat.emission = Color("ff7a0e")
+	trim_mat.emission_energy_multiplier = 2.2
 	trim_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 
 	var gold_mat := StandardMaterial3D.new()
-	gold_mat.albedo_color = Color("ffd22e")
+	gold_mat.albedo_color = Color("ffe048")
 	gold_mat.emission_enabled = true
-	gold_mat.emission = Color("ffcf2b")
-	gold_mat.emission_energy_multiplier = 2.2
+	gold_mat.emission = Color("ffd22e")
+	gold_mat.emission_energy_multiplier = 2.4
 	gold_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 
 	for side_name: String in ["RailLeft", "RailRight"]:
@@ -152,7 +152,7 @@ func _build_ambient_sparks() -> void:
 	proc.gravity = Vector3(0.0, 0.8, 0.0)
 	proc.scale_min = 0.55
 	proc.scale_max = 1.05
-	proc.color = Color(0.55, 0.98, 1.0, 0.85)
+	proc.color = Color(1.0, 0.78, 0.28, 0.88)
 	sparks.process_material = proc
 
 	var quad := QuadMesh.new()
@@ -161,9 +161,9 @@ func _build_ambient_sparks() -> void:
 	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	mat.billboard_mode = BaseMaterial3D.BILLBOARD_PARTICLES
-	mat.albedo_color = Color(0.75, 0.98, 1.0, 0.88)
+	mat.albedo_color = Color(1.0, 0.86, 0.42, 0.90)
 	mat.emission_enabled = true
-	mat.emission = Color(0.32, 0.94, 1.0)
+	mat.emission = Color(1.0, 0.56, 0.10)
 	mat.emission_energy_multiplier = 2.0
 	quad.material = mat
 	sparks.draw_pass_1 = quad

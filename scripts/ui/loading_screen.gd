@@ -9,12 +9,15 @@ const UiAnim := preload("res://scripts/ui/ui_anim.gd")
 ##   bar, with a concise single-line tip centered below.
 
 const UiPalette := preload("res://scripts/ui/ui_palette.gd")
+const CartDrawing := preload("res://scripts/ui/cart_drawing.gd")
 const ART_DIR: String = "res://assets/ui/art/"
 const DISPLAY_FONT: String = "res://assets/ui/fonts/LuckiestGuy-Regular.ttf"
 
 const ART_PATHS: PackedStringArray = [
-	"res://assets/ui/art/bg_parking.png",
-	"res://assets/ui/art/bg_arena.png",
+	"res://assets/ui/art/bg_hero_paddock.png",
+	"res://assets/ui/art/bg_hero_canyon.png",
+	"res://assets/ui/art/bg_hero_arena.png",
+	"res://assets/ui/art/bg_hero_glacier.png",
 	"res://assets/ui/art/preview_stadium.png",
 	"res://assets/ui/art/preview_canyon.png",
 	"res://assets/ui/art/preview_glacier.png",
@@ -326,9 +329,12 @@ func _draw_art(area: Vector2) -> void:
 	var source: Vector2 = _art.get_size()
 	if source.x <= 0.0 or source.y <= 0.0:
 		return
-	var cover_scale: float = maxf(area.x / source.x, area.y / source.y)
+	var reduce: bool = GameSettings.reduce_motion if GameSettings != null else false
+	var zoom: float = 1.0 if reduce else (1.03 + 0.03 * sin(_time * 0.45))
+	var pan_x: float = 0.0 if reduce else (sin(_time * 0.35) * 14.0)
+	var cover_scale: float = maxf(area.x / source.x, area.y / source.y) * zoom
 	var drawn: Vector2 = (source * cover_scale).round()
-	var origin: Vector2 = ((area - drawn) * 0.5).round()
+	var origin: Vector2 = ((area - drawn) * 0.5 + Vector2(pan_x, 0.0)).round()
 	draw_texture_rect(_art, Rect2(origin, drawn), false)
 
 
@@ -448,6 +454,12 @@ func _draw_bar(area: Vector2) -> void:
 					draw_colored_polygon(spark_pts, Color(1.0, 1.0, 1.0, 0.78))
 
 			draw_polyline(_closed_poly(slot_pts), UiPalette.INK, 2.0, true)
+
+	# Zipping mini turbo shopping cart riding atop the leading edge of the bar.
+	var cart_x: float = clampf(bar.position.x + 28.0 + (bar.size.x - 56.0) * ratio,
+		bar.position.x + 28.0, bar.end.x - 28.0)
+	var bounce_y: float = absf(sin(_time * 12.0)) * 3.0 if not (GameSettings != null and GameSettings.reduce_motion) else 0.0
+	CartDrawing.draw_cart(self, Vector2(cart_x, bar.position.y - 2.0 - bounce_y), 0.24, false)
 
 	if _display == null:
 		return

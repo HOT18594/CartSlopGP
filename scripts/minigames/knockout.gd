@@ -105,7 +105,7 @@ const TOP_BAR_WIDTH: float = 392.0
 const TOP_BAR_HEIGHT: float = 54.0
 const LEADERBOARD_LEFT: float = 16.0
 const LEADERBOARD_TOP: float = 10.0
-const LEADERBOARD_WIDTH: float = 186.0
+const LEADERBOARD_WIDTH: float = 212.0
 const TOAST_WIDTH: float = 392.0
 const TOAST_HEIGHT: float = 40.0
 const SLAM_BAR_INNER_WIDTH: float = 108.0
@@ -426,6 +426,7 @@ var _result_subtitle: Label
 var _result_rows: VBoxContainer
 var _result_play_again: Button
 var _result_back: Button
+var _action_dock: Control
 
 
 func _enter_tree() -> void:
@@ -783,7 +784,9 @@ func _local_key() -> int:
 
 
 func _chosen_vehicle_id() -> String:
-	var id: String = GameSettings.minigame_vehicle
+	var id: String = Network.effective_vehicle_for(_local_key(), "minigame") \
+		if Network.is_session_active() else GameSettings.minigame_vehicle
+	id = VehicleCatalog.normalize_id(id)
 	if VehicleCatalog.find(id).is_empty():
 		return VehicleCatalog.DEFAULT_ID
 	return id
@@ -853,28 +856,28 @@ func _register_contestant(key: int, display_name: String, tint: Color,
 		name_3d.name = "RivalName3D"
 		name_3d.text = display_name
 		name_3d.font = TITLE_FONT
-		name_3d.font_size = 42
-		name_3d.pixel_size = 0.0082
-		name_3d.outline_size = 12
+		name_3d.font_size = 38
+		name_3d.pixel_size = 0.0058
+		name_3d.outline_size = 11
 		name_3d.outline_modulate = UiPalette.OUTLINE
 		name_3d.modulate = tint.lightened(0.22)
 		name_3d.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 		name_3d.no_depth_test = true
-		name_3d.position = Vector3(0.0, 2.25, 0.0)
+		name_3d.position = Vector3(0.0, 2.02, 0.0)
 		cart.add_child(name_3d)
 
 		dmg_3d = Label3D.new()
 		dmg_3d.name = "RivalDamage3D"
 		dmg_3d.text = "0%"
 		dmg_3d.font = TITLE_FONT
-		dmg_3d.font_size = 62
-		dmg_3d.pixel_size = 0.0090
-		dmg_3d.outline_size = 16
+		dmg_3d.font_size = 48
+		dmg_3d.pixel_size = 0.0066
+		dmg_3d.outline_size = 13
 		dmg_3d.outline_modulate = UiPalette.OUTLINE
 		dmg_3d.modulate = Color.WHITE
 		dmg_3d.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 		dmg_3d.no_depth_test = true
-		dmg_3d.position = Vector3(0.0, 2.78, 0.0)
+		dmg_3d.position = Vector3(0.0, 2.46, 0.0)
 		cart.add_child(dmg_3d)
 
 	var base_mult: float = cart.boost_speed_multiplier if cart != null else 1.35
@@ -2169,8 +2172,7 @@ func _build_hud() -> void:
 	_top_bar.add_theme_stylebox_override("panel", _empty_box(18.0, 4.0, 20.0, 8.0))
 	_top_bar_plate = _attach_ko_slash(
 		_top_bar, 14.0, UiPalette.INK, UiPalette.CREAM, 3.5, Vector2(4.0, 5.0))
-	_top_bar_plate.accent_color = UiPalette.YELLOW
-	_top_bar_plate.accent_width = 10.0
+	_top_bar_plate.accent_width = 0.0
 	_hud_root.add_child(_top_bar)
 
 	var top_row := HBoxContainer.new()
@@ -2222,8 +2224,9 @@ func _build_hud() -> void:
 	_damage_badge.add_child(_damage_value_label)
 	top_row.add_child(_damage_badge)
 
-	# Right cluster: Skewed SLAM! charge slash
+	# Right cluster kept hidden in top bar (now shines in the bottom-center Action Dock!)
 	var slam_col := VBoxContainer.new()
+	slam_col.visible = false
 	slam_col.alignment = BoxContainer.ALIGNMENT_CENTER
 	slam_col.add_theme_constant_override("separation", 2)
 	slam_col.custom_minimum_size = Vector2(114.0, 0.0)
@@ -2255,21 +2258,23 @@ func _build_hud() -> void:
 	_leaderboard_rows.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_leaderboard_panel.add_child(_leaderboard_rows)
 
-	# 3. Bottom Smash Bros. / Hi-Fi Rush Skewed Parallelogram Fighter Damage Plates!
+	# 3. Legacy multi-fighter bottom strip hidden in favor of clean YOUR DAMAGE + [E] SLAM Dock!
 	_fighter_bar = HBoxContainer.new()
 	_fighter_bar.name = "SmashFighterBar"
-	_fighter_bar.alignment = BoxContainer.ALIGNMENT_CENTER
-	_fighter_bar.add_theme_constant_override("separation", 8)
+	_fighter_bar.visible = false
 	_fighter_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_fighter_bar.anchor_left = 0.0
-	_fighter_bar.anchor_right = 0.0
-	_fighter_bar.anchor_top = 1.0
-	_fighter_bar.anchor_bottom = 1.0
-	_fighter_bar.offset_left = 324.0
-	_fighter_bar.offset_right = 960.0
-	_fighter_bar.offset_top = -84.0
-	_fighter_bar.offset_bottom = -10.0
 	_hud_root.add_child(_fighter_bar)
+
+	# Dedicated Bottom-Center Player Combat & [E] Slam Recharge Dock
+	var AbilityDockRes := preload("res://scripts/ui/ability_dock.gd")
+	_action_dock = AbilityDockRes.new()
+	_action_dock.name = "KnockoutActionDock"
+	_action_dock.set("show_damage", true)
+	_action_dock.set("show_ability", true)
+	_action_dock.set("key_text", "E")
+	_action_dock.set("ability_title", "SLAM READY!")
+	_action_dock.set("controls_hint", "WASD DRIVE  ·  SPACE DRIFT  ·  SHIFT BOOST  ·  E SLAM")
+	_hud_root.add_child(_action_dock)
 
 	# 4. Upper-Center Skewed KO & Hazard Warning Slash
 	_toast_panel = PanelContainer.new()
@@ -2284,8 +2289,7 @@ func _build_hud() -> void:
 	_toast_panel.add_theme_stylebox_override("panel", _empty_box(18.0, 4.0, 20.0, 8.0))
 	_toast_plate = _attach_ko_slash(
 		_toast_panel, 12.0, UiPalette.INK, UiPalette.YELLOW, 3.5, Vector2(4.0, 5.0))
-	_toast_plate.accent_color = UiPalette.YELLOW
-	_toast_plate.accent_width = 14.0
+	_toast_plate.accent_width = 0.0
 	_toast_panel.visible = false
 	_hud_root.add_child(_toast_panel)
 
@@ -2296,7 +2300,7 @@ func _build_hud() -> void:
 	_toast_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	_toast_panel.add_child(_toast_label)
 
-	# 5. Spectator Status Slash (sits cleanly above the Smash Fighter Bar)
+	# 5. Spectator Status Slash (sits cleanly above the Action Dock)
 	_spectator_pill = PanelContainer.new()
 	_spectator_pill.name = "SpectatorPill"
 	_spectator_pill.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -2306,13 +2310,12 @@ func _build_hud() -> void:
 	_spectator_pill.anchor_bottom = 1.0
 	_spectator_pill.offset_left = -168.0
 	_spectator_pill.offset_right = 168.0
-	_spectator_pill.offset_top = -126.0
-	_spectator_pill.offset_bottom = -88.0
+	_spectator_pill.offset_top = -148.0
+	_spectator_pill.offset_bottom = -110.0
 	_spectator_pill.add_theme_stylebox_override("panel", _empty_box(18.0, 4.0, 20.0, 7.0))
 	_spectator_plate = _attach_ko_slash(
 		_spectator_pill, 12.0, UiPalette.INK, UiPalette.CYAN, 3.5, Vector2(4.0, 5.0))
-	_spectator_plate.accent_color = UiPalette.CYAN
-	_spectator_plate.accent_width = 12.0
+	_spectator_plate.accent_width = 0.0
 	_spectator_pill.visible = false
 	_hud_root.add_child(_spectator_pill)
 
@@ -2599,6 +2602,21 @@ func _refresh_hud_frame() -> void:
 			_slam_status_label.text = "SLAM %.1fS" % slam_cd
 			_slam_status_label.add_theme_color_override("font_color", UiPalette.CYAN)
 
+	if _action_dock != null:
+		_action_dock.set("damage_text", "%d%%" % int(round(pct)) if alive else "OUT")
+		_action_dock.set("damage_color", col if alive else UiPalette.RED)
+		_action_dock.set("ability_ratio", ready_ratio if alive else 0.0)
+		if not alive:
+			_action_dock.set("ability_title", "SPECTATING")
+			_action_dock.set("ability_color", UiPalette.CYAN)
+		elif ready_ratio >= 0.999:
+			_action_dock.set("ability_title", "SLAM READY!")
+			_action_dock.set("ability_color", UiPalette.YELLOW)
+		else:
+			_action_dock.set("ability_title", "RECHARGING %.1fS" % slam_cd)
+			_action_dock.set("ability_color", UiPalette.CYAN)
+		_action_dock.queue_redraw()
+
 	_refresh_leaderboard_pills()
 	_refresh_smash_fighter_plates()
 	_layout_hud()
@@ -2616,8 +2634,8 @@ func _refresh_leaderboard_pills() -> void:
 	while _leaderboard_cache.size() < count:
 		var pill := PanelContainer.new()
 		pill.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		pill.custom_minimum_size = Vector2(0.0, 22.0)
-		pill.add_theme_stylebox_override("panel", _empty_box(14.0, 1.0, 12.0, 3.0))
+		pill.custom_minimum_size = Vector2(0.0, 26.0)
+		pill.add_theme_stylebox_override("panel", _empty_box(20.0, 2.0, 18.0, 4.0))
 		var plate := _attach_ko_slash(
 			pill, 9.0, Color(0.118, 0.106, 0.227, 0.88), UiPalette.INK, 2.5, Vector2(2.5, 3.0))
 		plate.draw_sheen = false
@@ -3042,8 +3060,9 @@ func _spawn_remote_peer(peer_id: int) -> void:
 	cart.net_yaw = spawn_xform.basis.get_euler().y
 	cart.contact_enabled = true
 	cart.collision_layer = CollisionLayers.GHOST
-	var veh: String = str(_peer_vehicles.get(peer_id, _chosen_vehicle_id()))
-	cart.set_vehicle_id(veh)
+	var veh: String = str(_peer_vehicles.get(peer_id,
+		Network.effective_vehicle_for(peer_id, "minigame")))
+	cart.set_vehicle_id(veh, Network.effective_racer_color_for(peer_id))
 	_remote_carts[peer_id] = cart
 	_register_contestant(peer_id, Network.name_of(peer_id),
 		Network.color_of(peer_id), cart, false, -1, true)
@@ -3108,11 +3127,12 @@ func _net_knockout_ready(arena_id: String, vehicle_id: String) -> void:
 		return
 	Network.mark_peer_scene_ready(sender)
 	_spawn_remote_peer(sender)
-	var clean_veh: String = GameSettings.sanitize_vehicle_id(vehicle_id)
+	var clean_veh: String = Network.effective_vehicle_for(sender, "minigame") \
+		if Network.is_shared_vehicle_mode() else GameSettings.sanitize_vehicle_id(vehicle_id)
 	_peer_vehicles[sender] = clean_veh
 	var r_cart: CartPlayer = _remote_carts.get(sender) as CartPlayer
 	if r_cart != null and is_instance_valid(r_cart):
-		r_cart.set_vehicle_id(clean_veh)
+		r_cart.set_vehicle_id(clean_veh, Network.effective_racer_color_for(sender))
 
 	# Sync arena, bot count, round count & peer vehicles to the newly ready peer
 	# and refresh peer vehicles on all ready peers.

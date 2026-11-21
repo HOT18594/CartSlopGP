@@ -2,6 +2,49 @@
 
 Player-facing notes, newest first.
 
+## [0.8.5] - 2026-11-21
+
+### The Grand Spectacle Overhaul: New Racing-Sim UI, Living Worlds, Full 6-Track OST & Multiplayer Vehicle Freedom!
+
+![Hero Paddock](assets/ui/art/bg_hero_paddock.png)
+
+Our biggest visual, audio, UX, and multiplayer polish update yet — rebuilding **Cart Slop GP** from the boot splash all the way to the checkered flag!
+
+#### Brand-New Slanted Racing-Sim UI, Studio Art & Universal Navigation
+- **Complete UI Redesign:** Rebuilt the Main Menu, Mode & Map Selector, Multiplayer Lobby, Settings, and Garage into a cohesive, punchy **slanted-parallelogram racing-sim UI** with crisp high-contrast typography, true parallelogram-clipped map previews, live-crossfading studio key art, staggered slide/fade transitions, diagonal sheen sweeps, and tactile click/confirm audio — zero clutter, zero overflow.
+- **Crisp Curved-Corner App Icon:** Brand-new clean, high-contrast squircle shopping-cart app icon that stays razor-sharp on desktop docks, taskbars, and macOS Launchpad.
+- **Full `WASD` + Arrow Navigation & Universal `ESC` Back-Out:** Navigate every single menu, slider, tab, and lobby control with `WASD` just like Arrow Keys (without ever interfering with typing your name or room code), and hit `ESC` on **any** screen or overlay to cleanly back out.
+- **Rethought In-Game Combat & `[E]` Ability Dock:** Replaced the cluttered bottom row in Knockout, Blast Tag, and Deliver with a sleek bottom-center **Combat & Ability Dock** displaying a glowing `[E]` radial/bar recharge ring for **Power-Slam Surge**, **Juke Surge**, and **Crate Load** alongside your Knockback % or Bomb Fuse right where your eyes already are.
+
+#### Concept-Art Worlds Made Real Across Every Mode
+![Glacier Pass Aurora](assets/ui/art/preview_glacier.png)
+
+- **Northern Lights, Real Lantern Glow & Fluid Biome Blending:** Brought our concept art into 3D with animated emerald-cyan-violet **Northern Lights** aurora skies (`aurora_sky.gdshader`), real warm golden **lantern floor glow pools** (`lantern_pool.gdshader` + budgeted point lights), luminous turquoise ice crystal clusters, sweeping checkered Grand Prix tunnel arches, sandstone Canyon sky-arches, festival pennant garlands, orbiting SlopMart blimp, spinning wind turbines, and smooth multi-region **biome-blended ground shaders** (`biome_blend_ground.gdshader`) with zero harsh seams.
+- **Extensive Worlds Across Knockout, Blast Tag & Deliver:** Removed stray floating arena rings, fixed every backwards stadium bleacher across the entire game, and dressed all 9 non-racing arenas with layered mid-field districts and sweeping far-horizon silhouettes so every arena feels embedded inside a living world.
+- **Solar Orange-Gold Speed Pads & Forward Chevrons:** Replaced confusing blue pads and inverted arrows with unmistakably forward-pointing warm gold guide chevrons and solar orange-gold nitro boost strips, plus freshly re-rendered **18/18 live map previews**.
+
+![Skytop Knockout Arena](assets/ui/art/preview_knockout.png)
+
+#### Hero Turbo Shopping Cart, Unified `PRO RACER` Paint Shop & Sleek Particles
+- **Hero Turbo Shopping Cart:** Completely rebuilt the iconic Shopping Cart with a chrome tubular frame, wire lattice basket, oversized gold-rimmed slicks, carbon GT wing, LED headlights, swaying pennant, and **coaxially aligned twin rear nitro thrusters** with matching exhaust flames.
+- **Unified `PRO RACER` with 8-Color Live Paint Shop:** Combined the 4 separate racer color variants into one sleek **`PRO RACER`** with an 8-swatch **Paint Color** selector right inside the full-screen 3D Neon Garage Showroom (repaints live with glossy clearcoat automotive paint and syncs across multiplayer!).
+- **Cooler, Non-Distracting Particle Effects:** Upgraded drift sparks into crisp stretched world-space metallic spark streaks and added sleek **Nitro Ember Trails** streaming off your thrusters during boosts without obscuring the road ahead.
+
+#### Multiplayer Vehicle Freedom (`PICK OWN` vs `SHARED`) & Sync Overhaul
+- **Host Room Vehicle Policy (`PICK OWN` | `SHARED`):** Hosts can now flip any multiplayer room right from the Lobby between **PICK OWN** (both host and every client can open **GARAGE** in **every** mode — including tweaking their own car, `PRO RACER` paint color, and 4-stat Racing Tune!) and **SHARED** (everyone drives the host's car and tune for pure equal-machinery showdowns).
+- **100% Unified Vehicle Sync Across All 5 Modes:** Fixed inconsistent remote vehicle syncing across Racing, Deliver, Knockout, Blast Tag, and Sandbox — every player's chosen car, custom paint color, physics mass, collision footprint, and racing tune now sync cleanly on both host and clients, with live car badges right in the lobby roster.
+- **Sleeker Multiplayer Nametags:** Resized overhead 3D player nametags so they stay crisp and easy to spot without blocking your view of tight corners or brawls.
+
+#### Full 6-Track Mastered Soundtrack & Smooth DJ Crossfades
+- **6 Custom-Mastered Mode Tracks:** Added dedicated mastered OGG Vorbis tracks (`-14 LUFS`, silence-trimmed) for **Menu**, **Racing**, **Sandbox**, **Knockout**, **Deliver**, and **Blast Tag**.
+- **Seamless Audio Transitions:** Upgraded `MusicPlayer` with equal-power crossfading, 4-second DJ self-loop blending, smooth transitional low-pass sweeps between scenes, subtle pause-menu muffling, and menu-position resume memory.
+
+#### Bug Fixes & Rock-Solid Reliability
+![SlopMart Stunt Park](assets/ui/art/preview_sandbox.png)
+
+- **Fixed Sandbox Floor-Phasing Spawn Bug:** Thickened the Sandbox ground slab (`24 m`), added an infinite `WorldBoundaryShape3D` safety plane, raised spawn clearance (`y = 0.45`), zeroed initial spawn velocity, and added a floor-rescue watchdog so carts never phase through the floor on load.
+- **Server, Auto-Update & All-Platform Verification:** Verified all 135 Python Pi server race-API & security checks, updated the auto-update manifest & release packaging across **Windows**, **macOS Universal**, **Linux**, and **Web**, and reorganized workspace documentation cleanly.
+
 ## [0.8.4] - 2026-11-21
 
 ### Multiplayer room sync & controlled drifting

@@ -149,6 +149,72 @@ static func shake(item: Control, strength: float = 7.0, duration: float = 0.30) 
 	tween.tween_property(item, "position", base, duration / float(steps))
 
 
+static func _reduce_motion() -> bool:
+	var loop: MainLoop = Engine.get_main_loop()
+	if loop is SceneTree:
+		var gs: Node = (loop as SceneTree).root.get_node_or_null("GameSettings")
+		if gs != null:
+			return bool(gs.get("reduce_motion"))
+	return false
+
+
+static func stagger_slide(items: Array, offset: Vector2 = Vector2(-28.0, 0.0),
+		step: float = 0.045, duration: float = 0.28) -> void:
+	## Cascading slide-and-fade entrance for navigation rails, grids, and rows.
+	## Container children cannot have their position animated reliably, so we
+	## animate scale + modulate + pivot smoothly for container items and use
+	## position slide for free Controls.
+	var reduced: bool = _reduce_motion()
+	var idx: int = 0
+	for raw: Variant in items:
+		if not (raw is Control):
+			continue
+		var item := raw as Control
+		if not is_instance_valid(item) or not item.visible:
+			continue
+		var delay: float = 0.0 if reduced else float(idx) * step
+		idx += 1
+		if reduced:
+			fade_in(item, 0.12, 0.0)
+			continue
+		var parent: Node = item.get_parent()
+		if parent is Container:
+			item.pivot_offset = item.size * 0.5
+			item.scale = Vector2(0.93, 0.93)
+			item.modulate.a = 0.0
+			var tw: Tween = _tracked(item, "ui_anim_main")
+			if delay > 0.0:
+				tw.tween_interval(delay)
+			tw.set_parallel(true)
+			tw.tween_property(item, "scale", Vector2.ONE, duration) \
+				.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+			tw.tween_property(item, "modulate:a", 1.0, duration * 0.7) \
+				.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+		else:
+			slide_in(item, offset, duration, delay)
+
+
+static func modal_open(panel: Control, dim: CanvasItem = null,
+		duration: float = 0.24) -> void:
+	## Crisp racing-sim modal pop + fade-in backdrop.
+	if is_instance_valid(dim):
+		fade_in(dim, duration * 0.85)
+	if not is_instance_valid(panel):
+		return
+	if _reduce_motion():
+		fade_in(panel, 0.12)
+		return
+	panel.pivot_offset = panel.size * 0.5
+	panel.scale = Vector2(0.92, 0.92)
+	panel.modulate.a = 0.0
+	var tw: Tween = _tracked(panel, "ui_anim_main")
+	tw.set_parallel(true)
+	tw.tween_property(panel, "scale", Vector2.ONE, duration) \
+		.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	tw.tween_property(panel, "modulate:a", 1.0, duration * 0.65) \
+		.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+
+
 static func damp(current: float, target: float, delta: float, speed: float = 12.0) -> float:
 	## Exponential smoothing that behaves the same at 30 and 240 FPS.
 	return lerpf(current, target, 1.0 - exp(-speed * delta))

@@ -1,11 +1,11 @@
 <div align="center">
 
-<img src="assets/ui/art/bg_parking.png" alt="Cart Slop GP — Arcade Racing & Party Kart Brawler" width="100%" />
+<img src="assets/ui/art/bg_hero_paddock.png" alt="Cart Slop GP — Arcade Racing & Party Kart Brawler" width="100%" />
 
 # Cart Slop GP
 
 **High-energy comic-arcade kart racing & 8-player party mayhem built with Godot 4.**
-Hop-drift shopping carts and street rides across **5 vertical circuits**, brawl across **9 party arenas** in **Knockout**, **Blast Tag**, and **Deliver**, or tear up the **Stunt Park** — solo vs AI, on Wi-Fi LAN, or online with a 5-letter room code.
+Hop-drift a twin-thruster Hero Shopping Cart or custom-painted Pro Racer across **5 living vertical circuits**, brawl across **9 party arenas** in **Knockout**, **Blast Tag**, and **Deliver**, or tear up the **SlopMart Stunt Park** — solo vs AI, on Wi-Fi LAN, or online with a 5-letter room code.
 
 [![Latest Release](https://img.shields.io/github/v/release/HOT18594/CartSlopGP?label=Download&color=ffb800&style=for-the-badge)](https://github.com/HOT18594/CartSlopGP/releases/latest)
 [![Engine](https://img.shields.io/badge/Godot-4.7.2-478cbf?style=for-the-badge&logo=godotengine&logoColor=white)](https://godotengine.org/)
@@ -18,19 +18,15 @@ Hop-drift shopping carts and street rides across **5 vertical circuits**, brawl 
 
 ---
 
-## Highlights in v0.8.3
+## Highlights in v0.8.5 — The Grand Spectacle Overhaul
 
-- **Races always finish.** Fixed the 3-laps-no-finish bug (boosted laps vs the lap timer), plus host-loss and late-join endings that could freeze Blast Tag, Deliver, and Knockout — see the changelog.
+![Glacier Pass Northern Lights](assets/ui/art/preview_glacier.png)
 
-## Highlights in v0.8.2
-
-![Glacier Pass](assets/ui/art/preview_glacier.png)
-
-- **5 circuits, 9 arenas, zero clipping.** Mountain rings are footprint-checked so peaks can't land on the road, every blocked ramp was re-cut (Plaza skywalk, Labyrinth, Ferries kickers, Glacier Bowl berms), Meadow's green kerbs are terracotta, and washed-out white is now vivid cartoon color with bespoke Stadium and Dockyard skies.
-- **Bots that actually race you.** Blast Tag hunters lead their target and ram the intercept; runners weave and juke by difficulty; Knockout slams, race jump-boosts, Deliver crate brains, and Sandbox tag-chase all scale Easy → Hard — same kart, same physics, same rules as you.
-- **Faster netcode and Pi server.** Idle karts sync at 5 Hz, the tunnel caps and coalesces, heartbeats fail fast, joins explain themselves, and the Pi ticks on a deadline (~15k packets/s, sub-ms ticks) with TLS resumption and health-gated deploys.
-- **macOS Multiplayer Fixed** — the app bundle now declares macOS 14/15 **Local Network** access (the missing permission silently blocked LAN discovery and LAN joins), LAN discovery broadcasts across every local adapter instead of guessing one, and join failures explain how to allow the permission.
-- **Verified end to end** — full headless battery green, 44 + 91 + 6 + 5 Pi server and perf cases green, all 18 previews regenerated from the live scenes.
+- **All-New Racing-Sim UI, 3D Neon Garage & Studio Key Art** — Every menu, lobby, mode picker, and map card has been rebuilt into a crisp slanted-parallelogram racing-sim UI with custom studio artwork, curved-corner app icon, full `WASD` + Arrow navigation, universal `ESC` back-out on every screen, and snappy animations.
+- **Unified `PRO RACER` + Custom Paint Shop & Hero Turbo Shopping Cart** — All 4 racer variants are now one unified **PRO RACER** with an 8-color live paint selector, while the signature **Shopping Cart** has been rebuilt with coaxial twin rear nitro thrusters, carbon GT wing, LED headlights, and sleeker drift sparks & nitro ember trails.
+- **Multiplayer Vehicle Freedom (`PICK OWN` vs `SHARED`)** — Hosts can now switch any room between **PICK OWN** (every player picks their own vehicle, paint color, and 4-stat racing tune right from the lobby!) and **SHARED** (everyone drives the host's ride), synced cleanly across all 5 modes with sleeker overhead nametags.
+- **Concept-Art Worlds & Full 6-Track Mastered Soundtrack** — Shimmering Northern Lights aurora skies, warm lantern floor glow pools, fluid biome-blended grounds, expansive far-horizon worlds across Knockout, Blast Tag, and Deliver, a rethought `[E]` Combat & Ability Dock, and 6 custom-mastered Suno music tracks with smooth DJ crossfades!
+- **Rock-Solid Sandbox & Platform Polish** — Fixed Sandbox floor-phasing on spawn, fixed backwards stadium bleachers, replaced blue pads/arrows with solar orange-gold speed pads & forward chevrons, and verified all 4 platform builds + auto-updater end to end.
 ---
 
 ## 5 High-Verticality Racing Circuits
@@ -92,10 +88,10 @@ Grab the latest self-contained release from the [**Releases page**](https://gith
 
 | Platform | Package | How to Run |
 | :--- | :--- | :--- |
-| **Windows** (x64) | `CartSlopGP_v0.8.3_windows.zip` | Extract and run `CartSlopGP.exe` (single self-contained executable with embedded data pack). If SmartScreen warns on unsigned builds: **More info → Run anyway**. |
-| **macOS** (Universal) | `CartSlopGP_v0.8.3_macos.zip` | Extract and open `Cart Slop GP.app`. If Gatekeeper blocks the ad-hoc build, right-click **Open** or run `xattr -dr com.apple.quarantine "/path/to/Cart Slop GP.app"`. **LAN multiplayer:** on first launch macOS 14/15 asks to allow **Local Network** access — click **Allow** (if you missed it: **System Settings → Privacy & Security → Local Network**). Without that permission macOS silently blocks LAN discovery and LAN joins. |
-| **Linux** (x86_64) | `CartSlopGP_v0.8.3_linux.zip` | Extract and run `./CartSlopGP.x86_64` (`0755` executable bit preserved in zip; data pack embedded). |
-| **Web** (HTML5) | `CartSlopGP_v0.8.3_web.zip` | Serve over HTTP (e.g. `python3 -m http.server 8000`) and open in a modern browser. Solo modes only (browsers lack raw UDP sockets). |
+| **Windows** (x64) | `CartSlopGP_v0.8.5_windows.zip` | Extract and run `CartSlopGP.exe` (single self-contained executable with embedded data pack). If SmartScreen warns on unsigned builds: **More info → Run anyway**. |
+| **macOS** (Universal) | `CartSlopGP_v0.8.5_macos.zip` | Extract and open `Cart Slop GP.app`. If Gatekeeper blocks the ad-hoc build, right-click **Open** or run `xattr -dr com.apple.quarantine "/path/to/Cart Slop GP.app"`. **LAN multiplayer:** on first launch macOS 14/15 asks to allow **Local Network** access — click **Allow** (if you missed it: **System Settings → Privacy & Security → Local Network**). Without that permission macOS silently blocks LAN discovery and LAN joins. |
+| **Linux** (x86_64) | `CartSlopGP_v0.8.5_linux.zip` | Extract and run `./CartSlopGP.x86_64` (`0755` executable bit preserved in zip; data pack embedded). |
+| **Web** (HTML5) | `CartSlopGP_v0.8.5_web.zip` | Serve over HTTP (e.g. `python3 -m http.server 8000`) and open in a modern browser. Solo modes only (browsers lack raw UDP sockets). |
 
 ### Automatic Updates & Save Data
 Desktop builds check for new releases automatically (or via **SETTINGS → CHECK FOR UPDATES**), verify the download's **SHA-256** digest, swap the binary in place, and relaunch with one click. Local settings and lap records are stored in:

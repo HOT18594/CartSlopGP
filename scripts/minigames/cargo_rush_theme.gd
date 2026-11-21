@@ -21,6 +21,7 @@ const SceneryKit := preload("res://scripts/minigames/scenery/scenery_kit.gd")
 const PropBatch := preload("res://scripts/minigames/scenery/prop_batch.gd")
 const LandscapeSculptor := preload("res://scripts/minigames/scenery/landscape_sculptor.gd")
 const AmbientWorld := preload("res://scripts/minigames/scenery/ambient_world.gd")
+const ConceptSpectacle := preload("res://scripts/minigames/scenery/concept_spectacle.gd")
 
 const RACING_ROOT: String = "res://assets/models/kenney_racing_kit/Models/GLTF format/"
 const NATURE_ROOT: String = "res://assets/models/kenney_nature_kit/Models/GLTF format/"
@@ -152,11 +153,11 @@ const SNOWFIELD_SPEC: Dictionary = {
 	"name": "GLACIER BOWL",
 	"blurb": "SLICK ICE RINK & BERM JUMPS",
 	"teams": ["YULECREW", "REINDEER"],
-	"sky_top": Color(0.20, 0.50, 0.82),
-	"sky_horizon": Color(0.62, 0.82, 0.94),
-	"ground_bottom": Color(0.45, 0.62, 0.78),
-	"fog_color": Color(0.62, 0.78, 0.90),
-	"fog_density": 0.0016,
+	"sky_top": Color("0a1438"),
+	"sky_horizon": Color("345a92"),
+	"ground_bottom": Color("142442"),
+	"fog_color": Color("2a497c"),
+	"fog_density": 0.0012,
 	"ground": Color("bcdcee"),
 	"ground_alt": Color("8fcbe8"),
 	"paint": Color("2e86ab"),
@@ -372,30 +373,29 @@ static func build_arena(stage: Node3D, id: String) -> Dictionary:
 	if stage == null:
 		return {"theme": theme, "spawns": []}
 
-	# Floor + 7x7 checkerboard
+	# Smooth fluid multi-region arena floor (blends team zones + central courtyard
+	# organically with zero harsh blocky checker seams!)
+	var col_a: Color = theme.get("ground", Color("476878")) as Color
+	var col_b: Color = theme.get("ground_alt", Color("3f5f6f")) as Color
+	var col_n: Color = col_a.lerp(Color("3484d8"), 0.14)
+	var col_s: Color = col_a.lerp(Color("dc4a42"), 0.14)
 	var floor_inst := MeshInstance3D.new()
 	floor_inst.name = "ArenaFloor"
-	var floor_plane := PlaneMesh.new()
-	floor_plane.size = Vector2(FLOOR_SIZE, FLOOR_SIZE)
-	floor_inst.mesh = floor_plane
-	floor_inst.material_override = floor_material(theme)
+	floor_inst.mesh = SceneryKit.build_blended_ground(
+		Vector2(-FLOOR_SIZE * 0.5, -FLOOR_SIZE * 0.5),
+		Vector2(FLOOR_SIZE * 0.5, FLOOR_SIZE * 0.5),
+		36, 0.0, func(wx: float, wz: float) -> Color:
+			var wave: float = 0.5 + 0.5 * sin(wx * 0.095) * cos(wz * 0.095)
+			var base: Color = col_a.lerp(col_b, smoothstep(0.18, 0.82, wave))
+			var north_t: float = smoothstep(-16.0, -48.0, wz) * smoothstep(52.0, 12.0, absf(wx))
+			var south_t: float = smoothstep(16.0, 48.0, wz) * smoothstep(52.0, 12.0, absf(wx))
+			var rim_t: float = smoothstep(ARENA_HALF - 4.0, ARENA_HALF + 16.0, maxf(absf(wx), absf(wz)))
+			base = base.lerp(col_n, north_t * 0.65).lerp(col_s, south_t * 0.65)
+			return base.lerp(col_b.darkened(0.08), rim_t * 0.45)
+	)
+	floor_inst.material_override = SceneryKit.fluid_ground_material(
+		Color(0.95, 1.0, 0.96), Color(1.04, 0.98, 0.92), 0.042, 0.12, 0.86)
 	stage.add_child(floor_inst)
-
-	var tile := PlaneMesh.new()
-	tile.size = Vector2(TILE_SIZE, TILE_SIZE)
-	var checker_xforms: Array = []
-	var checker_cols: Array = []
-	for ix in range(-3, 4):
-		for iz in range(-3, 4):
-			checker_xforms.append(Transform3D(Basis.IDENTITY,
-				Vector3(float(ix) * TILE_SIZE, 0.014, float(iz) * TILE_SIZE)))
-			var even: bool = (ix + iz) % 2 == 0
-			checker_cols.append(theme.get("ground" if even else "ground_alt",
-				Color("476878")) as Color)
-	var checker: MultiMeshInstance3D = SceneryKit.multimesh(tile,
-		SceneryKit.instance_material(1.0), checker_xforms, "ArenaChecker",
-		false, checker_cols)
-	stage.add_child(checker)
 
 	# Perimeter barrier ring
 	var b_size: Vector3 = scaled_size("barrierWall", Vector3.ONE * TILE_SIZE)
@@ -429,10 +429,10 @@ static func build_arena(stage: Node3D, id: String) -> Dictionary:
 	paint_inst.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	stage.add_child(paint_inst)
 
-	# Grandstands, floodlights & banners
+	# Grandstands (seats face +Z, so -sx * PI/2 faces inward toward arena!), floodlights & banners
 	for sx: float in [-1.0, 1.0]:
 		place_model(stage, "grandStand", Vector3(sx * 64.0, 0.0, 0.0),
-			sx * PI * 0.5, Vector3.ONE * (TILE_SIZE * 0.75),
+			-sx * PI * 0.5, Vector3.ONE * (TILE_SIZE * 0.75),
 			"Grandstand_%d" % (0 if sx < 0.0 else 1))
 		for sz: float in [-1.0, 1.0]:
 			place_model(stage, "lightPostLarge",
@@ -581,6 +581,10 @@ static func _build_horizon_scenery(root: Node3D, canonical: String,
 	root.add_child(skirt)
 
 	var anim: Dictionary = AmbientWorld.anim_of(root)
+
+	# Planned mid-field village/port/lodge architecture around Deliver arenas!
+	_add_deliver_district_architecture(root, canonical)
+
 	var batch := PropBatch.new()
 	var rng := RandomNumberGenerator.new()
 	rng.seed = canonical.hash() ^ 0x51A7
@@ -591,15 +595,31 @@ static func _build_horizon_scenery(root: Node3D, canonical: String,
 				"mid": Color("5da346"),
 				"top": Color("76bd52"),
 			}
-			for i in 10:
-				var ang: float = TAU * float(i) / 10.0 + 0.25
+			for i in 12:
+				var ang: float = TAU * float(i) / 12.0 + 0.25
 				var dist: float = 155.0 + float(i % 3) * 34.0
-				LandscapeSculptor.add_woodland_hill(batch,
-					Vector3(cos(ang) * dist, -0.4, sin(ang) * dist),
-					38.0 + float(i % 3) * 12.0, 32.0 + float((i + 1) % 3) * 10.0,
-					16.0 + float(i % 4) * 6.5, rng, headland_pal)
+				var pos := Vector3(cos(ang) * dist, -0.4, sin(ang) * dist)
+				if i % 3 == 0:
+					LandscapeSculptor.add_coastal_sea_stacks(batch, pos,
+						28.0 + float(i % 2) * 10.0, 24.0 + float(i % 4) * 7.0, rng)
+				else:
+					LandscapeSculptor.add_woodland_hill(batch, pos,
+						38.0 + float(i % 3) * 12.0, 32.0 + float((i + 1) % 3) * 10.0,
+						16.0 + float(i % 4) * 6.5, rng, headland_pal)
 			batch.flush_to(root, "HarbourHeadlands", false, SceneryKit.vertex_material())
+			# Checkered GP Arch framing the central harbour overpass + perimeter lanterns!
+			var h_arch := PropBatch.new()
+			var h_trim := PropBatch.new()
+			ConceptSpectacle.add_checkered_arch_at(h_arch, h_trim, Vector3(0.0, 2.2, 0.0), 0.0, 22.0, 12.0, Color("38d6f0"))
+			h_arch.flush_to(root, "HarbourGPArch", false, SceneryKit.vertex_material())
+			h_trim.flush_to(root, "HarbourGPTrim", false, ConceptSpectacle._emissive_mat(Color("38d6f0"), 2.4))
+			var h_lants: Array[Dictionary] = []
+			for li in 12:
+				var lang: float = TAU * float(li) / 12.0
+				h_lants.append({"pos": Vector3(cos(lang) * 60.0, 0.0, sin(lang) * 60.0), "yaw": -lang, "inward_side": -1.0})
+			ConceptSpectacle.build_ring_lanterns(root, h_lants, Color("ffd254"), Color("334154"))
 			LandscapeSculptor.build_lighthouse(root, Vector3(-106.0, 0.0, -104.0), 19.0, anim)
+			LandscapeSculptor.build_giant_wind_turbine(root, Vector3(106.0, 0.0, 102.0), -2.2, 26.0, anim)
 			LandscapeSculptor.build_cargo_ship(root, Vector3(122.0, -0.45, -32.0), 0.25, 1.35, anim)
 			LandscapeSculptor.build_cargo_ship(root, Vector3(-124.0, -0.45, 36.0), -2.75, 1.30, anim)
 			LandscapeSculptor.build_port_crane(root, Vector3(-86.0, 0.0, 56.0), -1.1, 20.0,
@@ -622,9 +642,9 @@ static func _build_horizon_scenery(root: Node3D, canonical: String,
 					15.0 + float(i % 3) * 6.0, rng, hill_pal)
 			for j in 6:
 				var mang: float = TAU * float(j) / 6.0 + 0.45
-				LandscapeSculptor.add_alpine_mountain(batch,
+				LandscapeSculptor.add_twin_cathedral_peaks(batch,
 					Vector3(cos(mang) * 280.0, -0.2, sin(mang) * 280.0),
-					52.0 + float(j % 2) * 14.0, 56.0 + float(j % 3) * 14.0, rng,
+					50.0 + float(j % 2) * 14.0, 58.0 + float(j % 3) * 16.0, rng,
 					{
 						"base": Color("3e7a35"),
 						"rock": Color("4d9e48"),
@@ -632,11 +652,19 @@ static func _build_horizon_scenery(root: Node3D, canonical: String,
 						"snow_lo": Color("b8e0b0"),
 						"snow_hi": Color("e8f6e8"),
 					})
+			ConceptSpectacle.add_pennant_line(batch, Vector3(0.0, 0.0, -28.0), 0.0, 46.0, 12.5)
+			ConceptSpectacle.add_pennant_line(batch, Vector3(0.0, 0.0,  28.0), 0.0, 46.0, 12.5)
 			batch.flush_to(root, "FarmyardHorizonHills", false, SceneryKit.vertex_material())
+			var f_lants: Array[Dictionary] = []
+			for li in 12:
+				var lang: float = TAU * float(li) / 12.0
+				f_lants.append({"pos": Vector3(cos(lang) * 60.0, 0.0, sin(lang) * 60.0), "yaw": -lang, "inward_side": -1.0})
+			ConceptSpectacle.build_ring_lanterns(root, f_lants, Color("ffba42"), Color("633f28"))
 			LandscapeSculptor.build_windmill(root, Vector3(-98.0, 2.0, -86.0), 0.75, 1.35,
 				"meadow", anim)
 			LandscapeSculptor.build_windmill(root, Vector3(102.0, 2.0, 82.0), -2.4, 1.30,
 				"meadow", anim)
+			LandscapeSculptor.build_giant_wind_turbine(root, Vector3(-112.0, 0.0, 92.0), 0.9, 25.0, anim)
 			LandscapeSculptor.build_hot_air_balloon(root, Vector3(78.0, 30.0, -84.0),
 				Color("ff595e"), Color("ffd22e"), 0.2, anim)
 			LandscapeSculptor.build_hot_air_balloon(root, Vector3(-86.0, 34.0, 72.0),
@@ -645,15 +673,36 @@ static func _build_horizon_scenery(root: Node3D, canonical: String,
 				Color("71c847"), Color("ffd22e"), 4.0, anim)
 			LandscapeSculptor.add_biome_particles(root, "meadow", Vector3.ZERO, 96.0)
 		"snowfield":
+			# Northern Lights Aurora + Glowing Wooden Lanterns + Luminous Ice Crystals!
+			ConceptSpectacle.build_northern_lights(root, Vector3.ZERO, 210.0, 58.0)
 			for i in 14:
 				var ang: float = TAU * float(i) / 14.0 + 0.18
 				var dist: float = 132.0 + float(i % 3) * 28.0
-				LandscapeSculptor.add_alpine_mountain(batch,
-					Vector3(cos(ang) * dist, -0.2, sin(ang) * dist),
-					34.0 + float(i % 4) * 9.0, 38.0 + float(i % 3) * 15.0, rng)
+				var pos := Vector3(cos(ang) * dist, -0.2, sin(ang) * dist)
+				if i % 3 == 0:
+					LandscapeSculptor.add_twin_cathedral_peaks(batch, pos,
+						36.0 + float(i % 3) * 9.0, 48.0 + float(i % 3) * 16.0, rng)
+				else:
+					LandscapeSculptor.add_alpine_mountain(batch, pos,
+						34.0 + float(i % 4) * 9.0, 38.0 + float(i % 3) * 15.0, rng)
 			LandscapeSculptor.add_ski_chalet(batch, Vector3(-92.0, 0.0, -78.0), 0.65, 1.25)
 			LandscapeSculptor.add_ski_chalet(batch, Vector3(94.0, 0.0, 74.0), -2.35, 1.25)
 			batch.flush_to(root, "SnowfieldAlpinePeaks", false, SceneryKit.vertex_material())
+			var sc_batch := PropBatch.new()
+			for ci in 10:
+				var cang: float = TAU * float(ci) / 10.0 + 0.2
+				ConceptSpectacle.add_crystal_cluster(sc_batch,
+					Vector3(cos(cang) * 72.0, -0.5, sin(cang) * 72.0), 1.4, rng)
+			var sc_mi := MeshInstance3D.new()
+			sc_mi.name = "SnowfieldCrystals"
+			sc_mi.mesh = sc_batch.build()
+			sc_mi.material_override = ConceptSpectacle.crystal_material()
+			root.add_child(sc_mi)
+			var s_lants: Array[Dictionary] = []
+			for li in 16:
+				var lang: float = TAU * float(li) / 16.0
+				s_lants.append({"pos": Vector3(cos(lang) * 60.0, 0.0, sin(lang) * 60.0), "yaw": -lang, "inward_side": -1.0})
+			ConceptSpectacle.build_ring_lanterns(root, s_lants, Color("ffb538"), Color("5e3e29"))
 			LandscapeSculptor.build_ski_lift_system(root,
 				Vector3(-114.0, 18.0, -88.0), Vector3(114.0, 22.0, -78.0),
 				4, 4, anim)
@@ -1533,3 +1582,63 @@ static func _collect_parts(node: Node, xform: Transform3D, parts: Array) -> void
 			parts.append({"mesh": instance.mesh, "transform": local})
 	for child: Node in node.get_children():
 		_collect_parts(child, local, parts)
+
+
+static func _add_deliver_district_architecture(root: Node3D, canonical: String) -> void:
+	## Purposeful mid-field district landmarks framing each Deliver arena cleanly:
+	##   - farmyard: red barns, grain silos, timber fencing & rolling pasture lanes
+	##   - harbour: structured container quays, harbour warehouses & bay suspension bridge
+	##   - snowfield: cozy A-frame timber ski lodges with glowing golden windows
+	var batch := PropBatch.new()
+	var glow := PropBatch.new()
+	match canonical:
+		"farmyard":
+			for i in 4:
+				var ang: float = TAU * float(i) / 4.0 + PI * 0.25
+				var pos := Vector3(cos(ang) * 96.0, 0.0, sin(ang) * 96.0)
+				var xf := Transform3D(Basis(Vector3.UP, -ang + PI * 0.5), pos)
+				# Classic red timber barn + pitched roof + twin white grain silos
+				batch.add_box(xf * Transform3D(Basis.IDENTITY, Vector3(0.0, 4.5, 0.0)),
+					Vector3(16.0, 9.0, 11.0), Color("c44236"))
+				batch.add_cone(xf * Transform3D(Basis(Vector3.UP, PI * 0.25), Vector3(0.0, 11.5, 0.0)),
+					10.2, 5.2, 4, Color("5a3b2c"))
+				batch.add_cylinder(xf * Transform3D(Basis.IDENTITY, Vector3(11.5, 7.5, -1.5)),
+					3.2, 15.0, 10, Color("dce3ea"))
+				batch.add_cone(xf * Transform3D(Basis.IDENTITY, Vector3(11.5, 16.5, -1.5)),
+					3.4, 3.2, 10, Color("8a96a3"))
+				glow.add_box(xf * Transform3D(Basis.IDENTITY, Vector3(0.0, 5.2, 5.6)),
+					Vector3(3.8, 2.4, 0.2), Color("ffd86b"))
+		"harbour":
+			# Distant coastal suspension bridge spanning the northern shipping channel
+			var bridge_z: float = -168.0
+			batch.add_box(Transform3D(Basis.IDENTITY, Vector3(0.0, 20.0, bridge_z)),
+				Vector3(240.0, 2.6, 8.0), Color("4a5a6e"))
+			for px: float in [-58.0, 58.0]:
+				batch.add_box(Transform3D(Basis.IDENTITY, Vector3(px, 24.0, bridge_z)),
+					Vector3(4.5, 48.0, 9.5), Color("d95342"))
+				glow.add_box(Transform3D(Basis.IDENTITY, Vector3(px, 48.5, bridge_z)),
+					Vector3(2.2, 1.4, 2.2), Color("ffd22e"))
+			# Harbour waterfront warehouses along east & west quays
+			for sx: float in [-1.0, 1.0]:
+				for kz in [-36.0, 36.0]:
+					var wpos := Vector3(sx * 98.0, 0.0, kz)
+					batch.add_box(Transform3D(Basis.IDENTITY, wpos + Vector3(0.0, 5.0, 0.0)),
+						Vector3(14.0, 10.0, 24.0), Color("3c5468"))
+					batch.add_box(Transform3D(Basis.IDENTITY, wpos + Vector3(0.0, 10.5, 0.0)),
+						Vector3(15.2, 1.4, 25.0), Color("e07b39"))
+					glow.add_box(Transform3D(Basis.IDENTITY, wpos + Vector3(-sx * 7.1, 6.2, 0.0)),
+						Vector3(0.25, 1.8, 16.0), Color("ffdf7a"))
+		"snowfield":
+			# Cozy A-frame timber alpine ski lodges with warm lit windows around the bowl
+			for i in 4:
+				var ang: float = TAU * float(i) / 4.0 + PI * 0.25
+				var pos := Vector3(cos(ang) * 94.0, 0.0, sin(ang) * 94.0)
+				var xf := Transform3D(Basis(Vector3.UP, -ang + PI * 0.5), pos)
+				batch.add_box(xf * Transform3D(Basis.IDENTITY, Vector3(0.0, 3.6, 0.0)),
+					Vector3(14.0, 7.2, 10.5), Color("6b452e"))
+				batch.add_cone(xf * Transform3D(Basis(Vector3.UP, PI * 0.25), Vector3(0.0, 10.2, 0.0)),
+					10.4, 6.2, 4, Color("e8f4ff"))
+				glow.add_box(xf * Transform3D(Basis.IDENTITY, Vector3(0.0, 3.8, 5.35)),
+					Vector3(8.5, 2.8, 0.25), Color("ffcb57"))
+	batch.flush_to(root, "DeliverDistrictArch_" + canonical, false, SceneryKit.vertex_material())
+	glow.flush_to(root, "DeliverDistrictGlow_" + canonical, false, ConceptSpectacle._emissive_mat(Color("ffd25c"), 2.4))

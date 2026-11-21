@@ -46,21 +46,26 @@ static func build(race: Node3D, spline) -> void:
 
 
 static func _apply_sunset_atmosphere(race: Node3D) -> void:
+	## Dramatic golden-magenta canyon sunset matching bg_hero_canyon.png!
 	var sun := race.get_node_or_null("Sun") as DirectionalLight3D
 	if sun != null:
-		sun.light_color = Color("ffd093")
-		sun.light_energy = 1.25
+		sun.light_color = Color("ffbe6e")
+		sun.light_energy = 1.32
 	var world_env := race.get_node_or_null("WorldEnvironment") as WorldEnvironment
 	if world_env != null and world_env.environment != null:
 		var env: Environment = world_env.environment.duplicate() as Environment
 		env.fog_enabled = true
-		env.fog_light_color = Color("f6bf8a")
-		env.fog_density = 0.0014
-		env.fog_sky_affect = 0.22
+		env.fog_light_color = Color("f59f5c")
+		env.fog_density = 0.0012
+		env.fog_sky_affect = 0.18
+		env.glow_enabled = true
+		env.glow_intensity = 0.34
+		env.glow_bloom = 0.10
 		if env.sky != null and env.sky.sky_material is ProceduralSkyMaterial:
 			var sky: ProceduralSkyMaterial = env.sky.sky_material as ProceduralSkyMaterial
-			sky.sky_top_color = Color("2f8fe0")
-			sky.sky_horizon_color = Color("ffcf9e")
-			sky.ground_horizon_color = Color("d99a5b")
-			sky.ground_bottom_color = Color("6b3f22")
+			sky.sky_top_color = Color("59245e")
+			sky.sky_horizon_color = Color("ff9e48")
+			sky.sky_curve = 0.22
+			sky.ground_horizon_color = Color("d9763b")
+			sky.ground_bottom_color = Color("542416")
 		world_env.environment = env

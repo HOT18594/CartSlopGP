@@ -14,7 +14,7 @@ const Catalog := preload("res://scripts/vehicles/vehicle_catalog.gd")
 const UiPalette := preload("res://scripts/ui/ui_palette.gd")
 const VehicleSelect := preload("res://scripts/ui/vehicle_select.gd")
 
-const PLAY_MENU_SCENE: String = "res://scenes/ui/play_menu.tscn"
+const PLAY_MENU_SCENE: String = "res://scenes/ui/main_menu.tscn"
 const LOBBY_SCENE: String = "res://scenes/ui/lobby_menu.tscn"
 const MINIGAMES_SCENE: String = "res://scenes/ui/minigames_menu.tscn"
 const VEHICLE_SCENE: String = "res://scenes/ui/vehicle_select.tscn"
@@ -28,14 +28,14 @@ const GAME_RACING: String = "racing"
 const GAME_MINIGAME: String = "minigame"
 const GAME_SANDBOX: String = "sandbox"
 
-const MODE_CARD_WIDTH: float = 296.0
-const MODE_CARD_HEIGHT: float = 222.0
-const MODE_PREVIEW_HEIGHT: float = 138.0
+const MODE_CARD_WIDTH: float = 312.0
+const MODE_CARD_HEIGHT: float = 224.0
+const MODE_PREVIEW_HEIGHT: float = 158.0
 
-const MAP_CARD_WIDTH: float = 288.0
-const MAP_CARD_HEIGHT: float = 218.0
-const MAP_PREVIEW_HEIGHT: float = 136.0
-const CARD_PAD: int = 12
+const MAP_CARD_WIDTH: float = 304.0
+const MAP_CARD_HEIGHT: float = 220.0
+const MAP_PREVIEW_HEIGHT: float = 154.0
+const CARD_PAD: int = 10
 const SCROLL_OUTER_PAD: int = 12
 const GRID_COLUMNS: int = 3
 const GRID_GAP: int = 16
@@ -47,6 +47,142 @@ const MAP_GRID_WIDTH: float = MAP_CARD_WIDTH * 3.0 + float(GRID_GAP) * 2.0
 
 const BOT_LABELS: PackedStringArray = ["0", "1", "2", "3", "4", "5"]
 const BOT_VALUES: Array[int] = [0, 1, 2, 3, 4, 5]
+
+
+class _AnimatedPreviewCanvas extends Control:
+	## Animated map/mode preview: gentle Ken Burns pan & zoom at rest, smooth
+	## hover zoom boost, subtle accent bar, and diagonal glossy sheen sweep.
+	var texture: Texture2D = null
+	var accent: Color = Color("38d6f0")
+	var phase: float = 0.0
+	var _owner_btn: Button = null
+	var _time: float = 0.0
+	var _hover_t: float = 0.0
+	var _shine_t: float = 2.0
+	var _was_hot: bool = false
+
+	func _ready() -> void:
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+		clip_contents = true
+		phase = randf_range(0.0, TAU)
+		resized.connect(queue_redraw)
+
+	func bind_button(btn: Button) -> void:
+		_owner_btn = btn
+
+	func _is_reduced() -> bool:
+		var gs: Node = get_node_or_null("/root/GameSettings")
+		return gs != null and bool(gs.get("reduce_motion"))
+
+	func _process(delta: float) -> void:
+		if not is_visible_in_tree():
+			return
+		var reduced: bool = _is_reduced()
+		var hot: bool = _owner_btn != null and is_instance_valid(_owner_btn) \
+			and (_owner_btn.is_hovered() or _owner_btn.has_focus())
+		if hot and not _was_hot:
+			_shine_t = -0.35
+		_was_hot = hot
+		var target: float = 1.0 if hot else 0.0
+		_hover_t = UiAnim.damp(_hover_t, target, delta, 14.0)
+		if not reduced:
+			_time += delta
+			queue_redraw()
+		elif _shine_t < 1.5 or absf(_hover_t - target) > 0.005:
+			queue_redraw()
+		if _shine_t < 1.5:
+			_shine_t += delta * 2.4
+
+	var title_text: String = ""
+	var title_font: Font = preload("res://assets/ui/fonts/LuckiestGuy-Regular.ttf")
+
+	func _draw() -> void:
+		var area: Vector2 = size
+		if area.x < 24.0 or area.y < 24.0:
+			return
+		var sk: float = minf(12.0, area.x * 0.14)
+		var pad_x: float = 3.0
+		var pad_t: float = 2.0
+		var drop_y: float = 5.0
+		var bw: float = maxf(area.x - sk - pad_x * 2.0 - 3.0, 12.0)
+		var bh: float = maxf(area.y - pad_t - drop_y - 2.0, 12.0)
+		var x0: float = pad_x
+		var y0: float = pad_t
+		var pts := PackedVector2Array([
+			Vector2(x0 + sk, y0),
+			Vector2(x0 + sk + bw, y0),
+			Vector2(x0 + bw, y0 + bh),
+			Vector2(x0, y0 + bh),
+		])
+		draw_colored_polygon(pts, Color(0.06, 0.07, 0.16, 1.0))
+
+		if texture != null:
+			var src: Vector2 = texture.get_size()
+			if src.x > 0.0 and src.y > 0.0:
+				var reduced: bool = _is_reduced()
+				var card_aspect: float = (bw + sk) / maxf(bh, 1.0)
+				var tex_aspect: float = src.x / src.y
+				var zoom: float = 1.0 if reduced else (1.06 + 0.025 * sin(_time * 0.65 + phase) + _hover_t * 0.10)
+				var uv_w: float = (1.0 / zoom) * minf(card_aspect / tex_aspect, 1.0)
+				var uv_h: float = (1.0 / zoom) * minf(tex_aspect / card_aspect, 1.0)
+				var du: float = 0.0 if reduced else sin(_time * 0.45 + phase) * 0.022
+				var dv: float = 0.0 if reduced else cos(_time * 0.37 + phase) * 0.018
+				var u0: float = clampf(0.5 - uv_w * 0.5 + du, 0.0, 1.0 - uv_w)
+				var v0: float = clampf(0.5 - uv_h * 0.5 + dv, 0.0, 1.0 - uv_h)
+				var skew_u: float = uv_w * (sk / maxf(bw + sk, 1.0)) * 0.5
+				var uvs := PackedVector2Array([
+					Vector2(clampf(u0 + skew_u, 0.0, 1.0), v0),
+					Vector2(clampf(u0 + uv_w, 0.0, 1.0), v0),
+					Vector2(clampf(u0 + uv_w - skew_u, 0.0, 1.0), v0 + uv_h),
+					Vector2(clampf(u0, 0.0, 1.0), v0 + uv_h),
+				])
+				var tint := Color(1.0, 1.0, 1.0, lerpf(0.90, 1.0, _hover_t))
+				draw_polygon(pts, PackedColorArray([tint, tint, tint, tint]), uvs, texture)
+
+		# Clean dark slanted bottom title band (zero top/side color stripes!)
+		var rib_h: float = 46.0
+		var rib_sk: float = sk * (rib_h / maxf(bh, 1.0))
+		var rib_y: float = y0 + bh - rib_h
+		var rib := PackedVector2Array([
+			Vector2(x0 + rib_sk, rib_y),
+			Vector2(x0 + rib_sk + bw, rib_y),
+			Vector2(x0 + bw, y0 + bh),
+			Vector2(x0, y0 + bh),
+		])
+		draw_colored_polygon(rib, Color(0.055, 0.065, 0.16, 0.92))
+
+		# Animated diagonal gloss sweep on hover (clipped strictly inside parallelogram)
+		if _shine_t >= -0.35 and _shine_t <= 1.35:
+			var sx: float = lerpf(x0 - 24.0, x0 + bw + 24.0, _shine_t)
+			var sw: float = 36.0
+			var x_tl: float = clampf(sx + sk, x0 + sk, x0 + sk + bw)
+			var x_tr: float = clampf(sx + sk + sw, x0 + sk, x0 + sk + bw)
+			var x_br: float = clampf(sx + sw, x0, x0 + bw)
+			var x_bl: float = clampf(sx, x0, x0 + bw)
+			if x_tr > x_tl + 2.0 and x_br > x_bl + 2.0:
+				draw_colored_polygon(PackedVector2Array([
+					Vector2(x_tl, y0 + 2.0), Vector2(x_tr, y0 + 2.0),
+					Vector2(x_br, y0 + bh - 2.0), Vector2(x_bl, y0 + bh - 2.0),
+				]), Color(1.0, 1.0, 1.0, 0.24))
+
+		# Crisp bold auto-fitted title inside the slanted ribbon (zero overflow!)
+		if not title_text.is_empty() and title_font != null:
+			var fsz: int = 23
+			var avail_w: float = maxf(bw - 24.0, 40.0)
+			while fsz > 14 and title_font.get_string_size(title_text, HORIZONTAL_ALIGNMENT_LEFT, -1, fsz).x > avail_w:
+				fsz -= 1
+			var ascent: float = title_font.get_ascent(fsz)
+			var ty: float = rib_y + (rib_h + ascent * 0.72) * 0.5
+			var txt_col: Color = UiPalette.YELLOW if _hover_t > 0.25 else UiPalette.CREAM
+			draw_string(title_font, Vector2(x0 + rib_sk * 0.5, ty + 2.0), title_text,
+				HORIZONTAL_ALIGNMENT_CENTER, bw, fsz, Color(0.02, 0.02, 0.08, 0.90))
+			draw_string(title_font, Vector2(x0 + rib_sk * 0.5, ty), title_text,
+				HORIZONTAL_ALIGNMENT_CENTER, bw, fsz, txt_col)
+
+		# Crisp ink outer parallelogram outline matching CandyButton 1:1
+		var cl := pts.duplicate()
+		cl.append(pts[0])
+		draw_polyline(cl, UiPalette.INK, 3.8, true)
 
 
 class _ProceduralBanner extends Control:
@@ -181,14 +317,21 @@ func _ready() -> void:
 func _tune_panel_chrome() -> void:
 	if _panel == null:
 		return
-	var base: StyleBox = _panel.get_theme_stylebox("panel")
-	if base is StyleBoxFlat:
-		var style: StyleBoxFlat = (base as StyleBoxFlat).duplicate() as StyleBoxFlat
-		style.content_margin_left = 34.0
-		style.content_margin_right = 34.0
-		style.content_margin_top = 24.0
-		style.content_margin_bottom = 24.0
-		_panel.add_theme_stylebox_override("panel", style)
+	var style := StyleBoxFlat.new()
+	style.bg_color = UiPalette.SURFACE_GLASS
+	style.border_color = UiPalette.OUTLINE
+	style.set_border_width_all(5)
+	style.set_corner_radius_all(6)
+	style.border_color = Color(0.22, 0.84, 0.94, 0.42)
+	style.content_margin_left = 30.0
+	style.content_margin_right = 30.0
+	style.content_margin_top = 20.0
+	style.content_margin_bottom = 20.0
+	style.shadow_color = Color(0.02, 0.02, 0.09, 0.58)
+	style.shadow_size = 12
+	style.shadow_offset = Vector2(0, 10)
+	style.anti_aliasing = true
+	_panel.add_theme_stylebox_override("panel", style)
 	if _body != null:
 		_body.add_theme_constant_override("separation", 14)
 
@@ -343,9 +486,11 @@ func _build_ui() -> void:
 
 	_title = Label.new()
 	_title.theme_type_variation = &"TitleLabel"
-	_title.add_theme_font_size_override("font_size", 36)
-	_title.add_theme_color_override("font_color", UiPalette.INK)
-	_title.text = "SELECT MODE"
+	_title.add_theme_font_size_override("font_size", 38)
+	_title.add_theme_color_override("font_color", UiPalette.YELLOW)
+	_title.add_theme_color_override("font_outline_color", UiPalette.INK)
+	_title.add_theme_constant_override("outline_size", 6)
+	_title.text = "MODES"
 	_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_title.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	_title.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -361,10 +506,10 @@ func _build_ui() -> void:
 	header.add_child(_header_bots_box)
 
 	var bots_lbl := Label.new()
-	bots_lbl.text = "BOTS"
+	bots_lbl.text = "AI"
 	bots_lbl.theme_type_variation = &"TitleLabel"
 	bots_lbl.add_theme_font_size_override("font_size", 15)
-	bots_lbl.add_theme_color_override("font_color", UiPalette.INK)
+	bots_lbl.add_theme_color_override("font_color", UiPalette.YELLOW)
 	bots_lbl.add_theme_constant_override("shadow_offset_y", 0)
 	bots_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	bots_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -758,52 +903,18 @@ func _make_arena_card(slot: int, arena: Dictionary, mode_accent: Color,
 	return card
 
 
-func _populate_clean_card(card: Button, texture: Texture2D, preview_h: float,
-		art_id: String, accent: Color, title_text: String, desc_text: String) -> void:
-	var pad := MarginContainer.new()
-	pad.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	pad.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	pad.add_theme_constant_override("margin_left", CARD_PAD)
-	pad.add_theme_constant_override("margin_right", CARD_PAD)
-	pad.add_theme_constant_override("margin_top", CARD_PAD)
-	pad.add_theme_constant_override("margin_bottom", CARD_PAD)
-	card.add_child(pad)
-
-	var column := VBoxContainer.new()
-	column.add_theme_constant_override("separation", 8)
-	column.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	pad.add_child(column)
-
-	var preview_panel: PanelContainer = _preview_frame(texture,
-		Vector2(0.0, preview_h), UiPalette.OUTLINE, art_id, accent)
-	column.add_child(preview_panel)
-
-	var name_label := Label.new()
-	name_label.text = title_text
-	name_label.theme_type_variation = &"TitleLabel"
-	name_label.add_theme_font_size_override("font_size", 22)
-	name_label.add_theme_color_override("font_color", UiPalette.INK)
-	name_label.add_theme_constant_override("outline_size", 0)
-	name_label.add_theme_constant_override("shadow_offset_y", 0)
-	name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	name_label.clip_text = true
-	name_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	name_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	column.add_child(name_label)
-
-	var tagline := Label.new()
-	tagline.text = _trim_line(desc_text)
-	tagline.autowrap_mode = TextServer.AUTOWRAP_OFF
-	tagline.max_lines_visible = 1
-	tagline.clip_text = true
-	tagline.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	tagline.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	tagline.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	tagline.add_theme_font_size_override("font_size", 13)
-	tagline.add_theme_color_override("font_color", UiPalette.INK.lightened(0.16))
-	tagline.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	column.add_child(tagline)
+func _populate_clean_card(card: Button, texture: Texture2D, _preview_h: float,
+		_art_id: String, accent: Color, title_text: String, _desc_text: String) -> void:
+	## True full-bleed slanted parallelogram preview card: UV-mapped Ken Burns
+	## map art + bold dark title strip flush inside the CandyButton parallelogram!
+	var preview := _AnimatedPreviewCanvas.new()
+	preview.texture = texture
+	preview.accent = accent
+	preview.title_text = title_text
+	preview.clip_contents = false
+	preview.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	preview.bind_button(card)
+	card.add_child(preview)
 
 
 func _trim_line(raw: String, max_chars: int = 48) -> String:
@@ -882,26 +993,28 @@ func _climb_metres(preset: Dictionary) -> int:
 
 
 func _preview_frame(texture: Texture2D, minimum: Vector2, fallback: Color,
-		art_id: String = "", accent: Color = UiPalette.CYAN) -> PanelContainer:
+		art_id: String = "", accent: Color = UiPalette.CYAN,
+		owner_btn: Button = null) -> PanelContainer:
 	var frame := PanelContainer.new()
 	frame.custom_minimum_size = minimum
 	frame.clip_contents = true
 	frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var style := StyleBoxFlat.new()
 	style.bg_color = fallback
-	style.set_corner_radius_all(14)
-	style.content_margin_left = 4.0
-	style.content_margin_right = 4.0
-	style.content_margin_top = 4.0
-	style.content_margin_bottom = 4.0
+	style.set_corner_radius_all(4)
+	style.content_margin_left = 3.0
+	style.content_margin_right = 3.0
+	style.content_margin_top = 3.0
+	style.content_margin_bottom = 3.0
 	style.anti_aliasing = true
 	frame.add_theme_stylebox_override("panel", style)
 	if texture != null:
-		var preview := TextureRect.new()
+		var preview := _AnimatedPreviewCanvas.new()
 		preview.texture = texture
-		preview.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-		preview.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
-		preview.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		preview.accent = accent
+		preview.bind_button(owner_btn)
+		preview.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		preview.size_flags_vertical = Control.SIZE_EXPAND_FILL
 		frame.add_child(preview)
 	else:
 		var banner := _ProceduralBanner.new()
@@ -1116,13 +1229,14 @@ func _show_games(animate: bool = true) -> void:
 	_page = PAGE_GAMES
 	_games_page.visible = true
 	_selector_page.visible = false
-	_title.text = "SELECT MODE"
+	_title.text = "MODES"
 	_refresh_header_controls()
 	_fit_page_heights()
 	call_deferred("_fit_page_heights")
 	_refresh_vehicle()
 	if animate:
 		_page_in(_games_page)
+		UiAnim.stagger_slide(_game_cards, Vector2(0.0, 20.0), 0.04, 0.24)
 	MenuNav.refresh()
 	MenuNav.focus(_game_card_for(came_from))
 
@@ -1141,13 +1255,15 @@ func _show_selector(game_id: String) -> void:
 	if racing:
 		_arena_grid.visible = false
 		_arena_empty.visible = false
-		_title.text = "SELECT TRACK"
+		_title.text = "TRACKS"
 		_selector_caption.text = ""
 		_selector_caption.visible = false
+		UiAnim.stagger_slide(_map_cards, Vector2(0.0, 20.0), 0.04, 0.24)
 	else:
 		_show_minigame_page(entry)
-		_title.text = "SELECT MAP"
+		_title.text = str(entry.get("name", "ARENAS")).to_upper()
 		_selector_caption.text = ""
+		UiAnim.stagger_slide(_arena_cards, Vector2(0.0, 20.0), 0.045, 0.24)
 		_selector_caption.visible = false
 	_selector_scroll.scroll_vertical = 0
 	_fit_page_heights()
@@ -1455,9 +1571,10 @@ func _refresh_play_label() -> void:
 	var target_name: String = _current_arena_name() if minigame \
 		else str(data.get("name", "MAP"))
 	if Network.is_session_active():
-		_play_button.text = "SELECT FOR ROOM  ·  %s" % target_name
+		_play_button.text = target_name
 	else:
-		_play_button.text = "%s  ·  %s" % ["START" if minigame else "RACE", target_name]
+		_play_button.text = "RACE" if not minigame else "START"
+	_play_button.set_meta("sfx_confirm", true)
 	_play_button.fit_text()
 
 
@@ -1475,7 +1592,7 @@ func _refresh_vehicle() -> void:
 	var car_name: String = str(entry.get("name", "SHOPPING CART"))
 	if _vehicle_button != null:
 		_vehicle_button.visible = not Network.is_session_active()
-		_vehicle_button.text = "GARAGE: " + car_name
+		_vehicle_button.text = car_name
 		_vehicle_button.set("fill_color", Color("8ed8f6"))
 		_vehicle_button.fit_text()
 	if _header_garage_button != null:

@@ -100,6 +100,19 @@ const QUALITY_SCALES: PackedFloat32Array = [0.72, 0.92, 1.0]
 ## cart is the default pick; the four Kenney chassis remain selectable.
 var racing_vehicle: String = VehicleCatalog.DEFAULT_RACING_ID
 var racing_build: Dictionary = {} ## Four allocation keys; empty = balanced default.
+@export var racer_color: String = "e63946" ## Custom PRO RACER paint hex (RRGGBB).
+
+
+func racer_color_value() -> Color:
+	return Color.from_string(racer_color, Color("e63946"))
+
+
+func set_racer_color(hex: String) -> void:
+	var clean: String = hex.strip_edges().trim_prefix("#").to_lower()
+	if clean.length() == 6 and clean.is_valid_hex_number(false):
+		racer_color = clean
+		save_settings()
+		changed.emit()
 ## Backing store for the exported minigame car. The property below resolves to
 ## the racing pick only while a racing scene or racing garage is active, which
 ## is how grass_race.gd reuses its existing `minigame_vehicle` read without a
@@ -133,6 +146,9 @@ var _sandbox_vehicle: String = VehicleCatalog.DEFAULT_ID
 ## Online/LAN room discovery. Public rooms appear in the browser and can be
 ## joined with one click; private rooms are joinable only with the code.
 @export var room_public: bool = true
+## Multiplayer vehicle policy: "pick_own" (everyone drives their own Garage car
+## & tune) or "shared" (everyone drives the host's car).
+@export var multiplayer_vehicle_mode: String = "pick_own"
 
 ## Set before opening the vehicle screen so its confirm/back returns to the
 ## right menu (lobby, minigame picker, etc.). Memory only.
@@ -653,6 +669,22 @@ func set_room_public(value: bool) -> void:
 	session_changed.emit()
 
 
+func set_multiplayer_vehicle_mode(mode: String) -> void:
+	multiplayer_vehicle_mode = "shared" if mode == "shared" else "pick_own"
+	save_settings()
+	session_changed.emit()
+
+
+func vehicle_for_channel(channel: String) -> String:
+	match channel:
+		"racing":
+			return racing_vehicle_id()
+		"minigame":
+			return sanitize_vehicle_id(_minigame_vehicle)
+		_:
+			return sanitize_vehicle_id(_sandbox_vehicle)
+
+
 func set_session_config(mode: int, game: String, bots: bool, count: int,
 		map_id: String = "") -> void:
 	## Used by Network so every peer runs the host's exact configuration. The
@@ -702,20 +734,20 @@ static func sanitize_name(raw_name: String) -> String:
 
 
 static func sanitize_vehicle_id(raw: String) -> String:
-	## Any id that still exists in the catalog is honoured, including a racing
-	## chassis saved in the sandbox slot. An unset, blank or removed id opens on
-	## the shopping cart, which is the game's default everywhere.
-	var key: String = raw.strip_edges()
+	## Any id that still exists in the catalog is honoured, including legacy
+	## racer color variants normalized to "race_car". An unset, blank or removed
+	## id opens on the shopping cart, which is the game's default everywhere.
+	var key: String = VehicleCatalog.normalize_id(raw.strip_edges())
 	if key != "" and not VehicleCatalog.find(key).is_empty():
 		return key
 	return VehicleCatalog.DEFAULT_ID
 
 
 static func sanitize_racing_vehicle_id(raw: String) -> String:
-	## A racing pick survives only when it is the stock cart default or one of
-	## the four Kenney chassis. Corrupt, blank or sandbox ids fall back to the
-	## cart instead of silently becoming a race car.
-	var key: String = raw.strip_edges()
+	## A racing pick survives only when it is a curated racing choice (including
+	## legacy racer color variants normalized to "race_car"). Corrupt or blank
+	## ids fall back to the cart instead of silently becoming a race car.
+	var key: String = VehicleCatalog.normalize_id(raw.strip_edges())
 	if VehicleCatalog.is_racing_choice(key):
 		return key
 	return VehicleCatalog.DEFAULT_RACING_ID
@@ -943,6 +975,11 @@ func load_settings() -> void:
 	bots_enabled = _cfg_bool(config, "session", "bots_enabled", bots_enabled)
 	bot_count = _cfg_int(config, "session", "bot_count", bot_count, 0, 5)
 	room_public = _cfg_bool(config, "session", "room_public", room_public)
+	var saved_vm: String = _cfg_str(config, "session", "vehicle_mode", multiplayer_vehicle_mode).strip_edges().to_lower()
+	multiplayer_vehicle_mode = "shared" if saved_vm == "shared" else "pick_own"
+	var saved_racer_col: String = _cfg_str(config, "racing", "racer_color", racer_color).strip_edges().trim_prefix("#").to_lower()
+	if saved_racer_col.length() == 6 and saved_racer_col.is_valid_hex_number(false):
+		racer_color = saved_racer_col
 	# ---- ONE-TIME migration, deliberately last ----
 	# A save written before the marker may still name a racing chassis
 	# (race_car_red) in any vehicle slot, and that stale pick used to survive
@@ -1019,6 +1056,7 @@ func save_settings() -> void:
 	config.set_value("gameplay", "minigame_vehicle", _minigame_vehicle)
 	config.set_value("racing", "vehicle", racing_vehicle_id())
 	config.set_value("racing", "allocation", racing_allocation())
+	config.set_value("racing", "racer_color", racer_color)
 	config.set_value("gameplay", "tag_color", player_tag_color)
 	config.set_value("session", "play_mode", play_mode)
 	config.set_value("session", "multiplayer_mode", multiplayer_mode)
@@ -1029,6 +1067,7 @@ func save_settings() -> void:
 	config.set_value("session", "bots_enabled", bots_enabled)
 	config.set_value("session", "bot_count", bot_count)
 	config.set_value("session", "room_public", room_public)
+	config.set_value("session", "vehicle_mode", multiplayer_vehicle_mode)
 	# The schema marker is part of the save, not a one-off: every later write
 	# keeps it, which is what makes the vehicle migration above one-time.
 	config.set_value("meta", "version", SETTINGS_VERSION)

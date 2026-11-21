@@ -55,6 +55,7 @@ const CollisionLayers := preload("res://scripts/systems/collision_layers.gd")
 const LandscapeSculptor := preload("res://scripts/minigames/scenery/landscape_sculptor.gd")
 const PropBatch := preload("res://scripts/minigames/scenery/prop_batch.gd")
 const AmbientWorldScript := preload("res://scripts/minigames/scenery/ambient_world.gd")
+const ConceptSpectacle := preload("res://scripts/minigames/scenery/concept_spectacle.gd")
 const BOOST_PAD_SCENE := preload("res://scenes/track/boost_pad.tscn")
 const PYLON_SCENE := preload("res://assets/models/kenney_racing_kit/Models/GLTF format/pylon.glb")
 const CRATE_SCENE := preload("res://assets/models/kenney_car-kit/Models/GLB format/box.glb")
@@ -502,17 +503,36 @@ func _make_vertex_material() -> StandardMaterial3D:
 	return mat
 
 
-## Flat two-tone grass checker over the park and a matching outfield apron.
-## This is the one ground mesh and the one flat collision plane.
+## Smooth fluid blended ground plane across the Motorsport Park (grass, sunlit
+## meadow, feathered off-road dirt track, and rolling outfield transition with
+## zero boxy checkerboard seams) + one flat WORLD collision slab.
 func _ground_plane() -> void:
-	var cell: float = 8.0
-	for ix in 34:
-		for iz in 34:
-			var tint: Color = GRASS_A if (ix + iz) % 2 == 0 else GRASS_B
-			_ground.rect(Rect2(-136.0 + float(ix) * cell,
-				-136.0 + float(iz) * cell, cell, cell), 0.0, tint)
+	var SceneryKitRes := preload("res://scripts/minigames/scenery/scenery_kit.gd")
+	var inner: float = 148.0
+	var ground_mesh: ArrayMesh = SceneryKitRes.build_blended_ground(
+		Vector2(-inner, -inner), Vector2(inner, inner), 48, 0.0,
+		func(wx: float, wz: float) -> Color:
+			var wave: float = 0.5 + 0.5 * sin(wx * 0.055 + wz * 0.025) * cos(wz * 0.055 - wx * 0.02)
+			var grass: Color = GRASS_A.lerp(GRASS_B, smoothstep(0.15, 0.85, wave))
+			# Soft organic feathered transition into the off-road dirt zone & south service lane
+			var dx_d: float = maxf(maxf(DIRT.position.x - wx, wx - DIRT.end.x), 0.0)
+			var dz_d: float = maxf(maxf(DIRT.position.y - wz, wz - DIRT.end.y), 0.0)
+			var dist_dirt: float = sqrt(dx_d * dx_d + dz_d * dz_d)
+			var dx_l: float = maxf(maxf(16.0 - wx, wx - 32.0), 0.0)
+			var dz_l: float = maxf(maxf(68.0 - wz, wz - 148.0), 0.0)
+			var dist_lane: float = sqrt(dx_l * dx_l + dz_l * dz_l)
+			var dirt_t: float = 1.0 - smoothstep(0.0, 6.5, minf(dist_dirt, dist_lane))
+			var edge_t: float = smoothstep(108.0, 146.0, maxf(absf(wx), absf(wz)))
+			return grass.lerp(DIRT_TAN, dirt_t).lerp(OUTFIELD, edge_t)
+	)
+	var ground_mi := MeshInstance3D.new()
+	ground_mi.name = "FluidGroundMesh"
+	ground_mi.mesh = ground_mesh
+	ground_mi.material_override = SceneryKitRes.fluid_ground_material(
+		Color(0.95, 1.02, 0.90), Color(1.06, 0.98, 0.86), 0.036, 0.14, 0.90)
+	add_child(ground_mi)
+
 	var outer: float = 900.0
-	var inner: float = 136.0
 	_ground.rect(Rect2(-outer, -outer, outer * 2.0, outer - inner), -0.02,
 		OUTFIELD)
 	_ground.rect(Rect2(-outer, inner, outer * 2.0, outer - inner), -0.02,
@@ -526,11 +546,18 @@ func _ground_plane() -> void:
 	body.collision_layer = CollisionLayers.WORLD
 	body.collision_mask = 0
 	var box := BoxShape3D.new()
-	box.size = Vector3(outer * 2.0, 2.0, outer * 2.0)
+	box.size = Vector3(outer * 2.0, 24.0, outer * 2.0)
 	var collision := CollisionShape3D.new()
 	collision.shape = box
-	collision.position = Vector3(0.0, -1.0, 0.0)
+	collision.position = Vector3(0.0, -12.0, 0.0)
 	body.add_child(collision)
+	# Infinite half-space bedrock backup so no fast frame or vehicle swap can
+	# EVER phase downwards through the Sandbox floor!
+	var boundary := WorldBoundaryShape3D.new()
+	boundary.plane = Plane(Vector3.UP, -0.02)
+	var boundary_col := CollisionShape3D.new()
+	boundary_col.shape = boundary
+	body.add_child(boundary_col)
 	add_child(body)
 
 
@@ -584,8 +611,7 @@ func _zone_paint() -> void:
 		_paint.rect(Rect2(x0, SKID_CENTRE.y - 0.6,
 			SKID_RADIUS * 2.0 / 10.0, 1.2), PAINT_Y,
 			PAINT_CREAM if i % 2 == 0 else PAINT_DARK)
-	# Dirt block with dashed edges and a gate at the slalom entry.
-	_paint.rect(DIRT, ZONE_Y + 0.002, DIRT_TAN)
+	# Dirt block markings (the feathered dirt ground itself blends smoothly in _ground_plane!)
 	_paint.outline(DIRT.grow(-0.8), 0.4, PAINT_Y, DIRT_ALT)
 	for i in 10:
 		var z: float = DIRT.position.y + 4.0 + float(i) * 4.5
@@ -597,8 +623,7 @@ func _zone_paint() -> void:
 		PAINT_CREAM)
 	_paint.line(Vector2(8.0, 24.0), Vector2(12.0, 24.0), 0.4, PAINT_Y,
 		PAINT_CREAM)
-	# Dirt service lane through the perimeter gap in the south fence (out to +/-120 m gate).
-	_paint.rect(Rect2(16.0, 68.0, 16.0, 80.0), ZONE_Y + 0.002, DIRT_TAN)
+	# Dirt service lane border stripes through the south fence gap.
 	_paint.line(Vector2(16.8, 68.0), Vector2(16.8, 112.0), 0.3, PAINT_Y,
 		PAINT_CREAM)
 	_paint.line(Vector2(31.2, 68.0), Vector2(31.2, 112.0), 0.3, PAINT_Y,
@@ -606,7 +631,7 @@ func _zone_paint() -> void:
 	# Six painted grid slots on the paddock.
 	for i in GRID_SLOTS.size():
 		_paint_slot(GRID_SLOTS[i], PAINT_CREAM)
-	# Launch band, boost chevrons and landing distance stripes on the jump lane.
+	# Launch band, warm golden boost chevrons and landing distance stripes on the jump lane.
 	for i in 8:
 		var shade: Color = PAINT_CREAM if i % 2 == 0 else PAINT_DARK
 		_paint.rect(Rect2(JUMP_X - 5.5 + float(i) * 1.375, 58.0, 1.375, 1.0),
@@ -614,9 +639,9 @@ func _zone_paint() -> void:
 	for chevron in 4:
 		var cz: float = 52.0 - float(chevron) * 3.5
 		_paint.line(Vector2(JUMP_X - 3.2, cz + 1.4), Vector2(JUMP_X, cz), 0.36,
-			ROAD_TOP + 0.010, PAINT_BLUE)
+			ROAD_TOP + 0.010, PAINT_YELLOW)
 		_paint.line(Vector2(JUMP_X + 3.2, cz + 1.4), Vector2(JUMP_X, cz), 0.36,
-			ROAD_TOP + 0.010, PAINT_BLUE)
+			ROAD_TOP + 0.010, PAINT_YELLOW)
 	for target_z: float in [6.0, 0.0, -38.0, -46.0, -54.0]:
 		_paint.line(Vector2(JUMP_X - 4.8, target_z),
 			Vector2(JUMP_X + 4.8, target_z), 0.38, ROAD_TOP + 0.010,
@@ -1182,7 +1207,8 @@ func _loop_gantry() -> void:
 	_wall_label("SPEED TRAP", Vector3(0.82, 5.4, -54.0), PI * 0.5, 84, 0.010)
 	_wall_label("SLOP GP", Vector3(-0.82, 5.4, -54.0), -PI * 0.5, 84, 0.010)
 	for sx: float in [-20.0, 20.0]:
-		_kit_solid("grandStand", Vector3(sx, 0.0, -67.5), PI,
+		# North stands at z=-67.5 face +Z (yaw=0.0) toward the handling loop!
+		_kit_solid("grandStand", Vector3(sx, 0.0, -67.5), 0.0,
 			TileCatalog.PROP_SCALE * 0.55, body)
 
 
@@ -1337,8 +1363,9 @@ func _grandstand() -> void:
 	# terrace's 20 x 14 m deck.
 	var stand_scale: float = TileCatalog.PROP_SCALE * STAND_SCALE
 	node.name = "Grandstand"
+	# Covered stand at south terrace (+Z) faces -Z (yaw=PI) toward the paddock grid!
 	node.transform = _fit_model(model,
-		Vector3(STAND_CELL.x, PAD_TOP, STAND_CELL.y), 0.0,
+		Vector3(STAND_CELL.x, PAD_TOP, STAND_CELL.y), PI,
 		Vector3.ONE * stand_scale)
 	add_child(node)
 	var size: Vector3 = (info["aabb"] as AABB).size * stand_scale
@@ -2209,17 +2236,49 @@ func _scenic_horizon() -> void:
 	for j in 10:
 		var mang: float = TAU * float(j) / 10.0 + 0.31
 		var mdist: float = 310.0 + float(j % 2) * 55.0
-		LandscapeSculptor.add_alpine_mountain(hill_batch,
-			Vector3(cos(mang) * mdist, 0.0, sin(mang) * mdist),
-			56.0 + float(j % 3) * 14.0, 62.0 + float(j % 4) * 15.0,
-			sc_rng, mtn_palette)
+		var mpos := Vector3(cos(mang) * mdist, 0.0, sin(mang) * mdist)
+		if j % 3 == 0:
+			LandscapeSculptor.add_twin_cathedral_peaks(hill_batch, mpos,
+				54.0 + float(j % 2) * 14.0, 72.0 + float(j % 3) * 18.0,
+				sc_rng, mtn_palette)
+		else:
+			LandscapeSculptor.add_alpine_mountain(hill_batch, mpos,
+				56.0 + float(j % 3) * 14.0, 62.0 + float(j % 4) * 15.0,
+				sc_rng, mtn_palette)
 	hill_batch.flush_to(horizon, "ScenicHills", false, _vertex_mat)
 
 	var anim: Dictionary = AmbientWorldScript.anim_of(self)
+	# Concept-art Checkered Grand Prix Arches, Festival Pennants & Warm Lanterns!
+	var sb_arch := PropBatch.new()
+	var sb_trim := PropBatch.new()
+	ConceptSpectacle.add_checkered_arch_at(sb_arch, sb_trim, Vector3(0.0, 0.0, -22.0), PI * 0.5, 22.0, 12.5, Color("38d6f0"))
+	ConceptSpectacle.add_checkered_arch_at(sb_arch, sb_trim, Vector3(JUMP_X, 0.0, 42.0), 0.0, 21.0, 12.5, Color("ffd22e"))
+	ConceptSpectacle.add_pennant_line(sb_arch, Vector3(0.0, 0.0, -4.0), 0.0, 32.0, 11.5)
+	sb_arch.flush_to(horizon, "SandboxGPArches", false, _vertex_mat)
+	sb_trim.flush_to(horizon, "SandboxGPTrim", false, ConceptSpectacle._emissive_mat(Color("38d6f0"), 2.4))
+	var sb_lants: Array[Dictionary] = []
+	for li in 16:
+		var lang: float = TAU * float(li) / 16.0
+		sb_lants.append({"pos": Vector3(cos(lang) * 126.0, 0.0, sin(lang) * 126.0), "yaw": -lang, "inward_side": -1.0})
+	ConceptSpectacle.build_ring_lanterns(horizon, sb_lants, Color("ffbe42"), Color("5a3b26"))
+	# Floating neon stunt hoops over the Jump Lane ramps and SW Freestyle Funbox!
+	LandscapeSculptor.build_stunt_hoop(horizon, Vector3(JUMP_X, 5.4, 15.0), 0.0, 4.2,
+		Color("38d6f0"), anim)
+	LandscapeSculptor.build_stunt_hoop(horizon, Vector3(JUMP_X, 6.2, -33.0), 0.0, 4.4,
+		Color("ffd22e"), anim)
+	LandscapeSculptor.build_stunt_hoop(horizon, Vector3(-95.0, 5.8, 77.0), 0.0, 4.0,
+		Color("f26ca7"), anim)
+
 	LandscapeSculptor.build_ferris_wheel(horizon,
 		Vector3(162.0, 0.0, -148.0), -0.65, 24.0, anim)
 	LandscapeSculptor.build_lighthouse(horizon,
 		Vector3(148.0, 0.0, 28.0), 18.0, anim)
+	LandscapeSculptor.build_giant_wind_turbine(horizon,
+		Vector3(-176.0, 0.0, 12.0), 1.4, 30.0, anim)
+	LandscapeSculptor.build_sky_spotlight(horizon,
+		Vector3(136.0, 0.0, -134.0), Color("38d6f0"), 0.4, anim)
+	LandscapeSculptor.build_sky_spotlight(horizon,
+		Vector3(-136.0, 0.0, -134.0), Color("ffd22e"), 1.9, anim)
 	for wm: Dictionary in [
 		{"pos": Vector3(-168.0, 4.0, -146.0), "yaw": 0.7, "scale": 1.35},
 		{"pos": Vector3(174.0, 3.0, 144.0), "yaw": -2.3, "scale": 1.4},
@@ -2234,8 +2293,7 @@ func _scenic_horizon() -> void:
 		LandscapeSculptor.build_hot_air_balloon(horizon,
 			Vector3(cos(ba) * 152.0, 38.0 + float(b_idx % 2) * 7.0,
 			sin(ba) * 152.0), b_col_a, PAINT_YELLOW, float(b_idx) * 1.4, anim)
-	LandscapeSculptor.build_blimp(horizon, Vector3.ZERO, 185.0, 72.0,
-		Color("38b6ff"), PAINT_YELLOW, anim)
+	LandscapeSculptor.build_slop_blimp(horizon, Vector3.ZERO, 185.0, 72.0, anim, 0.5)
 	LandscapeSculptor.add_biome_particles(horizon, "meadow", Vector3.ZERO, 145.0)
 
 

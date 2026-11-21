@@ -94,6 +94,25 @@ func _process(delta: float) -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if not event.is_pressed() or event.is_echo():
 		return
+
+	# Allow WASD to navigate any active menu / overlay scope just like Arrow Keys,
+	# while NEVER hijacking typing inside a LineEdit / TextEdit or driving in 3D!
+	if event is InputEventKey:
+		var kev := event as InputEventKey
+		var focused: Control = get_viewport().gui_get_focus_owner()
+		var typing: bool = focused is LineEdit or focused is TextEdit
+		if not typing and _is_menu_scope_active():
+			var dir_side: int = -1
+			match kev.physical_keycode:
+				KEY_W: dir_side = SIDE_TOP
+				KEY_S: dir_side = SIDE_BOTTOM
+				KEY_A: dir_side = SIDE_LEFT
+				KEY_D: dir_side = SIDE_RIGHT
+			if dir_side != -1:
+				if _move_focus_direction(dir_side):
+					get_viewport().set_input_as_handled()
+					return
+
 	if event.is_action("ui_accept") or event.is_action("ui_focus_next") \
 			or event.is_action("ui_focus_prev"):
 		# Enter on a screen whose focus was lost should select something rather
@@ -102,8 +121,70 @@ func _unhandled_input(event: InputEvent) -> void:
 			_dirty = true
 		return
 	if event.is_action("ui_cancel") or event.is_action("pause"):
+		# If the user is typing in a text field, first ESC releases text focus.
+		var focused_esc: Control = get_viewport().gui_get_focus_owner()
+		if focused_esc is LineEdit or focused_esc is TextEdit:
+			focused_esc.release_focus()
+			get_viewport().set_input_as_handled()
+			return
 		if close_top():
 			get_viewport().set_input_as_handled()
+			return
+		# Universal ESC back-out fallback on every full-screen menu scene!
+		if _back_out_current_scene():
+			get_viewport().set_input_as_handled()
+
+
+func _is_menu_scope_active() -> bool:
+	var top: Control = _find_top_scope()
+	if top == null or not top.is_visible_in_tree():
+		return false
+	return true
+
+
+func _move_focus_direction(side: int) -> bool:
+	if _focusables.is_empty():
+		_rebuild()
+	if _focusables.is_empty():
+		return false
+	var current: Control = get_viewport().gui_get_focus_owner()
+	if current == null or not _focusables.has(current):
+		return _grab(_default_focus())
+	# Sliders & PillCyclers handle Left/Right natively via ui_left/ui_right!
+	if (side == SIDE_LEFT or side == SIDE_RIGHT) and current.has_method("step"):
+		current.call("step", -1 if side == SIDE_LEFT else 1)
+		return true
+	if (side == SIDE_LEFT or side == SIDE_RIGHT) and current is Range:
+		var rng := current as Range
+		var step_v: float = maxf(rng.step, (rng.max_value - rng.min_value) * 0.05)
+		rng.value = clampf(rng.value + (-step_v if side == SIDE_LEFT else step_v), rng.min_value, rng.max_value)
+		return true
+	var next_path: NodePath
+	match side:
+		SIDE_LEFT: next_path = current.focus_neighbor_left
+		SIDE_RIGHT: next_path = current.focus_neighbor_right
+		SIDE_TOP: next_path = current.focus_neighbor_top
+		SIDE_BOTTOM: next_path = current.focus_neighbor_bottom
+	if not next_path.is_empty():
+		var target: Control = current.get_node_or_null(next_path) as Control
+		if target != null and _is_focusable(target):
+			return _grab(target)
+	return false
+
+
+func _back_out_current_scene() -> bool:
+	var scene: Node = get_tree().current_scene
+	if scene == null or not (scene is Control):
+		return false
+	if SceneLoader != null and SceneLoader.has_method("is_busy") and SceneLoader.is_busy():
+		return false
+	for method_name: String in ["request_back", "_on_back_pressed", "_on_back", "_go_back"]:
+		if scene.has_method(method_name):
+			if UiKit != null and UiKit.has_method("play_back"):
+				UiKit.play_back()
+			scene.call(method_name)
+			return true
+	return false
 
 
 func _rebuild() -> void:

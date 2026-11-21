@@ -1296,8 +1296,10 @@ static func grandstand(parent: Node3D, spline: RefCounted, dist: float,
 	var distance: float = _snap_distance(spline, dist)
 	var point: Vector3 = _point_at(spline, distance,
 		_snap_lateral(STAND_OFFSET) * direction)
+	# Kenney grandStand / grandStandCovered seats face +Z, so rotate -PI/2 on the
+	# right (+X) side and +PI/2 on the left (-X) side to face INWARD at the road!
 	var yaw: float = _along_track_yaw(spline, distance) \
-		+ (PI * 0.5 if direction > 0.0 else -PI * 0.5)
+		+ (-PI * 0.5 if direction > 0.0 else PI * 0.5)
 	var node := _emit_unique(parent, model,
 		_fit_transform(model, point, yaw, Vector3.ONE * PROP_SCALE),
 		"Grandstand_%d" % int(round(distance)))

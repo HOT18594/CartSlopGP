@@ -1,13 +1,14 @@
 extends "res://scripts/ui/candy_button.gd"
-## Segmented control: discrete choice drawn as equal tactile tiles inside a
-## recessed capsule track, with a bordered glossy active pill.
+## Slanted Parallelogram Segmented Control:
+## Discrete racing-sim choice drawn as equal slanted parallelogram cells inside
+## a skewed dark-glass track, with a bright glossy active parallelogram tile
+## and a matching slanted parallelogram focus outline.
 
 signal option_changed(value: Variant)
 
-const TRACK: Color = Color(0.12, 0.13, 0.24, 0.13)
-const TRACK_HOVER: Color = Color(0.12, 0.13, 0.24, 0.19)
-const TRACK_BORDER: Color = Color(0.12, 0.11, 0.23, 0.28)
-const TEXT_OFF: Color = Color("4e4964")
+const TRACK: Color = Color(0.065, 0.078, 0.175, 0.90)
+const TRACK_HOVER: Color = Color(0.100, 0.120, 0.245, 0.94)
+const TEXT_OFF: Color = Color(0.84, 0.90, 0.98, 0.86)
 const TEXT_ON: Color = Color("1e1b3a")
 
 @export var options: PackedStringArray = PackedStringArray()
@@ -15,30 +16,14 @@ const TEXT_ON: Color = Color("1e1b3a")
 @export var tile_min_width: float = 76.0 ## Equal width for every tile.
 var selected_index: int = 0
 
-var _track := StyleBoxFlat.new()
-var _cell := StyleBoxFlat.new()
-var _cell_gloss := StyleBoxFlat.new()
-
 
 func _ready() -> void:
+	skew_px = 9.0
 	super._ready()
-	for state: String in ["normal", "hover", "pressed", "disabled"]:
-		add_theme_stylebox_override(state, _blank_style())
-	_track.bg_color = TRACK
-	_track.set_border_width_all(2)
-	_track.border_color = TRACK_BORDER
-	_track.set_corner_radius_all(corner_radius)
-	_track.anti_aliasing = true
-	_cell.set_corner_radius_all(maxi(corner_radius - 3, 6))
-	_cell.set_border_width_all(3)
-	_cell.border_color = UiPalette.OUTLINE
-	_cell.shadow_color = Color(0.08, 0.06, 0.18, 0.28)
-	_cell.shadow_size = 1
-	_cell.shadow_offset = Vector2(0, 2)
-	_cell.anti_aliasing = true
-	_cell_gloss.bg_color = Color(1.0, 1.0, 1.0, 0.28)
-	_cell_gloss.set_corner_radius_all(maxi(corner_radius - 6, 4))
-	_cell_gloss.anti_aliasing = true
+	set_meta("custom_focus", true)
+	var blank := StyleBoxEmpty.new()
+	for state: String in ["normal", "hover", "pressed", "disabled", "focus"]:
+		add_theme_stylebox_override(state, blank)
 	text = ""
 	pressed.connect(_cycle)
 	mouse_entered.connect(queue_redraw)
@@ -111,8 +96,10 @@ func _gui_input(event: InputEvent) -> void:
 func select_at(pointer: Vector2) -> void:
 	if options.is_empty() or size.x <= 0.0:
 		return
-	var tile_width: float = size.x / float(options.size())
-	var index: int = clampi(int(floor(pointer.x / maxf(tile_width, 1.0))), 0,
+	var sk: float = minf(skew_px, size.x * 0.12)
+	var usable_w: float = maxf(size.x - sk - 6.0, 1.0)
+	var tile_width: float = usable_w / float(options.size())
+	var index: int = clampi(int(floor((pointer.x - sk * 0.5) / maxf(tile_width, 1.0))), 0,
 		options.size() - 1)
 	if index == selected_index:
 		return
@@ -128,61 +115,71 @@ func _refresh() -> void:
 	queue_redraw()
 
 
-func _blank_style() -> StyleBoxFlat:
-	var style := StyleBoxFlat.new()
-	style.draw_center = false
-	style.bg_color = Color(0, 0, 0, 0)
-	style.content_margin_left = 4.0
-	style.content_margin_right = 4.0
-	style.content_margin_top = 4.0
-	style.content_margin_bottom = 4.0
-	return style
-
-
 func _draw() -> void:
-	if options.is_empty() or size.x <= 0.0:
+	if options.is_empty() or size.x < 18.0 or size.y < 14.0:
 		return
-	_track.bg_color = TRACK_HOVER if ((_hovered or has_focus()) and not disabled) else TRACK
-	draw_style_box(_track, Rect2(Vector2.ZERO, size))
+	var focused: bool = has_focus() and not disabled
+	var sk: float = minf(skew_px, size.x * 0.12)
+	var x0: float = 3.0
+	var y0: float = 3.0
+	var bw: float = maxf(size.x - sk - 6.0, 12.0)
+	var bh: float = maxf(size.y - 6.0, 12.0)
+
+	var track_pts: PackedVector2Array = _para(x0, y0, bw, bh, sk)
+
+	# Focus slanted halo
+	if focused:
+		var halo: PackedVector2Array = _para(x0 - 3.0, y0 - 2.5, bw + 6.0, bh + 5.0, sk)
+		draw_polyline(_closed(halo), UiPalette.YELLOW, 3.2, true)
+
+	# Dark slanted track background
+	var track_col: Color = TRACK_HOVER if ((_hovered or focused) and not disabled) else TRACK
+	draw_colored_polygon(track_pts, track_col)
+
 	var font: Font = get_theme_font("font")
 	if font == null:
 		return
-	var base_size: int = get_theme_font_size("font_size")
-	var tile_width: float = size.x / float(options.size())
-	var inset: float = 5.0
-	var available_w: float = maxf(tile_width - inset * 4.0 - 10.0, 8.0)
+	var base_size: int = maxi(get_theme_font_size("font_size"), 12)
+	var tile_w: float = bw / float(options.size())
+	var inset: float = 3.5
+	var available_w: float = maxf(tile_w - inset * 2.0 - 8.0, 8.0)
 	var font_size: int = base_size
 	for index in options.size():
 		font_size = mini(font_size, _fit_font(font, options[index], base_size, available_w))
 	var ascent: float = font.get_ascent(font_size)
 	var descent: float = font.get_descent(font_size)
-	var baseline: float = (size.y + ascent - descent) * 0.5
+	var baseline: float = y0 + (bh + ascent - descent) * 0.5
 
-	# Subtle dividers between inactive cells.
+	# Slanted dividers between inactive options
 	for index in range(1, options.size()):
 		if index == selected_index or index - 1 == selected_index:
 			continue
-		var dx: float = tile_width * float(index)
-		draw_line(Vector2(dx, 9.0), Vector2(dx, size.y - 9.0),
-			Color(0.12, 0.11, 0.23, 0.14), 1.5, true)
+		var dx: float = x0 + tile_w * float(index)
+		draw_line(Vector2(dx + sk * 0.85, y0 + 5.0), Vector2(dx + sk * 0.15, y0 + bh - 5.0),
+			Color(1.0, 1.0, 1.0, 0.16), 1.5, true)
 
+	# Active slanted cell + crisp labels
 	for index in options.size():
 		var selected: bool = index == selected_index
+		var cx: float = x0 + tile_w * float(index)
 		if selected:
-			_cell.bg_color = Color("cfc9da") if disabled else fill_color
-			var cell_rect := Rect2(
-				Vector2(tile_width * float(index) + inset, inset),
-				Vector2(tile_width - inset * 2.0, size.y - inset * 2.0))
-			draw_style_box(_cell, cell_rect)
-			if cell_rect.size.x > 14.0 and cell_rect.size.y > 14.0:
-				draw_style_box(_cell_gloss, Rect2(
-					cell_rect.position.x + 5.0,
-					cell_rect.position.y + 3.0,
-					cell_rect.size.x - 10.0,
-					cell_rect.size.y * 0.36))
-		draw_string(font, Vector2(tile_width * float(index), baseline),
-			options[index], HORIZONTAL_ALIGNMENT_CENTER, tile_width, font_size,
-			TEXT_ON if selected else TEXT_OFF)
+			var cell_col: Color = Color("646a82") if disabled else fill_color
+			var cell_pts: PackedVector2Array = _para(cx + inset, y0 + inset,
+				maxf(tile_w - inset * 2.0, 6.0), maxf(bh - inset * 2.0, 6.0), sk * 0.85)
+			draw_colored_polygon(cell_pts, cell_col)
+			var gh: float = maxf((bh - inset * 2.0) * 0.36, 2.0)
+			var gloss: PackedVector2Array = _para(cx + inset + sk * 0.50, y0 + inset + 1.0,
+				maxf(tile_w - inset * 2.0 - 2.0, 4.0), gh, sk * 0.32)
+			draw_colored_polygon(gloss, Color(1.0, 1.0, 1.0, 0.28))
+			draw_polyline(_closed(cell_pts), UiPalette.INK, 2.5, true)
+		var txt_col: Color = TEXT_ON if selected else TEXT_OFF
+		if disabled and not selected:
+			txt_col = Color(0.60, 0.64, 0.74, 0.55)
+		draw_string(font, Vector2(cx + sk * 0.5, baseline),
+			options[index], HORIZONTAL_ALIGNMENT_CENTER, tile_w, font_size, txt_col)
+
+	# Crisp outer ink border around track
+	draw_polyline(_closed(track_pts), UiPalette.INK, 3.2, true)
 
 
 func _fit_font(font: Font, text_value: String, base_size: int,

@@ -247,24 +247,42 @@ const VEHICLES: Array[Dictionary] = [
 	},
 ]
 
-## The four Kenney racing-kit cars. Footprint values were measured from the
-## GLB AABBs and the wheel nodes: raw length 1.346 m, width 0.729 m, height
-## 0.397 m, wheelbase 0.801 m, track 0.410 m. The build below scales the model
-## to a 2.55 m catalog length and derives every other side from that same
-## uniform scale, so the visual and the collider stay on the shared contract.
-## Paint is surface 1 of the "body" mesh on every one of the four models.
+## Paint swatches available for the unified PRO RACER chassis.
+const RACER_COLORS: Array[Dictionary] = [
+	{"name": "CRIMSON", "hex": "e63946"},
+	{"name": "COBALT",  "hex": "2979ff"},
+	{"name": "EMERALD", "hex": "2ecc71"},
+	{"name": "SOLAR",   "hex": "ff8c1a"},
+	{"name": "GOLD",    "hex": "ffd22e"},
+	{"name": "HOT PINK","hex": "f26ca7"},
+	{"name": "VIOLET",  "hex": "9b59b6"},
+	{"name": "PEARL",   "hex": "f5f7fc"},
+]
+
+## Legacy variant IDs mapped cleanly onto the unified PRO RACER so older saves
+## or network peers never break.
+const LEGACY_RACER_COLOR_MAP: Dictionary = {
+	"race_car_red": "e63946",
+	"race_car_green": "2ecc71",
+	"race_car_orange": "ff8c1a",
+	"race_car_white": "f5f7fc",
+}
+
+## Unified Pro Racer chassis (replaces the 4 separate color-variant slots).
+## Uses raceCarWhite.glb as a clean neutral paint base so ANY custom paint
+## swatch tints surface 1 of "body" vividly with glossy clearcoat.
 const RACING_VEHICLES: Array[Dictionary] = [
 	{
-		"id": "race_car_red",
-		"name": "RED RACER",
-		"scene": "res://assets/models/kenney_racing_kit/Models/GLTF format/raceCarRed.glb",
+		"id": "race_car",
+		"name": "PRO RACER",
+		"scene": "res://assets/models/kenney_racing_kit/Models/GLTF format/raceCarWhite.glb",
 		"length": 2.55,
 		"width": 1.38,
 		"height": 0.75,
 		"wheelbase": 1.52,
 		"track": 0.78,
 		"yaw": 180.0,
-		"mass": 760.0,
+		"mass": 750.0,
 		"max_speed": 29.0,
 		"engine_power": 26.0,
 		"push_accel": 15.0,
@@ -276,113 +294,24 @@ const RACING_VEHICLES: Array[Dictionary] = [
 		"skid_side": 0.66,
 		"skid_back": 0.84,
 		"loop_sound": "res://assets/audio/sfx/engines/sports_loop.wav",
-		"loop_pitch": 1.05,
-		"loop_pitch_span": 0.90,
-		"loop_filter_cutoff": 5200.0,
+		"loop_pitch": 1.08,
+		"loop_pitch_span": 0.92,
+		"loop_filter_cutoff": 5800.0,
 		"loop_idle": true,
 		"has_engine": true,
 		"racing": true,
+		"custom_paint": true,
 		"paint_node": "body",
 		"paint_surface": 1,
-		"base_paint": Color("f59c9b"),
-	},
-	{
-		"id": "race_car_green",
-		"name": "GREEN RACER",
-		"scene": "res://assets/models/kenney_racing_kit/Models/GLTF format/raceCarGreen.glb",
-		"length": 2.55,
-		"width": 1.38,
-		"height": 0.75,
-		"wheelbase": 1.52,
-		"track": 0.78,
-		"yaw": 180.0,
-		"mass": 780.0,
-		"max_speed": 28.0,
-		"engine_power": 25.0,
-		"push_accel": 15.0,
-		"grip": 1.12,
-		"steering": 1.12,
-		"push_scale": 0.91,
-		"smoke": 0.90,
-		"skid_width": 0.225,
-		"skid_side": 0.66,
-		"skid_back": 0.84,
-		"loop_sound": "res://assets/audio/sfx/engines/sports_loop.wav",
-		"loop_pitch": 0.92,
-		"loop_pitch_span": 0.85,
-		"loop_filter_cutoff": 3800.0,
-		"loop_idle": true,
-		"has_engine": true,
-		"racing": true,
-		"paint_node": "body",
-		"paint_surface": 1,
-		"base_paint": Color("95c5af"),
-	},
-	{
-		"id": "race_car_orange",
-		"name": "ORANGE RACER",
-		"scene": "res://assets/models/kenney_racing_kit/Models/GLTF format/raceCarOrange.glb",
-		"length": 2.55,
-		"width": 1.38,
-		"height": 0.75,
-		"wheelbase": 1.52,
-		"track": 0.78,
-		"yaw": 180.0,
-		"mass": 720.0,
-		"max_speed": 28.0,
-		"engine_power": 26.0,
-		"push_accel": 15.0,
-		"grip": 1.08,
-		"steering": 1.04,
-		"push_scale": 0.84,
-		"smoke": 1.0,
-		"skid_width": 0.245,
-		"skid_side": 0.66,
-		"skid_back": 0.84,
-		"loop_sound": "res://assets/audio/sfx/engines/sports_loop.wav",
-		"loop_pitch": 1.15,
-		"loop_pitch_span": 0.95,
-		"loop_filter_cutoff": 6500.0,
-		"loop_idle": true,
-		"has_engine": true,
-		"racing": true,
-		"paint_node": "body",
-		"paint_surface": 1,
-		"base_paint": Color("fbdd8b"),
-	},
-	{
-		"id": "race_car_white",
-		"name": "WHITE RACER",
-		"scene": "res://assets/models/kenney_racing_kit/Models/GLTF format/raceCarWhite.glb",
-		"length": 2.55,
-		"width": 1.38,
-		"height": 0.75,
-		"wheelbase": 1.52,
-		"track": 0.78,
-		"yaw": 180.0,
-		"mass": 740.0,
-		"max_speed": 29.0,
-		"engine_power": 24.0,
-		"push_accel": 15.0,
-		"grip": 1.04,
-		"steering": 1.02,
-		"push_scale": 0.86,
-		"smoke": 0.85,
-		"skid_width": 0.220,
-		"skid_side": 0.66,
-		"skid_back": 0.84,
-		"loop_sound": "res://assets/audio/sfx/engines/sports_loop.wav",
-		"loop_pitch": 1.25,
-		"loop_pitch_span": 1.00,
-		"loop_filter_cutoff": 7800.0,
-		"loop_idle": true,
-		"has_engine": true,
-		"racing": true,
-		"paint_node": "body",
-		"paint_surface": 1,
-		"base_paint": Color("f9f9fb"),
+		"base_paint": Color("e63946"),
 	},
 ]
+
+
+static func normalize_id(raw_id: String) -> String:
+	if LEGACY_RACER_COLOR_MAP.has(raw_id):
+		return "race_car"
+	return raw_id
 
 ## The four dedicated racing-kit models. racing_all() also includes every road
 ## vehicle, with the signature shopping cart kept at index zero.
@@ -489,7 +418,8 @@ static func is_racing_choice(id: String) -> bool:
 	return id == DEFAULT_ID or is_racing_id(id)
 
 
-static func racing_find(id: String) -> Dictionary:
+static func racing_find(raw_id: String) -> Dictionary:
+	var id: String = normalize_id(raw_id)
 	for entry: Dictionary in RACING_VEHICLES:
 		if str(entry.get("id", "")) == id:
 			return entry
@@ -502,8 +432,9 @@ static func racing_find(id: String) -> Dictionary:
 	return {}
 
 
-static func racing_index_of(id: String) -> int:
+static func racing_index_of(raw_id: String) -> int:
 	## Index inside racing_all(), where 0 is the stock cart default.
+	var id: String = normalize_id(raw_id)
 	var entries: Array[Dictionary] = racing_all()
 	for index in entries.size():
 		if str(entries[index].get("id", "")) == id:
@@ -601,10 +532,10 @@ static func compose_racing_entry(id: String,
 	return entry
 
 
-static func find(id: String) -> Dictionary:
-	## Sandbox roster first (unchanged order), then the racing class. Callers
-	## that need to distinguish the two use is_racing_id(). The default id lives
-	## in the sandbox roster, so the stock cart always resolves there.
+static func find(raw_id: String) -> Dictionary:
+	## Sandbox roster first (unchanged order), then the racing class. Legacy
+	## race_car_* IDs normalize cleanly to "race_car".
+	var id: String = normalize_id(raw_id)
 	for entry: Dictionary in VEHICLES:
 		if str(entry.get("id", "")) == id:
 			return entry

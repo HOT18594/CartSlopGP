@@ -24,6 +24,7 @@ signal code_updated(code: String)
 signal session_config_changed()
 signal server_status_changed(online: bool, detail: String)
 signal tag_colors_changed()
+signal vehicles_changed()
 signal ping_table_changed()
 ## Smoothed HTTP round trip to the relay. Emitted only when the value changes.
 signal relay_metrics_changed(rtt_ms: int, jitter_ms: int)
@@ -58,6 +59,8 @@ const MINIGAME_EVENTS: Array[String] = [
 ## Two symmetric sides. 0 = ALPHA (blue), 1 = BETA (red).
 const TEAM_COUNT: int = 2
 const TEAM_NAMES: PackedStringArray = ["ALPHA", "BETA"]
+const VEHICLE_MODE_PICK_OWN: String = "pick_own"
+const VEHICLE_MODE_SHARED: String = "shared"
 const LOBBY_SCENE: String = "res://scenes/ui/lobby_menu.tscn"
 const MINIGAMES_SCENE: String = "res://scenes/ui/minigames_menu.tscn"
 const PING_INTERVAL: float = 2.0
@@ -178,6 +181,7 @@ var last_error: String = ""
 var connection_mode: String = "pi" ## "lan" (this PC) or "pi" (room service).
 var player_names: Dictionary = {} ## peer id -> sanitized display name
 var player_colors: Dictionary = {} ## peer id -> name tag Color
+var player_vehicles: Dictionary = {} ## peer id -> { sandbox, racing, minigame, racer_color, allocation }
 var ping_table: Dictionary = {} ## peer id -> that peer's ping to the server (ms)
 var join_pending: bool = false
 var room_state: String = "lobby" ## "lobby" | "playing" | "finished"
@@ -335,6 +339,12 @@ var session_map_id: String = TrackDefs.DEFAULT_ID
 ## peer that does not carry the field working.
 var session_racing_car_id: String = ""
 var session_racing_allocation: Dictionary = {}
+## Host-controlled room vehicle policy: "pick_own" lets every player choose
+## their own Garage vehicle, PRO RACER paint & racing tune; "shared" puts
+## everyone into the host's vehicle & tune.
+var session_vehicle_mode: String = VEHICLE_MODE_PICK_OWN
+var session_shared_vehicle: String = VehicleCatalog.DEFAULT_ID
+var session_shared_racer_color: String = "e63946"
 var race_standings: Array[Dictionary] = [] ## peer id/name/time/place, filled by the race.
 
 var _peer: ENetMultiplayerPeer
@@ -660,9 +670,10 @@ func _prune_separation_ms(now_ms: int) -> void:
 
 
 static func sanitize_racing_car_id(raw: String) -> String:
-	## Every curated racing choice, including road vehicles and the stock cart,
-	## may cross the wire. Unknown ids still fall back to the local save.
-	return raw if VehicleCatalog.is_racing_choice(raw) else ""
+	## Every curated racing choice, including road vehicles, the stock cart,
+	## and legacy racer color IDs normalized to "race_car", may cross the wire.
+	var key: String = VehicleCatalog.normalize_id(raw.strip_edges())
+	return key if VehicleCatalog.is_racing_choice(key) else ""
 
 
 static func sanitize_racing_allocation(raw: Dictionary) -> Dictionary:
@@ -1323,9 +1334,15 @@ func host_game(mode: String = "pi") -> void:
 		GameSettings.racing_vehicle_id())
 	session_racing_allocation = sanitize_racing_allocation(
 		GameSettings.racing_allocation())
+	session_vehicle_mode = VEHICLE_MODE_SHARED \
+		if GameSettings.multiplayer_vehicle_mode == VEHICLE_MODE_SHARED \
+		else VEHICLE_MODE_PICK_OWN
+	session_shared_vehicle = GameSettings.vehicle_for_channel(active_vehicle_channel())
+	session_shared_racer_color = GameSettings.racer_color
 	room_public = GameSettings.room_public
 	player_names[1] = GameSettings.player_name
 	player_colors[1] = GameSettings.tag_color()
+	player_vehicles[1] = _local_loadout_dict()
 	ping_table[1] = 0
 
 	if connection_mode == "lan":
@@ -3033,6 +3050,156 @@ func set_local_tag_color(hex: String) -> void:
 	tag_colors_changed.emit()
 
 
+func active_vehicle_channel() -> String:
+	## Which Garage slot applies to the room's current mode ("racing", "minigame", "sandbox").
+	var sc: String = session_scene
+	if sc == RACE_SCENE or session_event == EVENT_RACE:
+		return "racing"
+	if sc in [CARGO_SCENE, KNOCKOUT_SCENE, BOMB_TAG_SCENE] or session_event in MINIGAME_EVENTS:
+		return "minigame"
+	if session_mode == GameSettings.GAME_MINIGAMES:
+		return "racing"
+	return "sandbox"
+
+
+func _local_loadout_dict() -> Dictionary:
+	return {
+		"sandbox": GameSettings.vehicle_for_channel("sandbox"),
+		"racing": GameSettings.vehicle_for_channel("racing"),
+		"minigame": GameSettings.vehicle_for_channel("minigame"),
+		"racer_color": GameSettings.racer_color,
+		"allocation": GameSettings.racing_allocation(),
+	}
+
+
+static func _sanitize_racer_hex(raw: String) -> String:
+	var clean: String = raw.strip_edges().trim_prefix("#").to_lower()
+	if clean.length() != 6:
+		return "e63946"
+	for ch: String in clean:
+		if not "0123456789abcdef".contains(ch):
+			return "e63946"
+	return clean
+
+
+static func _sanitize_vehicle_loadout(raw: Dictionary) -> Dictionary:
+	var alloc_raw: Variant = raw.get("allocation", {})
+	var alloc_dict: Dictionary = alloc_raw as Dictionary if alloc_raw is Dictionary else {}
+	return {
+		"sandbox": GameSettings.sanitize_vehicle_id(str(raw.get("sandbox", VehicleCatalog.DEFAULT_ID))),
+		"racing": GameSettings.sanitize_racing_vehicle_id(str(raw.get("racing", VehicleCatalog.DEFAULT_RACING_ID))),
+		"minigame": GameSettings.sanitize_vehicle_id(str(raw.get("minigame", VehicleCatalog.DEFAULT_ID))),
+		"racer_color": _sanitize_racer_hex(str(raw.get("racer_color", "e63946"))),
+		"allocation": VehicleCatalog.sanitize_allocation(alloc_dict) if not alloc_dict.is_empty() else VehicleCatalog.default_allocation(),
+	}
+
+
+func set_session_vehicle_mode(mode: String) -> void:
+	## Host only. Switches between "pick_own" (every player uses their own car
+	## and racing tune) and "shared" (everyone drives the host's car).
+	var clean: String = VEHICLE_MODE_SHARED if mode == VEHICLE_MODE_SHARED else VEHICLE_MODE_PICK_OWN
+	GameSettings.set_multiplayer_vehicle_mode(clean)
+	if not is_host:
+		return
+	session_vehicle_mode = clean
+	session_shared_vehicle = GameSettings.vehicle_for_channel(active_vehicle_channel())
+	session_shared_racer_color = GameSettings.racer_color
+	session_racing_car_id = sanitize_racing_car_id(GameSettings.racing_vehicle_id())
+	session_racing_allocation = sanitize_racing_allocation(GameSettings.racing_allocation())
+	player_vehicles[1] = _local_loadout_dict()
+	_push_session_config()
+	vehicles_changed.emit()
+
+
+func set_local_vehicle_loadout() -> void:
+	## Broadcasts the local player's Garage choices (vehicles, PRO RACER paint,
+	## and racing stat allocation) to the multiplayer room.
+	var loadout: Dictionary = _local_loadout_dict()
+	if not is_session_active():
+		vehicles_changed.emit()
+		return
+	var my_id: int = multiplayer.get_unique_id() if multiplayer.multiplayer_peer != null else 1
+	player_vehicles[my_id] = loadout
+	if is_connected_to_server():
+		rpc("_net_set_vehicle_loadout", my_id, loadout)
+	if is_host:
+		session_shared_vehicle = GameSettings.vehicle_for_channel(active_vehicle_channel())
+		session_shared_racer_color = GameSettings.racer_color
+		session_racing_car_id = sanitize_racing_car_id(GameSettings.racing_vehicle_id())
+		session_racing_allocation = sanitize_racing_allocation(GameSettings.racing_allocation())
+		_push_session_config()
+	vehicles_changed.emit()
+
+
+func is_shared_vehicle_mode() -> bool:
+	return is_session_active() and session_vehicle_mode == VEHICLE_MODE_SHARED
+
+
+func effective_vehicle_for(peer_id: int, channel: String = "") -> String:
+	## Single authoritative vehicle resolver used by every gameplay scene and
+	## CartPlayer so host and clients always agree on every car in the match.
+	var ch: String = channel if channel != "" else active_vehicle_channel()
+	if not is_session_active():
+		return GameSettings.vehicle_for_channel(ch)
+	if session_vehicle_mode == VEHICLE_MODE_SHARED:
+		if player_vehicles.has(1):
+			var host_lo: Dictionary = player_vehicles[1] as Dictionary
+			var from_host: String = str(host_lo.get(ch, ""))
+			if from_host != "":
+				return GameSettings.sanitize_racing_vehicle_id(from_host) if ch == "racing" \
+					else GameSettings.sanitize_vehicle_id(from_host)
+		if ch == "racing" and session_racing_car_id != "":
+			return sanitize_racing_car_id(session_racing_car_id)
+		return GameSettings.sanitize_vehicle_id(session_shared_vehicle)
+	# PICK OWN mode: every player uses their own Garage car!
+	var my_id: int = multiplayer.get_unique_id() if multiplayer.multiplayer_peer != null else 0
+	if peer_id == my_id:
+		return GameSettings.vehicle_for_channel(ch)
+	if player_vehicles.has(peer_id):
+		var peer_lo: Dictionary = player_vehicles[peer_id] as Dictionary
+		var pick: String = str(peer_lo.get(ch, ""))
+		if pick != "":
+			return GameSettings.sanitize_racing_vehicle_id(pick) if ch == "racing" \
+				else GameSettings.sanitize_vehicle_id(pick)
+	return VehicleCatalog.DEFAULT_ID
+
+
+func effective_racer_color_for(peer_id: int) -> String:
+	if not is_session_active():
+		return GameSettings.racer_color
+	if session_vehicle_mode == VEHICLE_MODE_SHARED:
+		if player_vehicles.has(1):
+			return _sanitize_racer_hex(str((player_vehicles[1] as Dictionary).get("racer_color", session_shared_racer_color)))
+		return _sanitize_racer_hex(session_shared_racer_color)
+	var my_id: int = multiplayer.get_unique_id() if multiplayer.multiplayer_peer != null else 0
+	if peer_id == my_id:
+		return GameSettings.racer_color
+	if player_vehicles.has(peer_id):
+		return _sanitize_racer_hex(str((player_vehicles[peer_id] as Dictionary).get("racer_color", "e63946")))
+	return "e63946"
+
+
+func effective_racing_allocation_for(peer_id: int) -> Dictionary:
+	if not is_session_active():
+		return GameSettings.racing_allocation()
+	if session_vehicle_mode == VEHICLE_MODE_SHARED:
+		if not session_racing_allocation.is_empty():
+			return session_racing_allocation
+		if player_vehicles.has(1):
+			var host_alloc: Variant = (player_vehicles[1] as Dictionary).get("allocation", {})
+			if host_alloc is Dictionary and not (host_alloc as Dictionary).is_empty():
+				return sanitize_racing_allocation(host_alloc as Dictionary)
+		return VehicleCatalog.default_allocation()
+	var my_id: int = multiplayer.get_unique_id() if multiplayer.multiplayer_peer != null else 0
+	if peer_id == my_id:
+		return GameSettings.racing_allocation()
+	if player_vehicles.has(peer_id):
+		var peer_alloc: Variant = (player_vehicles[peer_id] as Dictionary).get("allocation", {})
+		if peer_alloc is Dictionary and not (peer_alloc as Dictionary).is_empty():
+			return sanitize_racing_allocation(peer_alloc as Dictionary)
+	return VehicleCatalog.default_allocation()
+
+
 func join_public_room(room: Dictionary) -> void:
 	## Join a room picked from the public browser. No code is shown or typed:
 	## the fresh /api/lobbies row already carries the relay address.
@@ -3312,16 +3479,21 @@ func leave() -> void:
 	input_locked = false
 	player_names.clear()
 	player_colors.clear()
+	player_vehicles.clear()
 	ping_table.clear()
 	_name_stamp.clear()
 	_ping_stamp.clear()
 	_color_stamp.clear()
+	_vehicle_stamp.clear()
 	_ping_request_stamp.clear()
 	race_standings.clear()
 	# A stale host build must not leak into the next session before its first
 	# config packet; player_cart.gd treats empty as "use the local save".
 	session_racing_car_id = ""
 	session_racing_allocation = {}
+	session_vehicle_mode = VEHICLE_MODE_PICK_OWN
+	session_shared_vehicle = VehicleCatalog.DEFAULT_ID
+	session_shared_racer_color = "e63946"
 	# No room means no mode/scene/teams. A new session starts from its own
 	# host snapshot instead of inheriting the last room's DELIVER split.
 	session_scene = GAME_SCENE
@@ -3376,6 +3548,9 @@ func configure_session(mode: String, bots: bool, count: int,
 		GameSettings.racing_vehicle_id())
 	session_racing_allocation = sanitize_racing_allocation(
 		GameSettings.racing_allocation())
+	session_shared_vehicle = GameSettings.vehicle_for_channel(active_vehicle_channel())
+	session_shared_racer_color = GameSettings.racer_color
+	player_vehicles[1] = _local_loadout_dict()
 	_push_session_config()
 
 
@@ -3445,7 +3620,8 @@ func _push_session_config() -> void:
 	rpc("_net_session_config", session_mode, session_bots, session_bot_count,
 		session_map_id, session_racing_car_id, session_racing_allocation,
 		session_event, session_scene, session_minigame, room_public,
-		_peer_teams.duplicate(), teams_locked, session_bot_difficulty)
+		_peer_teams.duplicate(), teams_locked, session_bot_difficulty,
+		session_vehicle_mode, session_shared_vehicle, session_shared_racer_color)
 
 
 @rpc("authority", "call_local", "reliable")
@@ -3453,7 +3629,9 @@ func _net_session_config(mode: String, bots: bool, count: int,
 		map_id: String = "", racing_car_id: String = "",
 		racing_allocation: Dictionary = {}, event: String = "",
 		scene: String = "", theme_id: String = "", public_room: bool = false,
-		teams: Dictionary = {}, locked: bool = false, difficulty: int = 1) -> void:
+		teams: Dictionary = {}, locked: bool = false, difficulty: int = 1,
+		vehicle_mode: String = "", shared_vehicle: String = "",
+		shared_racer_color: String = "") -> void:
 	if mode != GameSettings.GAME_SANDBOX and mode != GameSettings.GAME_MINIGAMES:
 		return
 	count = clampi(count, 0, MAX_BOT_COUNT)
@@ -3487,6 +3665,13 @@ func _net_session_config(mode: String, bots: bool, count: int,
 	if not racing_allocation.is_empty():
 		session_racing_allocation = sanitize_racing_allocation(
 			racing_allocation)
+	if vehicle_mode != "":
+		session_vehicle_mode = VEHICLE_MODE_SHARED \
+			if vehicle_mode == VEHICLE_MODE_SHARED else VEHICLE_MODE_PICK_OWN
+	if shared_vehicle != "":
+		session_shared_vehicle = GameSettings.sanitize_vehicle_id(shared_vehicle)
+	if shared_racer_color != "":
+		session_shared_racer_color = _sanitize_racer_hex(shared_racer_color)
 	var clean_teams: Dictionary = _sanitize_teams(teams)
 	var lock_changed: bool = locked != teams_locked
 	var assignment_changed: bool = clean_teams != _peer_teams
@@ -3569,6 +3754,9 @@ func start_game(scene_path: String = "", mode: String = "") -> void:
 		GameSettings.racing_vehicle_id())
 	session_racing_allocation = sanitize_racing_allocation(
 		GameSettings.racing_allocation())
+	session_shared_vehicle = GameSettings.vehicle_for_channel(active_vehicle_channel())
+	session_shared_racer_color = GameSettings.racer_color
+	player_vehicles[1] = _local_loadout_dict()
 	_balance_teams()
 	race_seed = Time.get_ticks_msec()
 	clear_scene_ready()
@@ -3692,6 +3880,7 @@ func _on_peer_connected(id: int) -> void:
 	_name_stamp.erase(id)
 	_ping_stamp.erase(id)
 	_color_stamp.erase(id)
+	_vehicle_stamp.erase(id)
 	_ping_request_stamp.erase(id)
 	if is_host and in_game and game_scene == RACE_SCENE:
 		# Meadow Loop does not support joining mid-race: a peer that arrives
@@ -3721,19 +3910,23 @@ func _on_peer_connected(id: int) -> void:
 		for peer_id: int in player_colors:
 			var color: Color = player_colors[peer_id]
 			rpc_id(id, "_net_set_tag_color", peer_id, color.to_html(false))
+		for peer_id: int in player_vehicles:
+			rpc_id(id, "_net_set_vehicle_loadout", peer_id, player_vehicles[peer_id])
 		if in_game:
 			rpc_id(id, "_net_begin_game", game_scene, session_mode,
 				session_bots, session_bot_count, race_seed)
 			if host_scene_ready_path == game_scene and host_scene_ready_path != "":
 				rpc_id(id, "_net_host_scene_ready", host_scene_ready_path)
 	if is_session_active():
-		# Re-announce our name so the newcomer (and everyone) has it.
+		# Re-announce our name & vehicle loadout so the newcomer (and everyone) has it.
 		rpc("_net_set_name", multiplayer.get_unique_id(), GameSettings.player_name)
+		rpc("_net_set_vehicle_loadout", multiplayer.get_unique_id(), _local_loadout_dict())
 
 
 var _name_stamp: Dictionary = {}
 var _ping_stamp: Dictionary = {}
 var _color_stamp: Dictionary = {}
+var _vehicle_stamp: Dictionary = {}
 var _ping_request_stamp: Dictionary = {}
 
 
@@ -3783,6 +3976,25 @@ func _net_set_tag_color(peer_id: int, raw_hex: String) -> void:
 		rpc("_net_set_tag_color", peer_id, clean)
 
 
+@rpc("any_peer", "call_local", "reliable")
+func _net_set_vehicle_loadout(peer_id: int, raw_loadout: Dictionary) -> void:
+	## Relay each player's Garage choices (vehicles per mode, PRO RACER paint
+	## color, and racing stat allocation). Host sanitizes & broadcasts to all.
+	var sender: int = _rpc_sender()
+	if sender != 0 and sender != 1 and peer_id != sender:
+		return
+	if sender > 1:
+		var now: int = Time.get_ticks_msec()
+		if now - int(_vehicle_stamp.get(sender, -10000)) < 400:
+			return
+		_vehicle_stamp[sender] = now
+	var clean: Dictionary = _sanitize_vehicle_loadout(raw_loadout)
+	player_vehicles[peer_id] = clean
+	vehicles_changed.emit()
+	if is_host and sender != 0 and sender != 1:
+		rpc("_net_set_vehicle_loadout", peer_id, clean)
+
+
 func _on_peer_disconnected(id: int) -> void:
 	scene_ready_peers.erase(id)
 	_erase_peer_separation(id)
@@ -3791,15 +4003,18 @@ func _on_peer_disconnected(id: int) -> void:
 	_left_scene_peers.erase(id)
 	player_names.erase(id)
 	player_colors.erase(id)
+	player_vehicles.erase(id)
 	ping_table.erase(id)
 	_peer_teams.erase(id)
 	_name_stamp.erase(id)
 	_ping_stamp.erase(id)
 	_color_stamp.erase(id)
+	_vehicle_stamp.erase(id)
 	_ping_request_stamp.erase(id)
 	peers_changed.emit()
 	names_changed.emit()
 	tag_colors_changed.emit()
+	vehicles_changed.emit()
 	ping_table_changed.emit()
 	_push_room_state()
 	if is_host and is_session_active():
@@ -3821,6 +4036,7 @@ func _on_connected_to_server() -> void:
 	clear_scene_ready()
 	rpc("_net_set_name", multiplayer.get_unique_id(), GameSettings.player_name)
 	rpc("_net_set_tag_color", multiplayer.get_unique_id(), GameSettings.player_tag_color)
+	set_local_vehicle_loadout()
 	join_status_changed.emit("Connected. Waiting for the host to start...")
 	join_succeeded.emit()
 	peers_changed.emit()

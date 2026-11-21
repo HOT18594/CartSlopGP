@@ -75,7 +75,8 @@ func open() -> void:
 	show()
 	visible = true
 	_show_page(_current_page)
-	UiAnim.pop($Center/Panel)
+	UiAnim.modal_open($Center/Panel, get_node_or_null("Dim"))
+	UiAnim.stagger_slide(_nav_buttons, Vector2(-20.0, 0.0), 0.035, 0.20)
 	MenuNav.refresh()
 	_check_button.disabled = false
 	_offline_note.visible = false
@@ -108,7 +109,7 @@ func _build_ui() -> void:
 	title.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	header.add_child(title)
 	var close_button := _candy_button("BACK", UiPalette.RED, 44, 17)
-	close_button.custom_minimum_size = Vector2(124, 44)
+	close_button.custom_minimum_size = Vector2(148, 48)
 	close_button.pressed.connect(close)
 	header.add_child(close_button)
 
@@ -118,7 +119,7 @@ func _build_ui() -> void:
 	_body.add_child(main)
 
 	var nav := VBoxContainer.new()
-	nav.custom_minimum_size = Vector2(176, 0)
+	nav.custom_minimum_size = Vector2(200, 0)
 	nav.add_theme_constant_override("separation", 6)
 	nav.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	main.add_child(nav)
@@ -172,7 +173,7 @@ func _build_ui() -> void:
 	footer.add_theme_constant_override("separation", UiKit.SPACING)
 	_body.add_child(footer)
 	var reset := _candy_button("RESET DEFAULTS", UiPalette.BLUE, 44, 15)
-	reset.custom_minimum_size = Vector2(210, 44)
+	reset.custom_minimum_size = Vector2(240, 48)
 	reset.pressed.connect(_on_reset_defaults)
 	footer.add_child(reset)
 	var spacer := Control.new()

@@ -130,7 +130,7 @@ const TOP_BAR_TOP: float = 10.0
 const TOP_BAR_WIDTH: float = 456.0
 const TOP_BAR_MAX_HEIGHT: float = 60.0
 const SCORE_LEFT: float = 18.0
-const SCORE_WIDTH: float = 192.0
+const SCORE_WIDTH: float = 214.0
 const CALLOUT_HEIGHT: float = 38.0
 const BT_SHADOW_COLOR := Color(0.07, 0.05, 0.15, 0.88)
 const BT_TEXT_SHADOW := Color(0.08, 0.06, 0.16, 0.85)
@@ -310,7 +310,10 @@ var _result_secondary_btn: Button
 
 func _enter_tree() -> void:
 	_saved_vehicle = GameSettings.selected_vehicle
-	GameSettings.selected_vehicle = GameSettings.minigame_vehicle
+	if Network.is_session_active() and multiplayer.multiplayer_peer != null:
+		GameSettings.selected_vehicle = Network.effective_vehicle_for(multiplayer.get_unique_id(), "minigame")
+	else:
+		GameSettings.selected_vehicle = GameSettings.minigame_vehicle
 
 
 func _exit_tree() -> void:
@@ -2231,18 +2234,20 @@ func _spawn_remote_cart(peer_id: int) -> void:
 	rcart.transform = spawn_xf
 	add_child(rcart)
 	rcart.setup_remote(peer_id)
+	rcart.set_vehicle_id(Network.effective_vehicle_for(peer_id, "minigame"),
+		Network.effective_racer_color_for(peer_id))
 	var label := Label3D.new()
 	label.name = "NameTag"
 	label.text = Network.name_of(peer_id)
 	label.font = TITLE_FONT
-	label.font_size = 54
-	label.pixel_size = 0.0095
-	label.outline_size = 15
+	label.font_size = 42
+	label.pixel_size = 0.0062
+	label.outline_size = 13
 	label.outline_modulate = UiPalette.OUTLINE
 	label.modulate = Network.color_of(peer_id)
 	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 	label.no_depth_test = true
-	label.position = Vector3(0.0, 2.3, 0.0)
+	label.position = Vector3(0.0, 2.05, 0.0)
 	rcart.add_child(label)
 	_name_labels[peer_id] = label
 	_remote_carts[peer_id] = rcart
@@ -2311,7 +2316,9 @@ func _net_bomb_ready(arena_id: String, vehicle_id: String) -> void:
 	_spawn_remote_cart(sender)
 	var rcart: CartPlayer = _remote_carts.get(sender) as CartPlayer
 	if rcart != null and is_instance_valid(rcart):
-		rcart.set_vehicle_id(GameSettings.sanitize_vehicle_id(vehicle_id))
+		var clean_vid: String = Network.effective_vehicle_for(sender, "minigame") \
+			if Network.is_shared_vehicle_mode() else GameSettings.sanitize_vehicle_id(vehicle_id)
+		rcart.set_vehicle_id(clean_vid, Network.effective_racer_color_for(sender))
 	rpc_id(sender, "_net_bomb_config", _arena_id, _bots.size())
 	_send_snapshot_to(sender)
 	if _phase == Phase.FINISHED:
@@ -2660,8 +2667,7 @@ func _build_hud() -> void:
 	_top_bar.add_theme_stylebox_override("panel", _empty_bt_box(16.0, 4.0, 18.0, 7.0))
 	_top_bar_plate = _attach_bt_slash(
 		_top_bar, 14.0, UiPalette.INK, UiPalette.CREAM, 3.5, Vector2(4.0, 5.0))
-	_top_bar_plate.accent_color = UiPalette.YELLOW
-	_top_bar_plate.accent_width = 10.0
+	_top_bar_plate.accent_width = 0.0
 	_hud_root.add_child(_top_bar)
 
 	var col := VBoxContainer.new()
@@ -2728,6 +2734,18 @@ func _build_hud() -> void:
 	_arena_label = _make_label("BLAST TAG · " + _arena_name, 10, UiPalette.CREAM, 4)
 	_arena_label.visible = false
 	col.add_child(_arena_label)
+
+	# Bottom-Center Dedicated [E] Juke Surge Recharge & Controls Dock
+	var AbilityDockRes := preload("res://scripts/ui/ability_dock.gd")
+	var bt_dock: Control = AbilityDockRes.new()
+	bt_dock.name = "BlastActionDock"
+	bt_dock.set("show_damage", false)
+	bt_dock.set("show_ability", true)
+	bt_dock.set("key_text", "E")
+	bt_dock.set("ability_title", "JUKE READY!")
+	bt_dock.set("controls_hint", "WASD DRIVE  ·  SPACE DRIFT  ·  SHIFT BOOST  ·  E JUKE SURGE")
+	_hud_root.add_child(bt_dock)
+	set_meta("action_dock", bt_dock)
 
 	# 2. Top-Left Skewed Parallelogram Score Slashes (StyleBoxEmpty outer container!).
 	_score_panel = PanelContainer.new()
@@ -2945,6 +2963,29 @@ func _refresh_hud() -> void:
 		if _status_plate != null:
 			_status_plate.fill_color = UiPalette.GRASS
 			_status_plate.queue_redraw()
+
+	var bt_dock: Control = get_meta("action_dock", null) as Control
+	if bt_dock != null:
+		var juke_ratio: float = clampf(1.0 - juke_cd / JUKE_COOLDOWN, 0.0, 1.0)
+		bt_dock.set("key_text", _juke_key_name())
+		if my_fuse >= 0.0:
+			bt_dock.set("ability_title", "PASS THE BOMB!")
+			bt_dock.set("ability_ratio", -1.0)
+			bt_dock.set("ability_sub", "RAM ANY RIVAL TO PASS IT!")
+			bt_dock.set("ability_color", Color("ff3b3f") if flash else UiPalette.PINK)
+		elif shield_t > 0.0:
+			bt_dock.set("ability_title", "SHIELD ACTIVE %.1fS" % shield_t)
+			bt_dock.set("ability_ratio", juke_ratio)
+			bt_dock.set("ability_color", UiPalette.CYAN)
+		elif juke_cd > 0.05:
+			bt_dock.set("ability_title", "JUKE RECHARGING %.1fS" % juke_cd)
+			bt_dock.set("ability_ratio", juke_ratio)
+			bt_dock.set("ability_color", UiPalette.CYAN)
+		else:
+			bt_dock.set("ability_title", "JUKE SURGE READY!")
+			bt_dock.set("ability_ratio", 1.0)
+			bt_dock.set("ability_color", UiPalette.GRASS)
+		bt_dock.queue_redraw()
 
 	# Refresh sorted Skewed Comic Live Score Slashes.
 	var sorted: Array[Dictionary] = _sorted_standings()

@@ -27,6 +27,7 @@ const SceneryKit := preload("res://scripts/minigames/scenery/scenery_kit.gd")
 const PropBatch := preload("res://scripts/minigames/scenery/prop_batch.gd")
 const LandscapeSculptor := preload("res://scripts/minigames/scenery/landscape_sculptor.gd")
 const AmbientWorld := preload("res://scripts/minigames/scenery/ambient_world.gd")
+const ConceptSpectacle := preload("res://scripts/minigames/scenery/concept_spectacle.gd")
 const BOOST_PAD_SCENE: PackedScene = preload("res://scenes/track/boost_pad.tscn")
 
 const RACING_ROOT: String = "res://assets/models/kenney_racing_kit/Models/GLTF format/"
@@ -187,28 +188,26 @@ static func _build_plaza(root: Node3D, spawns: Array[Transform3D],
 	_add_box_collider(body, Transform3D(Basis.IDENTITY, Vector3(0.0, -1.0, 0.0)),
 		Vector3(144.0, 2.0, 144.0))
 
-	# Ground courtyard floor slab + MultiMesh checkerboard tiles (120 x 120 m).
-	_add_plane(root, "PlazaBaseFloor", Vector2(124.0, 124.0),
-		Vector3(0.0, 0.0, 0.0), Color("e6cfa8"))
-	var tile_mesh := PlaneMesh.new()
-	tile_mesh.size = Vector2(12.0, 12.0)
-	var tile_xforms: Array = []
-	var tile_cols: Array = []
+	# Smooth fluid courtyard floor blending terracotta fountain plaza -> warm stone -> lawn verge!
 	var col_a := Color("edd8b4")
 	var col_b := Color("dfbf91")
 	var col_ring := Color("d4845a")
-	for ix in range(-5, 5):
-		for iz in range(-5, 5):
-			var cx: float = (float(ix) + 0.5) * 12.0
-			var cz: float = (float(iz) + 0.5) * 12.0
-			tile_xforms.append(Transform3D(Basis.IDENTITY, Vector3(cx, 0.012, cz)))
-			var radial: float = Vector2(cx, cz).length()
-			if radial < 18.0:
-				tile_cols.append(col_ring if (ix + iz) % 2 == 0 else col_a)
-			else:
-				tile_cols.append(col_a if (ix + iz) % 2 == 0 else col_b)
-	root.add_child(SceneryKit.multimesh(tile_mesh, SceneryKit.instance_material(1.0),
-		tile_xforms, "PlazaTiles", false, tile_cols))
+	var col_lawn := Color("58ae4e")
+	var plaza_floor := MeshInstance3D.new()
+	plaza_floor.name = "PlazaFluidFloor"
+	plaza_floor.mesh = SceneryKit.build_blended_ground(
+		Vector2(-74.0, -74.0), Vector2(74.0, 74.0), 42, 0.01,
+		func(wx: float, wz: float) -> Color:
+			var radial: float = Vector2(wx, wz).length()
+			var wave: float = 0.5 + 0.5 * sin(wx * 0.085) * cos(wz * 0.085)
+			var base: Color = col_a.lerp(col_b, smoothstep(0.2, 0.8, wave))
+			var ring_t: float = 1.0 - smoothstep(10.0, 24.0, radial)
+			var outer_t: float = smoothstep(56.0, 68.0, maxf(absf(wx), absf(wz)))
+			return base.lerp(col_ring, ring_t * 0.72).lerp(col_lawn, outer_t)
+	)
+	plaza_floor.material_override = SceneryKit.fluid_ground_material(
+		Color(0.96, 0.99, 0.94), Color(1.04, 0.97, 0.88), 0.044, 0.12, 0.86)
+	root.add_child(plaza_floor)
 
 	# Central Fountain Roundabout at (0, 0, 0) — solid stone basin + turquoise water tiers.
 	var fountain_r: float = 4.6
@@ -413,7 +412,8 @@ static func _dress_plaza_exterior(root: Node3D, body: StaticBody3D, half: float)
 	var stand_xforms: Array = []
 	for side: float in [-1.0, 1.0]:
 		var pos_ew := Vector3(side * (half + 10.5), 0.0, 0.0)
-		var yaw_ew: float = -PI * 0.5 if side < 0.0 else PI * 0.5
+		# Kenney grandStandCovered seats face +Z: +PI/2 on west faces east (+X) inward!
+		var yaw_ew: float = PI * 0.5 if side < 0.0 else -PI * 0.5
 		stand_xforms.append(fit_transform("grandStandCovered", pos_ew, yaw_ew,
 			Vector3.ONE * 13.0))
 		var sz: Vector3 = scaled_size("grandStandCovered", Vector3.ONE * 13.0)
@@ -465,29 +465,27 @@ static func _build_labyrinth(root: Node3D, spawns: Array[Transform3D],
 	_add_box_collider(body, Transform3D(Basis.IDENTITY, Vector3(0.0, -1.0, 0.0)),
 		Vector3(150.0, 2.0, 150.0))
 
-	_add_plane(root, "CanyonBasinFloor", Vector2(128.0, 128.0),
-		Vector3(0.0, 0.0, 0.0), Color("df864a"))
-
-	# Bold figure-8 desert track tiles (MultiMesh, 1 draw call).
-	var tile_mesh := PlaneMesh.new()
-	tile_mesh.size = Vector2(12.4, 12.4)
-	var tile_xforms: Array = []
-	var tile_cols: Array = []
+	# Smooth fluid canyon floor blending red-clay figure-8 streets into warm golden sand!
 	var sand_a := Color("e69558")
 	var sand_b := Color("d67b42")
-	var road_tint := Color("c45e33")
-	for ix in range(-5, 5):
-		for iz in range(-5, 5):
-			var cx: float = (float(ix) + 0.5) * 12.4
-			var cz: float = (float(iz) + 0.5) * 12.4
-			tile_xforms.append(Transform3D(Basis.IDENTITY, Vector3(cx, 0.012, cz)))
-			var on_main_street: bool = absf(cz) < 11.0 or (absf(absf(cx) - 34.0) < 9.0)
-			if on_main_street:
-				tile_cols.append(road_tint)
-			else:
-				tile_cols.append(sand_a if (ix + iz) % 2 == 0 else sand_b)
-	root.add_child(SceneryKit.multimesh(tile_mesh, SceneryKit.instance_material(1.0),
-		tile_xforms, "CanyonFloorTiles", false, tile_cols))
+	var road_tint := Color("bf5930")
+	var outer_clay := Color("c96235")
+	var canyon_floor := MeshInstance3D.new()
+	canyon_floor.name = "CanyonFluidFloor"
+	canyon_floor.mesh = SceneryKit.build_blended_ground(
+		Vector2(-74.0, -74.0), Vector2(74.0, 74.0), 42, 0.01,
+		func(wx: float, wz: float) -> Color:
+			var wave: float = 0.5 + 0.5 * sin(wx * 0.08 + wz * 0.04) * cos(wz * 0.08 - wx * 0.03)
+			var base: Color = sand_a.lerp(sand_b, smoothstep(0.18, 0.82, wave))
+			var street_z: float = 1.0 - smoothstep(6.0, 15.0, absf(wz))
+			var street_x: float = 1.0 - smoothstep(4.5, 13.5, absf(absf(wx) - 34.0))
+			var street_t: float = maxf(street_z, street_x)
+			var outer_t: float = smoothstep(58.0, 70.0, maxf(absf(wx), absf(wz)))
+			return base.lerp(road_tint, street_t * 0.78).lerp(outer_clay, outer_t)
+	)
+	canyon_floor.material_override = SceneryKit.fluid_ground_material(
+		Color(1.04, 0.96, 0.90), Color(0.95, 0.92, 0.86), 0.040, 0.14, 0.88)
+	root.add_child(canyon_floor)
 
 	# ------------------------------------------------------------------
 	# 8 Towering Sandstone Rock Pillars / Mesa Blocks inside the arena!
@@ -650,7 +648,7 @@ static func _dress_labyrinth_exterior(root: Node3D, body: StaticBody3D,
 		# Pushed well outside the +-62 m barrier ring at a smaller scale so
 		# the stands no longer straddle the wall and cover edge tiles.
 		var spos := Vector3(side * (half + 18.0), 0.0, 28.0 * side)
-		var syaw: float = -PI * 0.5 if side < 0.0 else PI * 0.5
+		var syaw: float = PI * 0.5 if side < 0.0 else -PI * 0.5
 		stands.append(fit_transform("grandStand", spos, syaw, Vector3.ONE * 8.0))
 		var sz: Vector3 = scaled_size("grandStand", Vector3.ONE * 8.0)
 		_add_box_collider(body, Transform3D(Basis(Vector3.UP, syaw),
@@ -1018,10 +1016,23 @@ static func _add_dynamic_landmarks(root: Node3D, resolved: String) -> void:
 					38.0 + float(i % 3) * 10.0, 32.0 + float((i + 1) % 3) * 8.0,
 					16.0 + float(i % 4) * 5.5, rng, hill_pal)
 			batch.flush_to(holder, "PlazaHorizonHills", false, SceneryKit.vertex_material())
+			# Festival pennant garlands + warm glowing perimeter lanterns!
+			var p_gar := PropBatch.new()
+			ConceptSpectacle.add_pennant_line(p_gar, Vector3(0.0, 2.2, -24.0), 0.0, 44.0, 11.5)
+			ConceptSpectacle.add_pennant_line(p_gar, Vector3(0.0, 2.2,  24.0), 0.0, 44.0, 11.5)
+			p_gar.flush_to(holder, "PlazaPennants", false, SceneryKit.vertex_material())
+			var p_lants: Array[Dictionary] = []
+			for li in 12:
+				var lang: float = TAU * float(li) / 12.0
+				p_lants.append({"pos": Vector3(cos(lang) * 63.0, 0.0, sin(lang) * 63.0), "yaw": -lang, "inward_side": -1.0})
+			ConceptSpectacle.build_ring_lanterns(holder, p_lants, Color("ffbc42"), Color("633e26"))
+			# Well-planned terracotta Mediterranean town-square district framing the Plaza
+			_add_plaza_town_district(holder)
 			LandscapeSculptor.build_windmill(holder, Vector3(-96.0, 0.0, -88.0), 0.7, 1.3,
 				"meadow", anim)
 			LandscapeSculptor.build_windmill(holder, Vector3(98.0, 0.0, 86.0), -2.4, 1.25,
 				"meadow", anim)
+			LandscapeSculptor.build_giant_wind_turbine(holder, Vector3(-110.0, 0.0, 90.0), 0.8, 26.0, anim)
 			LandscapeSculptor.build_hot_air_balloon(holder, Vector3(84.0, 32.0, -76.0),
 				Color("ff595e"), Color("ffd22e"), 0.4, anim)
 			LandscapeSculptor.build_hot_air_balloon(holder, Vector3(-88.0, 36.0, 74.0),
@@ -1040,7 +1051,10 @@ static func _add_dynamic_landmarks(root: Node3D, resolved: String) -> void:
 				var ang: float = TAU * float(i) / 12.0 + 0.21
 				var dist: float = 122.0 + float(i % 3) * 28.0
 				var pos := Vector3(cos(ang) * dist, -0.2, sin(ang) * dist)
-				if i % 3 == 0:
+				if i % 4 == 0:
+					LandscapeSculptor.add_canyon_arch_butte(batch, pos, 26.0 + float(i % 2) * 8.0,
+						34.0 + float(i % 3) * 8.0, rng, mesa_pal)
+				elif i % 3 == 0:
 					LandscapeSculptor.add_canyon_spire(batch, pos, 18.0 + float(i % 2) * 5.0,
 						32.0 + float(i % 4) * 7.0, rng)
 				else:
@@ -1051,8 +1065,20 @@ static func _add_dynamic_landmarks(root: Node3D, resolved: String) -> void:
 				Vector3(0.0, 0.0, -124.0), 0.15, 28.0, 14.0, 6.0,
 				Color("b85a35"), Color("e89e5a"))
 			batch.flush_to(holder, "LabyrinthHorizonMesas", false, SceneryKit.vertex_material())
+			var l_gar := PropBatch.new()
+			ConceptSpectacle.add_pennant_line(l_gar, Vector3(0.0, 0.0, -34.0), 0.0, 48.0, 12.5)
+			ConceptSpectacle.add_pennant_line(l_gar, Vector3(0.0, 0.0,  34.0), 0.0, 48.0, 12.5)
+			l_gar.flush_to(holder, "LabyrinthPennants", false, SceneryKit.vertex_material())
+			var l_lants: Array[Dictionary] = []
+			for li in 12:
+				var lang: float = TAU * float(li) / 12.0
+				l_lants.append({"pos": Vector3(cos(lang) * 65.0, 0.0, sin(lang) * 65.0), "yaw": -lang, "inward_side": -1.0})
+			ConceptSpectacle.build_ring_lanterns(holder, l_lants, Color("ffa43b"), Color("6b3822"))
+			# Planned desert sandstone aqueduct arches framing the Labyrinth oasis
+			_add_labyrinth_aqueduct_district(holder)
 			LandscapeSculptor.build_windmill(holder, Vector3(-98.0, 0.0, 74.0), 0.85, 1.25,
 				"canyon", anim)
+			LandscapeSculptor.build_giant_wind_turbine(holder, Vector3(104.0, 0.0, -76.0), -2.3, 25.0, anim)
 			LandscapeSculptor.add_biome_particles(holder, "bt_labyrinth", Vector3.ZERO, 90.0)
 		"bt_ferries":
 			var coast_pal := {
@@ -1060,14 +1086,24 @@ static func _add_dynamic_landmarks(root: Node3D, resolved: String) -> void:
 				"mid": Color("5da346"),
 				"top": Color("76bd52"),
 			}
-			for i in 10:
-				var ang: float = TAU * float(i) / 10.0 + 0.28
+			for i in 12:
+				var ang: float = TAU * float(i) / 12.0 + 0.28
 				var dist: float = 148.0 + float(i % 3) * 32.0
-				LandscapeSculptor.add_woodland_hill(batch,
-					Vector3(cos(ang) * dist, -3.2, sin(ang) * dist),
-					38.0 + float(i % 3) * 11.0, 32.0 + float((i + 1) % 3) * 9.0,
-					18.0 + float(i % 4) * 7.0, rng, coast_pal)
+				var pos := Vector3(cos(ang) * dist, -3.2, sin(ang) * dist)
+				if i % 3 == 0:
+					LandscapeSculptor.add_coastal_sea_stacks(batch, pos,
+						26.0 + float(i % 2) * 9.0, 22.0 + float(i % 4) * 7.0, rng)
+				else:
+					LandscapeSculptor.add_woodland_hill(batch, pos,
+						38.0 + float(i % 3) * 11.0, 32.0 + float((i + 1) % 3) * 9.0,
+						18.0 + float(i % 4) * 7.0, rng, coast_pal)
 			batch.flush_to(holder, "FerriesCoastline", false, SceneryKit.vertex_material())
+			# Twin glowing stunt jump hoops floating directly over the 12 m harbour channel gaps!
+			LandscapeSculptor.build_stunt_hoop(holder, Vector3(0.0, 4.6, -12.0), PI * 0.5, 4.2,
+				Color("38d6f0"), anim)
+			LandscapeSculptor.build_stunt_hoop(holder, Vector3(0.0, 4.6, 12.0), PI * 0.5, 4.2,
+				Color("ffd22e"), anim)
+			LandscapeSculptor.build_lighthouse(holder, Vector3(-118.0, -3.0, -96.0), 22.0, anim)
 			LandscapeSculptor.build_lighthouse(holder, Vector3(-108.0, -2.5, -98.0), 19.0, anim)
 			LandscapeSculptor.build_cargo_ship(holder, Vector3(-96.0, -3.1, -24.0), 0.15, 1.35, anim)
 			LandscapeSculptor.build_cargo_ship(holder, Vector3(98.0, -3.1, 28.0), 3.05, 1.30, anim)
@@ -1075,7 +1111,61 @@ static func _add_dynamic_landmarks(root: Node3D, resolved: String) -> void:
 				Color("ff9f2e"), anim)
 			LandscapeSculptor.build_port_crane(holder, Vector3(84.0, -3.0, -78.0), 2.1, 20.0,
 				Color("e65142"), anim)
+			_add_ferries_bay_bridge(holder)
 			LandscapeSculptor.add_biome_particles(holder, "bt_ferries", Vector3.ZERO, 90.0)
+
+
+static func _add_plaza_town_district(holder: Node3D) -> void:
+	## Orderly sunlit Mediterranean festival townhouses framing the outer Plaza promenade.
+	var batch := PropBatch.new()
+	var glow := PropBatch.new()
+	var walls: Array[Color] = [Color("f4dfbe"), Color("f0c9a8"), Color("e8d6b8"), Color("f5e5cc")]
+	var roofs: Array[Color] = [Color("c9573b"), Color("b84c35"), Color("d66844")]
+	for i in 12:
+		var ang: float = TAU * float(i) / 12.0 + 0.14
+		var pos := Vector3(cos(ang) * 92.0, 0.0, sin(ang) * 92.0)
+		var xf := Transform3D(Basis(Vector3.UP, -ang + PI * 0.5), pos)
+		var h: float = 8.5 + float(i % 3) * 3.2
+		batch.add_box(xf * Transform3D(Basis.IDENTITY, Vector3(0.0, h * 0.5, 0.0)),
+			Vector3(12.5, h, 9.5), walls[i % walls.size()])
+		batch.add_cone(xf * Transform3D(Basis(Vector3.UP, PI * 0.25), Vector3(0.0, h + 2.2, 0.0)),
+			8.6, 4.4, 4, roofs[i % roofs.size()])
+		glow.add_box(xf * Transform3D(Basis.IDENTITY, Vector3(0.0, h * 0.58, 4.82)),
+			Vector3(6.8, 1.8, 0.2), Color("ffe084"))
+	batch.flush_to(holder, "PlazaTownDistrict", false, SceneryKit.vertex_material())
+	glow.flush_to(holder, "PlazaTownWindows", false, ConceptSpectacle._emissive_mat(Color("ffe084"), 1.9))
+
+
+static func _add_labyrinth_aqueduct_district(holder: Node3D) -> void:
+	## Monumental sunlit sandstone aqueduct colonnades flanking the Labyrinth oasis.
+	var batch := PropBatch.new()
+	var stone := Color("d69054")
+	var cap := Color("e8b272")
+	for side: float in [-1.0, 1.0]:
+		var z_line: float = side * 94.0
+		batch.add_box(Transform3D(Basis.IDENTITY, Vector3(0.0, 14.5, z_line)),
+			Vector3(128.0, 2.8, 5.2), cap)
+		for p in 7:
+			var px: float = lerpf(-56.0, 56.0, float(p) / 6.0)
+			batch.add_box(Transform3D(Basis.IDENTITY, Vector3(px, 7.0, z_line)),
+				Vector3(4.2, 14.0, 4.6), stone)
+	batch.flush_to(holder, "LabyrinthAqueducts", false, SceneryKit.vertex_material())
+
+
+static func _add_ferries_bay_bridge(holder: Node3D) -> void:
+	## Distant coastal harbour bridge silhouette spanning the Twin Ferries bay.
+	var batch := PropBatch.new()
+	var glow := PropBatch.new()
+	var bz: float = -164.0
+	batch.add_box(Transform3D(Basis.IDENTITY, Vector3(0.0, 19.0, bz)),
+		Vector3(240.0, 2.4, 7.6), Color("46586e"))
+	for px: float in [-56.0, 56.0]:
+		batch.add_box(Transform3D(Basis.IDENTITY, Vector3(px, 23.0, bz)),
+			Vector3(4.4, 48.0, 9.0), Color("d95342"))
+		glow.add_box(Transform3D(Basis.IDENTITY, Vector3(px, 47.5, bz)),
+			Vector3(2.2, 1.4, 2.2), Color("ffd22e"))
+	batch.flush_to(holder, "FerriesBayBridge", false, SceneryKit.vertex_material())
+	glow.flush_to(holder, "FerriesBayBeacons", false, ConceptSpectacle._emissive_mat(Color("ffd22e"), 2.4))
 
 
 # ==========================================================================
