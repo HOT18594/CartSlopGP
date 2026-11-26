@@ -2853,7 +2853,8 @@ func _layout_hud() -> void:
 func _print_hud_rects() -> void:
 	## Measurement, not eyeballing: CART_CARGO_HUD=1 dumps every HUD rect and
 	## the content minimum it has to hold at both 960x540 and 1280x720.
-	var view: Vector2 = get_viewport().get_visible_rect().size
+	var vp: Viewport = get_viewport()
+	var view: Vector2 = vp.get_visible_rect().size if vp != null else Vector2(1280.0, 720.0)
 	print("CARGO_HUD viewport=%dx%d margin=%.0f gap=%.0f small=%.0f radius=%d"
 		% [int(view.x), int(view.y), SPACE_MARGIN, SPACE_GAP, SPACE_GAP_SMALL,
 		CORNER_RADIUS])
@@ -2876,7 +2877,8 @@ func _print_hud_rects() -> void:
 func _hud_clips() -> bool:
 	## True if any HUD control leaves the viewport, exceeds the 64 px scoreboard
 	## height budget, or is smaller than its own content minimum.
-	var view: Vector2 = get_viewport().get_visible_rect().size
+	var vp: Viewport = get_viewport()
+	var view: Vector2 = vp.get_visible_rect().size if vp != null else Vector2(1280.0, 720.0)
 	if _scoreboard_panel != null and is_instance_valid(_scoreboard_panel):
 		if _scoreboard_panel.get_global_rect().size.y > SCOREBOARD_MAX_HEIGHT + 0.5:
 			return true
@@ -3177,39 +3179,28 @@ func _build_result_card() -> void:
 	_result_root.add_child(center)
 
 	var panel := PanelContainer.new()
-	panel.custom_minimum_size = Vector2(560, 0)
-	var panel_style := StyleBoxFlat.new()
-	panel_style.bg_color = UiPalette.CREAM
-	panel_style.border_color = UiPalette.OUTLINE
-	panel_style.set_border_width_all(5)
-	panel_style.set_corner_radius_all(CORNER_RADIUS)
-	panel_style.content_margin_left = 5.0
-	panel_style.content_margin_right = 5.0
-	panel_style.content_margin_top = 5.0
-	panel_style.content_margin_bottom = 5.0
-	panel_style.shadow_color = Color(0.12, 0.10, 0.23, 0.45)
-	panel_style.shadow_offset = Vector2(0, 10)
-	panel.add_theme_stylebox_override("panel", panel_style)
+	panel.custom_minimum_size = Vector2(580, 0)
+	panel.add_theme_stylebox_override("panel",
+		UiKit.slanted_panel(Color(0.056, 0.068, 0.156, 0.95),
+			Color(0.24, 0.84, 0.96, 0.56), 0.055, 4, 6, 36.0, 28.0))
 	center.add_child(panel)
 
-	var pad := MarginContainer.new()
-	pad.add_theme_constant_override("margin_left", int(SPACE_MARGIN))
-	pad.add_theme_constant_override("margin_right", int(SPACE_MARGIN))
-	pad.add_theme_constant_override("margin_top", int(SPACE_MARGIN))
-	pad.add_theme_constant_override("margin_bottom", int(SPACE_MARGIN))
-	panel.add_child(pad)
 	var body := VBoxContainer.new()
 	body.add_theme_constant_override("separation", int(SPACE_GAP))
-	pad.add_child(body)
+	panel.add_child(body)
 
 	var banner := PanelContainer.new()
 	var banner_style := StyleBoxFlat.new()
 	banner_style.bg_color = UiPalette.YELLOW
-	banner_style.set_corner_radius_all(CORNER_RADIUS)
+	banner_style.border_color = UiPalette.OUTLINE
+	banner_style.set_border_width_all(3)
+	banner_style.set_corner_radius_all(5)
+	banner_style.skew = Vector2(0.14, 0.0)
 	banner_style.content_margin_left = SPACE_MARGIN
 	banner_style.content_margin_right = SPACE_MARGIN
 	banner_style.content_margin_top = SPACE_GAP_SMALL
 	banner_style.content_margin_bottom = SPACE_GAP_SMALL
+	banner_style.anti_aliasing = true
 	banner.add_theme_stylebox_override("panel", banner_style)
 	body.add_child(banner)
 	_result_title = _label("VICTORY!", 34, UiPalette.INK)
@@ -3218,43 +3209,78 @@ func _build_result_card() -> void:
 	_result_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	banner.add_child(_result_title)
 
-	_result_subtitle = _label("", 14, UiPalette.MUTED)
+	_result_subtitle = _label("", 14, UiPalette.CYAN)
 	_result_subtitle.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	body.add_child(_result_subtitle)
 
 	var scores := HBoxContainer.new()
 	scores.alignment = BoxContainer.ALIGNMENT_CENTER
-	scores.add_theme_constant_override("separation", int(SPACE_GAP * 2.0))
+	scores.add_theme_constant_override("separation", 20)
 	body.add_child(scores)
+	var team_accents: Array[Color] = [UiPalette.BLUE, UiPalette.RED]
 	for team in TEAM_COUNT:
+		var score_card := PanelContainer.new()
+		score_card.custom_minimum_size = Vector2(180.0, 0.0)
+		score_card.add_theme_stylebox_override("panel",
+			UiKit.slanted_card(Color(0.095, 0.112, 0.228, 0.92),
+				team_accents[team], 0.14, 2, 5, 18.0, 12.0))
+		scores.add_child(score_card)
 		var column := VBoxContainer.new()
 		column.alignment = BoxContainer.ALIGNMENT_CENTER
-		column.add_theme_constant_override("separation", 0)
-		scores.add_child(column)
-		var team_label := _label(_team_names[team], 14, UiPalette.MUTED)
+		column.add_theme_constant_override("separation", 2)
+		score_card.add_child(column)
+		var team_label := _label(_team_names[team], 14, team_accents[team])
 		team_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		column.add_child(team_label)
-		var value := _label("0", 36, UiPalette.INK, 0)
+		var value := _label("0", 38, UiPalette.CREAM, 0)
 		value.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		column.add_child(value)
 		_result_team_labels.append(team_label)
 		_result_score_labels.append(value)
 
-	_result_note = _label("FIRST TO %d DELIVERIES WINS" % _target, 12,
-		UiPalette.MUTED)
+	_result_note = _label("FIRST TO %d DELIVERIES WINS" % _target, 13,
+		UiPalette.TEXT_DIM)
 	_result_note.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	body.add_child(_result_note)
 
 	if _multiplayer:
-		_result_primary = _make_button("BACK TO LOBBY", UiPalette.YELLOW, 58.0)
-		_result_primary.pressed.connect(_on_back_to_lobby)
+		if _is_host:
+			_result_primary = _make_button("PLAY AGAIN", UiPalette.YELLOW, 54.0)
+			_result_primary.pressed.connect(_on_play_again)
+			body.add_child(_result_primary)
+			var sec_row := HBoxContainer.new()
+			sec_row.add_theme_constant_override("separation", 14)
+			body.add_child(sec_row)
+			var lobby_btn := _make_button("BACK TO LOBBY", UiPalette.CYAN, 50.0)
+			lobby_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			lobby_btn.pressed.connect(_on_back_to_lobby)
+			sec_row.add_child(lobby_btn)
+			var menu := _make_button("MAIN MENU", UiPalette.RED, 50.0)
+			menu.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			menu.pressed.connect(_on_main_menu)
+			sec_row.add_child(menu)
+		else:
+			_result_primary = _make_button("BACK TO LOBBY", UiPalette.YELLOW, 56.0)
+			_result_primary.pressed.connect(_on_back_to_lobby)
+			body.add_child(_result_primary)
+			var menu := _make_button("MAIN MENU", UiPalette.RED, 50.0)
+			menu.pressed.connect(_on_main_menu)
+			body.add_child(menu)
 	else:
-		_result_primary = _make_button("PLAY AGAIN", UiPalette.YELLOW, 58.0)
+		_result_primary = _make_button("PLAY AGAIN", UiPalette.YELLOW, 56.0)
 		_result_primary.pressed.connect(_on_play_again)
-	body.add_child(_result_primary)
-	var menu := _make_button("MAIN MENU", UiPalette.BLUE, 52.0)
-	menu.pressed.connect(_on_main_menu)
-	body.add_child(menu)
+		body.add_child(_result_primary)
+		var sec_row := HBoxContainer.new()
+		sec_row.add_theme_constant_override("separation", 14)
+		body.add_child(sec_row)
+		var back_btn := _make_button("BACK TO MODES", UiPalette.CYAN, 50.0)
+		back_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		back_btn.pressed.connect(_on_back_to_lobby)
+		sec_row.add_child(back_btn)
+		var menu := _make_button("MAIN MENU", UiPalette.RED, 50.0)
+		menu.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		menu.pressed.connect(_on_main_menu)
+		sec_row.add_child(menu)
 
 
 func _make_button(text: String, colour: Color, height: float) -> Button:
@@ -3905,6 +3931,8 @@ func _probe_structure() -> void:
 
 func _on_play_again() -> void:
 	if _multiplayer:
+		if _is_host:
+			Network.start_game(SCENE_PATH, GameSettings.GAME_MINIGAMES)
 		return
 	SceneLoader.go_to(SCENE_PATH, "CARGO RUSH", "PRESENT RELAY")
 

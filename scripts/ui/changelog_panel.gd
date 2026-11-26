@@ -7,12 +7,12 @@ const CHANGELOG_PATH: String = "res://CHANGELOG.md"
 const UiAnim := preload("res://scripts/ui/ui_anim.gd")
 const UiPalette := preload("res://scripts/ui/ui_palette.gd")
 
-const INK: String = "#1e1b3a"
-const BLUE: String = "#2a8fc4"
-const CYAN: String = "#45b6f0"
-const GOLD: String = "#b97900"
-const MUTED: String = "#7284a6"
-const NOTE_INK: String = "#4b5c82"
+const INK: String = "#f4f7ff"
+const BLUE: String = "#5fd1ff"
+const CYAN: String = "#38d6f0"
+const GOLD: String = "#ffd22e"
+const MUTED: String = "#9aa8c7"
+const NOTE_INK: String = "#c5d2eb"
 
 const PANEL_MAX_WIDTH: float = 860.0
 const PANEL_MAX_HEIGHT: float = 600.0
@@ -41,6 +41,10 @@ var _selected_release: int = -1
 func _ready() -> void:
 	add_to_group("nav_scope")
 	hide()
+	if _panel != null:
+		_panel.add_theme_stylebox_override("panel",
+			UiKit.slanted_panel(Color(0.056, 0.068, 0.156, 0.95),
+				Color(0.24, 0.84, 0.96, 0.56), 0.042, 4, 6, 36.0, 26.0))
 	_back_button.pressed.connect(close)
 	_all_versions_button.pressed.connect(_show_list)
 	_compact_button(_back_button, float(UiKit.SPACING), float(UiKit.SPACING_TIGHT))
@@ -112,11 +116,11 @@ func _unhandled_input(event: InputEvent) -> void:
 	if not visible:
 		return
 	if event.is_action_pressed("pause") or event.is_action_pressed("ui_cancel"):
+		UiKit.consume_input(self)
 		if _detail_view.visible:
 			_show_list()
 		else:
 			close()
-		get_viewport().set_input_as_handled()
 
 
 func _scrollbar_reserve() -> float:

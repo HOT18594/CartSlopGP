@@ -236,11 +236,12 @@ func _apply_styles() -> void:
 func _make(color: Color, drop: int) -> StyleBoxFlat:
 	var box := StyleBoxFlat.new()
 	box.bg_color = color
-	box.set_corner_radius_all(30)
-	box.set_border_width_all(6)
+	box.set_corner_radius_all(10)
+	box.skew = Vector2(0.08, 0.0)
+	box.set_border_width_all(5)
 	box.border_color = UiPalette.OUTLINE
-	box.shadow_color = Color(0.08, 0.06, 0.18, 0.54)
-	box.shadow_size = 3
-	box.shadow_offset = Vector2(0, drop)
+	box.shadow_color = Color(0.04, 0.03, 0.12, 0.62)
+	box.shadow_size = 5
+	box.shadow_offset = Vector2(4, drop)
 	box.anti_aliasing = true
 	return box

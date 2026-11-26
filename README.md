@@ -18,15 +18,14 @@ Hop-drift a twin-thruster Hero Shopping Cart or custom-painted Pro Racer across 
 
 ---
 
-## Highlights in v0.8.5 — The Grand Spectacle Overhaul
+## Highlights in v0.8.6 — Glacier Pass Alpine Overhaul, Full Slanted UI & macOS Fix
 
 ![Glacier Pass Northern Lights](assets/ui/art/preview_glacier.png)
 
-- **All-New Racing-Sim UI, 3D Neon Garage & Studio Key Art** — Every menu, lobby, mode picker, and map card has been rebuilt into a crisp slanted-parallelogram racing-sim UI with custom studio artwork, curved-corner app icon, full `WASD` + Arrow navigation, universal `ESC` back-out on every screen, and snappy animations.
-- **Unified `PRO RACER` + Custom Paint Shop & Hero Turbo Shopping Cart** — All 4 racer variants are now one unified **PRO RACER** with an 8-color live paint selector, while the signature **Shopping Cart** has been rebuilt with coaxial twin rear nitro thrusters, carbon GT wing, LED headlights, and sleeker drift sparks & nitro ember trails.
-- **Multiplayer Vehicle Freedom (`PICK OWN` vs `SHARED`)** — Hosts can now switch any room between **PICK OWN** (every player picks their own vehicle, paint color, and 4-stat racing tune right from the lobby!) and **SHARED** (everyone drives the host's ride), synced cleanly across all 5 modes with sleeker overhead nametags.
-- **Concept-Art Worlds & Full 6-Track Mastered Soundtrack** — Shimmering Northern Lights aurora skies, warm lantern floor glow pools, fluid biome-blended grounds, expansive far-horizon worlds across Knockout, Blast Tag, and Deliver, a rethought `[E]` Combat & Ability Dock, and 6 custom-mastered Suno music tracks with smooth DJ crossfades!
-- **Rock-Solid Sandbox & Platform Polish** — Fixed Sandbox floor-phasing on spawn, fixed backwards stadium bleachers, replaced blue pads/arrows with solar orange-gold speed pads & forward chevrons, and verified all 4 platform builds + auto-updater end to end.
+- **Glacier Pass Complete 3D Alpine Night Overhaul & Twin Chasm Jumps** — Rebuilt Glacier Pass into an `1,813 m` cliffside mountain pass ringed by a sculpted 3D ridged-multifractal alpine mountain range, multi-tone winter snow valleys under a midnight Northern Lights sky, and twin `17.35 m` broken-bridge chasm jumps with weight-balanced launch physics across every vehicle.
+- **100% Slanted Dark-Glass UI Unification** — Refreshed the **Room Browser**, **Pause Menu**, **Settings**, **Update Dialog**, **Changelog**, **Play Menu**, and **all 4 Game-End Screens** (Racing, Knockout, Deliver, Blast Tag) so every screen — including outer panel borders, inputs, cards, rows, and focus halos — shares one crisp slanted racing-sim telemetry aesthetic, plus multiplayer host rematch support across every mode.
+- **Critical macOS ARM-64 Crash Fix** — Eliminated the `0.8.5` release-build `EXC_BAD_ACCESS (0x450)` crash in `Viewport::set_input_as_handled()` when pressing `ESC` / backing out of menus during scene swaps, and verified all 4 platform builds (`Windows`, `macOS Universal`, `Linux`, `Web`).
+- **Unified `PRO RACER` Paint Shop, Hero Shopping Cart & 6-Track OST** — 8-color live paint shop, coaxial twin-thruster Shopping Cart, `PICK OWN` vs `SHARED` multiplayer vehicle freedom, `[E]` Combat & Ability Dock, and 6 custom-mastered OGG tracks with DJ crossfades.
 ---
 
 ## 5 High-Verticality Racing Circuits

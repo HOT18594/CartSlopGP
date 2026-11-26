@@ -916,30 +916,30 @@ func _unhandled_input(event: InputEvent) -> void:
 	if SceneLoader.is_busy():
 		return
 	if event.is_action_pressed("ui_cancel"):
+		UiKit.consume_input(self)
 		_on_back()
-		get_viewport().set_input_as_handled()
 		return
 	if event is InputEventKey:
 		var key := event as InputEventKey
 		if key.pressed and not key.echo:
 			if key.keycode == KEY_Q or key.keycode == KEY_PAGEUP:
+				UiKit.consume_input(self)
 				_step(-1)
-				get_viewport().set_input_as_handled()
 				return
 			elif key.keycode == KEY_E or key.keycode == KEY_PAGEDOWN:
+				UiKit.consume_input(self)
 				_step(1)
-				get_viewport().set_input_as_handled()
 				return
 	elif event is InputEventJoypadButton:
 		var pad_btn := event as InputEventJoypadButton
 		if pad_btn.pressed:
 			if pad_btn.button_index == JOY_BUTTON_LEFT_SHOULDER:
+				UiKit.consume_input(self)
 				_step(-1)
-				get_viewport().set_input_as_handled()
 				return
 			elif pad_btn.button_index == JOY_BUTTON_RIGHT_SHOULDER:
+				UiKit.consume_input(self)
 				_step(1)
-				get_viewport().set_input_as_handled()
 				return
 	var direction: int = 0
 	if event.is_action_pressed("ui_left"):
@@ -947,7 +947,7 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif event.is_action_pressed("ui_right"):
 		direction = 1
 	if direction != 0 and nav_horizontal(direction):
-		get_viewport().set_input_as_handled()
+		UiKit.consume_input(self)
 
 
 func nav_horizontal(direction: int) -> bool:

@@ -261,23 +261,9 @@ func _ready() -> void:
 
 func _tune_shell_chrome() -> void:
 	if _panel != null:
-		var style := StyleBoxFlat.new()
-		style.bg_color = Color(0.052, 0.062, 0.142, 0.88)
-		style.border_color = Color(0.22, 0.84, 0.94, 0.42)
-		style.border_width_top = 4
-		style.border_width_bottom = 4
-		style.border_width_left = 4
-		style.border_width_right = 4
-		style.set_corner_radius_all(6)
-		style.shadow_color = Color(0.02, 0.02, 0.08, 0.65)
-		style.shadow_size = 14
-		style.shadow_offset = Vector2(0, 10)
-		style.content_margin_left = 30.0
-		style.content_margin_right = 30.0
-		style.content_margin_top = 20.0
-		style.content_margin_bottom = 20.0
-		style.anti_aliasing = true
-		_panel.add_theme_stylebox_override("panel", style)
+		_panel.add_theme_stylebox_override("panel",
+			UiKit.slanted_panel(Color(0.052, 0.062, 0.146, 0.93),
+				Color(0.24, 0.84, 0.96, 0.54), 0.042, 4, 6, 36.0, 22.0))
 	if _title != null:
 		_title.add_theme_color_override("font_color", UiPalette.YELLOW)
 		_title.add_theme_color_override("font_outline_color", UiPalette.INK)
@@ -404,14 +390,16 @@ func _style_dark_input(field: LineEdit) -> void:
 	field.add_theme_color_override("caret_color", UiPalette.YELLOW)
 	field.add_theme_color_override("selection_color", Color(UiPalette.CYAN, 0.35))
 	var normal := StyleBoxFlat.new()
-	normal.bg_color = Color(0.05, 0.06, 0.13, 0.94)
-	normal.border_color = Color(0.32, 0.78, 0.95, 0.45)
+	normal.bg_color = Color(0.05, 0.06, 0.13, 0.95)
+	normal.border_color = Color(0.32, 0.78, 0.95, 0.48)
 	normal.set_border_width_all(3)
-	normal.set_corner_radius_all(4)
-	normal.content_margin_left = 12.0
-	normal.content_margin_right = 12.0
+	normal.set_corner_radius_all(5)
+	normal.skew = Vector2(0.14, 0.0)
+	normal.content_margin_left = 14.0
+	normal.content_margin_right = 14.0
 	normal.content_margin_top = 8.0
 	normal.content_margin_bottom = 8.0
+	normal.anti_aliasing = true
 	field.add_theme_stylebox_override("normal", normal)
 	var focus_st: StyleBoxFlat = normal.duplicate() as StyleBoxFlat
 	focus_st.border_color = UiPalette.YELLOW
@@ -424,19 +412,20 @@ func _style_dark_input(field: LineEdit) -> void:
 
 func _card_panel(parent: Node, pad_h: int = 16, pad_v: int = 14,
 		tint: Color = Color(0.075, 0.088, 0.195, 0.92),
-		_accent: Color = Color(0.22, 0.84, 0.94, 0.50)) -> PanelContainer:
+		accent: Color = Color(0.22, 0.84, 0.94, 0.34)) -> PanelContainer:
 	var panel := PanelContainer.new()
 	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var style := StyleBoxFlat.new()
 	style.bg_color = tint
-	style.set_corner_radius_all(4)
+	style.set_corner_radius_all(5)
+	style.skew = Vector2(0.055, 0.0)
 	style.set_border_width_all(2)
-	style.border_color = Color(1.0, 1.0, 1.0, 0.16)
-	style.content_margin_left = pad_h
-	style.content_margin_right = pad_h
+	style.border_color = Color(accent.r, accent.g, accent.b, 0.36)
+	style.content_margin_left = pad_h + 4
+	style.content_margin_right = pad_h + 4
 	style.content_margin_top = pad_v
 	style.content_margin_bottom = pad_v
-	style.shadow_color = Color(0.02, 0.02, 0.08, 0.48)
+	style.shadow_color = Color(0.02, 0.02, 0.08, 0.50)
 	style.shadow_size = 6
 	style.shadow_offset = Vector2(3, 5)
 	style.anti_aliasing = true
@@ -507,7 +496,8 @@ func _build_profile() -> void:
 		swatch_button.tooltip_text = "%s TAG" % str(swatch["name"])
 		var swatch_style := StyleBoxFlat.new()
 		swatch_style.bg_color = Color(hex)
-		swatch_style.set_corner_radius_all(9)
+		swatch_style.set_corner_radius_all(4)
+		swatch_style.skew = Vector2(0.18, 0.0)
 		swatch_style.set_border_width_all(3)
 		swatch_style.border_color = UiPalette.INK
 		swatch_style.anti_aliasing = true
@@ -533,10 +523,11 @@ func _build_profile() -> void:
 	server_pill.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	server_pill.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_server_pill_style = StyleBoxFlat.new()
-	_server_pill_style.bg_color = Color(UiPalette.BLUE, 0.22)
-	_server_pill_style.set_corner_radius_all(12)
+	_server_pill_style.bg_color = Color(0.08, 0.14, 0.28, 0.92)
+	_server_pill_style.set_corner_radius_all(5)
+	_server_pill_style.skew = Vector2(0.20, 0.0)
 	_server_pill_style.set_border_width_all(2)
-	_server_pill_style.border_color = UiPalette.OUTLINE
+	_server_pill_style.border_color = UiPalette.CYAN
 	_server_pill_style.content_margin_left = 18.0
 	_server_pill_style.content_margin_right = 18.0
 	_server_pill_style.content_margin_top = 8.0
@@ -546,7 +537,7 @@ func _build_profile() -> void:
 	_server_pill_label = Label.new()
 	_server_pill_label.text = "● CHECKING..."
 	_server_pill_label.add_theme_font_size_override("font_size", 13)
-	_server_pill_label.add_theme_color_override("font_color", UiPalette.INK)
+	_server_pill_label.add_theme_color_override("font_color", UiPalette.CYAN)
 	_server_pill_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	server_pill.add_child(_server_pill_label)
 	_profile_row.add_child(server_pill)
@@ -705,17 +696,9 @@ func _build_idle() -> void:
 func _idle_art_banner(texture: Texture2D, accent: Color) -> PanelContainer:
 	var frame := PanelContainer.new()
 	frame.custom_minimum_size = Vector2(0.0, 186.0)
-	frame.clip_contents = true
+	frame.clip_contents = false
 	frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var style := StyleBoxFlat.new()
-	style.bg_color = UiPalette.OUTLINE
-	style.set_corner_radius_all(4)
-	style.content_margin_left = 3.0
-	style.content_margin_right = 3.0
-	style.content_margin_top = 3.0
-	style.content_margin_bottom = 3.0
-	style.anti_aliasing = true
-	frame.add_theme_stylebox_override("panel", style)
+	frame.add_theme_stylebox_override("panel", StyleBoxEmpty.new())
 	if texture != null:
 		var anim_banner := _AnimatedBanner.new()
 		anim_banner.texture = texture
@@ -781,27 +764,35 @@ func _build_room() -> void:
 	_lobby_preview_tex.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	shot_stack.add_child(_lobby_preview_tex)
 
-	# Bottom dark scrim for map title readability over bright screenshots
-	var scrim := ColorRect.new()
-	scrim.color = Color(0.04, 0.05, 0.14, 0.68)
+	# Bottom slanted dark scrim for map title readability over bright screenshots
+	var scrim := PanelContainer.new()
+	var scrim_st := StyleBoxFlat.new()
+	scrim_st.bg_color = Color(0.04, 0.05, 0.14, 0.78)
+	scrim_st.skew = Vector2(0.16, 0.0)
+	scrim_st.set_corner_radius_all(3)
+	scrim_st.anti_aliasing = true
+	scrim.add_theme_stylebox_override("panel", scrim_st)
 	scrim.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	scrim.anchor_left = 0.0
 	scrim.anchor_right = 1.0
 	scrim.anchor_top = 1.0
 	scrim.anchor_bottom = 1.0
-	scrim.offset_top = -56.0
-	scrim.offset_bottom = 0.0
+	scrim.offset_left = 10.0
+	scrim.offset_right = -24.0
+	scrim.offset_top = -54.0
+	scrim.offset_bottom = -4.0
 	shot_stack.add_child(scrim)
 
 	var mode_chip := PanelContainer.new()
 	mode_chip.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	mode_chip.anchor_left = 0.0
 	mode_chip.anchor_top = 0.0
-	mode_chip.offset_left = 10.0
+	mode_chip.offset_left = 26.0
 	mode_chip.offset_top = 10.0
 	_lobby_mode_chip_style = StyleBoxFlat.new()
 	_lobby_mode_chip_style.bg_color = UiPalette.GRASS
-	_lobby_mode_chip_style.set_corner_radius_all(8)
+	_lobby_mode_chip_style.set_corner_radius_all(4)
+	_lobby_mode_chip_style.skew = Vector2(0.20, 0.0)
 	_lobby_mode_chip_style.set_border_width_all(2)
 	_lobby_mode_chip_style.border_color = UiPalette.OUTLINE
 	_lobby_mode_chip_style.content_margin_left = 16.0
@@ -1493,8 +1484,10 @@ func _set_server_status(online: bool, detail: String) -> void:
 	if detail == "checking":
 		if _server_pill_label != null:
 			_server_pill_label.text = "● CHECKING..."
+			_server_pill_label.add_theme_color_override("font_color", UiPalette.CYAN)
 		if _server_pill_style != null:
-			_server_pill_style.bg_color = Color(UiPalette.BLUE, 0.25)
+			_server_pill_style.bg_color = Color(0.08, 0.14, 0.28, 0.92)
+			_server_pill_style.border_color = UiPalette.CYAN
 		return
 	_server_checked = true
 	if _join_button != null:
@@ -1508,8 +1501,10 @@ func _set_server_status(online: bool, detail: String) -> void:
 		_apply_soft_disabled(_host_pi_button)
 	if _server_pill_label != null:
 		_server_pill_label.text = "● ONLINE" if online else "● LAN ONLY"
+		_server_pill_label.add_theme_color_override("font_color", UiPalette.INK)
 	if _server_pill_style != null:
 		_server_pill_style.bg_color = UiPalette.GRASS if online else UiPalette.YELLOW
+		_server_pill_style.border_color = UiPalette.OUTLINE
 	if _retry_button != null:
 		_retry_button.visible = not online
 		_retry_button.disabled = false
@@ -1857,7 +1852,7 @@ func _set_join_status(text: String) -> void:
 		return
 	_join_status.text = text
 	_join_status.add_theme_color_override("font_color",
-		UiPalette.BLUE_DARK if text.begins_with("Connecting") or text.begins_with("Joining")
+		UiPalette.CYAN if text.begins_with("Connecting") or text.begins_with("Joining")
 		else UiPalette.RED)
 
 
@@ -2032,13 +2027,14 @@ func _refresh_players() -> void:
 		var is_local: bool = peer_id == multiplayer.get_unique_id()
 		var row_panel := PanelContainer.new()
 		var row_style := StyleBoxFlat.new()
-		row_style.bg_color = Color(0.14, 0.28, 0.42, 0.85) if is_local \
-			else Color(0.11, 0.13, 0.25, 0.82)
-		row_style.border_color = UiPalette.CYAN if is_local else Color(1.0, 1.0, 1.0, 0.14)
+		row_style.bg_color = Color(0.14, 0.28, 0.42, 0.88) if is_local \
+			else Color(0.11, 0.13, 0.25, 0.86)
+		row_style.border_color = UiPalette.CYAN if is_local else Color(0.28, 0.72, 0.94, 0.22)
 		row_style.set_border_width_all(2)
 		row_style.set_corner_radius_all(4)
-		row_style.content_margin_left = 14.0
-		row_style.content_margin_right = 14.0
+		row_style.skew = Vector2(0.14, 0.0)
+		row_style.content_margin_left = 16.0
+		row_style.content_margin_right = 16.0
 		row_style.content_margin_top = 8.0
 		row_style.content_margin_bottom = 8.0
 		row_style.anti_aliasing = true

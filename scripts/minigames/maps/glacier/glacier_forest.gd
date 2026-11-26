@@ -303,10 +303,18 @@ static func _band(ctx: Dictionary, grid: Dictionary, side: float,
 			if clearance < TREE_CLEARANCE:
 				ctx["rejected"] = int(ctx["rejected"]) + 1
 				continue
+			# High cliffside pass (deck >= 4.5 m) sits above the alpine treeline, and
+			# outer slopes (clearance > 37.5 m) rise into the 3D sculpted mountain range:
+			# keep trees in the valley floor & lower snow apron so no treetop pokes out
+			# of a 3D mountain slope or cliff face!
+			if centreline.y >= 4.5 or clearance > 37.5:
+				ctx["rejected"] = int(ctx["rejected"]) + 1
+				continue
 			ctx["pine_closest"] = minf(float(ctx["pine_closest"]), clearance)
 			var counts: Dictionary = ctx["counts"] as Dictionary
 			counts[tag] = int(counts.get(tag, 0)) + 1
-			_plant_pine(rng, point, species, float(sector["height"]), entries,
+			var h_scale: float = float(sector["height"])
+			_plant_pine(rng, point, species, h_scale, entries,
 				grid)
 
 
@@ -357,7 +365,7 @@ static func _ridge(ctx: Dictionary, grid: Dictionary, entries: Array) -> void:
 			if _cluster(point.x * 0.4, point.z * 0.4) < 0.30:
 				continue
 			var clearance: float = _clearance(spline, point)
-			if clearance < RIDGE_CLEARANCE:
+			if clearance < RIDGE_CLEARANCE or clearance > 78.0:
 				continue
 			ctx["ridge_closest"] = minf(float(ctx["ridge_closest"]), clearance)
 			if not _room(grid, point, RIDGE_SPACING):

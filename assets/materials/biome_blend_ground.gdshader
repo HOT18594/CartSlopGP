@@ -1,5 +1,5 @@
 shader_type spatial;
-render_mode diffuse_burley, specular_schlick_ggx;
+render_mode diffuse_burley, specular_schlick_ggx, cull_disabled;
 
 // Cart Slop GP: Stylized Fluid Multi-Region Ground Shader
 // Blends smoothly between vertex-colored terrain/floor regions with soft

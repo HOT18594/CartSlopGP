@@ -165,7 +165,8 @@ func _ready() -> void:
 	_launch_chips = $LaunchChips as GPUParticles3D
 	_impact_sparks = $ImpactSparks as GPUParticles3D
 	_paint_chips = $PaintChips as GPUParticles3D
-	_camera = get_viewport().get_camera_3d()
+	var vp: Viewport = get_viewport()
+	_camera = vp.get_camera_3d() if vp != null else null
 	# Spawn ribbons before the rival early-out. Every catalog vehicle - cart,
 	# racing class, truck, van and the AI drivers of any of them - must mark.
 	_spawn_skid_trails()
@@ -627,7 +628,8 @@ func _process(delta: float) -> void:
 		return
 	_fx_clock += delta
 	if _camera == null or not is_instance_valid(_camera):
-		_camera = get_viewport().get_camera_3d()
+		var vp: Viewport = get_viewport()
+		_camera = vp.get_camera_3d() if vp != null else null
 	if _wind != null and _camera != null:
 		_wind.global_transform = _camera.global_transform
 	_update_exhaust_flames(delta)
@@ -641,7 +643,8 @@ func _physics_process(delta: float) -> void:
 		return
 	# A freed camera still compares unequal to null, so test validity too.
 	if _camera == null or not is_instance_valid(_camera):
-		_camera = get_viewport().get_camera_3d()
+		var vp: Viewport = get_viewport()
+		_camera = vp.get_camera_3d() if vp != null else null
 	var speed: float = _cart.velocity.length()
 	var grounded: bool = _cart.is_on_floor()
 	var drifting: bool = _cart.is_drifting

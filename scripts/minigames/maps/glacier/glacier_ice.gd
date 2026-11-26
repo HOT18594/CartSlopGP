@@ -21,10 +21,11 @@ const KenneyTiles := preload("res://scripts/minigames/tiles/kenney_tiles.gd")
 const GlacierSurface := preload("res://scripts/minigames/maps/glacier/glacier_surface.gd")
 
 const NODE_NAME: String = "GlacierIceSheen"
-## Cold cartoon ice: one flat translucent blue, no texture, no reflection.
-const SHEEN_COLOR := Color(0.70, 0.89, 1.0, 0.55)
+## Cold stylized glacial ice: rich translucent cyan-sapphire sheen with
+## bright crystalline frost track highlights.
+const SHEEN_COLOR := Color(0.52, 0.85, 1.0, 0.62)
 const STEP: float = 3.0
-const EDGE_INSET: float = 0.35
+const EDGE_INSET: float = 0.30
 ## The legacy grass_race dirt ribbon is painted at y = 0.04.
 const FALLBACK_ROAD_TOP: float = 0.04
 const FALLBACK_GRID_TOP: float = 0.32
@@ -116,8 +117,8 @@ static func _add_span(spline: RefCounted, from_distance: float,
 		indices.append(base + 3)
 
 
-## True on a bump or jump cell, where the road crest rises above the flat
-## sheen. The legacy spline has no tiles, so nothing is skipped there.
+## True on a bump, jump cell, or the carved broken-chasm cell immediately
+## following a jump cell, so the ice sheet never stretches across open air!
 static func _is_raised(spline: RefCounted, distance: float) -> bool:
 	if not spline.has_method("tile_at"):
 		return false
@@ -125,7 +126,12 @@ static func _is_raised(spline: RefCounted, distance: float) -> bool:
 	if not (tile is Dictionary):
 		return false
 	var tile_char: String = str((tile as Dictionary).get("tile", ""))
-	return tile_char == "B" or tile_char == "J"
+	if tile_char == "B" or tile_char == "J":
+		return true
+	var prev_tile: Variant = spline.call("tile_at", distance - 14.0)
+	if prev_tile is Dictionary and str((prev_tile as Dictionary).get("tile", "")) == "J":
+		return true
+	return false
 
 
 ## Height of the visible road top. On any Kenney grid map (flat MultiMesh

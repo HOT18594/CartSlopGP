@@ -43,6 +43,7 @@ const GlacierIce := preload("res://scripts/minigames/maps/glacier/glacier_ice.gd
 const GlacierGround := preload("res://scripts/minigames/maps/glacier/glacier_ground.gd")
 const GlacierSurface := preload("res://scripts/minigames/maps/glacier/glacier_surface.gd")
 const GlacierCourse := preload("res://scripts/minigames/maps/glacier/glacier_course.gd")
+const GlacierChasm := preload("res://scripts/minigames/maps/glacier/glacier_chasm.gd")
 const AmbientWorld := preload("res://scripts/minigames/scenery/ambient_world.gd")
 
 const HOLDER_NAME: String = "GlacierDressing"
@@ -77,6 +78,7 @@ static func build(race: Node3D, spline) -> void:
 	var forest: Dictionary = GlacierForest.build(holder, spline)
 	var terrain: Dictionary = GlacierTerrain.build(holder, spline)
 	var ice: Dictionary = GlacierIce.build(holder, race, spline, preset)
+	var chasm: Dictionary = GlacierChasm.build(holder, race, spline)
 	var ground: int = GlacierGround.build(race, preset)
 	_apply_climate(race, preset)
 	var measured: Dictionary = _measure(holder)
@@ -98,6 +100,7 @@ static func build(race: Node3D, spline) -> void:
 		"outcrops": int(terrain.get("outcrops", 0)),
 		"ridges": int(terrain.get("ridges", 0)),
 		"pylons": int(terrain.get("pylons", 0)),
+		"chasms": int(chasm.get("chasms", 0)),
 		"ice_spans": int(ice.get("spans", 0)),
 		"ice_length": float(ice.get("length", 0.0)),
 		"ice_top": float(ice.get("top", 0.0)),
@@ -175,37 +178,48 @@ static func _descendants(root: Node) -> Array[Node]:
 	return found
 
 
-## Aurora Twilight alpine grade matching bg_hero_glacier.png: deep indigo-violet
-## twilight sky with glowing bloom so Northern Lights curtains, luminous turquoise
-## ice crystals, and warm golden trackside lanterns pop dramatically!
+## Winter Night & Aurora Moonlit Alpine Grade:
+## Keeps the sky a true deep dark winter night so the Northern Lights & stars pop,
+## while bathing the 3D sculpted snow mountains, valley snowfields, and cliffs in
+## luminous icy moonlight + soft opposite aurora fill light (zero black shadows!).
 static func _apply_climate(race: Node3D, _preset: Dictionary) -> void:
 	var world := race.get_node_or_null("WorldEnvironment") as WorldEnvironment
 	if world != null and world.environment != null:
 		var env: Environment = world.environment.duplicate() as Environment
-		var twilight_haze := Color("284375")
+		var winter_haze := Color("2b4f82")
 		env.fog_enabled = true
 		env.fog_mode = Environment.FOG_MODE_EXPONENTIAL
-		env.fog_light_color = twilight_haze
-		env.fog_light_energy = 0.85
-		env.fog_density = 0.0011
-		env.fog_aerial_perspective = 0.45
-		env.fog_sky_affect = 0.12
-		env.ambient_light_color = Color("7ea8e8")
-		env.ambient_light_energy = 0.78
+		env.fog_light_color = winter_haze
+		env.fog_light_energy = 0.78
+		env.fog_density = 0.00038
+		env.fog_aerial_perspective = 0.22
+		env.fog_sky_affect = 0.03
+		env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+		env.ambient_light_color = Color("78aae8")
+		env.ambient_light_energy = 0.74
+		env.ambient_light_sky_contribution = 0.10
 		env.glow_enabled = true
-		env.glow_intensity = 0.45
-		env.glow_bloom = 0.14
-		env.glow_hdr_threshold = 1.05
+		env.glow_intensity = 0.48
+		env.glow_bloom = 0.10
+		env.glow_hdr_threshold = 1.02
 		if env.sky != null and env.sky.sky_material is ProceduralSkyMaterial:
 			var sky: ProceduralSkyMaterial = \
 				env.sky.sky_material as ProceduralSkyMaterial
-			sky.sky_top_color = Color("0a1438")
-			sky.sky_horizon_color = Color("345a92")
-			sky.sky_curve = 0.24
-			sky.ground_horizon_color = Color("2a4778")
-			sky.ground_bottom_color = Color("101c3a")
+			sky.sky_top_color = Color("04081a")
+			sky.sky_horizon_color = Color("152c54")
+			sky.sky_curve = 0.20
+			sky.ground_horizon_color = Color("224270")
+			sky.ground_bottom_color = Color("142848")
 		world.environment = env
 	var sun := race.get_node_or_null("Sun") as DirectionalLight3D
 	if sun != null:
-		sun.light_color = Color("cfe8ff")
-		sun.light_energy = 0.96
+		sun.light_color = Color("eaf4ff")
+		sun.light_energy = 0.94
+	if not race.has_node("GlacierAuroraFillLight"):
+		var fill := DirectionalLight3D.new()
+		fill.name = "GlacierAuroraFillLight"
+		fill.light_color = Color("62a4eb")
+		fill.light_energy = 0.36
+		fill.shadow_enabled = false
+		fill.rotation_degrees = Vector3(-36.0, 142.0, 0.0)
+		race.add_child(fill)

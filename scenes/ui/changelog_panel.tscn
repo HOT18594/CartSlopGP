@@ -48,7 +48,9 @@ theme_override_constants/separation = 16
 layout_mode = 2
 size_flags_horizontal = 3
 theme_type_variation = &"TitleLabel"
-theme_override_colors/font_color = Color(0.117647, 0.105882, 0.227451, 1)
+theme_override_colors/font_color = Color(1, 0.823529, 0.180392, 1)
+theme_override_colors/font_outline_color = Color(0.117647, 0.105882, 0.227451, 1)
+theme_override_constants/outline_size = 8
 theme_override_font_sizes/font_size = 38
 text = "CHANGELOG"
 
@@ -56,9 +58,9 @@ text = "CHANGELOG"
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_vertical = 4
-theme_override_colors/font_color = Color(0.109804, 0.427451, 0.580392, 1)
+theme_override_colors/font_color = Color(0.219608, 0.839216, 0.941176, 1)
 theme_override_font_sizes/font_size = 18
-text = "CURRENT  v0.8.0"
+text = "CURRENT  v0.8.6"
 horizontal_alignment = 2
 
 [node name="ListView" type="VBoxContainer" parent="Panel/Body"]
@@ -69,7 +71,7 @@ theme_override_constants/separation = 12
 
 [node name="Prompt" type="Label" parent="Panel/Body/ListView"]
 layout_mode = 2
-theme_override_colors/font_color = Color(0.109804, 0.427451, 0.580392, 1)
+theme_override_colors/font_color = Color(0.76, 0.84, 0.96, 0.85)
 theme_override_font_sizes/font_size = 15
 text = "SELECT A RELEASE"
 horizontal_alignment = 1
@@ -122,7 +124,7 @@ custom_minimum_size = Vector2(0, 220)
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
-theme_override_colors/default_color = Color(0.117647, 0.105882, 0.227451, 1)
+theme_override_colors/default_color = Color(0.95, 0.96, 1, 1)
 theme_override_font_sizes/normal_font_size = 17
 theme_override_constants/line_separation = 6
 bbcode_enabled = true

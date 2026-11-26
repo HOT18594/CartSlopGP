@@ -2437,7 +2437,7 @@ func _build_overlay() -> void:
 	_result_subtitle.text = _result_summary_text()
 	_result_subtitle.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_result_subtitle.add_theme_font_size_override("font_size", 14)
-	_result_subtitle.add_theme_color_override("font_color", UiPalette.MUTED)
+	_result_subtitle.add_theme_color_override("font_color", UiPalette.CYAN)
 	column.add_child(_result_subtitle)
 
 	# One caption row over one value row: no divider lines, just the shared
@@ -2452,8 +2452,8 @@ func _build_overlay() -> void:
 		caption.text = caption_text
 		caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		caption.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		caption.add_theme_font_size_override("font_size", 15)
-		caption.add_theme_color_override("font_color", UiPalette.MUTED)
+		caption.add_theme_font_size_override("font_size", 14)
+		caption.add_theme_color_override("font_color", UiPalette.TEXT_DIM)
 		stats.add_child(caption)
 	_result_total = _make_result_value()
 	_result_best = _make_result_value()
@@ -2494,21 +2494,34 @@ func _build_overlay() -> void:
 		column.add_child(_result_standings_section)
 
 	if _multiplayer:
-		# Restarting only one peer would desync the field.
-		var lobby: Button = _make_button("BACK TO LOBBY", UiPalette.RED, 58.0)
+		if _is_host:
+			var again: Button = _make_button("RACE AGAIN", UiPalette.YELLOW, 54.0)
+			again.set_meta("nav_default", true)
+			again.pressed.connect(_on_race_again)
+			column.add_child(again)
+		var secondary := HBoxContainer.new()
+		secondary.add_theme_constant_override("separation", UI_GAP)
+		column.add_child(secondary)
+		var lobby: Button = _make_button("BACK TO LOBBY",
+			UiPalette.CYAN if _is_host else UiPalette.YELLOW, 52.0)
+		if not _is_host:
+			lobby.set_meta("nav_default", true)
+		lobby.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		lobby.pressed.connect(_on_back_to_lobby)
-		column.add_child(lobby)
+		secondary.add_child(lobby)
 		var menu: Button = _make_button("MAIN MENU", UiPalette.RED, 52.0)
+		menu.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		menu.pressed.connect(_on_main_menu)
-		column.add_child(menu)
+		secondary.add_child(menu)
 	else:
-		var again: Button = _make_button("RACE AGAIN", UiPalette.YELLOW, 58.0)
+		var again: Button = _make_button("RACE AGAIN", UiPalette.YELLOW, 56.0)
+		again.set_meta("nav_default", true)
 		again.pressed.connect(_on_race_again)
 		column.add_child(again)
 		var secondary := HBoxContainer.new()
 		secondary.add_theme_constant_override("separation", UI_GAP)
 		column.add_child(secondary)
-		var lobby: Button = _make_button("BACK TO EVENTS", UiPalette.RED, 52.0)
+		var lobby: Button = _make_button("BACK TO MODES", UiPalette.CYAN, 52.0)
 		lobby.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		lobby.pressed.connect(_on_back_to_lobby)
 		secondary.add_child(lobby)
@@ -2532,7 +2545,7 @@ func _build_result_standings(parent: VBoxContainer) -> void:
 	standings_title.text = "STANDINGS"
 	standings_title.theme_type_variation = &"TitleLabel"
 	standings_title.add_theme_font_size_override("font_size", 18)
-	standings_title.add_theme_color_override("font_color", UiPalette.INK)
+	standings_title.add_theme_color_override("font_color", UiPalette.YELLOW)
 	standings_title.add_theme_constant_override("outline_size", 0)
 	standings_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_result_standings_section.add_child(standings_title)
@@ -2583,20 +2596,27 @@ func _build_result_standings(parent: VBoxContainer) -> void:
 	standings_scroll.add_child(_result_standings_rows)
 
 	_result_row_style = StyleBoxFlat.new()
-	_result_row_style.bg_color = Color(0, 0, 0, 0)
-	_result_row_style.set_corner_radius_all(UI_RADIUS)
+	_result_row_style.bg_color = Color(0.095, 0.112, 0.225, 0.88)
+	_result_row_style.border_color = Color(1.0, 1.0, 1.0, 0.10)
+	_result_row_style.set_border_width_all(1)
+	_result_row_style.set_corner_radius_all(4)
+	_result_row_style.skew = Vector2(0.14, 0.0)
 	_result_row_style.content_margin_left = 16.0
 	_result_row_style.content_margin_right = 16.0
 	_result_row_style.content_margin_top = 8.0
 	_result_row_style.content_margin_bottom = 8.0
+	_result_row_style.anti_aliasing = true
 	_result_local_row_style = StyleBoxFlat.new()
-	# "(YOU)" marks the local row; keep it neutral instead of a yellow bar.
-	_result_local_row_style.bg_color = Color(1.0, 1.0, 1.0, 0.10)
-	_result_local_row_style.set_corner_radius_all(UI_RADIUS)
+	_result_local_row_style.bg_color = Color(0.14, 0.26, 0.42, 0.94)
+	_result_local_row_style.border_color = UiPalette.CYAN
+	_result_local_row_style.set_border_width_all(2)
+	_result_local_row_style.set_corner_radius_all(4)
+	_result_local_row_style.skew = Vector2(0.14, 0.0)
 	_result_local_row_style.content_margin_left = 16.0
 	_result_local_row_style.content_margin_right = 16.0
 	_result_local_row_style.content_margin_top = 8.0
 	_result_local_row_style.content_margin_bottom = 8.0
+	_result_local_row_style.anti_aliasing = true
 
 
 func _result_summary_text() -> String:
@@ -2648,18 +2668,19 @@ func _make_button(text: String, color: Color, height: float = 52.0) -> Button:
 
 func _make_result_panel_style() -> StyleBoxFlat:
 	var style := StyleBoxFlat.new()
-	style.bg_color = UiPalette.CREAM
-	style.border_color = UiPalette.OUTLINE
-	style.set_border_width_all(5)
-	style.set_corner_radius_all(UI_RADIUS)
-	# Keep the body inside the 5 px border instead of painting over the
-	# outline. The 24 px page margin is the MarginContainer, not this inset.
-	style.content_margin_left = 5.0
-	style.content_margin_top = 5.0
-	style.content_margin_right = 5.0
-	style.content_margin_bottom = 5.0
-	style.shadow_color = Color(0.12, 0.10, 0.23, 0.45)
-	style.shadow_offset = Vector2(0, 10)
+	style.bg_color = Color(0.056, 0.068, 0.156, 0.95)
+	style.border_color = Color(0.24, 0.84, 0.96, 0.56)
+	style.set_border_width_all(4)
+	style.set_corner_radius_all(6)
+	style.skew = Vector2(0.05, 0.0)
+	style.content_margin_left = 12.0
+	style.content_margin_top = 8.0
+	style.content_margin_right = 12.0
+	style.content_margin_bottom = 8.0
+	style.shadow_color = Color(0.02, 0.02, 0.08, 0.72)
+	style.shadow_size = 14
+	style.shadow_offset = Vector2(5, 10)
+	style.anti_aliasing = true
 	return style
 
 
@@ -2667,12 +2688,14 @@ func _make_result_banner_style(color: Color) -> StyleBoxFlat:
 	var style := StyleBoxFlat.new()
 	style.bg_color = color
 	style.border_color = UiPalette.OUTLINE
-	style.set_border_width_all(4)
-	style.set_corner_radius_all(UI_RADIUS)
+	style.set_border_width_all(3)
+	style.set_corner_radius_all(5)
+	style.skew = Vector2(0.14, 0.0)
 	style.content_margin_left = float(UI_GAP)
 	style.content_margin_right = float(UI_GAP)
 	style.content_margin_top = float(UI_GAP_SMALL)
 	style.content_margin_bottom = float(UI_GAP_SMALL)
+	style.anti_aliasing = true
 	return style
 
 
@@ -2682,7 +2705,7 @@ func _make_result_value() -> Label:
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	label.add_theme_font_size_override("font_size", 22)
-	label.add_theme_color_override("font_color", UiPalette.INK)
+	label.add_theme_color_override("font_color", UiPalette.CREAM)
 	return label
 
 
@@ -2696,7 +2719,7 @@ func _make_lap_caption(text: String, width: float, align: int,
 	if expand:
 		label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	label.add_theme_font_size_override("font_size", 12)
-	label.add_theme_color_override("font_color", Color(UiPalette.MUTED, 0.9))
+	label.add_theme_color_override("font_color", UiPalette.CYAN)
 	return label
 
 
@@ -2709,7 +2732,7 @@ func _make_standings_header(text: String, width: float, align: int,
 	if expand:
 		label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	label.add_theme_font_size_override("font_size", 12)
-	label.add_theme_color_override("font_color", Color(UiPalette.INK, 0.62))
+	label.add_theme_color_override("font_color", UiPalette.CYAN)
 	return label
 
 
@@ -2724,7 +2747,7 @@ func _make_standings_row() -> Dictionary:
 	place.custom_minimum_size = Vector2(30, 0)
 	place.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	place.add_theme_font_size_override("font_size", 14)
-	place.add_theme_color_override("font_color", UiPalette.INK)
+	place.add_theme_color_override("font_color", UiPalette.YELLOW)
 	row.add_child(place)
 	var dot := ColorRect.new()
 	dot.custom_minimum_size = Vector2(10, 12)
@@ -2735,25 +2758,25 @@ func _make_standings_row() -> Dictionary:
 	name_label.clip_text = true
 	name_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	name_label.add_theme_font_size_override("font_size", 15)
-	name_label.add_theme_color_override("font_color", UiPalette.INK)
+	name_label.add_theme_color_override("font_color", UiPalette.CREAM)
 	row.add_child(name_label)
 	var total := Label.new()
 	total.custom_minimum_size = Vector2(62, 0)
 	total.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	total.add_theme_font_size_override("font_size", 14)
-	total.add_theme_color_override("font_color", UiPalette.INK)
+	total.add_theme_color_override("font_color", UiPalette.CREAM)
 	row.add_child(total)
 	var best := Label.new()
 	best.custom_minimum_size = Vector2(62, 0)
 	best.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	best.add_theme_font_size_override("font_size", 14)
-	best.add_theme_color_override("font_color", UiPalette.INK)
+	best.add_theme_color_override("font_color", UiPalette.CYAN)
 	row.add_child(best)
 	var gap := Label.new()
 	gap.custom_minimum_size = Vector2(54, 0)
 	gap.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	gap.add_theme_font_size_override("font_size", 14)
-	gap.add_theme_color_override("font_color", UiPalette.INK)
+	gap.add_theme_color_override("font_color", UiPalette.YELLOW)
 	row.add_child(gap)
 	_result_standings_rows.add_child(panel)
 	return {
@@ -3001,21 +3024,22 @@ func _fill_result_laps() -> void:
 		caption.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		caption.add_theme_font_size_override("font_size", 16)
 		caption.add_theme_color_override("font_color",
-			UiPalette.YELLOW_DARK if index == best_index else UiPalette.MUTED)
+			UiPalette.YELLOW if index == best_index else UiPalette.TEXT_DIM)
 		row.add_child(caption)
 		var value := Label.new()
 		value.custom_minimum_size = Vector2(96, 0)
 		value.text = _format_time(_lap_times[index]) if index < _lap_times.size() else "—"
 		value.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 		value.add_theme_font_size_override("font_size", 16)
-		value.add_theme_color_override("font_color", UiPalette.INK)
+		value.add_theme_color_override("font_color",
+			UiPalette.YELLOW if index == best_index else UiPalette.CREAM)
 		row.add_child(value)
 		var delta := Label.new()
 		delta.custom_minimum_size = Vector2(76, 0)
 		delta.text = "—"
 		delta.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 		delta.add_theme_font_size_override("font_size", 14)
-		delta.add_theme_color_override("font_color", UiPalette.MUTED)
+		delta.add_theme_color_override("font_color", UiPalette.TEXT_DIM)
 		if index > 0 and index < _lap_times.size():
 			var change: float = _lap_times[index] - _lap_times[index - 1]
 			delta.text = _format_lap_delta(change)
@@ -4627,6 +4651,8 @@ func _ordinal(place: int) -> String:
 
 func _on_race_again() -> void:
 	if _multiplayer:
+		if _is_host:
+			Network.start_game(RACE_SCENE, GameSettings.GAME_MINIGAMES)
 		return
 	SceneLoader.go_to(RACE_SCENE, _race_title(), "GET READY")
 

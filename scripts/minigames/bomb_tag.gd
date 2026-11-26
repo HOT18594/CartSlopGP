@@ -3077,6 +3077,7 @@ func _build_result_card() -> void:
 	_result_root.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_result_root.mouse_filter = Control.MOUSE_FILTER_STOP
 	_result_root.visible = false
+	_result_root.add_to_group("nav_scope")
 	_hud_root.add_child(_result_root)
 
 	var pause_root: Control = get_node_or_null("PauseMenu/Root") as Control
@@ -3085,7 +3086,7 @@ func _build_result_card() -> void:
 
 	var dim := ColorRect.new()
 	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
-	dim.color = Color(0.05, 0.08, 0.18, 0.62)
+	dim.color = Color(0.04, 0.05, 0.12, 0.72)
 	dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_result_root.add_child(dim)
 
@@ -3095,19 +3096,10 @@ func _build_result_card() -> void:
 	_result_root.add_child(center)
 
 	var card := PanelContainer.new()
-	card.custom_minimum_size = Vector2(560.0, 0.0)
-	var card_style := StyleBoxFlat.new()
-	card_style.bg_color = UiPalette.CREAM
-	card_style.border_color = UiPalette.OUTLINE
-	card_style.set_border_width_all(5)
-	card_style.set_corner_radius_all(16)
-	card_style.content_margin_left = 28.0
-	card_style.content_margin_right = 28.0
-	card_style.content_margin_top = 24.0
-	card_style.content_margin_bottom = 24.0
-	card_style.shadow_color = Color(0.10, 0.09, 0.22, 0.48)
-	card_style.shadow_offset = Vector2(0.0, 8.0)
-	card.add_theme_stylebox_override("panel", card_style)
+	card.custom_minimum_size = Vector2(580.0, 0.0)
+	card.add_theme_stylebox_override("panel",
+		UiKit.slanted_panel(Color(0.056, 0.068, 0.156, 0.95),
+			Color(0.24, 0.84, 0.96, 0.56), 0.055, 4, 6, 34.0, 26.0))
 	center.add_child(card)
 
 	var body := VBoxContainer.new()
@@ -3117,11 +3109,15 @@ func _build_result_card() -> void:
 	var banner := PanelContainer.new()
 	_result_banner_style = StyleBoxFlat.new()
 	_result_banner_style.bg_color = UiPalette.YELLOW
-	_result_banner_style.set_corner_radius_all(12)
+	_result_banner_style.border_color = UiPalette.OUTLINE
+	_result_banner_style.set_border_width_all(3)
+	_result_banner_style.set_corner_radius_all(5)
+	_result_banner_style.skew = Vector2(0.14, 0.0)
 	_result_banner_style.content_margin_left = 24.0
 	_result_banner_style.content_margin_right = 24.0
 	_result_banner_style.content_margin_top = 12.0
 	_result_banner_style.content_margin_bottom = 12.0
+	_result_banner_style.anti_aliasing = true
 	banner.add_theme_stylebox_override("panel", _result_banner_style)
 	body.add_child(banner)
 
@@ -3130,18 +3126,18 @@ func _build_result_card() -> void:
 	_result_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	banner.add_child(_result_title)
 
-	_result_subtitle = _make_label("", 13, UiPalette.MUTED)
+	_result_subtitle = _make_label("", 14, UiPalette.CYAN)
 	_result_subtitle.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	body.add_child(_result_subtitle)
 
 	# Column header + per-contestant standings rows (Points, Passes, Survivals).
 	var header := HBoxContainer.new()
 	header.add_theme_constant_override("separation", 8)
-	var h_name := _make_label("CONTESTANT", 12, UiPalette.MUTED)
+	var h_name := _make_label("CONTESTANT", 12, UiPalette.CYAN)
 	h_name.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header.add_child(h_name)
 	for col_txt: String in ["PTS", "PASSES", "SURVIVALS"]:
-		var hl := _make_label(col_txt, 12, UiPalette.MUTED)
+		var hl := _make_label(col_txt, 12, UiPalette.CYAN)
 		hl.custom_minimum_size = Vector2(72.0, 0.0)
 		hl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 		header.add_child(hl)
@@ -3161,7 +3157,7 @@ func _build_result_card() -> void:
 		_result_primary_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		_result_primary_btn.pressed.connect(_on_back_pressed)
 		btn_row.add_child(_result_primary_btn)
-		_result_secondary_btn = _make_candy_button("MAIN MENU", UiPalette.BLUE, 48.0)
+		_result_secondary_btn = _make_candy_button("MAIN MENU", UiPalette.RED, 48.0)
 		_result_secondary_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		_result_secondary_btn.pressed.connect(_on_main_menu_pressed)
 		btn_row.add_child(_result_secondary_btn)
@@ -3171,7 +3167,7 @@ func _build_result_card() -> void:
 		_result_primary_btn.pressed.connect(_on_play_again_pressed)
 		btn_row.add_child(_result_primary_btn)
 		var back_text: String = "BACK TO LOBBY" if _multiplayer else "BACK TO MODES"
-		_result_secondary_btn = _make_candy_button(back_text, UiPalette.BLUE, 48.0)
+		_result_secondary_btn = _make_candy_button(back_text, UiPalette.CYAN, 48.0)
 		_result_secondary_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		_result_secondary_btn.pressed.connect(_on_back_pressed)
 		btn_row.add_child(_result_secondary_btn)
@@ -3206,31 +3202,39 @@ func _show_result_card() -> void:
 	for i in standings.size():
 		var row_data: Dictionary = standings[i]
 		var rk: int = int(row_data["key"])
+		var is_me: bool = rk == my_key
 		var pill := PanelContainer.new()
 		var pstyle := StyleBoxFlat.new()
-		pstyle.bg_color = Color(1.0, 0.85, 0.25, 0.35) if rk == my_key \
-			else Color(0.12, 0.11, 0.23, 0.07)
-		pstyle.set_corner_radius_all(8)
-		pstyle.content_margin_left = 16.0
-		pstyle.content_margin_right = 16.0
+		pstyle.bg_color = Color(0.14, 0.26, 0.42, 0.94) if is_me \
+			else Color(0.095, 0.112, 0.228, 0.88)
+		pstyle.border_color = UiPalette.YELLOW if i == 0 else (UiPalette.CYAN if is_me else Color(1.0, 1.0, 1.0, 0.10))
+		pstyle.set_border_width_all(2 if (i == 0 or is_me) else 1)
+		pstyle.set_corner_radius_all(5)
+		pstyle.skew = Vector2(0.14, 0.0)
+		pstyle.content_margin_left = 18.0
+		pstyle.content_margin_right = 18.0
 		pstyle.content_margin_top = 8.0
 		pstyle.content_margin_bottom = 8.0
+		pstyle.anti_aliasing = true
 		pill.add_theme_stylebox_override("panel", pstyle)
 
 		var rbox := HBoxContainer.new()
 		rbox.add_theme_constant_override("separation", 8)
 		pill.add_child(rbox)
 
-		var nm := _make_label("%d. %s" % [i + 1, str(row_data["name"])], 14, UiPalette.INK)
+		var nm := _make_label("%d. %s" % [i + 1, str(row_data["name"])], 15,
+			UiPalette.YELLOW if is_me else UiPalette.CREAM)
 		nm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		rbox.add_child(nm)
 
-		for val_txt: String in [
+		var vals: Array[String] = [
 			str(int(row_data.get("points", 0))),
 			str(int(row_data.get("passes", 0))),
 			str(int(row_data.get("survivals", 0))),
-		]:
-			var vl := _make_label(val_txt, 14, UiPalette.INK)
+		]
+		var val_cols: Array[Color] = [UiPalette.YELLOW, UiPalette.CYAN, UiPalette.CREAM]
+		for ci in vals.size():
+			var vl := _make_label(vals[ci], 15, val_cols[ci])
 			vl.custom_minimum_size = Vector2(72.0, 0.0)
 			vl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 			rbox.add_child(vl)
@@ -3238,6 +3242,10 @@ func _show_result_card() -> void:
 		_result_rows_box.add_child(pill)
 
 	_result_root.visible = true
+	_result_root.modulate.a = 0.0
+	var fade: Tween = create_tween()
+	fade.tween_property(_result_root, "modulate:a", 1.0, 0.22) \
+		.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
 	CursorController.set_menu_mode(true)
 	var pause_root: Control = get_node_or_null("PauseMenu/Root") as Control
 	if pause_root != null and pause_root.visible:

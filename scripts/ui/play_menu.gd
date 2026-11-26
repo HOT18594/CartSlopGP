@@ -23,6 +23,11 @@ var _multi_card: Button
 
 func _ready() -> void:
 	CursorController.set_menu_mode(true)
+	var panel := get_node_or_null("Center/Panel") as PanelContainer
+	if panel != null:
+		panel.add_theme_stylebox_override("panel",
+			UiKit.slanted_panel(Color(0.056, 0.068, 0.156, 0.94),
+				Color(0.24, 0.84, 0.96, 0.52), 0.05, 4, 6, 38.0, 28.0))
 	_build_ui()
 	_mark_mode_cards()
 	call_deferred("_enter")
@@ -58,7 +63,9 @@ func _build_ui() -> void:
 	_title = Label.new()
 	_title.theme_type_variation = &"TitleLabel"
 	_title.add_theme_font_size_override("font_size", UiKit.TITLE_SIZE)
-	_title.add_theme_color_override("font_color", UiPalette.INK)
+	_title.add_theme_color_override("font_color", UiPalette.YELLOW)
+	_title.add_theme_color_override("font_outline_color", UiPalette.INK)
+	_title.add_theme_constant_override("outline_size", 8)
 	_title.text = "PLAY"
 	_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_body.add_child(_title)
@@ -121,8 +128,8 @@ func _outline(card: Button, selected: bool) -> void:
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("ui_cancel") and not SceneLoader.is_busy():
+		UiKit.consume_input(self)
 		_on_back()
-		get_viewport().set_input_as_handled()
 
 
 func _leave_session() -> void:

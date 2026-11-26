@@ -77,7 +77,10 @@ func _process(delta: float) -> void:
 		_apply_mode()
 	if not show_custom:
 		return
-	_hovering = _is_over_button(get_viewport().gui_get_hovered_control())
+	var vp: Viewport = get_viewport()
+	if vp == null:
+		return
+	_hovering = _is_over_button(vp.gui_get_hovered_control())
 	if _hovering != _was_hovering:
 		_was_hovering = _hovering
 		if _hovering and _hover_audio != null and _hover_audio.stream != null:
@@ -85,7 +88,7 @@ func _process(delta: float) -> void:
 			_hover_audio.play()
 	_sprite.texture = hover_texture if _hovering else normal_texture
 	var hotspot: Vector2 = hover_hotspot if _hovering else idle_hotspot
-	var target: Vector2 = get_viewport().get_mouse_position() - hotspot * cursor_scale
+	var target: Vector2 = vp.get_mouse_position() - hotspot * cursor_scale
 	if _cursor_settled:
 		# Frame-rate independent damping removes the jitter of a raw mouse
 		# position while keeping the cursor responsive.

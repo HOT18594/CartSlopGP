@@ -134,16 +134,70 @@ func wire_button_sfx(button: BaseButton) -> void:
 			play_click())
 
 
-func glass_panel(bg: Color = UiPalette.SURFACE_GLASS, border: Color = UiPalette.OUTLINE,
-		radius: int = CORNER_RADIUS, border_w: int = 4) -> StyleBoxFlat:
+func consume_input(node: Node) -> void:
+	## Safe wrapper for Viewport.set_input_as_handled(). Calling get_viewport()
+	## after a synchronous scene change or tree exit returns null, which in
+	## Godot 4.7 release builds triggers a null-pointer deref at offset 0x450.
+	if node == null or not is_instance_valid(node) or not node.is_inside_tree():
+		return
+	var vp: Viewport = node.get_viewport()
+	if vp != null:
+		vp.set_input_as_handled()
+
+
+func slanted_panel(bg: Color = Color(0.064, 0.074, 0.162, 0.94),
+		border: Color = Color(0.24, 0.80, 0.96, 0.48),
+		skew_x: float = 0.045, border_w: int = 4, radius: int = 6,
+		pad_h: float = 34.0, pad_v: float = 24.0) -> StyleBoxFlat:
 	var style := StyleBoxFlat.new()
 	style.bg_color = bg
 	style.border_color = border
 	style.set_border_width_all(border_w)
 	style.set_corner_radius_all(radius)
-	style.shadow_color = Color(0.03, 0.03, 0.10, 0.52)
-	style.shadow_size = 8
-	style.shadow_offset = Vector2(0, 8)
+	style.skew = Vector2(skew_x, 0.0)
+	style.content_margin_left = pad_h
+	style.content_margin_right = pad_h
+	style.content_margin_top = pad_v
+	style.content_margin_bottom = pad_v
+	style.shadow_color = Color(0.02, 0.02, 0.08, 0.68)
+	style.shadow_size = 12
+	style.shadow_offset = Vector2(5, 10)
+	style.anti_aliasing = true
+	return style
+
+
+func slanted_card(bg: Color = Color(0.095, 0.112, 0.228, 0.92),
+		border: Color = Color(0.32, 0.78, 0.95, 0.28),
+		skew_x: float = 0.11, border_w: int = 2, radius: int = 5,
+		pad_h: float = 16.0, pad_v: float = 12.0) -> StyleBoxFlat:
+	var style := StyleBoxFlat.new()
+	style.bg_color = bg
+	style.border_color = border
+	style.set_border_width_all(border_w)
+	style.set_corner_radius_all(radius)
+	style.skew = Vector2(skew_x, 0.0)
+	style.content_margin_left = pad_h
+	style.content_margin_right = pad_h
+	style.content_margin_top = pad_v
+	style.content_margin_bottom = pad_v
+	style.shadow_color = Color(0.02, 0.02, 0.08, 0.45)
+	style.shadow_size = 5
+	style.shadow_offset = Vector2(3, 4)
+	style.anti_aliasing = true
+	return style
+
+
+func glass_panel(bg: Color = UiPalette.SURFACE_GLASS, border: Color = UiPalette.OUTLINE,
+		radius: int = 6, border_w: int = 4) -> StyleBoxFlat:
+	var style := StyleBoxFlat.new()
+	style.bg_color = bg
+	style.border_color = border
+	style.set_border_width_all(border_w)
+	style.set_corner_radius_all(radius)
+	style.skew = Vector2(0.045, 0.0)
+	style.shadow_color = Color(0.03, 0.03, 0.10, 0.58)
+	style.shadow_size = 10
+	style.shadow_offset = Vector2(4, 8)
 	style.anti_aliasing = true
 	return style
 
@@ -237,8 +291,9 @@ func _focus_style(radius: int) -> StyleBoxFlat:
 	style.draw_center = false
 	style.bg_color = Color(0, 0, 0, 0)
 	style.border_color = FOCUS_RING
-	style.set_border_width_all(4)
-	style.set_corner_radius_all(radius + 4)
+	style.set_border_width_all(3)
+	style.set_corner_radius_all(mini(radius, 8))
+	style.skew = Vector2(0.11, 0.0)
 	# Matching content margins keep a focused LineEdit's text in the same spot;
 	# Button ignores focus-style margins for layout.
 	style.content_margin_left = 20.0
@@ -246,7 +301,7 @@ func _focus_style(radius: int) -> StyleBoxFlat:
 	style.content_margin_top = 12.0
 	style.content_margin_bottom = 12.0
 	# The stylebox is grown a few pixels so the ring lines up outside the
-	# control's own candy border instead of eating into the label.
+	# control's own border instead of eating into the label.
 	style.expand_margin_left = 3.0
 	style.expand_margin_top = 3.0
 	style.expand_margin_right = 3.0

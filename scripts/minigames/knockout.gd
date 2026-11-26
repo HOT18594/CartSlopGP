@@ -543,7 +543,7 @@ func _input(event: InputEvent) -> void:
 		var jb := event as InputEventJoypadButton
 		if jb.pressed and jb.button_index == JOY_BUTTON_B:
 			_local_slam_queued = true
-			get_viewport().set_input_as_handled()
+			UiKit.consume_input(self)
 
 
 func _is_pause_open() -> bool:
@@ -2400,15 +2400,10 @@ func _build_result_card() -> void:
 
 	_result_panel = PanelContainer.new()
 	_result_panel.name = "ResultPanel"
-	_result_panel.custom_minimum_size = Vector2(468.0, 0.0)
-	var panel_style := _card_style(UiPalette.CREAM, UiPalette.OUTLINE, 5, UiKit.CORNER_RADIUS)
-	panel_style.content_margin_left = 28.0
-	panel_style.content_margin_right = 28.0
-	panel_style.content_margin_top = 24.0
-	panel_style.content_margin_bottom = 24.0
-	panel_style.shadow_color = Color(0.10, 0.09, 0.22, 0.45)
-	panel_style.shadow_offset = Vector2(0.0, 8.0)
-	_result_panel.add_theme_stylebox_override("panel", panel_style)
+	_result_panel.custom_minimum_size = Vector2(520.0, 0.0)
+	_result_panel.add_theme_stylebox_override("panel",
+		UiKit.slanted_panel(Color(0.056, 0.068, 0.156, 0.95),
+			Color(0.24, 0.84, 0.96, 0.56), 0.055, 4, 6, 34.0, 26.0))
 	center.add_child(_result_panel)
 
 	var body := VBoxContainer.new()
@@ -2416,7 +2411,8 @@ func _build_result_card() -> void:
 	_result_panel.add_child(body)
 
 	var banner := PanelContainer.new()
-	var banner_style := _card_style(UiPalette.YELLOW, UiPalette.OUTLINE, 0, 12)
+	var banner_style := _card_style(UiPalette.YELLOW, UiPalette.OUTLINE, 3, 5)
+	banner_style.skew = Vector2(0.14, 0.0)
 	banner_style.content_margin_left = 22.0
 	banner_style.content_margin_right = 22.0
 	banner_style.content_margin_top = 12.0
@@ -2429,7 +2425,7 @@ func _build_result_card() -> void:
 	_result_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	banner.add_child(_result_title)
 
-	_result_subtitle = _ui_label("", 13, UiPalette.MUTED, 0)
+	_result_subtitle = _ui_label("", 14, UiPalette.CYAN, 0)
 	_result_subtitle.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	body.add_child(_result_subtitle)
 
@@ -2449,7 +2445,8 @@ func _build_result_card() -> void:
 		actions.add_child(_result_play_again)
 
 	var back_text: String = "BACK TO LOBBY" if _multiplayer else "BACK TO MODES"
-	_result_back = _candy_button(back_text, UiPalette.BLUE, 48.0, 18)
+	_result_back = _candy_button(back_text,
+		UiPalette.CYAN if (not _multiplayer or _is_host) else UiPalette.YELLOW, 48.0, 18)
 	_result_back.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_result_back.pressed.connect(_on_back_pressed)
 	actions.add_child(_result_back)
@@ -2477,10 +2474,12 @@ func _show_result_card() -> void:
 		var c: Dictionary = ranked[i]
 		var is_me: bool = int(c.get("key", 0)) == _local_key()
 		var row_panel := PanelContainer.new()
-		var bg: Color = Color(1.0, 0.85, 0.24, 0.32) if is_me else Color(0.12, 0.12, 0.22, 0.08)
-		var r_style := _card_style(bg, UiPalette.OUTLINE, 2 if i == 0 else 0, 8)
-		r_style.content_margin_left = 16.0
-		r_style.content_margin_right = 16.0
+		var bg: Color = Color(0.14, 0.26, 0.42, 0.94) if is_me else Color(0.095, 0.112, 0.228, 0.88)
+		var bcol: Color = UiPalette.YELLOW if i == 0 else (UiPalette.CYAN if is_me else Color(1.0, 1.0, 1.0, 0.10))
+		var r_style := _card_style(bg, bcol, 2 if (i == 0 or is_me) else 1, 5)
+		r_style.skew = Vector2(0.14, 0.0)
+		r_style.content_margin_left = 18.0
+		r_style.content_margin_right = 18.0
 		r_style.content_margin_top = 8.0
 		r_style.content_margin_bottom = 8.0
 		row_panel.add_theme_stylebox_override("panel", r_style)
@@ -2490,25 +2489,26 @@ func _show_result_card() -> void:
 		row.add_theme_constant_override("separation", 8)
 		row_panel.add_child(row)
 
-		var rank_lbl := _ui_label("#%d" % (i + 1), 15, UiPalette.INK, 0)
+		var rank_lbl := _ui_label("#%d" % (i + 1), 15, UiPalette.YELLOW if i == 0 else UiPalette.CYAN, 0)
 		rank_lbl.theme_type_variation = &"TitleLabel"
-		rank_lbl.custom_minimum_size = Vector2(30.0, 0.0)
+		rank_lbl.custom_minimum_size = Vector2(34.0, 0.0)
 		row.add_child(rank_lbl)
 
-		var name_lbl := _ui_label(str(c.get("name", "PLAYER")), 15, UiPalette.INK, 0)
+		var name_lbl := _ui_label(str(c.get("name", "PLAYER")), 15,
+			UiPalette.YELLOW if is_me else UiPalette.CREAM, 0)
 		name_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		name_lbl.clip_text = true
 		name_lbl.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 		row.add_child(name_lbl)
 
-		var ko_lbl := _ui_label("%d KO" % int(c.get("kos", 0)), 14, UiPalette.MUTED, 0)
-		ko_lbl.custom_minimum_size = Vector2(56.0, 0.0)
+		var ko_lbl := _ui_label("%d KO" % int(c.get("kos", 0)), 14, UiPalette.CYAN, 0)
+		ko_lbl.custom_minimum_size = Vector2(58.0, 0.0)
 		ko_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 		row.add_child(ko_lbl)
 
-		var pts_lbl := _ui_label("%d PTS" % int(c.get("score", 0)), 16, UiPalette.INK, 0)
+		var pts_lbl := _ui_label("%d PTS" % int(c.get("score", 0)), 16, UiPalette.YELLOW, 0)
 		pts_lbl.theme_type_variation = &"TitleLabel"
-		pts_lbl.custom_minimum_size = Vector2(68.0, 0.0)
+		pts_lbl.custom_minimum_size = Vector2(72.0, 0.0)
 		pts_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 		row.add_child(pts_lbl)
 
@@ -2709,7 +2709,8 @@ func _fighter_display_list(max_cards: int) -> Array[Dictionary]:
 func _refresh_smash_fighter_plates() -> void:
 	if _fighter_bar == null:
 		return
-	var view: Vector2 = get_viewport().get_visible_rect().size
+	var vp: Viewport = get_viewport()
+	var view: Vector2 = vp.get_visible_rect().size if vp != null else Vector2(1280.0, 720.0)
 	if view.x <= 1.0:
 		view = Vector2(1280.0, 720.0)
 	var lane_w: float = maxf((view.x - 246.0) - 324.0, 320.0)
@@ -2834,7 +2835,8 @@ func _ranked_contestants() -> Array[Dictionary]:
 
 
 func _layout_hud() -> void:
-	var view: Vector2 = get_viewport().get_visible_rect().size
+	var vp: Viewport = get_viewport()
+	var view: Vector2 = vp.get_visible_rect().size if vp != null else Vector2(1280.0, 720.0)
 	if view.x <= 1.0 or view.y <= 1.0:
 		view = Vector2(1280.0, 720.0)
 	if _top_bar != null:
@@ -2866,7 +2868,8 @@ func _layout_hud() -> void:
 
 
 func _hud_clips() -> bool:
-	var view: Vector2 = get_viewport().get_visible_rect().size
+	var vp: Viewport = get_viewport()
+	var view: Vector2 = vp.get_visible_rect().size if vp != null else Vector2(1280.0, 720.0)
 	if _hud_clips_for_rect(view):
 		return true
 	if _top_bar != null and _leaderboard_panel != null:

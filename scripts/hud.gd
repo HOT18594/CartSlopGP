@@ -2032,13 +2032,13 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if key.keycode == KEY_TAB and _scoreboard != null:
 		if not key.echo:
+			UiKit.consume_input(self)
 			_set_scoreboard_visible(key.pressed)
-			get_viewport().set_input_as_handled()
 		return
 	if key.pressed and not key.echo and key.keycode == KEY_F3:
+		UiKit.consume_input(self)
 		_debug_visible = not _debug_visible
 		_debug_label.visible = _debug_visible and not _scoreboard_visible
-		get_viewport().set_input_as_handled()
 
 
 func _update_debug(cart: CartPlayer) -> void:

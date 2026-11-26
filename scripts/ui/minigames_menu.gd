@@ -317,21 +317,9 @@ func _ready() -> void:
 func _tune_panel_chrome() -> void:
 	if _panel == null:
 		return
-	var style := StyleBoxFlat.new()
-	style.bg_color = UiPalette.SURFACE_GLASS
-	style.border_color = UiPalette.OUTLINE
-	style.set_border_width_all(5)
-	style.set_corner_radius_all(6)
-	style.border_color = Color(0.22, 0.84, 0.94, 0.42)
-	style.content_margin_left = 30.0
-	style.content_margin_right = 30.0
-	style.content_margin_top = 20.0
-	style.content_margin_bottom = 20.0
-	style.shadow_color = Color(0.02, 0.02, 0.09, 0.58)
-	style.shadow_size = 12
-	style.shadow_offset = Vector2(0, 10)
-	style.anti_aliasing = true
-	_panel.add_theme_stylebox_override("panel", style)
+	_panel.add_theme_stylebox_override("panel",
+		UiKit.slanted_panel(Color(0.058, 0.068, 0.152, 0.92),
+			Color(0.24, 0.84, 0.96, 0.50), 0.042, 4, 6, 36.0, 22.0))
 	if _body != null:
 		_body.add_theme_constant_override("separation", 14)
 
@@ -469,8 +457,8 @@ func _page_in(page: Control) -> void:
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("ui_cancel") and not SceneLoader.is_busy():
+		UiKit.consume_input(self)
 		_on_back()
-		get_viewport().set_input_as_handled()
 
 
 # --------------------------------------------------------------------------

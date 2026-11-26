@@ -44,6 +44,7 @@ var _action_callable: Callable = Callable()
 func _ready() -> void:
 	add_to_group("nav_scope")
 	hide()
+	_apply_dark_slanted_theme()
 	_close_button.pressed.connect(close)
 	_refresh_button.pressed.connect(func() -> void: _refresh())
 	_search_field.text_changed.connect(_on_search_changed)
@@ -55,6 +56,37 @@ func _ready() -> void:
 	_build_action_button()
 	resized.connect(_fit_panel)
 	_fit_panel()
+
+
+func _apply_dark_slanted_theme() -> void:
+	if _panel != null:
+		_panel.add_theme_stylebox_override("panel",
+			UiKit.slanted_panel(Color(0.056, 0.068, 0.156, 0.95),
+				Color(0.24, 0.84, 0.96, 0.56), 0.05, 4, 6, 36.0, 26.0))
+	if _title != null:
+		_title.add_theme_color_override("font_color", UiPalette.YELLOW)
+		_title.add_theme_color_override("font_outline_color", UiPalette.INK)
+		_title.add_theme_constant_override("outline_size", 8)
+	if _count_label != null:
+		_count_label.add_theme_color_override("font_color", UiPalette.CYAN)
+	if _search_field != null:
+		_search_field.set_meta("skip_kit", true)
+		_search_field.add_theme_color_override("font_color", UiPalette.CREAM)
+		_search_field.add_theme_color_override("font_placeholder_color", Color(0.62, 0.72, 0.88, 0.55))
+		_search_field.add_theme_color_override("caret_color", UiPalette.YELLOW)
+		_search_field.add_theme_color_override("selection_color", Color(UiPalette.CYAN, 0.35))
+		var normal: StyleBoxFlat = UiKit.slanted_card(
+			Color(0.045, 0.055, 0.125, 0.96), Color(0.28, 0.78, 0.96, 0.48),
+			0.14, 3, 5, 16.0, 10.0)
+		_search_field.add_theme_stylebox_override("normal", normal)
+		var focus_st: StyleBoxFlat = normal.duplicate() as StyleBoxFlat
+		focus_st.border_color = UiPalette.YELLOW
+		_search_field.add_theme_stylebox_override("focus", focus_st)
+	if _list_scroll != null:
+		var list_bg: StyleBoxFlat = UiKit.slanted_card(
+			Color(0.038, 0.046, 0.106, 0.82), Color(0.24, 0.72, 0.94, 0.24),
+			0.035, 2, 6, 8.0, 8.0)
+		_list_scroll.add_theme_stylebox_override("panel", list_bg)
 
 
 func _fit_panel() -> void:
@@ -110,8 +142,8 @@ func _unhandled_input(event: InputEvent) -> void:
 	if not visible:
 		return
 	if event.is_action_pressed("pause") or event.is_action_pressed("ui_cancel"):
+		UiKit.consume_input(self)
 		close()
-		get_viewport().set_input_as_handled()
 
 
 func _process(delta: float) -> void:
@@ -357,7 +389,8 @@ func _with_hint(text: String, hint: String) -> String:
 
 
 func _restore_row_focus() -> void:
-	var focused: Control = get_viewport().gui_get_focus_owner()
+	var vp: Viewport = get_viewport()
+	var focused: Control = vp.gui_get_focus_owner() if vp != null else null
 	if focused != null and is_instance_valid(focused) and focused.is_visible_in_tree():
 		return
 	for child: Node in _list.get_children():
@@ -376,19 +409,19 @@ func _room_row(room: Dictionary) -> Button:
 	var joinable: bool = (not is_lan or state == "lobby") and not full
 	var button := Button.new()
 	button.set_meta("keep_align", true)
-	button.custom_minimum_size = Vector2(0, 54)
-	button.add_theme_stylebox_override("normal", _row_style(Color(UiPalette.CREAM, 0.65)))
-	button.add_theme_stylebox_override("hover", _row_style(Color(1, 1, 1, 0.95)))
-	button.add_theme_stylebox_override("pressed", _row_style(UiPalette.YELLOW))
-	button.add_theme_stylebox_override("disabled", _row_style(Color(0.84, 0.81, 0.89, 0.55)))
+	button.custom_minimum_size = Vector2(0, 56)
+	button.add_theme_stylebox_override("normal", _row_style(Color(0.095, 0.115, 0.235, 0.92), Color(0.28, 0.78, 0.96, 0.30)))
+	button.add_theme_stylebox_override("hover", _row_style(Color(0.155, 0.195, 0.365, 0.98), UiPalette.CYAN))
+	button.add_theme_stylebox_override("pressed", _row_style(Color(0.20, 0.24, 0.42, 1.0), UiPalette.YELLOW))
+	button.add_theme_stylebox_override("disabled", _row_style(Color(0.07, 0.08, 0.16, 0.60), Color(1.0, 1.0, 1.0, 0.10)))
 	button.disabled = not joinable
-	UiKit.apply_focus_ring(button, UiKit.CORNER_RADIUS)
+	UiKit.apply_focus_ring(button, 6)
 	button.pressed.connect(_on_room_pressed.bind(room))
 
 	var row := HBoxContainer.new()
 	row.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	row.offset_left = UiKit.SPACING
-	row.offset_right = -UiKit.SPACING
+	row.offset_left = 20.0
+	row.offset_right = -20.0
 	row.add_theme_constant_override("separation", UiKit.SPACING)
 	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	button.add_child(row)
@@ -400,13 +433,13 @@ func _room_row(room: Dictionary) -> Button:
 	name_label.clip_text = true
 	name_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	name_label.add_theme_font_size_override("font_size", 19)
-	name_label.add_theme_color_override("font_color", UiPalette.INK)
+	name_label.add_theme_color_override("font_color", UiPalette.CREAM if joinable else UiPalette.TEXT_DIM)
 	name_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	row.add_child(name_label)
 
 	if _mode == "all":
 		row.add_child(_row_badge("LAN" if is_lan else "ONLINE",
-			UiPalette.CYAN if is_lan else UiPalette.BLUE, 78))
+			UiPalette.CYAN if is_lan else UiPalette.YELLOW, 84))
 
 	var players_label := Label.new()
 	players_label.text = "%d / %d" % [players, MAX_PLAYERS]
@@ -414,7 +447,7 @@ func _room_row(room: Dictionary) -> Button:
 	players_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	players_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	players_label.add_theme_font_size_override("font_size", 16)
-	players_label.add_theme_color_override("font_color", UiPalette.BODY_BLUE)
+	players_label.add_theme_color_override("font_color", UiPalette.CYAN if joinable else UiPalette.TEXT_DIM)
 	players_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	row.add_child(players_label)
 
@@ -425,14 +458,14 @@ func _room_row(room: Dictionary) -> Button:
 		ping_label.custom_minimum_size = Vector2(64, 0)
 		ping_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 		ping_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		ping_label.add_theme_font_size_override("font_size", 13)
-		ping_label.add_theme_color_override("font_color", UiPalette.BODY_BLUE)
+		ping_label.add_theme_font_size_override("font_size", 14)
+		ping_label.add_theme_color_override("font_color", UiPalette.GRASS if ping < 80 else UiPalette.YELLOW)
 		ping_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		row.add_child(ping_label)
 
 	if not joinable:
 		var badge_text: String = "FULL" if full else "IN GAME"
-		row.add_child(_row_badge(badge_text, UiPalette.TEXT_DIM))
+		row.add_child(_row_badge(badge_text, UiPalette.RED))
 
 	return button
 
@@ -444,18 +477,22 @@ func _row_badge(text: String, color: Color, min_width: float = 88.0) -> PanelCon
 	badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var style := StyleBoxFlat.new()
 	style.bg_color = color
-	style.set_corner_radius_all(10)
+	style.border_color = UiPalette.INK
+	style.set_border_width_all(2)
+	style.set_corner_radius_all(4)
+	style.skew = Vector2(0.20, 0.0)
 	style.content_margin_left = 14
 	style.content_margin_right = 14
-	style.content_margin_top = 5
-	style.content_margin_bottom = 5
+	style.content_margin_top = 4
+	style.content_margin_bottom = 4
+	style.anti_aliasing = true
 	badge.add_theme_stylebox_override("panel", style)
 	var label := Label.new()
 	label.text = text
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	label.add_theme_font_size_override("font_size", 13)
-	label.add_theme_color_override("font_color", UiPalette.INK)
+	label.add_theme_color_override("font_color", UiPalette.CREAM if color.get_luminance() < 0.36 else UiPalette.INK)
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	badge.add_child(label)
 	return badge
@@ -527,16 +564,16 @@ func _set_state(kind: String, text: String, action_text: String = "",
 	_status.text = text
 	_status.visible = text != ""
 	_status.add_theme_font_size_override("font_size", 15)
-	var color: Color = UiPalette.BODY_BLUE
+	var color: Color = UiPalette.CYAN
 	match kind:
 		"error":
-			color = UiPalette.ERROR
+			color = UiPalette.RED
 		"empty":
-			color = UiPalette.MUTED
+			color = UiPalette.TEXT_DIM
 		"nomatch":
-			color = UiPalette.INK
+			color = UiPalette.YELLOW
 		_:
-			color = UiPalette.BODY_BLUE
+			color = UiPalette.CYAN
 	_status.add_theme_color_override("font_color", color)
 	_action_callable = action
 	if _action_button != null:
@@ -556,52 +593,40 @@ func _style_scrollbar() -> void:
 	var bar: VScrollBar = _list_scroll.get_v_scroll_bar()
 	if bar == null:
 		return
-	bar.custom_minimum_size.x = 14
+	bar.custom_minimum_size.x = 12
 	var track := StyleBoxFlat.new()
-	track.bg_color = Color(UiPalette.INK, 0.10)
-	track.set_corner_radius_all(7)
+	track.bg_color = Color(0.05, 0.06, 0.14, 0.55)
+	track.set_corner_radius_all(5)
 	var grab := StyleBoxFlat.new()
-	grab.bg_color = Color(UiPalette.BLUE, 0.75)
-	grab.set_corner_radius_all(7)
+	grab.bg_color = Color(UiPalette.CYAN, 0.72)
+	grab.set_corner_radius_all(5)
 	var grab_hover: StyleBoxFlat = grab.duplicate()
-	grab_hover.bg_color = UiPalette.BLUE.lightened(0.12)
+	grab_hover.bg_color = UiPalette.CYAN.lightened(0.14)
 	bar.add_theme_stylebox_override("scroll", track)
 	bar.add_theme_stylebox_override("grabber", grab)
 	bar.add_theme_stylebox_override("grabber_highlight", grab_hover)
 	bar.add_theme_stylebox_override("grabber_pressed", grab_hover)
 
 
-func _apply_soft_disabled(button: Button) -> void:
-	## Preserve the button's normal horizontal/vertical content margins so state
-	## changes never alter layout or fit_text() measurements.
-	if button == null:
-		return
-	var style := StyleBoxFlat.new()
-	style.bg_color = Color("d8d3e4")
-	style.set_corner_radius_all(UiKit.CORNER_RADIUS)
-	var normal: StyleBox = button.get_theme_stylebox("normal")
-	if normal != null:
-		style.content_margin_left = normal.get_margin(SIDE_LEFT)
-		style.content_margin_right = normal.get_margin(SIDE_RIGHT)
-		style.content_margin_top = normal.get_margin(SIDE_TOP)
-		style.content_margin_bottom = normal.get_margin(SIDE_BOTTOM)
-	else:
-		style.content_margin_left = 26.0
-		style.content_margin_right = 26.0
-		style.content_margin_top = 10.0
-		style.content_margin_bottom = 10.0
-	style.anti_aliasing = true
-	button.add_theme_stylebox_override("disabled", style)
+func _apply_soft_disabled(_button: Button) -> void:
+	## Slanted CandyButton renders its own muted dark parallelogram when disabled.
+	pass
 
 
-func _row_style(bg: Color) -> StyleBoxFlat:
+func _row_style(bg: Color, border: Color = Color(0.28, 0.78, 0.96, 0.30)) -> StyleBoxFlat:
 	var style := StyleBoxFlat.new()
 	style.bg_color = bg
-	style.set_corner_radius_all(UiKit.CORNER_RADIUS)
-	style.content_margin_left = UiKit.SPACING
-	style.content_margin_right = UiKit.SPACING
+	style.border_color = border
+	style.set_border_width_all(2)
+	style.set_corner_radius_all(5)
+	style.skew = Vector2(0.14, 0.0)
+	style.content_margin_left = 20.0
+	style.content_margin_right = 20.0
 	style.content_margin_top = UiKit.SPACING_TIGHT
 	style.content_margin_bottom = UiKit.SPACING_TIGHT
+	style.shadow_color = Color(0.02, 0.02, 0.08, 0.45)
+	style.shadow_size = 4
+	style.shadow_offset = Vector2(2, 3)
 	style.anti_aliasing = true
 	return style
 

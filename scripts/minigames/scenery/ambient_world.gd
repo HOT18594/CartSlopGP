@@ -85,9 +85,9 @@ func _build_track(track: RefCounted, theme_id: String) -> void:
 
 	# Outer sculpted mountain / mesa / headland horizon ring surrounding the circuit
 	# so the track feels enveloped in a living 360-degree landscape.
-	# Clearance is measured against each landform's real footprint (base radius
-	# x spread + margin): a flat 36 m gate let 80 m-wide peaks land on the road.
-	var ring_count: int = 14 if _theme == "dockyard" else 22
+	# Note: Glacier Pass builds its own bespoke cliffside massifs & Matterhorn
+	# cathedral ranges in GlacierTerrain with strict multi-point road clearance.
+	var ring_count: int = 0 if _theme == "glacier" else (14 if _theme == "dockyard" else 22)
 	for i in ring_count:
 		var ang: float = TAU * float(i) / float(ring_count) + rng.randf_range(-0.08, 0.08)
 		var dist: float = radius_est + rng.randf_range(65.0 if _theme == "dockyard" else 55.0, 155.0)
@@ -159,7 +159,7 @@ func _build_track(track: RefCounted, theme_id: String) -> void:
 						rng.randf_range(22.0, 48.0), rng)
 
 	# Mid-field clusters well clear of the widened lane.
-	var cluster_count: int = 0 if _theme == "dockyard" else 42
+	var cluster_count: int = 0 if (_theme == "dockyard" or _theme == "glacier") else 42
 	for index in cluster_count:
 		var frame: Dictionary = track.call("sample",
 			total * (float(index) + 0.35) / float(cluster_count))
@@ -186,9 +186,11 @@ func _build_track(track: RefCounted, theme_id: String) -> void:
 		add_child(mesh)
 
 	# Tier-3 Low-Effort Far-Field Horizon Silhouette Ring for racing maps too!
-	_build_far_horizon_ring(radius_est + 120.0, rng)
+	# Centered on the track's true center and checked against all road samples.
+	if _theme != "glacier":
+		_build_far_horizon_ring(radius_est + 120.0, rng, Vector3(center.x, _floor_y, center.z), samples)
 
-	for index in 6:
+	for index in (0 if _theme == "glacier" else 6):
 		var frame: Dictionary = track.call("sample", total * (0.08 + float(index) * 0.165))
 		var point: Vector3 = frame["position"]
 		var right: Vector3 = frame["right"]
@@ -357,7 +359,9 @@ func _build_arena(theme_id: String, half: float, context: Dictionary) -> void:
 		Vector3(0.0, maxf(_floor_y, 0.0), 0.0), half * 1.45)
 
 
-func _build_far_horizon_ring(inner_r: float, rng: RandomNumberGenerator) -> void:
+func _build_far_horizon_ring(inner_r: float, rng: RandomNumberGenerator,
+		ring_center: Vector3 = Vector3.ZERO,
+		track_samples: PackedVector3Array = PackedVector3Array()) -> void:
 	## Ultra-low-poly distant atmospheric mountain / skyline / island silhouette
 	## ring (one cheap single-mesh batch) so every map feels embedded in a huge
 	## cohesive world without costing frame rate or cluttering the arena.
@@ -368,7 +372,9 @@ func _build_far_horizon_ring(inner_r: float, rng: RandomNumberGenerator) -> void
 	for i in count:
 		var ang: float = TAU * float(i) / float(count) + rng.randf_range(-0.04, 0.04)
 		var dist: float = base_r + rng.randf_range(0.0, 75.0)
-		var pos := Vector3(cos(ang) * dist, _floor_y - 2.0, sin(ang) * dist)
+		var pos := Vector3(ring_center.x + cos(ang) * dist, _floor_y - 2.0, ring_center.z + sin(ang) * dist)
+		if not track_samples.is_empty() and not _clear_of_track(pos, track_samples, 96.0):
+			continue
 		match style:
 			"skyline":
 				var h: float = rng.randf_range(44.0, 108.0)

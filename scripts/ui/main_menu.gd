@@ -53,7 +53,7 @@ static func _closed(pts: PackedVector2Array) -> PackedVector2Array:
 
 class _SlashTag extends Control:
 	## Compact slanted parallelogram version ribbon (no box clutter).
-	var label_text: String = "v0.8.5"
+	var label_text: String = "v0.8.6"
 	var fill_color: Color = Color(0.08, 0.09, 0.19, 0.90)
 	var accent_color: Color = Color("ffd22e")
 

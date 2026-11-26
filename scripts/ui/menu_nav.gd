@@ -57,7 +57,8 @@ func focus(control: Control) -> bool:
 
 func focused_control() -> Control:
 	## The control that currently owns keyboard focus, if any.
-	return get_viewport().gui_get_focus_owner()
+	var vp: Viewport = get_viewport()
+	return vp.gui_get_focus_owner() if vp != null else null
 
 
 func current_scope() -> Control:
@@ -94,12 +95,15 @@ func _process(delta: float) -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if not event.is_pressed() or event.is_echo():
 		return
+	var vp: Viewport = get_viewport()
+	if vp == null:
+		return
 
 	# Allow WASD to navigate any active menu / overlay scope just like Arrow Keys,
 	# while NEVER hijacking typing inside a LineEdit / TextEdit or driving in 3D!
 	if event is InputEventKey:
 		var kev := event as InputEventKey
-		var focused: Control = get_viewport().gui_get_focus_owner()
+		var focused: Control = vp.gui_get_focus_owner()
 		var typing: bool = focused is LineEdit or focused is TextEdit
 		if not typing and _is_menu_scope_active():
 			var dir_side: int = -1
@@ -110,29 +114,29 @@ func _unhandled_input(event: InputEvent) -> void:
 				KEY_D: dir_side = SIDE_RIGHT
 			if dir_side != -1:
 				if _move_focus_direction(dir_side):
-					get_viewport().set_input_as_handled()
+					vp.set_input_as_handled()
 					return
 
 	if event.is_action("ui_accept") or event.is_action("ui_focus_next") \
 			or event.is_action("ui_focus_prev"):
 		# Enter on a screen whose focus was lost should select something rather
 		# than do nothing forever.
-		if get_viewport().gui_get_focus_owner() == null:
+		if vp.gui_get_focus_owner() == null:
 			_dirty = true
 		return
 	if event.is_action("ui_cancel") or event.is_action("pause"):
 		# If the user is typing in a text field, first ESC releases text focus.
-		var focused_esc: Control = get_viewport().gui_get_focus_owner()
+		var focused_esc: Control = vp.gui_get_focus_owner()
 		if focused_esc is LineEdit or focused_esc is TextEdit:
+			vp.set_input_as_handled()
 			focused_esc.release_focus()
-			get_viewport().set_input_as_handled()
 			return
 		if close_top():
-			get_viewport().set_input_as_handled()
+			vp.set_input_as_handled()
 			return
 		# Universal ESC back-out fallback on every full-screen menu scene!
 		if _back_out_current_scene():
-			get_viewport().set_input_as_handled()
+			vp.set_input_as_handled()
 
 
 func _is_menu_scope_active() -> bool:
@@ -147,7 +151,8 @@ func _move_focus_direction(side: int) -> bool:
 		_rebuild()
 	if _focusables.is_empty():
 		return false
-	var current: Control = get_viewport().gui_get_focus_owner()
+	var vp: Viewport = get_viewport()
+	var current: Control = vp.gui_get_focus_owner() if vp != null else null
 	if current == null or not _focusables.has(current):
 		return _grab(_default_focus())
 	# Sliders & PillCyclers handle Left/Right natively via ui_left/ui_right!
@@ -189,7 +194,8 @@ func _back_out_current_scene() -> bool:
 
 func _rebuild() -> void:
 	var old_scope: Control = _scope
-	var focused: Control = get_viewport().gui_get_focus_owner()
+	var vp: Viewport = get_viewport()
+	var focused: Control = vp.gui_get_focus_owner() if vp != null else null
 	if is_instance_valid(old_scope) and is_instance_valid(focused) \
 			and old_scope.is_ancestor_of(focused):
 		_last_focus[old_scope.get_instance_id()] = focused
@@ -201,7 +207,7 @@ func _rebuild() -> void:
 	if _focusables.is_empty():
 		return
 	_wire_neighbours()
-	var current: Control = get_viewport().gui_get_focus_owner()
+	var current: Control = vp.gui_get_focus_owner() if vp != null else null
 	if current != null and _is_focusable(current) and _focusables.has(current):
 		return
 	_grab(_default_focus())
@@ -378,7 +384,10 @@ func _grab(control: Control) -> bool:
 func _verify_focus() -> void:
 	if not is_instance_valid(_scope) or _focusables.is_empty():
 		return
-	var focused: Control = get_viewport().gui_get_focus_owner()
+	var vp: Viewport = get_viewport()
+	if vp == null:
+		return
+	var focused: Control = vp.gui_get_focus_owner()
 	if focused == null:
 		_grab(_default_focus())
 		return

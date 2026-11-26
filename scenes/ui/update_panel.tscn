@@ -45,7 +45,9 @@ theme_override_constants/separation = 16
 [node name="Title" type="Label" parent="Center/Panel/Body"]
 layout_mode = 2
 theme_type_variation = &"TitleLabel"
-theme_override_colors/font_color = Color(0.117647, 0.105882, 0.227451, 1)
+theme_override_colors/font_color = Color(1, 0.823529, 0.180392, 1)
+theme_override_colors/font_outline_color = Color(0.117647, 0.105882, 0.227451, 1)
+theme_override_constants/outline_size = 8
 theme_override_font_sizes/font_size = 40
 text = "UPDATE AVAILABLE"
 horizontal_alignment = 1
@@ -53,7 +55,7 @@ horizontal_alignment = 1
 [node name="VersionLabel" type="Label" parent="Center/Panel/Body"]
 unique_name_in_owner = true
 layout_mode = 2
-theme_override_colors/font_color = Color(0.109804, 0.427451, 0.580392, 1)
+theme_override_colors/font_color = Color(0.219608, 0.839216, 0.941176, 1)
 theme_override_font_sizes/font_size = 18
 text = "v0.0.0  ->  v0.0.0"
 horizontal_alignment = 1
@@ -62,7 +64,7 @@ horizontal_alignment = 1
 unique_name_in_owner = true
 custom_minimum_size = Vector2(0, 40)
 layout_mode = 2
-theme_override_colors/font_color = Color(0.117647, 0.105882, 0.227451, 1)
+theme_override_colors/font_color = Color(0.95, 0.96, 1, 1)
 theme_override_font_sizes/font_size = 15
 text = "Download the new build, then restart to install."
 horizontal_alignment = 1
@@ -77,7 +79,7 @@ show_percentage = false
 [node name="ProgressLabel" type="Label" parent="Center/Panel/Body"]
 unique_name_in_owner = true
 layout_mode = 2
-theme_override_colors/font_color = Color(0.109804, 0.427451, 0.580392, 1)
+theme_override_colors/font_color = Color(0.219608, 0.839216, 0.941176, 1)
 theme_override_font_sizes/font_size = 15
 text = "0%"
 horizontal_alignment = 1

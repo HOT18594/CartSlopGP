@@ -146,17 +146,63 @@ static func build(holder: Node3D, spline: RefCounted,
 ## quarter-tile seam and the final short run carries the line across the start.
 static func _barrier_ring(holder: Node3D, spline: RefCounted,
 		_total: float) -> int:
-	# Open alpine circuit: crisp cobalt/snow safety rails only on steep summit
-	# ledges (y >= 2.2) and tight outside hairpins, plus far outer containment.
+	# Themed Alpine Cliffside Guardrails (matching bg_hero_glacier.png):
+	# Weathered dark-timber posts, frosted steel-blue beams & warm amber reflector
+	# accents along elevated cliff ledges and tight mountain hairpins, paired with
+	# sculpted wind-swept snowdrift berms hugging the road verge!
 	var rails: int = TileKit.selective_safety_rails(holder, spline, {
-		"bridge_y": 2.2,
-		"curve_min": 0.032,
-		"rail_color": Color("eef6fc"),
-		"accent_color": Color("2a86b8"),
-		"post_color": Color("475a6b"),
+		"bridge_y": 1.4,
+		"curve_min": 0.028,
+		"rail_color": Color("6e4a30"),
+		"accent_color": Color("5bc8f5"),
+		"post_color": Color("3b2618"),
 	})
+	_build_verge_snowdrifts(holder, spline)
 	TileKit.build_outer_soft_containment(holder, spline, 13.0)
 	return rails
+
+
+static func _build_verge_snowdrifts(holder: Node3D, spline: RefCounted) -> void:
+	## Continuous wind-sculpted snowdrift berms & timber guardrail caps along
+	## the road shoulder (visual-only, zero collision snag), giving the road
+	## the exact snow-banked alpine cliff verge from bg_hero_glacier.png!
+	var PropBatchRes := preload("res://scripts/minigames/scenery/prop_batch.gd")
+	var SceneryKitRes := preload("res://scripts/minigames/scenery/scenery_kit.gd")
+	var batch := PropBatchRes.new()
+	var total: float = maxf(float(spline.total_length), 1.0)
+	var steps: int = 220
+	var lateral: float = ROAD_HALF + 1.05
+	var snow_hi := Color("eef8ff")
+	var snow_lo := Color("bfdcf2")
+	for i in steps:
+		var s: float = total * (float(i) + 0.5) / float(steps)
+		if spline.has_method("tile_at"):
+			var t_info: Variant = spline.call("tile_at", s)
+			if t_info is Dictionary and str((t_info as Dictionary).get("tile", "")) == "J":
+				continue
+			var prev_info: Variant = spline.call("tile_at", fposmod(s - 11.0, total))
+			if prev_info is Dictionary and str((prev_info as Dictionary).get("tile", "")) == "J":
+				continue
+		var frame: Dictionary = spline.sample(s)
+		var pos: Vector3 = frame["position"] as Vector3
+		var right: Vector3 = frame["right"] as Vector3
+		right.y = 0.0
+		if right.length_squared() < 0.001:
+			continue
+		right = right.normalized()
+		var fw: Vector3 = frame["forward"] as Vector3
+		fw.y = 0.0
+		fw = fw.normalized()
+		var yaw: float = atan2(-fw.x, -fw.z)
+		var seg_len: float = (total / float(steps)) * 1.08
+		for side: float in [-1.0, 1.0]:
+			var drift_pos: Vector3 = pos + right * (side * lateral) + Vector3(0.0, 0.26, 0.0)
+			var h_wave: float = 0.34 + 0.14 * sin(float(i) * 0.7 + side * 1.5)
+			var w_wave: float = 1.25 + 0.35 * cos(float(i) * 0.5 - side)
+			var d_xf := Transform3D(Basis(Vector3.UP, yaw), drift_pos)
+			batch.add_box(d_xf, Vector3(w_wave, h_wave, seg_len),
+				snow_hi if (i + int(side + 2.0)) % 2 == 0 else snow_lo)
+	batch.flush_to(holder, "GlacierVergeSnowdrifts", false, SceneryKitRes.vertex_material())
 
 
 # --------------------------------------------------------------------------

@@ -54,8 +54,8 @@ static func build_blended_ground(min_xz: Vector2, max_xz: Vector2,
 			var b: int = a + 1
 			var c: int = a + stride
 			var d: int = c + 1
-			indices[ptr] = a; indices[ptr + 1] = b; indices[ptr + 2] = d
-			indices[ptr + 3] = a; indices[ptr + 4] = d; indices[ptr + 5] = c
+			indices[ptr] = a; indices[ptr + 1] = c; indices[ptr + 2] = d
+			indices[ptr + 3] = a; indices[ptr + 4] = d; indices[ptr + 5] = b
 			ptr += 6
 	return mesh_from(verts, cols, indices, false)
 

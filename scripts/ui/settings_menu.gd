@@ -1,7 +1,10 @@
 extends Control
 ## Settings overlay used by the main menu and the pause menu.
-## Streamlined layout: left section rail, clean control rows with no redundant
-## headings or duplicate tooltip popups, and responsive sizing down to 960x540.
+## Redesigned in the 0.8.5 Dark Telemetry Slanted Parallelogram UI style:
+## - Skewed dark-glass modal shell with cyan inner rim
+## - Left rail of 5 slanted parallelogram section tabs with true parallelogram focus halos
+## - Recessed dark-glass control rows with high-contrast white labels & cyan telemetry readouts
+## - Responsive sizing down to 960x540 with zero text clipping.
 
 signal closed
 
@@ -9,10 +12,11 @@ const UiAnim := preload("res://scripts/ui/ui_anim.gd")
 const UiPalette := preload("res://scripts/ui/ui_palette.gd")
 const CANDY_BUTTON: String = "res://scripts/ui/candy_button.gd"
 const FOCUS_SLIDER: String = "res://scripts/ui/focus_slider.gd"
+const BODY_FONT: Font = preload("res://assets/ui/fonts/Fredoka-Bold.ttf")
 
 const SECTIONS: Array[String] = ["AUDIO", "VIDEO", "GAMEPLAY", "ACCESSIBILITY", "UPDATES"]
-const LABEL_COLUMN: float = 210.0
-const VALUE_COLUMN: float = 54.0
+const LABEL_COLUMN: float = 226.0
+const VALUE_COLUMN: float = 62.0
 const IDLE_HINT: String = ""
 
 var _panel: PanelContainer
@@ -46,6 +50,151 @@ var _refreshing: bool = false
 var _value_labels: Dictionary = {}
 
 
+class _SlantedSettingsBackdrop extends Control:
+	## Skewed dark-glass parallelogram outer shell for the Settings modal.
+	func _init() -> void:
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+		set_anchors_preset(Control.PRESET_FULL_RECT)
+
+	func _draw() -> void:
+		var w: float = size.x
+		var h: float = size.y
+		if w < 32.0 or h < 32.0:
+			return
+		var sk: float = 22.0
+		var pad_x: float = 26.0
+		var pad_y: float = 20.0
+		var x0: float = -pad_x - sk * 0.5
+		var y0: float = -pad_y
+		var bw: float = w + pad_x * 2.0
+		var bh: float = h + pad_y * 2.0
+		var pts := PackedVector2Array([
+			Vector2(x0 + sk, y0),
+			Vector2(x0 + sk + bw, y0),
+			Vector2(x0 + bw, y0 + bh),
+			Vector2(x0, y0 + bh),
+		])
+		var sh := PackedVector2Array([
+			pts[0] + Vector2(6.0, 10.0), pts[1] + Vector2(6.0, 10.0),
+			pts[2] + Vector2(6.0, 10.0), pts[3] + Vector2(6.0, 10.0),
+		])
+		draw_colored_polygon(sh, Color(0.02, 0.02, 0.07, 0.74))
+		draw_colored_polygon(pts, Color(0.068, 0.078, 0.162, 0.96))
+		var cl := pts.duplicate()
+		cl.append(pts[0])
+		draw_polyline(cl, UiPalette.OUTLINE, 4.5, true)
+		var inner := PackedVector2Array([
+			pts[0] + Vector2(3.0, 3.0),
+			pts[1] + Vector2(-4.0, 3.0),
+			pts[2] + Vector2(-3.0, -3.0),
+			pts[3] + Vector2(4.0, -3.0),
+			pts[0] + Vector2(3.0, 3.0),
+		])
+		draw_polyline(inner, Color(0.35, 0.82, 1.0, 0.18), 1.6, true)
+
+
+class _SlantedNavTab extends Button:
+	## Slanted parallelogram section tab for the Settings left rail, with true
+	## parallelogram focus outline, hover slide-right, and golden active plate.
+	var label_text: String = ""
+	var is_active_tab: bool = false
+	var _hovered: bool = false
+	var _held: bool = false
+	var _hover_t: float = 0.0
+	var _shine_t: float = 2.0
+
+	func _ready() -> void:
+		focus_mode = Control.FOCUS_ALL
+		flat = true
+		clip_contents = false
+		set_meta("skip_kit", true)
+		set_meta("custom_focus", true)
+		set_meta("keep_align", true)
+		var empty := StyleBoxEmpty.new()
+		for st: String in ["normal", "hover", "pressed", "disabled", "focus"]:
+			add_theme_stylebox_override(st, empty)
+		var clear := Color(0.0, 0.0, 0.0, 0.0)
+		for ck: String in ["font_color", "font_hover_color", "font_focus_color",
+				"font_pressed_color", "font_disabled_color"]:
+			add_theme_color_override(ck, clear)
+		mouse_entered.connect(func() -> void: _hovered = true; _shine_t = -0.35; queue_redraw())
+		mouse_exited.connect(func() -> void: _hovered = false; queue_redraw())
+		focus_entered.connect(func() -> void: _shine_t = -0.35; queue_redraw())
+		focus_exited.connect(queue_redraw)
+		button_down.connect(func() -> void: _held = true; queue_redraw())
+		button_up.connect(func() -> void: _held = false; queue_redraw())
+
+	func set_active_tab(on: bool) -> void:
+		is_active_tab = on
+		queue_redraw()
+
+	func _process(delta: float) -> void:
+		if not is_visible_in_tree():
+			return
+		var hot: bool = (_hovered or has_focus() or is_active_tab) and not disabled
+		var target: float = 1.0 if hot else 0.0
+		_hover_t = UiAnim.damp(_hover_t, target, delta, 16.0)
+		if _shine_t < 1.5:
+			_shine_t += delta * 2.6
+			queue_redraw()
+		elif absf(_hover_t - target) > 0.004:
+			queue_redraw()
+
+	func _draw() -> void:
+		var w: float = size.x
+		var h: float = size.y
+		if w < 24.0 or h < 18.0:
+			return
+		var focused: bool = has_focus() and not disabled
+		var sk: float = 12.0
+		var shift: float = _hover_t * 6.0
+		var x0: float = 3.0 + shift
+		var y0: float = 2.0 + (1.5 if _held else 0.0)
+		var bw: float = maxf(w - sk - 14.0, 20.0)
+		var bh: float = maxf(h - 6.0, 14.0)
+		var pts := PackedVector2Array([
+			Vector2(x0 + sk, y0),
+			Vector2(x0 + sk + bw, y0),
+			Vector2(x0 + bw, y0 + bh),
+			Vector2(x0, y0 + bh),
+		])
+		var sh := PackedVector2Array([
+			pts[0] + Vector2(3.0, 4.0), pts[1] + Vector2(3.0, 4.0),
+			pts[2] + Vector2(3.0, 4.0), pts[3] + Vector2(3.0, 4.0),
+		])
+		draw_colored_polygon(sh, Color(0.02, 0.02, 0.08, 0.58))
+
+		if focused:
+			var halo := PackedVector2Array([
+				Vector2(x0 + sk - 3.0, y0 - 2.5),
+				Vector2(x0 + sk + bw + 3.0, y0 - 2.5),
+				Vector2(x0 + bw + 3.0, y0 + bh + 2.5),
+				Vector2(x0 - 3.0, y0 + bh + 2.5),
+				Vector2(x0 + sk - 3.0, y0 - 2.5),
+			])
+			draw_polyline(halo, Color.WHITE if is_active_tab else UiPalette.YELLOW, 3.2, true)
+
+		var fill: Color
+		if is_active_tab:
+			fill = UiPalette.YELLOW.lightened(0.06 if _hovered else 0.0)
+		elif _hovered or focused:
+			fill = Color(0.15, 0.18, 0.34, 0.96)
+		else:
+			fill = Color(0.10, 0.115, 0.225, 0.90)
+		draw_colored_polygon(pts, fill)
+
+		var cl := pts.duplicate()
+		cl.append(pts[0])
+		draw_polyline(cl, UiPalette.OUTLINE, 3.2, true)
+
+		var fsz: int = 17
+		var ascent: float = BODY_FONT.get_ascent(fsz)
+		var ty: float = y0 + (bh + ascent * 0.72) * 0.5
+		var t_col: Color = UiPalette.INK if is_active_tab else UiPalette.TEXT
+		draw_string(BODY_FONT, Vector2(x0 + sk + 12.0, ty), label_text,
+			HORIZONTAL_ALIGNMENT_LEFT, bw - 18.0, fsz, t_col)
+
+
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	add_to_group("nav_scope")
@@ -65,8 +214,8 @@ func _fit_panel() -> void:
 	if vp.x < 1.0 or vp.y < 1.0:
 		return
 	_panel.custom_minimum_size = Vector2(
-		clampf(vp.x - 48.0, 760.0, 1000.0),
-		clampf(vp.y - 48.0, 460.0, 560.0))
+		clampf(vp.x - 44.0, 800.0, 1040.0),
+		clampf(vp.y - 44.0, 480.0, 585.0))
 
 
 func open() -> void:
@@ -99,35 +248,50 @@ func close() -> void:
 
 
 func _build_ui() -> void:
-	_body.add_theme_constant_override("separation", 12)
+	var panel_pad := StyleBoxFlat.new()
+	panel_pad.draw_center = false
+	panel_pad.bg_color = Color(0, 0, 0, 0)
+	panel_pad.content_margin_left = 38.0
+	panel_pad.content_margin_right = 38.0
+	panel_pad.content_margin_top = 26.0
+	panel_pad.content_margin_bottom = 28.0
+	_panel.add_theme_stylebox_override("panel", panel_pad)
+	var bg := _SlantedSettingsBackdrop.new()
+	bg.name = "SlantedSettingsBackdrop"
+	_panel.add_child(bg)
+	_panel.move_child(bg, 0)
+
+	_body.add_theme_constant_override("separation", 14)
 	var header := HBoxContainer.new()
 	header.add_theme_constant_override("separation", UiKit.SPACING)
 	_body.add_child(header)
-	var title := _label("SETTINGS", 36, UiPalette.INK)
+	var title := _label("SETTINGS", 38, UiPalette.TEXT)
 	title.theme_type_variation = &"TitleLabel"
+	title.add_theme_color_override("font_outline_color", UiPalette.OUTLINE)
+	title.add_theme_constant_override("outline_size", 8)
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	title.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	header.add_child(title)
-	var close_button := _candy_button("BACK", UiPalette.RED, 44, 17)
-	close_button.custom_minimum_size = Vector2(148, 48)
+	var close_button := _candy_button("BACK", UiPalette.RED, 46, 18)
+	close_button.custom_minimum_size = Vector2(154, 48)
 	close_button.pressed.connect(close)
 	header.add_child(close_button)
 
 	var main := HBoxContainer.new()
 	main.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	main.add_theme_constant_override("separation", UiKit.SPACING)
+	main.add_theme_constant_override("separation", 18)
 	_body.add_child(main)
 
 	var nav := VBoxContainer.new()
-	nav.custom_minimum_size = Vector2(200, 0)
-	nav.add_theme_constant_override("separation", 6)
+	nav.custom_minimum_size = Vector2(218, 0)
+	nav.add_theme_constant_override("separation", 8)
 	nav.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	main.add_child(nav)
 	for index in SECTIONS.size():
-		var button := _plain_button(SECTIONS[index], 17, 44)
-		button.set_meta("skip_kit", true)
-		button.set_meta("keep_align", true)
-		button.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		var button := _SlantedNavTab.new()
+		button.label_text = SECTIONS[index]
+		button.text = SECTIONS[index]
+		button.custom_minimum_size = Vector2(216, 48)
 		button.pressed.connect(_show_page.bind(index))
 		nav.add_child(button)
 		_nav_buttons.append(button)
@@ -136,22 +300,27 @@ func _build_ui() -> void:
 	var card := PanelContainer.new()
 	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	card.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	card.add_theme_stylebox_override("panel",
-		UiKit.flat_card(Color(1.0, 1.0, 1.0, 0.38)))
+	var card_style := StyleBoxFlat.new()
+	card_style.bg_color = Color(0.042, 0.048, 0.108, 0.90)
+	card_style.border_color = Color(0.25, 0.65, 0.95, 0.22)
+	card_style.set_border_width_all(2)
+	card_style.set_corner_radius_all(12)
+	card_style.skew = Vector2(0.035, 0.0)
+	card.add_theme_stylebox_override("panel", card_style)
 	main.add_child(card)
 	var margin := MarginContainer.new()
-	margin.add_theme_constant_override("margin_left", 26)
-	margin.add_theme_constant_override("margin_right", 26)
-	margin.add_theme_constant_override("margin_top", 20)
-	margin.add_theme_constant_override("margin_bottom", 20)
+	margin.add_theme_constant_override("margin_left", 24)
+	margin.add_theme_constant_override("margin_right", 24)
+	margin.add_theme_constant_override("margin_top", 18)
+	margin.add_theme_constant_override("margin_bottom", 18)
 	card.add_child(margin)
 	_content = VBoxContainer.new()
-	_content.add_theme_constant_override("separation", 16)
+	_content.add_theme_constant_override("separation", 14)
 	margin.add_child(_content)
 
 	for _section: String in SECTIONS:
 		var page := VBoxContainer.new()
-		page.add_theme_constant_override("separation", 14)
+		page.add_theme_constant_override("separation", 10)
 		page.size_flags_vertical = Control.SIZE_EXPAND_FILL
 		page.visible = false
 		_content.add_child(page)
@@ -163,23 +332,23 @@ func _build_ui() -> void:
 	_build_accessibility(_pages[3])
 	_build_updates(_pages[4])
 
-	_desc_label = UiKit.caption("")
+	_desc_label = _label(IDLE_HINT, 15, UiPalette.TEXT_DIM)
 	_desc_label.custom_minimum_size = Vector2(0, 26)
 	_desc_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_desc_label.text = IDLE_HINT
+	_desc_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_content.add_child(_desc_label)
 
 	var footer := HBoxContainer.new()
 	footer.add_theme_constant_override("separation", UiKit.SPACING)
 	_body.add_child(footer)
-	var reset := _candy_button("RESET DEFAULTS", UiPalette.BLUE, 44, 15)
-	reset.custom_minimum_size = Vector2(240, 48)
+	var reset := _candy_button("RESET DEFAULTS", UiPalette.BLUE, 46, 16)
+	reset.custom_minimum_size = Vector2(246, 48)
 	reset.pressed.connect(_on_reset_defaults)
 	footer.add_child(reset)
 	var spacer := Control.new()
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	footer.add_child(spacer)
-	var version := _label("v%s" % UpdateChecker.read_version_file(), 13, UiPalette.MUTED)
+	var version := _label("v%s" % UpdateChecker.read_version_file(), 15, UiPalette.YELLOW)
 	version.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	footer.add_child(version)
 
@@ -212,25 +381,25 @@ func _build_video(page: VBoxContainer) -> void:
 	_quality_button = _choice_row(page, "Quality preset",
 		"Rendering and visual effect detail.",
 		GameSettings.QUALITY_NAMES, [0, 1, 2], GameSettings.quality_preset,
-		_on_quality_changed, 104.0)
+		_on_quality_changed, 108.0)
 
 
 func _build_gameplay(page: VBoxContainer) -> void:
 	_boost_mode_button = _choice_row(page, "Boost input",
 		"HOLD: boost while button is held. TOGGLE: tap once to start, tap again to stop.",
 		PackedStringArray(["HOLD", "TOGGLE"]), [false, true],
-		1 if GameSettings.boost_toggle else 0, _on_boost_mode_changed, 96.0)
+		1 if GameSettings.boost_toggle else 0, _on_boost_mode_changed, 102.0)
 	_drift_mode_button = _choice_row(page, "Drift input",
 		"HOLD: drift while button is held. TOGGLE: tap once to latch drift, tap again to release.",
 		PackedStringArray(["HOLD", "TOGGLE"]), [false, true],
-		1 if GameSettings.drift_toggle else 0, _on_drift_mode_changed, 96.0)
+		1 if GameSettings.drift_toggle else 0, _on_drift_mode_changed, 102.0)
 	_deadzone_slider = _slider_row(page, "deadzone", "Stick deadzone",
 		"Minimum stick movement before steering reacts.",
 		0, 40, 1, _on_deadzone_changed)
 	_difficulty_button = _choice_row(page, "Bot difficulty",
 		"AI pace in single-player races and arena matches.",
 		PackedStringArray(["EASY", "NORMAL", "HARD"]), [0, 1, 2],
-		GameSettings.minigame_difficulty, _on_difficulty_changed, 96.0)
+		GameSettings.minigame_difficulty, _on_difficulty_changed, 102.0)
 
 
 func _build_accessibility(page: VBoxContainer) -> void:
@@ -244,16 +413,16 @@ func _build_accessibility(page: VBoxContainer) -> void:
 
 func _build_updates(page: VBoxContainer) -> void:
 	page.alignment = BoxContainer.ALIGNMENT_CENTER
-	_offline_note = _label("", 14, UiPalette.RED)
+	_offline_note = _label("", 15, UiPalette.RED)
 	_offline_note.visible = false
 	page.add_child(_offline_note)
-	_check_button = _candy_button("CHECK FOR UPDATES", UiPalette.YELLOW, 48, 17)
-	_check_button.custom_minimum_size = Vector2(260, 48)
+	_check_button = _candy_button("CHECK FOR UPDATES", UiPalette.YELLOW, 52, 18)
+	_check_button.custom_minimum_size = Vector2(280, 52)
 	_check_button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	_check_button.pressed.connect(_on_check_updates)
 	_describe(_check_button, _check_button, "Check whether a newer release is available.")
 	page.add_child(_check_button)
-	_update_status = _label("", 15, UiPalette.MUTED)
+	_update_status = _label("", 16, UiPalette.TEXT_DIM)
 	_update_status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	page.add_child(_update_status)
 
@@ -270,7 +439,7 @@ func _slider_row(page: VBoxContainer, key: String, label_text: String,
 	slider.step = step
 	slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	slider.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	slider.custom_minimum_size = Vector2(200, 26)
+	slider.custom_minimum_size = Vector2(200, 28)
 	slider.value_changed.connect(callback)
 	row.add_child(slider)
 	_value_labels[key] = _value_label(row)
@@ -296,13 +465,13 @@ func _toggle_row(page: VBoxContainer, label_text: String,
 
 func _choice_row(page: VBoxContainer, label_text: String, description: String,
 		labels: PackedStringArray, values: Array, current: int,
-		callback: Callable, tile_width: float = 100.0) -> Button:
+		callback: Callable, tile_width: float = 104.0) -> Button:
 	var row := _row(page)
 	row.add_child(_row_label(label_text))
 	var spacer := Control.new()
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	row.add_child(spacer)
-	var strip := UiKit.segmented(labels, values, current, tile_width, 40.0)
+	var strip := UiKit.segmented(labels, values, current, tile_width, 42.0)
 	strip.size_flags_horizontal = Control.SIZE_SHRINK_END
 	strip.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	strip.connect("option_changed", callback)
@@ -312,16 +481,30 @@ func _choice_row(page: VBoxContainer, label_text: String, description: String,
 
 
 func _row(page: VBoxContainer) -> HBoxContainer:
+	var row_card := PanelContainer.new()
+	var row_st := StyleBoxFlat.new()
+	row_st.bg_color = Color(0.095, 0.112, 0.220, 0.86)
+	row_st.border_color = Color(1.0, 1.0, 1.0, 0.08)
+	row_st.set_border_width_all(1)
+	row_st.set_corner_radius_all(8)
+	row_st.skew = Vector2(0.08, 0.0)
+	row_st.content_margin_left = 16.0
+	row_st.content_margin_right = 16.0
+	row_st.content_margin_top = 6.0
+	row_st.content_margin_bottom = 6.0
+	row_card.add_theme_stylebox_override("panel", row_st)
+	page.add_child(row_card)
+
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 12)
 	row.custom_minimum_size = Vector2(0, 38)
 	row.mouse_filter = Control.MOUSE_FILTER_PASS
-	page.add_child(row)
+	row_card.add_child(row)
 	return row
 
 
 func _row_label(text: String) -> Label:
-	var label := _label(text, 17, UiPalette.INK)
+	var label := _label(text, 18, UiPalette.TEXT)
 	label.custom_minimum_size = Vector2(LABEL_COLUMN, 0)
 	label.clip_text = true
 	label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
@@ -330,7 +513,7 @@ func _row_label(text: String) -> Label:
 
 
 func _value_label(row: HBoxContainer) -> Label:
-	var value := _label("", 17, UiPalette.BODY_BLUE)
+	var value := _label("", 18, UiPalette.CYAN)
 	value.custom_minimum_size = Vector2(VALUE_COLUMN, 0)
 	value.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	value.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
@@ -364,48 +547,15 @@ func _label(text: String, font_size: int, color: Color) -> Label:
 	return label
 
 
-func _plain_button(text: String, font_size: int, height: int) -> Button:
-	var button := Button.new()
-	button.text = text
-	button.custom_minimum_size = Vector2(0, height)
-	button.add_theme_font_size_override("font_size", font_size)
-	_ink_text(button)
-	button.focus_mode = Control.FOCUS_ALL
-	button.add_theme_stylebox_override("normal", _row_style(Color(0, 0, 0, 0)))
-	button.add_theme_stylebox_override("hover", _row_style(Color(1, 1, 1, 0.55)))
-	button.add_theme_stylebox_override("pressed", _row_style(UiPalette.YELLOW))
-	UiKit.apply_focus_ring(button, UiKit.CORNER_RADIUS)
-	return button
-
-
-func _ink_text(button: Button) -> void:
-	for key: String in ["font_color", "font_hover_color", "font_pressed_color",
-			"font_focus_color", "font_disabled_color"]:
-		button.add_theme_color_override(key, UiPalette.INK)
-	button.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0))
-	button.add_theme_constant_override("outline_size", 0)
-
-
 func _candy_button(text: String, color: Color, height: int, font_size: int) -> Button:
 	var button := Button.new()
 	button.set_script(load(CANDY_BUTTON))
 	button.set("fill_color", color)
+	button.set("skew_px", 13.0)
 	button.text = text
 	button.custom_minimum_size = Vector2(0, height)
 	button.add_theme_font_size_override("font_size", font_size)
 	return button
-
-
-func _row_style(bg: Color) -> StyleBoxFlat:
-	var style := StyleBoxFlat.new()
-	style.bg_color = bg
-	style.set_corner_radius_all(UiKit.CORNER_RADIUS)
-	style.content_margin_left = UiKit.SPACING
-	style.content_margin_right = UiKit.SPACING
-	style.content_margin_top = UiKit.SPACING_TIGHT
-	style.content_margin_bottom = UiKit.SPACING_TIGHT
-	style.anti_aliasing = true
-	return style
 
 
 func _show_page(index: int) -> void:
@@ -414,11 +564,8 @@ func _show_page(index: int) -> void:
 		_pages[i].visible = i == _current_page
 		var selected: bool = i == _current_page
 		var button := _nav_buttons[i]
-		_ink_text(button)
-		button.add_theme_stylebox_override("normal",
-			_row_style(UiPalette.YELLOW if selected else Color(0, 0, 0, 0)))
-		button.add_theme_stylebox_override("hover",
-			_row_style(UiPalette.YELLOW if selected else Color(1, 1, 1, 0.55)))
+		if button is _SlantedNavTab:
+			(button as _SlantedNavTab).set_active_tab(selected)
 	if _desc_label != null:
 		_desc_label.text = IDLE_HINT
 	MenuNav.refresh()
@@ -584,5 +731,5 @@ func _unhandled_input(event: InputEvent) -> void:
 	if not visible:
 		return
 	if event.is_action_pressed("pause") or event.is_action_pressed("ui_cancel"):
+		UiKit.consume_input(self)
 		close()
-		get_viewport().set_input_as_handled()

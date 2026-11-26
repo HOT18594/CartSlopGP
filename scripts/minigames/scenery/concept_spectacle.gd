@@ -35,15 +35,13 @@ static func _emissive_mat(color: Color, energy: float = 2.6,
 
 
 static func crystal_material() -> StandardMaterial3D:
-	## Bright faceted glacier ice crystal material: unshaded vertex-colored
-	## facets + subtle glow so every face gleams icy turquoise with zero dark sides.
+	## Faceted glacier ice crystal material: unshaded per-facet vertex colors with
+	## a subtle deep-cyan inner luminescence so all 6 geometric crystal faces
+	## stay distinct and vibrant without blooming to flat white.
 	var mat := StandardMaterial3D.new()
 	mat.vertex_color_use_as_albedo = true
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
-	mat.emission_enabled = true
-	mat.emission = Color("3ae8ff")
-	mat.emission_energy_multiplier = 0.42
 	return mat
 
 
@@ -64,12 +62,14 @@ static func build_northern_lights(parent: Node3D, center: Vector3,
 	parent.add_child(root)
 
 	var ribbon_specs: Array[Dictionary] = [
-		{"r": sky_radius * 0.92, "h": 92.0, "y": 6.0, "a0": -2.4, "a1": 1.1, "phase": 0.0,
-			"low": Color("24ff8c"), "mid": Color("22e8ff"), "high": Color("7d3cff"), "energy": 1.75},
-		{"r": sky_radius * 0.72, "h": 76.0, "y": 24.0, "a0": 0.3, "a1": 3.5, "phase": 2.1,
-			"low": Color("30ffb2"), "mid": Color("38d6ff"), "high": Color("b448ff"), "energy": 1.50},
-		{"r": sky_radius * 1.08, "h": 110.0, "y": -6.0, "a0": -0.9, "a1": 2.6, "phase": 4.3,
-			"low": Color("1eff9e"), "mid": Color("26d4ff"), "high": Color("6a32e8"), "energy": 1.35},
+		{"r": sky_radius * 0.92, "h": 98.0, "y": 4.0, "a0": -2.6, "a1": 1.3, "phase": 0.0,
+			"low": Color("24ff8c"), "mid": Color("22e8ff"), "high": Color("7d3cff"), "energy": 2.05},
+		{"r": sky_radius * 0.68, "h": 82.0, "y": 20.0, "a0": 0.1, "a1": 3.7, "phase": 2.1,
+			"low": Color("30ffb2"), "mid": Color("38d6ff"), "high": Color("b448ff"), "energy": 1.85},
+		{"r": sky_radius * 1.06, "h": 114.0, "y": -8.0, "a0": -1.1, "a1": 2.8, "phase": 4.3,
+			"low": Color("1eff9e"), "mid": Color("26d4ff"), "high": Color("6a32e8"), "energy": 1.65},
+		{"r": sky_radius * 0.44, "h": 68.0, "y": 34.0, "a0": -3.14, "a1": 3.14, "phase": 1.15,
+			"low": Color("2eff98"), "mid": Color("3bf0ff"), "high": Color("8c42ff"), "energy": 1.95},
 	]
 
 	for idx in ribbon_specs.size():
@@ -295,69 +295,136 @@ static func _flush_lanterns(parent: Node3D, node_name: String, wood_batch: PropB
 
 
 static func build_glacier_crystals(parent: Node3D, spline: RefCounted,
-		count: int = 18) -> Node3D:
-	## Dramatic giant translucent/glowing faceted cyan ice crystal spires jutting
-	## from the snowy verges and cliffs alongside the track.
+		count: int = 26) -> Node3D:
+	## Dramatic giant translucent/glowing faceted cyan-sapphire ice crystal spires
+	## jutting from the snowy cliff verges alongside the track (matching bg_hero_glacier!).
 	if parent == null or spline == null:
 		return null
 	var total: float = maxf(float(spline.total_length), 1.0)
 	var samples := PackedVector3Array()
-	for si in 140:
-		var sf: Dictionary = spline.call("sample", total * float(si) / 140.0)
+	for si in 180:
+		var sf: Dictionary = spline.call("sample", total * float(si) / 180.0)
 		samples.append(sf["position"] as Vector3)
 
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 77431
 	var batch := PropBatch.new()
+	var snow_batch := PropBatch.new()
 	var placed: int = 0
 	for i in count:
-		var s: float = total * (float(i) + 0.5) / float(count)
+		var s: float = total * (float(i) + 0.38) / float(count)
 		var frame: Dictionary = spline.call("sample", s)
 		var pos: Vector3 = frame["position"] as Vector3
 		var right: Vector3 = frame["right"] as Vector3
 		right.y = 0.0
+		if right.length_squared() < 0.001:
+			continue
 		right = right.normalized()
 		var side: float = 1.0 if i % 2 == 0 else -1.0
-		var dist: float = rng.randf_range(19.0, 32.0)
+		var scale_k: float = rng.randf_range(1.35, 2.55)
+		var dist: float = rng.randf_range(21.5, 34.0)
 		var c_pos: Vector3 = pos + right * (side * dist)
-		if not _clear_of_samples(c_pos, samples, 16.5):
-			continue
-		c_pos.y = maxf(pos.y - 1.5, -1.0)
-		add_crystal_cluster(batch, c_pos, rng.randf_range(1.1, 2.2), rng)
+		# Verify both center and outer crystal ring clear every road segment!
+		var clear_r: float = 16.5 + scale_k * 3.0
+		if not _clear_of_samples(c_pos, samples, clear_r):
+			side = -side
+			c_pos = pos + right * (side * dist)
+			if not _clear_of_samples(c_pos, samples, clear_r):
+				continue
+		c_pos.y = maxf(pos.y - 1.2, 0.0)
+		add_crystal_cluster(batch, c_pos, scale_k, rng, snow_batch)
 		placed += 1
 	if placed == 0:
 		return null
+	var root := Node3D.new()
+	root.name = "GlacierIceCrystals"
+	parent.add_child(root)
 	var mi := MeshInstance3D.new()
-	mi.name = "GlacierIceCrystals"
+	mi.name = "CrystalSpires"
 	mi.mesh = batch.build()
 	mi.material_override = crystal_material()
-	parent.add_child(mi)
-	return mi
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	root.add_child(mi)
+	snow_batch.flush_to(root, "CrystalSnowBases", false, SceneryKit.vertex_material())
+	return root
 
 
 static func add_crystal_cluster(batch: PropBatch, center: Vector3,
-		scale_k: float, rng: RandomNumberGenerator) -> void:
-	## 3-5 angled hexagonal crystalline shards rising from a single frost base.
-	var shards: int = rng.randi_range(3, 5)
-	var pal: Array[Color] = [
-		Color("6ef2ff"), Color("3cd4f7"), Color("9ef8ff"), Color("2db5e8"),
+		scale_k: float, rng: RandomNumberGenerator,
+		snow_batch: PropBatch = null) -> void:
+	## 4-7 angled multi-faceted hexagonal crystalline spires rising from a sculpted
+	## snow-and-slate pedestal, with per-face turquoise/cyan/sapphire facet shading
+	## matching bg_hero_glacier.png.
+	var shards: int = rng.randi_range(4, 7)
+	var pal_main: Array[Color] = [
+		Color("35cef7"), Color("28b4eb"), Color("4ee0ff"), Color("1e98d6"),
 	]
+	if snow_batch != null:
+		# Sculpted snowbank & dark slate rock collar wrapping the crystal eruption
+		snow_batch.add_cone(Transform3D(Basis.IDENTITY, center + Vector3(0.0, 0.65 * scale_k, 0.0)),
+			3.8 * scale_k, 2.4 * scale_k, 8, Color("e3f3fc"))
+		snow_batch.add_cone(Transform3D(Basis(Vector3.UP, 0.4), center + Vector3(0.8 * scale_k, 0.45 * scale_k, -0.6 * scale_k)),
+			2.9 * scale_k, 1.8 * scale_k, 7, Color("bfdcf0"))
+		snow_batch.add_box(Transform3D(Basis(Vector3.UP, 0.25), center + Vector3(0.0, -1.8 * scale_k, 0.0)),
+			Vector3(4.8 * scale_k, 3.8 * scale_k, 4.8 * scale_k), Color("2b4870"))
 	for i in shards:
 		var is_main: bool = i == 0
-		var h: float = (rng.randf_range(9.5, 16.5) if is_main else rng.randf_range(4.2, 9.8)) * scale_k
-		var r: float = (rng.randf_range(1.6, 2.5) if is_main else rng.randf_range(0.85, 1.55)) * scale_k
-		var ang: float = TAU * float(i) / float(shards) + rng.randf_range(-0.3, 0.3)
-		var off := Vector3(cos(ang), 0.0, sin(ang)) * (0.0 if is_main else r * 1.4)
-		var tilt_x: float = rng.randf_range(-0.18, 0.18) if is_main else rng.randf_range(-0.42, 0.42)
-		var tilt_z: float = rng.randf_range(-0.18, 0.18) if is_main else rng.randf_range(-0.42, 0.42)
+		var is_second: bool = i == 1
+		var h: float = (rng.randf_range(12.5, 19.5) if is_main else (rng.randf_range(8.5, 13.5) if is_second else rng.randf_range(4.8, 9.8))) * scale_k
+		var r: float = (rng.randf_range(1.75, 2.65) if is_main else (rng.randf_range(1.25, 1.95) if is_second else rng.randf_range(0.82, 1.42))) * scale_k
+		var ang: float = TAU * float(i) / float(shards) + rng.randf_range(-0.22, 0.22)
+		var off := Vector3(cos(ang), 0.0, sin(ang)) * (0.0 if is_main else r * 1.28)
+		var tilt_x: float = rng.randf_range(-0.14, 0.14) if is_main else rng.randf_range(-0.42, 0.42)
+		var tilt_z: float = rng.randf_range(-0.14, 0.14) if is_main else rng.randf_range(-0.42, 0.42)
 		var rot := Basis(Vector3.UP, ang) * Basis(Vector3.RIGHT, tilt_x) * Basis(Vector3.FORWARD, tilt_z)
-		var col: Color = pal[i % pal.size()]
+		var col: Color = pal_main[i % pal_main.size()]
 		var base_xf := Transform3D(rot, center + off)
-		# Lower faceted hexagonal shaft + tall pointed crystal tip
-		batch.add_cylinder(base_xf * Transform3D(Basis.IDENTITY, Vector3(0.0, h * 0.36, 0.0)),
-			r, h * 0.72, 6, col)
-		batch.add_cone(base_xf * Transform3D(Basis.IDENTITY, Vector3(0.0, h * 0.88, 0.0)),
-			r, h * 0.36, 6, col.lightened(0.24))
+		_add_faceted_crystal_spire(batch, base_xf, r, h, col)
+
+
+static func _add_faceted_crystal_spire(batch: PropBatch, base_xf: Transform3D,
+		radius: float, height: float, base_col: Color) -> void:
+	## 6-sided hexagonal quartz-ice crystal prism with distinct per-facet colors:
+	## deep sapphire collar -> multi-tone turquoise shaft -> tapered upper shoulder -> chiseled 6-facet apex.
+	var sides: int = 6
+	var facet_tones: Array[Color] = [
+		base_col.lightened(0.42), # Sun-catching specular diamond-cyan facet
+		base_col.lightened(0.20), # Bright turquoise facet
+		base_col,                 # Core glacial cyan facet
+		base_col.darkened(0.18),  # Mid sapphire facet
+		base_col.darkened(0.32),  # Deep shadow sapphire facet
+		base_col.lightened(0.08), # Rim-lit cyan facet
+	]
+	var y0: float = -0.4
+	var y1: float = height * 0.24
+	var y2: float = height * 0.68
+	var y3: float = height * 1.0
+	var r0: float = radius * 1.06
+	var r1: float = radius * 0.96
+	var r2: float = radius * 0.74
+	var apex: Vector3 = base_xf * Vector3(0.0, y3, 0.0)
+	for s in sides:
+		var a0: float = TAU * float(s) / float(sides)
+		var a1: float = TAU * float(s + 1) / float(sides)
+		var c0 := Vector2(cos(a0), sin(a0))
+		var c1 := Vector2(cos(a1), sin(a1))
+		var f_col: Color = facet_tones[s % facet_tones.size()]
+		var collar_col: Color = f_col.darkened(0.26)
+		var tip_col: Color = f_col.lightened(0.22)
+
+		var p00: Vector3 = base_xf * Vector3(c0.x * r0, y0, c0.y * r0)
+		var p01: Vector3 = base_xf * Vector3(c1.x * r0, y0, c1.y * r0)
+		var p10: Vector3 = base_xf * Vector3(c0.x * r1, y1, c0.y * r1)
+		var p11: Vector3 = base_xf * Vector3(c1.x * r1, y1, c1.y * r1)
+		var p20: Vector3 = base_xf * Vector3(c0.x * r2, y2, c0.y * r2)
+		var p21: Vector3 = base_xf * Vector3(c1.x * r2, y2, c1.y * r2)
+
+		# Lower sapphire collar quad
+		batch.add_quad(p00, p10, p11, p01, collar_col)
+		# Main faceted crystal shaft quad
+		batch.add_quad(p10, p20, p21, p11, f_col)
+		# Chiseled pyramidal crystal tip triangle
+		batch.add_triangle(p20, apex, p21, tip_col)
 
 
 # --------------------------------------------------------------------------

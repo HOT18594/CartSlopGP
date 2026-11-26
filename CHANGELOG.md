@@ -2,6 +2,27 @@
 
 Player-facing notes, newest first.
 
+## [0.8.6] - 2026-11-25
+
+### Glacier Pass Alpine Overhaul, Full Slanted UI Unification & macOS Crash Fix!
+
+![Glacier Pass Overhaul](assets/ui/art/preview_glacier.png)
+
+A packed polish, visual overhaul, and stability release fixing the macOS ARM-64 crash, unifying **every** UI screen (including Room Browser, Pause, Settings, Multiplayer, and all 4 Game-End screens) under the dark-glass slanted parallelogram theme, and rebuilding **Glacier Pass** into a dramatic cliffside winter-night mountain course!
+
+#### Critical macOS & Release-Build Crash Fix
+- **Fixed macOS ARM-64 `EXC_BAD_ACCESS (0x450)` Crash:** Diagnosed the exact release-build null-pointer dereference inside `Viewport::set_input_as_handled()` triggered when pressing `ESC` or backing out of a menu during a scene transition. Every input handler and viewport query across the entire UI and gameplay codebase now consumes input safely before scene swaps and guards against null viewports.
+- **Zero-Warning macOS Universal Bundle:** Added `NSSupportsAutomaticGraphicsSwitching` and bundle copyright metadata, re-synced all imports cleanly, and verified the signed Universal Mach-O (`arm64` + `x86_64`) package.
+
+#### Glacier Pass — Complete 3D Alpine Night Overhaul & Twin Chasm Jumps
+- **Dramatic 1,813 m Cliffside Mountain Circuit:** Rebuilt Glacier Pass into a sprawling alpine pass (`1.5 m`–`13.5 m` elevation) flanked by a continuous sculpted **3D ridged-multifractal alpine mountain range** (`104 × 92` mesh) with snow-capped peaks, frosted granite crags, valley pine forests, and strict road clearance — zero intersecting mountains or 2D cutouts.
+- **Twin Broken-Bridge Cliff Chasm Jumps:** Added two physical & visual **17.35 m broken-bridge crevasses** framed with splintered timber, stone abutments, hazard chevrons, and glowing turquoise ice abysses, powered by **weight-balanced launch physics** (tuned from the `45 kg` Shopping Cart up to the `3,200 kg` Box Truck) plus a fair setback if you miss the jump.
+- **Luminous Winter-Night Lighting & Multi-Tone Snow:** Fixed inverted ground winding so the snow valley glows cleanly under the midnight aurora sky (`#04081a`), added opposite cool-blue aurora fill lighting so shadowed mountain faces stay rich frosted blue instead of pitch black, and upgraded glacier crystals to 6-sided faceted sapphire-cyan spires.
+
+#### 100% Slanted Dark-Glass UI Unification & Multiplayer End-Screen Fixes
+- **Refreshed Room Browser & Every Modal:** Rebuilt the **Room Browser** (LAN + Online), **Pause Menu**, **Settings Menu**, **Update Dialog**, **Changelog Viewer**, and **Play Menu** in the cohesive 0.8.6 dark-glass slanted-parallelogram theme with crisp slanted outer borders, slanted inputs, slanted room rows, and slanted focus halos across **every** screen.
+- **Overhauled All 4 Game-End Screens & Multiplayer Rematch Flow:** Updated **Racing**, **Knockout**, **Deliver**, and **Blast Tag** match result cards from the legacy cream boxes to sleek slanted dark-glass telemetry cards with high-contrast standings, fixed readable lobby server-status badges, and gave **multiplayer hosts** a working **`RACE AGAIN` / `PLAY AGAIN`** rematch button in Racing and Deliver alongside `BACK TO LOBBY` and `MAIN MENU`.
+
 ## [0.8.5] - 2026-11-21
 
 ### The Grand Spectacle Overhaul: New Racing-Sim UI, Living Worlds, Full 6-Track OST & Multiplayer Vehicle Freedom!
