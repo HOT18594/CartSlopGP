@@ -22,11 +22,10 @@ func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	add_to_group("nav_scope")
 	hide()
+	UiKit.apply_scrim(get_node_or_null("Dim") as ColorRect)
 	var panel := get_node_or_null("Center/Panel") as PanelContainer
 	if panel != null:
-		panel.add_theme_stylebox_override("panel",
-			UiKit.slanted_panel(Color(0.056, 0.068, 0.156, 0.95),
-				Color(0.24, 0.84, 0.96, 0.56), 0.06, 4, 6, 36.0, 28.0))
+		panel.add_theme_stylebox_override("panel", UiKit.modal_panel())
 	_primary_button.pressed.connect(_on_primary)
 	_secondary_button.pressed.connect(_on_secondary)
 	UpdateChecker.download_progress.connect(_on_progress)

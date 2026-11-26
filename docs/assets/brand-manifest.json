@@ -1,0 +1,130 @@
+{
+  "favicon_data_uri_32_bytes": 1550,
+  "favicon_data_uri_32_sha256": "0caa022939b5bf37b1a9be53ac50463be362836a34464b5a7ca57bac6c34792c",
+  "format": 1,
+  "generator": "website/tools/build_brand_assets.py",
+  "outputs": [
+    {
+      "bytes": 31010,
+      "path": "assets/apple-touch-icon.png",
+      "sha256": "4bf43214f323c30f8c7c01c06cedf49865b7b30dcc8436eb0bac84d718184032"
+    },
+    {
+      "bytes": 44189,
+      "path": "assets/brand/logo-192.png",
+      "sha256": "cf3377da7e6dd5f20d1bb566d071c060cc974d242ba5591ef7ab16a28924afe5"
+    },
+    {
+      "bytes": 8761,
+      "path": "assets/brand/logo-64.png",
+      "sha256": "bb75bd9442c39e2e51c7bff840294bd13e7339c10d693511422c02a71f78549b"
+    },
+    {
+      "bytes": 127218,
+      "path": "assets/brand/logo.png",
+      "sha256": "37cc46e2feb31ec0a353ce2bcef8f21a53854321ab81d69e1348eeb74b4c4aa0"
+    },
+    {
+      "bytes": 932,
+      "path": "assets/favicon-16x16.png",
+      "sha256": "89363749a464a3af53967b7e6edfd3052c0b6dfe93d4c4e2aa20820fffd37e9c"
+    },
+    {
+      "bytes": 1551,
+      "path": "assets/favicon-32-data-uri.txt",
+      "sha256": "01f500ca9ad179b1782f0ace687d5017363594821604eb66c0e4abb9b736f875"
+    },
+    {
+      "bytes": 2897,
+      "path": "assets/favicon-32x32.png",
+      "sha256": "edec56798a4502584e67508813633a355c66a1235eb0888e04ed4c5dc5049d38"
+    },
+    {
+      "bytes": 5623,
+      "path": "assets/favicon-48x48.png",
+      "sha256": "6a74fde05b726db2a50604f269115b2006c5acf6d84568a08a638f15ad35d8bc"
+    },
+    {
+      "bytes": 1145,
+      "path": "assets/favicon-embed.png",
+      "sha256": "20060abce761ce8ffaf5660f33f9c8f7d13edc2da747b70f2af48981a9cc389e"
+    },
+    {
+      "bytes": 9715,
+      "path": "assets/favicon.ico",
+      "sha256": "74b14d68ce6e792e26eaeaed9de5c1c3312790c15036399ed7a504050973d1fc"
+    },
+    {
+      "bytes": 50124,
+      "path": "assets/fonts/Fredoka-Medium.ttf",
+      "sha256": "83ccadd4f1a49c6d6bc658df3dbf5c739e142e2783b3eeb0d5570d5ffe52f654"
+    },
+    {
+      "bytes": 11358,
+      "path": "assets/fonts/LICENSE-LuckiestGuy.txt",
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+    },
+    {
+      "bytes": 73320,
+      "path": "assets/fonts/LuckiestGuy-Regular.ttf",
+      "sha256": "cfbdd68a039f92df51cf3721506af6242e64594c6325fe0bedbeff3fe385d980"
+    },
+    {
+      "bytes": 4388,
+      "path": "assets/fonts/OFL-Fredoka.txt",
+      "sha256": "5c9e7eee5c6b25f4b05b8d53b2e470ea4962f9ced742d044a98f7d95d1375bab"
+    },
+    {
+      "bytes": 143217,
+      "path": "assets/hero.jpg",
+      "sha256": "245228d37e8d542c415106404b9e756a07ae2fa1186eb38def2e9d11c891bfbf"
+    },
+    {
+      "bytes": 103986,
+      "path": "assets/hero.webp",
+      "sha256": "9e8958db421b1fc491de876fa4f833e6719b892751f87372d15dc8f0ffb5a0f7"
+    },
+    {
+      "bytes": 36186,
+      "path": "assets/icon-192.png",
+      "sha256": "176e03985e7270ae896a2ce35d8033118e59c25bb083ce030814d9e29ab88fc4"
+    },
+    {
+      "bytes": 99817,
+      "path": "assets/icon-512-maskable.png",
+      "sha256": "e79fcea2577decc236e19e0574479529356087244853b2c6bdf9809ffb85aaa8"
+    },
+    {
+      "bytes": 137969,
+      "path": "assets/icon-512.png",
+      "sha256": "34170f6bc8f90ae63415f7bcc6443a4ec7184e8a423d12e006157172323a390b"
+    },
+    {
+      "bytes": 764774,
+      "path": "assets/og-image.png",
+      "sha256": "fa0d72238be9f0c63299adf68cb4490049e322b72a8e64be3135f6dcc5ff402f"
+    }
+  ],
+  "palette": {
+    "bg": "#0a0d1a",
+    "cream": "#fff6e3",
+    "cyan": "#45b6f0",
+    "red": "#f2545b",
+    "surface": "#0e1226",
+    "yellow": "#ffd22e"
+  },
+  "sources": [
+    {
+      "bytes": 137780,
+      "path": "assets/ui/cart_icon.png",
+      "role": "logo",
+      "sha256": "66a11616b87d87a0cda5fc76d9dc36f9094bb94f99ebea7fca8abf706d909df8"
+    },
+    {
+      "bytes": 2013592,
+      "path": "assets/ui/boot_splash.png",
+      "role": "hero/og art",
+      "sha256": "f2bb44e6be71cbc8c053c49c3eba637736c600b060f5958907d2eaf61b0b466e"
+    }
+  ]
+}

@@ -45,12 +45,32 @@ $G --headless --path godot_project res://scripts/tools/mode_rules_smoke.tscn
 $G --headless --path godot_project res://scripts/tools/driving_smoke.tscn
 $G --headless --path godot_project --script res://scripts/tools/update_smoke.gd
 $G --headless --path godot_project res://scripts/tools/net_mac_smoke.tscn
+$G --headless --path godot_project --script res://scripts/ui/ui_layout_audit.gd
 
 # build a release (PowerShell, from the repo root)
-powershell -ExecutionPolicy Bypass -File pi_setup\build_0_8_2.ps1
+powershell -ExecutionPolicy Bypass -File pi_setup\build_0_8_7.ps1
 ```
 
 `preview_render.tscn` must run **windowed**; it refuses `--headless`.
+
+`ui_layout_audit.gd` measures every UI screen and all result-card variants at
+1280x720 and 1920x1080 (legacy-theme controls, viewport overflow, focus ring)
+and must stay at 0 failures. `net_ping_probe.tscn`, `net_lan_probe.tscn` and
+`net_pi_host_probe.tscn` are two-process route/latency diagnostics, not
+pass/fail suites — see `docs/MAINTENANCE.md` §4.
+
+Additional regression harnesses live under `scripts/tools/` and `scripts/ui/`:
+`phase2_bugfix_smoke.gd`, `phase2_verify_checks.gd`, `phase2_restart_probe.tscn`,
+`phase3_bugfix_smoke.gd`, `ws4_ui_smoke.gd`, `ws2_ui_checks.gd`,
+`ws3_ui_checks.gd`, `ws4_bot_slots_smoke.tscn`, plus FX/audio/physics probes in
+`scripts/effects/` and `scripts/tools/_p2_physics_probe.tscn`; MAINTENANCE §4
+lists their env modes. The workspace-level `web_deploy/scripts/` validators cover the web
+release (version parity, Cloudflare package, logo parity) — the game repo does
+not contain the website/CDN sources. Run the harness that covers whatever you
+changed — a green UI layout audit alone does not catch runtime `SCRIPT ERROR`s,
+so scan the run log for `SCRIPT ERROR`/`Parse Error` explicitly. Always pass
+`--headless` to Godot in automation; a missed flag can open a real window and
+hang the run.
 
 ## Reading a test run
 

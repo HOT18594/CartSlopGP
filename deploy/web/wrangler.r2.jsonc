@@ -1,0 +1,28 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  // Optional R2 + Worker path. `wrangler.r2.jsonc` is a Workers config (it has
+  // `main`), so it is deployed with `wrangler deploy --config wrangler.r2.jsonc`.
+  // The bucket is created out-of-band once (see README "R2 + Worker"); this
+  // config only binds it.
+  "name": "cartslop-play-r2",
+  "main": "worker/index.js",
+  "compatibility_date": "2026-11-26",
+  "workers_dev": true,
+  "r2_buckets": [
+    {
+      "binding": "WEB_ASSETS",
+      "bucket_name": "cartslop-web"
+    }
+  ],
+  "vars": {
+    // "1" only for a threaded export (see web_deploy/README.md);
+    // the stager sets release.json.threaded from version.json.
+    "THREADED": "0"
+  },
+  // Uncomment after the first `wrangler deploy` has created the Worker and the
+  // zone is on this Cloudflare account, to serve it on a custom hostname:
+  // "routes": [{ "pattern": "play.example.com", "custom_domain": true }],
+  "observability": {
+    "enabled": true
+  }
+}

@@ -1829,11 +1829,21 @@ func _network_entries(raw: Array) -> Array[Dictionary]:
 
 
 func _sort_by_place(a: Dictionary, b: Dictionary) -> bool:
-	return int(a.get("place", 0)) < int(b.get("place", 0))
+	## Deterministic tie-break by name: two clients that feed the same rows must
+	## draw the same order even before/without an authoritative place column.
+	var pa: int = int(a.get("place", 0))
+	var pb: int = int(b.get("place", 0))
+	if pa != pb:
+		return pa < pb
+	return str(a.get("name", "")) < str(b.get("name", ""))
 
 
 func _sort_by_progress(a: Dictionary, b: Dictionary) -> bool:
-	return float(a.get("progress", 0.0)) > float(b.get("progress", 0.0))
+	var pa: float = float(a.get("progress", 0.0))
+	var pb: float = float(b.get("progress", 0.0))
+	if not is_equal_approx(pa, pb):
+		return pa > pb
+	return str(a.get("name", "")) < str(b.get("name", ""))
 
 
 # --------------------------------------------------------------------------
@@ -2027,13 +2037,17 @@ func _state_color(cart: CartPlayer) -> Color:
 
 
 func _unhandled_input(event: InputEvent) -> void:
+	# The scoreboard is an InputMap action (Tab on keyboard, Select/View on a
+	# gamepad), so any device can hold it open. Reading the raw key here is what
+	# left pad players without a scoreboard (WS5-05).
+	if _scoreboard != null and InputMap.has_action(&"scoreboard") \
+			and event.is_action(&"scoreboard"):
+		if not event.is_echo():
+			UiKit.consume_input(self)
+			_set_scoreboard_visible(event.is_pressed())
+		return
 	var key := event as InputEventKey
 	if key == null:
-		return
-	if key.keycode == KEY_TAB and _scoreboard != null:
-		if not key.echo:
-			UiKit.consume_input(self)
-			_set_scoreboard_visible(key.pressed)
 		return
 	if key.pressed and not key.echo and key.keycode == KEY_F3:
 		UiKit.consume_input(self)

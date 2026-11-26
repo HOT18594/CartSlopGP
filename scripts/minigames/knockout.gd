@@ -23,12 +23,12 @@ const VehicleCatalog := preload("res://scripts/vehicles/vehicle_catalog.gd")
 const CollisionLayers := preload("res://scripts/systems/collision_layers.gd")
 const VisualGrade := preload("res://scripts/systems/visual_grade.gd")
 const UiPalette := preload("res://scripts/ui/ui_palette.gd")
+const ResultScreen := preload("res://scripts/ui/result_screen.gd")
 
 const SCENE_PATH: String = "res://scenes/minigames/knockout.tscn"
 const MINIGAMES_MENU: String = "res://scenes/ui/minigames_menu.tscn"
 const MAIN_MENU: String = "res://scenes/ui/main_menu.tscn"
 const UI_THEME: Theme = preload("res://assets/ui/theme.tres")
-const CANDY_BUTTON := preload("res://scripts/ui/candy_button.gd")
 const TITLE_FONT: Font = preload("res://assets/ui/fonts/LuckiestGuy-Regular.ttf")
 const BODY_FONT: Font = preload("res://assets/ui/fonts/Fredoka-Bold.ttf")
 
@@ -420,12 +420,16 @@ var _intermission_sub: Label
 
 ## Match Result Card nodes.
 var _result_root: Control
+var _result_ui ## scripts/ui/result_screen.gd builder for the shared card layout.
+var _result_card: Dictionary = {}
 var _result_panel: PanelContainer
 var _result_title: Label
 var _result_subtitle: Label
 var _result_rows: VBoxContainer
 var _result_play_again: Button
 var _result_back: Button
+var _result_rounds_value: Label
+var _result_survivors_value: Label
 var _action_dock: Control
 
 
@@ -439,7 +443,21 @@ func _exit_tree() -> void:
 	Engine.time_scale = 1.0
 
 
+## WS5P3-04: the room ended while this scene was streaming. Never start a
+## silent offline match; return to the lobby with the disconnect notice instead.
+func _abort_stale_session_load() -> void:
+	SceneLoader.go_to(Network.LOBBY_SCENE, "SESSION ENDED",
+		"The room ended before the match could start.",
+		SceneLoader.network_priority())
+
+
 func _ready() -> void:
+	# WS5P3-04 guard: only an authoritative (network-priority) load can be
+	# stale-session; a solo start is never cancelled by this check.
+	if SceneLoader.active_priority() > 0 \
+			and Network.consume_session_ended_during_load():
+		call_deferred("_abort_stale_session_load")
+		return
 	_selftest = OS.get_environment("CART_KNOCKOUT_SELFTEST") == "1"
 	_ensure_slam_action()
 	_multiplayer = Network.is_session_active()
@@ -2375,81 +2393,57 @@ func _build_hud() -> void:
 
 
 func _build_result_card() -> void:
-	_result_root = Control.new()
-	_result_root.name = "ResultCard"
-	_result_root.set_anchors_preset(Control.PRESET_FULL_RECT)
-	_result_root.mouse_filter = Control.MOUSE_FILTER_STOP
-	_result_root.visible = false
-	_result_root.add_to_group("nav_scope")
-	_hud_root.add_child(_result_root)
+	_result_ui = ResultScreen.new()
+	_result_card = _result_ui.build(_hud_root, {
+		"name": "ResultCard",
+		"title": "KNOCKOUT CHAMPION!",
+		"subtitle": "",
+		"multiplayer": _multiplayer,
+		"is_host": _is_host,
+		"primary_text": "PLAY AGAIN" if (not _multiplayer or _is_host) else "",
+		"primary_color": UiPalette.YELLOW,
+		"on_primary": _on_play_again,
+		"secondary_text": "BACK TO LOBBY" if _multiplayer else "BACK TO MODES",
+		"secondary_color": UiPalette.CYAN if (not _multiplayer or _is_host) else UiPalette.YELLOW,
+		"on_secondary": _on_back_pressed,
+		"tertiary_text": "MAIN MENU",
+		"tertiary_color": UiPalette.RED,
+		"on_tertiary": _on_main_menu,
+		# 0.8.7 host/non-host contract (resolved in result_screen.gd): host MAIN
+		# MENU is confirm-gated in a live room; a client gets the waiting status +
+		# LEAVE LOBBY instead of host-only navigation.
+		"confirm_main_menu": _multiplayer,
+		"on_leave": _on_main_menu,
+		"standings_columns": [
+			{"label": "#", "width": 34.0, "align": HORIZONTAL_ALIGNMENT_CENTER,
+				"color": UiPalette.YELLOW},
+			{"label": "DRIVER", "expand": true, "align": HORIZONTAL_ALIGNMENT_LEFT,
+				"swatch": true},
+			{"label": "KOs", "width": 56.0, "align": HORIZONTAL_ALIGNMENT_RIGHT,
+				"color": UiPalette.CYAN},
+			{"label": "PTS", "width": 64.0, "align": HORIZONTAL_ALIGNMENT_RIGHT,
+				"color": UiPalette.YELLOW},
+		],
+	})
+	_result_root = _result_card["root"] as Control
+	_result_panel = _result_card["panel"] as PanelContainer
+	_result_title = _result_card["title"] as Label
+	_result_subtitle = _result_card["subtitle"] as Label
+	_result_rows = _result_card["standings_rows"] as VBoxContainer
+	_result_play_again = _result_card.get("primary") as Button
+	_result_back = _result_card.get("secondary") as Button
 
 	var pause_menu: Control = get_node_or_null("PauseMenu/Root") as Control
 	if pause_menu != null and not pause_menu.visibility_changed.is_connected(_on_pause_visibility_changed):
 		pause_menu.visibility_changed.connect(_on_pause_visibility_changed)
 
-	var dim := ColorRect.new()
-	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
-	dim.color = Color(0.05, 0.08, 0.18, 0.60)
-	dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_result_root.add_child(dim)
-
-	var center := CenterContainer.new()
-	center.set_anchors_preset(Control.PRESET_FULL_RECT)
-	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_result_root.add_child(center)
-
-	_result_panel = PanelContainer.new()
-	_result_panel.name = "ResultPanel"
-	_result_panel.custom_minimum_size = Vector2(520.0, 0.0)
-	_result_panel.add_theme_stylebox_override("panel",
-		UiKit.slanted_panel(Color(0.056, 0.068, 0.156, 0.95),
-			Color(0.24, 0.84, 0.96, 0.56), 0.055, 4, 6, 34.0, 26.0))
-	center.add_child(_result_panel)
-
-	var body := VBoxContainer.new()
-	body.add_theme_constant_override("separation", 12)
-	_result_panel.add_child(body)
-
-	var banner := PanelContainer.new()
-	var banner_style := _card_style(UiPalette.YELLOW, UiPalette.OUTLINE, 3, 5)
-	banner_style.skew = Vector2(0.14, 0.0)
-	banner_style.content_margin_left = 22.0
-	banner_style.content_margin_right = 22.0
-	banner_style.content_margin_top = 12.0
-	banner_style.content_margin_bottom = 12.0
-	banner.add_theme_stylebox_override("panel", banner_style)
-	body.add_child(banner)
-
-	_result_title = _ui_label("KNOCKOUT CHAMPION!", 28, UiPalette.INK, 0)
-	_result_title.theme_type_variation = &"TitleLabel"
-	_result_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	banner.add_child(_result_title)
-
-	_result_subtitle = _ui_label("", 14, UiPalette.CYAN, 0)
-	_result_subtitle.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	body.add_child(_result_subtitle)
-
-	_result_rows = VBoxContainer.new()
-	_result_rows.add_theme_constant_override("separation", 8)
-	body.add_child(_result_rows)
-
-	var actions := HBoxContainer.new()
-	actions.alignment = BoxContainer.ALIGNMENT_CENTER
-	actions.add_theme_constant_override("separation", UiKit.SPACING)
-	body.add_child(actions)
-
-	if not _multiplayer or _is_host:
-		_result_play_again = _candy_button("PLAY AGAIN", UiPalette.YELLOW, 48.0, 18)
-		_result_play_again.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		_result_play_again.pressed.connect(_on_play_again)
-		actions.add_child(_result_play_again)
-
-	var back_text: String = "BACK TO LOBBY" if _multiplayer else "BACK TO MODES"
-	_result_back = _candy_button(back_text,
-		UiPalette.CYAN if (not _multiplayer or _is_host) else UiPalette.YELLOW, 48.0, 18)
-	_result_back.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_result_back.pressed.connect(_on_back_pressed)
-	actions.add_child(_result_back)
+	# Match telemetry: rounds fought and fighters still standing.
+	var telemetry: VBoxContainer = _result_card["telemetry"] as VBoxContainer
+	var stats: Dictionary = _result_ui.make_stat_tiles(["ROUNDS", "SURVIVORS"])
+	telemetry.add_child(stats["grid"])
+	var values: Array = stats["values"]
+	_result_rounds_value = values[0] as Label
+	_result_survivors_value = values[1] as Label
 
 
 func _show_result_card() -> void:
@@ -2459,64 +2453,40 @@ func _show_result_card() -> void:
 	var champ_name: String = str(ranked[0].get("name", "PLAYER")) if not ranked.is_empty() else "PLAYER"
 	var champ_key: int = int(ranked[0].get("key", 0)) if not ranked.is_empty() else 0
 	if champ_key == _local_key():
-		_result_title.text = "VICTORY!  ·  %s" % champ_name
+		_result_ui.set_title(_result_card, "VICTORY!  ·  %s" % champ_name)
 	else:
-		_result_title.text = "WINNER: %s" % champ_name
-	_result_subtitle.text = "%s  ·  %d ROUNDS COMPLETE" % [
-		str(_arena_data.get("name", "SKYTOP HELIPAD")), _total_rounds]
+		_result_ui.set_title(_result_card, "WINNER: %s" % champ_name)
+	_result_ui.set_subtitle(_result_card, "%s  ·  %d ROUNDS COMPLETE" % [
+		str(_arena_data.get("name", "SKYTOP HELIPAD")), _total_rounds])
+	if _result_rounds_value != null:
+		_result_rounds_value.text = str(_total_rounds)
+	if _result_survivors_value != null:
+		_result_survivors_value.text = str(_alive_contestant_keys().size())
 
-	for child: Node in _result_rows.get_children():
-		_result_rows.remove_child(child)
-		child.queue_free()
-
+	# One row per contestant, ranked by the deterministic _ranked_contestants()
+	# order (score, KOs, alive, damage, id). The layout helper owns only the
+	# row chrome; this loop still owns every value shown.
+	var entries: Array[Dictionary] = []
 	var max_rows: int = mini(ranked.size(), MAX_CONTESTANTS)
 	for i: int in max_rows:
 		var c: Dictionary = ranked[i]
 		var is_me: bool = int(c.get("key", 0)) == _local_key()
-		var row_panel := PanelContainer.new()
-		var bg: Color = Color(0.14, 0.26, 0.42, 0.94) if is_me else Color(0.095, 0.112, 0.228, 0.88)
-		var bcol: Color = UiPalette.YELLOW if i == 0 else (UiPalette.CYAN if is_me else Color(1.0, 1.0, 1.0, 0.10))
-		var r_style := _card_style(bg, bcol, 2 if (i == 0 or is_me) else 1, 5)
-		r_style.skew = Vector2(0.14, 0.0)
-		r_style.content_margin_left = 18.0
-		r_style.content_margin_right = 18.0
-		r_style.content_margin_top = 8.0
-		r_style.content_margin_bottom = 8.0
-		row_panel.add_theme_stylebox_override("panel", r_style)
-		_result_rows.add_child(row_panel)
-
-		var row := HBoxContainer.new()
-		row.add_theme_constant_override("separation", 8)
-		row_panel.add_child(row)
-
-		var rank_lbl := _ui_label("#%d" % (i + 1), 15, UiPalette.YELLOW if i == 0 else UiPalette.CYAN, 0)
-		rank_lbl.theme_type_variation = &"TitleLabel"
-		rank_lbl.custom_minimum_size = Vector2(34.0, 0.0)
-		row.add_child(rank_lbl)
-
-		var name_lbl := _ui_label(str(c.get("name", "PLAYER")), 15,
-			UiPalette.YELLOW if is_me else UiPalette.CREAM, 0)
-		name_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		name_lbl.clip_text = true
-		name_lbl.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-		row.add_child(name_lbl)
-
-		var ko_lbl := _ui_label("%d KO" % int(c.get("kos", 0)), 14, UiPalette.CYAN, 0)
-		ko_lbl.custom_minimum_size = Vector2(58.0, 0.0)
-		ko_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-		row.add_child(ko_lbl)
-
-		var pts_lbl := _ui_label("%d PTS" % int(c.get("score", 0)), 16, UiPalette.YELLOW, 0)
-		pts_lbl.theme_type_variation = &"TitleLabel"
-		pts_lbl.custom_minimum_size = Vector2(72.0, 0.0)
-		pts_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-		row.add_child(pts_lbl)
-
-	_result_root.visible = true
-	_result_root.modulate.a = 0.0
-	var fade: Tween = create_tween()
-	fade.tween_property(_result_root, "modulate:a", 1.0, 0.24) \
-		.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+		var accent: Variant = UiPalette.YELLOW if i == 0 else null
+		entries.append({
+			"cells": ["#%d" % (i + 1), str(c.get("name", "PLAYER")),
+				"%d KO" % int(c.get("kos", 0)), "%d PTS" % int(c.get("score", 0))],
+			"colors": [
+				UiPalette.YELLOW if i == 0 else UiPalette.CYAN,
+				UiPalette.YELLOW if is_me else UiPalette.CREAM,
+				UiPalette.CYAN,
+				UiPalette.YELLOW,
+			],
+			"local": is_me,
+			"accent": accent,
+			"swatch": c.get("color", UiPalette.SURFACE_CHIP),
+		})
+	_result_ui.set_standings(_result_card, entries)
+	_result_ui.present(_result_card)
 
 	CursorController.set_menu_mode(true)
 	if _is_pause_open():
@@ -2525,7 +2495,7 @@ func _show_result_card() -> void:
 		if not _result_root.is_in_group("nav_scope"):
 			_result_root.add_to_group("nav_scope")
 		MenuNav.refresh()
-		var focus_btn: Button = _result_play_again if _result_play_again != null else _result_back
+		var focus_btn: Control = _result_ui.focus_default(_result_card)
 		if focus_btn != null:
 			MenuNav.focus(focus_btn)
 	_play_one_shot(FINISH_FANFARE, -6.5, 1.0)
@@ -2541,7 +2511,7 @@ func _on_pause_visibility_changed() -> void:
 		_result_root.add_to_group("nav_scope")
 	MenuNav.refresh()
 	if not pause_open:
-		var focus_btn: Button = _result_play_again if _result_play_again != null else _result_back
+		var focus_btn: Control = _result_ui.focus_default(_result_card)
 		if focus_btn != null:
 			MenuNav.focus(focus_btn)
 
@@ -2549,7 +2519,9 @@ func _on_pause_visibility_changed() -> void:
 func _on_play_again() -> void:
 	if _multiplayer:
 		if _is_host:
-			Network.start_game(SCENE_PATH, GameSettings.GAME_MINIGAMES)
+			# restart = true: a same-scene rematch must reload the scene; the
+			# plain start would be swallowed by the begin-game retry guard.
+			Network.start_game(SCENE_PATH, GameSettings.GAME_MINIGAMES, true)
 		return
 	SceneLoader.go_to(SCENE_PATH, "KNOCKOUT", "BUMPER ROYALE")
 
@@ -2559,6 +2531,13 @@ func _on_back_pressed() -> void:
 		Network.return_to_lobby_keep_session()
 	else:
 		SceneLoader.go_to(MINIGAMES_MENU, "GAME MODES", "PICK AN EVENT")
+
+
+func _on_main_menu() -> void:
+	## Same teardown Cargo Rush and Blast Tag use: drop the session, go home.
+	if Network.is_session_active():
+		Network.leave()
+	SceneLoader.go_to(MAIN_MENU, "MAIN MENU")
 
 
 func _refresh_hud_frame() -> void:
@@ -2829,7 +2808,16 @@ func _ranked_contestants() -> Array[Dictionary]:
 		var ab: bool = bool(b.get("alive", false))
 		if aa != ab:
 			return aa and not ab
-		return float(a.get("damage_pct", 0.0)) < float(b.get("damage_pct", 0.0))
+		var da: float = float(a.get("damage_pct", 0.0))
+		var db: float = float(b.get("damage_pct", 0.0))
+		if not is_equal_approx(da, db):
+			return da < db
+		# Final deterministic tie-break. Without it two contestants that tie on
+		# every stat keep the dictionary insertion order, which differs between
+		# the host (spawn order) and a client (connect order), so tied players
+		# could see the final result card in a different order. Same fight,
+		# different "final standings" is exactly the reported leaderboard bug.
+		return int(a.get("key", 0)) < int(b.get("key", 0))
 	)
 	return list
 
@@ -2932,16 +2920,6 @@ func _pop_control(ctrl: Control) -> void:
 		.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 
 
-func _card_style(bg: Color, border: Color, border_w: int, radius: int) -> StyleBoxFlat:
-	var st := StyleBoxFlat.new()
-	st.bg_color = bg
-	st.border_color = border
-	st.set_border_width_all(border_w)
-	st.set_corner_radius_all(radius)
-	st.anti_aliasing = true
-	return st
-
-
 func _ui_label(text: String, font_size: int, colour: Color,
 		outline: int = 0, hard_shadow: Variant = null) -> Label:
 	var lbl := Label.new()
@@ -2966,17 +2944,6 @@ func _ui_label(text: String, font_size: int, colour: Color,
 		lbl.add_theme_constant_override("shadow_offset_x", 0)
 		lbl.add_theme_constant_override("shadow_offset_y", 0)
 	return lbl
-
-
-func _candy_button(text: String, fill: Color, height: float,
-		font_size: int) -> Button:
-	var btn := Button.new()
-	btn.set_script(CANDY_BUTTON)
-	btn.set("fill_color", fill)
-	btn.text = text
-	btn.custom_minimum_size = Vector2(0.0, height)
-	btn.add_theme_font_size_override("font_size", font_size)
-	return btn
 
 
 # ==========================================================================

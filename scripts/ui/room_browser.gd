@@ -44,6 +44,7 @@ var _action_callable: Callable = Callable()
 func _ready() -> void:
 	add_to_group("nav_scope")
 	hide()
+	UiKit.apply_scrim(get_node_or_null("Dim") as ColorRect)
 	_apply_dark_slanted_theme()
 	_close_button.pressed.connect(close)
 	_refresh_button.pressed.connect(func() -> void: _refresh())
@@ -52,7 +53,6 @@ func _ready() -> void:
 	_title.text = _base_title()
 	_count_label.text = "0 ROOMS"
 	_style_scrollbar()
-	_apply_soft_disabled(_refresh_button)
 	_build_action_button()
 	resized.connect(_fit_panel)
 	_fit_panel()
@@ -60,32 +60,31 @@ func _ready() -> void:
 
 func _apply_dark_slanted_theme() -> void:
 	if _panel != null:
-		_panel.add_theme_stylebox_override("panel",
-			UiKit.slanted_panel(Color(0.056, 0.068, 0.156, 0.95),
-				Color(0.24, 0.84, 0.96, 0.56), 0.05, 4, 6, 36.0, 26.0))
+		_panel.add_theme_stylebox_override("panel", UiKit.modal_panel())
 	if _title != null:
+		_title.add_theme_font_size_override("font_size", UiKit.TITLE_SIZE)
 		_title.add_theme_color_override("font_color", UiPalette.YELLOW)
 		_title.add_theme_color_override("font_outline_color", UiPalette.INK)
-		_title.add_theme_constant_override("outline_size", 8)
+		_title.add_theme_constant_override("outline_size", UiKit.TITLE_OUTLINE)
 	if _count_label != null:
 		_count_label.add_theme_color_override("font_color", UiPalette.CYAN)
 	if _search_field != null:
 		_search_field.set_meta("skip_kit", true)
 		_search_field.add_theme_color_override("font_color", UiPalette.CREAM)
-		_search_field.add_theme_color_override("font_placeholder_color", Color(0.62, 0.72, 0.88, 0.55))
+		_search_field.add_theme_color_override("font_placeholder_color",
+			Color(UiPalette.TEXT_DIM, 0.66))
 		_search_field.add_theme_color_override("caret_color", UiPalette.YELLOW)
-		_search_field.add_theme_color_override("selection_color", Color(UiPalette.CYAN, 0.35))
-		var normal: StyleBoxFlat = UiKit.slanted_card(
-			Color(0.045, 0.055, 0.125, 0.96), Color(0.28, 0.78, 0.96, 0.48),
-			0.14, 3, 5, 16.0, 10.0)
+		_search_field.add_theme_color_override("selection_color",
+			Color(UiPalette.CYAN, 0.35))
+		var normal: StyleBoxFlat = UiKit.slanted_card(UiPalette.FIELD_FILL,
+			UiPalette.FIELD_BORDER, 0.14, 3, 5, 16.0, 10.0)
 		_search_field.add_theme_stylebox_override("normal", normal)
 		var focus_st: StyleBoxFlat = normal.duplicate() as StyleBoxFlat
 		focus_st.border_color = UiPalette.YELLOW
 		_search_field.add_theme_stylebox_override("focus", focus_st)
 	if _list_scroll != null:
-		var list_bg: StyleBoxFlat = UiKit.slanted_card(
-			Color(0.038, 0.046, 0.106, 0.82), Color(0.24, 0.72, 0.94, 0.24),
-			0.035, 2, 6, 8.0, 8.0)
+		var list_bg: StyleBoxFlat = UiKit.slanted_card(UiPalette.SURFACE_WELL,
+			Color(UiPalette.CYAN, 0.24), 0.035, 2, 6, 8.0, 8.0)
 		_list_scroll.add_theme_stylebox_override("panel", list_bg)
 
 
@@ -96,8 +95,8 @@ func _fit_panel() -> void:
 	if vp.x < 1.0 or vp.y < 1.0:
 		return
 	_panel.custom_minimum_size = Vector2(
-		clampf(vp.x - 48.0, 640.0, 820.0),
-		clampf(vp.y - 48.0, 420.0, 540.0))
+		clampf(vp.x - UiKit.MODAL_MARGIN, 640.0, 820.0),
+		clampf(vp.y - UiKit.MODAL_MARGIN, 420.0, 540.0))
 
 
 func open(mode: String) -> void:
@@ -410,10 +409,11 @@ func _room_row(room: Dictionary) -> Button:
 	var button := Button.new()
 	button.set_meta("keep_align", true)
 	button.custom_minimum_size = Vector2(0, 56)
-	button.add_theme_stylebox_override("normal", _row_style(Color(0.095, 0.115, 0.235, 0.92), Color(0.28, 0.78, 0.96, 0.30)))
-	button.add_theme_stylebox_override("hover", _row_style(Color(0.155, 0.195, 0.365, 0.98), UiPalette.CYAN))
-	button.add_theme_stylebox_override("pressed", _row_style(Color(0.20, 0.24, 0.42, 1.0), UiPalette.YELLOW))
-	button.add_theme_stylebox_override("disabled", _row_style(Color(0.07, 0.08, 0.16, 0.60), Color(1.0, 1.0, 1.0, 0.10)))
+	button.add_theme_stylebox_override("normal", _row_style(UiPalette.SURFACE_ROW))
+	button.add_theme_stylebox_override("hover", _row_style(UiPalette.SURFACE_ROW_HOVER, UiPalette.CYAN))
+	button.add_theme_stylebox_override("pressed", _row_style(UiPalette.SURFACE_CHIP, UiPalette.YELLOW))
+	button.add_theme_stylebox_override("disabled",
+		_row_style(Color(UiPalette.SURFACE_DARK, 0.60), Color(1.0, 1.0, 1.0, 0.10)))
 	button.disabled = not joinable
 	UiKit.apply_focus_ring(button, 6)
 	button.pressed.connect(_on_room_pressed.bind(room))
@@ -545,7 +545,7 @@ func _base_title() -> String:
 
 
 func _build_action_button() -> void:
-	_action_button = _candy("", UiPalette.YELLOW, 48, 16)
+	_action_button = UiKit.compact_button("", UiPalette.YELLOW)
 	_action_button.custom_minimum_size = Vector2(220, 48)
 	_action_button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	_action_button.visible = false
@@ -563,7 +563,7 @@ func _set_state(kind: String, text: String, action_text: String = "",
 	_status_kind = kind
 	_status.text = text
 	_status.visible = text != ""
-	_status.add_theme_font_size_override("font_size", 15)
+	_status.add_theme_font_size_override("font_size", UiKit.CAPTION_SIZE)
 	var color: Color = UiPalette.CYAN
 	match kind:
 		"error":
@@ -582,6 +582,11 @@ func _set_state(kind: String, text: String, action_text: String = "",
 		_action_button.text = action_text
 		_action_button.set("fill_color", action_color)
 		_action_button.fit_text()
+	# Navigation dedup: when the empty/error state offers RETRY or SEARCH AGAIN,
+	# the header REFRESH button would be the exact same action twice. Keep one.
+	if _refresh_button != null:
+		_refresh_button.visible = action_text != "RETRY" \
+			and action_text != "SEARCH AGAIN"
 	if kind == "loading":
 		_loading_dots = 0
 		_status_timer = 0.0
@@ -595,12 +600,14 @@ func _style_scrollbar() -> void:
 		return
 	bar.custom_minimum_size.x = 12
 	var track := StyleBoxFlat.new()
-	track.bg_color = Color(0.05, 0.06, 0.14, 0.55)
+	track.bg_color = Color(UiPalette.SURFACE_DARK, 0.65)
 	track.set_corner_radius_all(5)
+	track.skew = Vector2(0.14, 0.0)
 	var grab := StyleBoxFlat.new()
 	grab.bg_color = Color(UiPalette.CYAN, 0.72)
 	grab.set_corner_radius_all(5)
-	var grab_hover: StyleBoxFlat = grab.duplicate()
+	grab.skew = Vector2(0.14, 0.0)
+	var grab_hover: StyleBoxFlat = grab.duplicate() as StyleBoxFlat
 	grab_hover.bg_color = UiPalette.CYAN.lightened(0.14)
 	bar.add_theme_stylebox_override("scroll", track)
 	bar.add_theme_stylebox_override("grabber", grab)
@@ -608,12 +615,7 @@ func _style_scrollbar() -> void:
 	bar.add_theme_stylebox_override("grabber_pressed", grab_hover)
 
 
-func _apply_soft_disabled(_button: Button) -> void:
-	## Slanted CandyButton renders its own muted dark parallelogram when disabled.
-	pass
-
-
-func _row_style(bg: Color, border: Color = Color(0.28, 0.78, 0.96, 0.30)) -> StyleBoxFlat:
+func _row_style(bg: Color, border: Color = Color(UiPalette.CYAN, 0.30)) -> StyleBoxFlat:
 	var style := StyleBoxFlat.new()
 	style.bg_color = bg
 	style.border_color = border

@@ -204,59 +204,23 @@ static func _carve_road_gaps(race: Node3D, sites: Array[Dictionary]) -> void:
 		var detail_mi := detail_holder.get_node_or_null("TrackDetail") as MeshInstance3D
 		_carve_array_mesh_gaps(detail_mi, sites, -0.05, 5.5)
 
-	# Compress RampDetail & RoadCollision/Ramps above deck_y by 0.22x so the
-	# procedural lip & wedge collider match the visible Ramp_roadRampWall surface
-	# (0.70 m crest instead of floating at 3.20 m)!
-	var ramp_detail_mi := road_holder.get_node_or_null("RampDetail") as MeshInstance3D
-	if ramp_detail_mi != null and ramp_detail_mi.mesh is ArrayMesh:
-		var old_rm: ArrayMesh = ramp_detail_mi.mesh as ArrayMesh
-		var new_rm := ArrayMesh.new()
-		for surf in old_rm.get_surface_count():
-			var r_arr: Array = old_rm.surface_get_arrays(surf)
-			if r_arr.is_empty():
-				continue
-			var r_verts: PackedVector3Array = r_arr[Mesh.ARRAY_VERTEX] as PackedVector3Array
-			for vi in r_verts.size():
-				var v: Vector3 = r_verts[vi]
-				for site: Dictionary in sites:
-					var lip: Vector3 = site["lip_pos"] as Vector3
-					if Vector2(v.x - lip.x, v.z - lip.z).length() < 32.0:
-						var dy: float = float(site["deck_y"])
-						if v.y > dy:
-							v.y = dy + (v.y - dy) * 0.22
-						break
-				r_verts[vi] = v
-			r_arr[Mesh.ARRAY_VERTEX] = r_verts
-			var s_idx: int = new_rm.get_surface_count()
-			new_rm.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, r_arr)
-			new_rm.surface_set_material(s_idx, old_rm.surface_get_material(surf))
-		ramp_detail_mi.mesh = new_rm
+	# The RampDetail lip/walls are built by KenneyTiles from the same measured
+	# surface the collider uses, so they are left untouched here. They used to be
+	# squashed by 0.22x along with the Ramps collider, which put both the paint
+	# and the physics inside the 2.86 m visible kicker.
 
-	# 2. Carve RoadCollision ConcavePolygonShape3D & under-deck BoxShape3D fill blocks
+	# 2. Carve RoadCollision ConcavePolygonShape3D & under-deck BoxShape3D fill blocks.
+	#    The jump ramps' own collider is NOT touched: KenneyTiles built it from the
+	#    measured surface of the visible kicker, so mesh and collider already agree.
+	#    (An earlier 0.22x compression here assumed a 0.70 m crest and left the
+	#    collider inside a 2.86 m ramp: karts drove straight through the art.)
 	var col_body := road_holder.get_node_or_null("RoadCollision") as StaticBody3D
 	if col_body != null:
 		for child: Node in col_body.get_children():
 			var cs := child as CollisionShape3D
 			if cs == null or cs.shape == null:
 				continue
-			if cs.name == "Ramps" and cs.shape is ConcavePolygonShape3D:
-				var r_concave := cs.shape as ConcavePolygonShape3D
-				var r_faces: PackedVector3Array = r_concave.get_faces()
-				for fi in r_faces.size():
-					var fv: Vector3 = r_faces[fi]
-					for site: Dictionary in sites:
-						var lip: Vector3 = site["lip_pos"] as Vector3
-						if Vector2(fv.x - lip.x, fv.z - lip.z).length() < 32.0:
-							var dy: float = float(site["deck_y"])
-							if fv.y > dy:
-								fv.y = dy + (fv.y - dy) * 0.22
-							break
-					r_faces[fi] = fv
-				var new_r_concave := ConcavePolygonShape3D.new()
-				new_r_concave.set_faces(r_faces)
-				new_r_concave.backface_collision = true
-				cs.shape = new_r_concave
-			elif cs.name == "RoadSurface" and cs.shape is ConcavePolygonShape3D:
+			if cs.name == "RoadSurface" and cs.shape is ConcavePolygonShape3D:
 				var concave := cs.shape as ConcavePolygonShape3D
 				var faces: PackedVector3Array = concave.get_faces()
 				var kept := PackedVector3Array()
@@ -351,7 +315,7 @@ func _dress_chasms(sites: Array[Dictionary]) -> Dictionary:
 	var hazard_gold := Color("ffb928")
 	var hazard_red := Color("ff3d47")
 	var road_half: float = TileKit.ROAD_HALF
-	var ramp_crest_y: float = KenneyTiles._ramp_face_height() * 0.22
+	var ramp_crest_y: float = KenneyTiles.ramp_top_height("J")
 
 	for site: Dictionary in sites:
 		var lip: Vector3 = site["lip_pos"] as Vector3
@@ -569,7 +533,6 @@ func _physics_process(delta: float) -> void:
 				var raw_fwd: float = cart.velocity.dot(fw)
 				var fwd_speed: float = Vector2(maxf(raw_fwd, 0.0), maxf(cart.velocity.y, 0.0)).length() if raw_fwd > 0.0 else raw_fwd
 				var req_speed: float = required_speed_for(cart)
-				var ramp_crest: float = KenneyTiles._ramp_face_height() * 0.22
 				_launch_cooldowns[cid] = 1.4
 				if fwd_speed >= req_speed:
 					# Weight-compensated ballistic launch across the 17.35 m chasm!
@@ -579,9 +542,10 @@ func _physics_process(delta: float) -> void:
 					var lat_vel: Vector3 = cart.velocity - fw * raw_fwd
 					lat_vel.y = 0.0
 					var launch_vy: float = maxf(cart.velocity.y, lerpf(9.4, 10.2, weight_t))
-					# Lift above the 0.70 m 'J' ramp exit crest so the cart clears the ramp wall into free air
-					if cart.global_position.y < deck_y + ramp_crest + 0.18:
-						cart.global_position.y = deck_y + ramp_crest + 0.18
+					# No forced lift: the ramp collider now reaches the same 2.86 m
+					# crest as the visible kicker (KenneyTiles measures both from the
+					# GLB), so the kart is already at crest height on the lip and the
+					# launch only has to add the ballistic arc.
 					cart.set("_pad_burst_timer", 0.80)
 					cart.velocity = fw * target_horiz + lat_vel * 0.25 + Vector3.UP * launch_vy
 					_active_jumpers[cid] = {

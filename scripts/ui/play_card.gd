@@ -23,7 +23,6 @@ var _scale_now: float = 1.0
 var _glow_now: float = 0.0
 var _display: Font
 var _inner_rim := StyleBoxFlat.new()
-var _top_gloss := StyleBoxFlat.new()
 var _badge_style := StyleBoxFlat.new()
 
 
@@ -33,17 +32,13 @@ func _ready() -> void:
 	_inner_rim.draw_center = false
 	_inner_rim.set_border_width_all(2)
 	_inner_rim.set_corner_radius_all(24)
+	_inner_rim.skew = Vector2(0.08, 0.0)
 	_inner_rim.anti_aliasing = true
-	_top_gloss.bg_color = Color(1, 1, 1, 0.22)
-	_top_gloss.corner_radius_top_left = 22
-	_top_gloss.corner_radius_top_right = 22
-	_top_gloss.corner_radius_bottom_left = 8
-	_top_gloss.corner_radius_bottom_right = 8
-	_top_gloss.anti_aliasing = true
 	_badge_style.bg_color = UiPalette.CREAM
 	_badge_style.set_corner_radius_all(11)
 	_badge_style.set_border_width_all(3)
 	_badge_style.border_color = UiPalette.INK
+	_badge_style.skew = Vector2(0.14, 0.0)
 	_badge_style.shadow_color = Color(0.08, 0.06, 0.18, 0.36)
 	_badge_style.shadow_size = 2
 	_badge_style.shadow_offset = Vector2(0, 3)
@@ -118,11 +113,18 @@ func _draw() -> void:
 
 func _draw_card_sheen() -> void:
 	var active: bool = (_hovered or has_focus()) and not disabled
-	# Top glossy band + inner rim inside the 6px outline.
-	_top_gloss.bg_color = Color(1.0, 1.0, 1.0, 0.26 if active else 0.19)
-	draw_style_box(_top_gloss, Rect2(14.0, 8.0, size.x - 28.0, size.y * 0.22))
+	# Top glossy band + inner rim inside the 6px outline. The gloss is a vertical
+	# alpha fade so it dissolves instead of ending on a hard horizontal line.
+	var gloss_rect := Rect2(14.0, 8.0, size.x - 28.0, size.y * 0.22)
+	UiAnim.draw_vertical_fade(self, PackedVector2Array([
+		gloss_rect.position,
+		Vector2(gloss_rect.end.x, gloss_rect.position.y),
+		gloss_rect.end,
+		Vector2(gloss_rect.position.x, gloss_rect.end.y),
+	]), Color.WHITE, 0.26 if active else 0.19)
 
 	# Rich diagonal shine bands kept strictly within the card's safe interior.
+	# Both are soft gradient bands (no clipped straight edge at the band end).
 	var pad: float = 20.0
 	var x0: float = pad + size.x * 0.08
 	var x1: float = x0 + size.x * 0.20
@@ -130,23 +132,21 @@ func _draw_card_sheen() -> void:
 	var y_bot: float = size.y - pad
 	var skew: float = size.x * 0.22
 	if x1 + skew < size.x - pad:
-		var main_band := PackedVector2Array([
+		UiAnim.draw_soft_band(self, PackedVector2Array([
 			Vector2(x0 + skew, y_top),
 			Vector2(x1 + skew, y_top),
 			Vector2(x1, y_bot),
 			Vector2(x0, y_bot),
-		])
-		draw_colored_polygon(main_band, Color(1.0, 1.0, 1.0, 0.15 if active else 0.10))
+		]), Color.WHITE, 0.15 if active else 0.10)
 		var thin_x0: float = x1 + 10.0
 		var thin_x1: float = thin_x0 + size.x * 0.055
 		if thin_x1 + skew < size.x - pad:
-			var thin_band := PackedVector2Array([
+			UiAnim.draw_soft_band(self, PackedVector2Array([
 				Vector2(thin_x0 + skew, y_top),
 				Vector2(thin_x1 + skew, y_top),
 				Vector2(thin_x1, y_bot),
 				Vector2(thin_x0, y_bot),
-			])
-			draw_colored_polygon(thin_band, Color(1.0, 1.0, 1.0, 0.10 if active else 0.06))
+			]), Color.WHITE, 0.10 if active else 0.06)
 
 	_inner_rim.border_color = Color(1.0, 1.0, 1.0, 0.44 if active else 0.28)
 	draw_style_box(_inner_rim, Rect2(6.0, 6.0, size.x - 12.0, size.y - 12.0))

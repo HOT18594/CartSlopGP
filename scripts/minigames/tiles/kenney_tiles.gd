@@ -130,8 +130,9 @@ const BRIDGE_MODEL: String = "roadStraightBridge"
 ## Height data key on the race root, so prop helpers can follow the terrain.
 const HEIGHTS_META: String = "kenney_heights"
 
-static var _ramp_height: float = -1.0
-static var _bump_height: float = -1.0
+## Cached visible top-surface profiles of the jump/bump pieces, keyed by
+## "tile_char:rows". Measured once from the GLB so the collider follows the art.
+static var _ramp_profiles: Dictionary = {}
 
 
 ## Closed centreline derived from a traced grid lap. Mirrors TrackSpline.
@@ -151,7 +152,24 @@ class GridSpline:
 	## this to sit on the terrain instead of at world zero.
 	var heights: Dictionary = {}
 
+	## Plan-view bucket edge, in metres, for the nearest-point index below.
+	const BUCKET_SIZE: float = 16.0
+
 	var _count: int = 0
+	## Plan-view segment buckets: Vector2i(x/z cell) -> PackedInt32Array of
+	## segment indices whose plan footprint touches that cell. Nearest-point
+	## queries are on every prop-clearance path and one `clearance_path()` asks
+	## thousands of them, so a straight scan of the whole centreline per query
+	## (93 us on the 402-sample Glacier lap) dominated map build time.
+	var _buckets: Dictionary = {}
+	var _bucket_low: Vector2i = Vector2i.ZERO
+	var _bucket_high: Vector2i = Vector2i.ZERO
+	## Scratch register for the shared nearest-point search, so plan_distance()
+	## can answer without allocating a Dictionary per query.
+	var _found_sq: float = INF
+	var _found_s: float = 0.0
+	var _found_distance: float = INF
+	var _found_point: Vector3 = Vector3.ZERO
 
 	func _init(pts: PackedVector3Array, tile_list: Array,
 			half_width: float) -> void:
@@ -169,6 +187,7 @@ class GridSpline:
 			cumulative[i] = travelled
 			travelled += points[i].distance_to(points[(i + 1) % _count])
 		total_length = travelled
+		_build_buckets()
 
 
 	## A lap needs enough samples and a positive length to be usable.
@@ -206,24 +225,9 @@ class GridSpline:
 
 	## Nearest point on the polyline. Returns {s, distance, point}.
 	func closest(world_position: Vector3) -> Dictionary:
-		var best_sq: float = INF
-		var best_s: float = 0.0
-		var best_point: Vector3 = Vector3.ZERO
-		for i in _count:
-			var a: Vector3 = points[i]
-			var b: Vector3 = points[(i + 1) % _count]
-			var ab: Vector3 = b - a
-			var length_sq: float = ab.length_squared()
-			var t: float = 0.0
-			if length_sq > 0.000001:
-				t = clampf((world_position - a).dot(ab) / length_sq, 0.0, 1.0)
-			var candidate: Vector3 = a + ab * t
-			var d_sq: float = world_position.distance_squared_to(candidate)
-			if d_sq < best_sq:
-				best_sq = d_sq
-				best_point = candidate
-				best_s = wrap_distance(cumulative[i] + sqrt(length_sq) * t)
-		return {"s": best_s, "distance": sqrt(best_sq), "point": best_point}
+		_search(world_position, false)
+		return {"s": _found_s, "distance": _found_distance,
+			"point": _found_point}
 
 
 	func yaw_at(distance: float) -> float:
@@ -277,17 +281,135 @@ class GridSpline:
 	## barriers and props measure clearance against this: a prop beside a raised
 	## road section is still on the racing surface if its plan distance is small.
 	func plan_distance(world_position: Vector3) -> float:
-		return float(plan_closest(world_position)["distance"])
+		_search(world_position, true)
+		return _found_distance
 
 
 	## Nearest centreline point in plan view: {s, distance, point}.
 	func plan_closest(world_position: Vector3) -> Dictionary:
-		var best_sq: float = INF
-		var best_s: float = 0.0
-		var best_point: Vector3 = Vector3.ZERO
-		for i in _count:
-			var a: Vector3 = points[i]
-			var b: Vector3 = points[(i + 1) % _count]
+		_search(world_position, true)
+		return {"s": _found_s, "distance": _found_distance,
+			"point": _found_point}
+
+
+	# ----------------------------------------------------------------------
+	# nearest-point index
+	# ----------------------------------------------------------------------
+
+
+	## Registers every centreline segment in each plan bucket its bounding box
+	## touches. Built once per spline; the steady-state query path only reads it.
+	func _build_buckets() -> void:
+		if _count < 2:
+			return
+		var low := Vector2(INF, INF)
+		var high := Vector2(-INF, -INF)
+		for index in _count:
+			var point: Vector3 = points[index]
+			low.x = minf(low.x, point.x)
+			low.y = minf(low.y, point.z)
+			high.x = maxf(high.x, point.x)
+			high.y = maxf(high.y, point.z)
+		_bucket_low = Vector2i(int(floor(low.x / BUCKET_SIZE)),
+			int(floor(low.y / BUCKET_SIZE)))
+		_bucket_high = Vector2i(int(floor(high.x / BUCKET_SIZE)),
+			int(floor(high.y / BUCKET_SIZE)))
+		for index in _count:
+			var a: Vector3 = points[index]
+			var b: Vector3 = points[(index + 1) % _count]
+			var min_x: int = int(floor(minf(a.x, b.x) / BUCKET_SIZE))
+			var max_x: int = int(floor(maxf(a.x, b.x) / BUCKET_SIZE))
+			var min_z: int = int(floor(minf(a.z, b.z) / BUCKET_SIZE))
+			var max_z: int = int(floor(maxf(a.z, b.z) / BUCKET_SIZE))
+			for cell_x in range(min_x, max_x + 1):
+				for cell_z in range(min_z, max_z + 1):
+					var key := Vector2i(cell_x, cell_z)
+					var bucket: PackedInt32Array = _buckets.get(key,
+						PackedInt32Array())
+					bucket.append(index)
+					_buckets[key] = bucket
+
+
+	## Single nearest-centreline search shared by closest(), plan_closest() and
+	## plan_distance(). Writes {_found_s, _found_distance, _found_point}.
+	##
+	## `plan_only` measures in plan view (the clearance contract); otherwise the
+	## true 3D distance is used. The result is exact: the ring walk only stops
+	## once every bucket it has not visited is provably farther away than the
+	## best match in the register.
+	func _search(world_position: Vector3, plan_only: bool) -> void:
+		_found_sq = INF
+		_found_s = 0.0
+		_found_distance = INF
+		_found_point = Vector3.ZERO
+		if _count == 0:
+			return
+		if _buckets.is_empty():
+			_scan_whole_polyline(world_position, plan_only)
+			return
+		var centre := Vector2i(int(floor(world_position.x / BUCKET_SIZE)),
+			int(floor(world_position.z / BUCKET_SIZE)))
+		# First ring that can hold a bucket, and the last one that can: a ring is
+		# a Chebyshev distance, so these are exact bounds on the occupied square.
+		var ring: int = 0
+		if centre.x < _bucket_low.x:
+			ring = _bucket_low.x - centre.x
+		elif centre.x > _bucket_high.x:
+			ring = centre.x - _bucket_high.x
+		if centre.y < _bucket_low.y:
+			ring = maxi(ring, _bucket_low.y - centre.y)
+		elif centre.y > _bucket_high.y:
+			ring = maxi(ring, centre.y - _bucket_high.y)
+		var last_ring: int = maxi(
+			maxi(absi(centre.x - _bucket_low.x), absi(centre.x - _bucket_high.x)),
+			maxi(absi(centre.y - _bucket_low.y), absi(centre.y - _bucket_high.y)))
+		while ring <= last_ring:
+			var candidates := PackedInt32Array()
+			_ring_indices(centre, ring, candidates)
+			for index in candidates:
+				_evaluate_segment(index, world_position, plan_only)
+			# A bucket on a later ring is at least this far from the probe cell.
+			if _found_sq < INF:
+				var margin: float = float(maxi(ring - 1, 0)) * BUCKET_SIZE
+				if _found_distance <= margin:
+					return
+			ring += 1
+		# Defensive net: if the index somehow saw nothing, answer exactly.
+		if _found_sq == INF:
+			_scan_whole_polyline(world_position, plan_only)
+
+
+	## Appends every bucket index on the square ring `ring` around `centre`.
+	func _ring_indices(centre: Vector2i, ring: int,
+			out: PackedInt32Array) -> void:
+		var first_x: int = centre.x - ring
+		var last_x: int = centre.x + ring
+		var first_z: int = centre.y - ring
+		var last_z: int = centre.y + ring
+		if ring == 0:
+			_append_bucket(centre, out)
+			return
+		for cell_x in range(first_x, last_x + 1):
+			_append_bucket(Vector2i(cell_x, first_z), out)
+			_append_bucket(Vector2i(cell_x, last_z), out)
+		for cell_z in range(first_z + 1, last_z):
+			_append_bucket(Vector2i(first_x, cell_z), out)
+			_append_bucket(Vector2i(last_x, cell_z), out)
+
+
+	func _append_bucket(key: Vector2i, out: PackedInt32Array) -> void:
+		if not _buckets.has(key):
+			return
+		out.append_array(_buckets[key] as PackedInt32Array)
+
+
+	## Folds one centreline segment into the scratch register. A long segment can
+	## appear in more than one visited bucket, so re-testing it is harmless.
+	func _evaluate_segment(index: int, world_position: Vector3,
+			plan_only: bool) -> void:
+		var a: Vector3 = points[index]
+		var b: Vector3 = points[(index + 1) % _count]
+		if plan_only:
 			var ab := Vector2(b.x - a.x, b.z - a.z)
 			var ap := Vector2(world_position.x - a.x, world_position.z - a.z)
 			var length_sq: float = ab.length_squared()
@@ -298,11 +420,32 @@ class GridSpline:
 			var dx: float = world_position.x - candidate.x
 			var dz: float = world_position.z - candidate.y
 			var d_sq: float = dx * dx + dz * dz
-			if d_sq < best_sq:
-				best_sq = d_sq
-				best_point = Vector3(candidate.x, world_position.y, candidate.y)
-				best_s = wrap_distance(cumulative[i] + sqrt(length_sq) * t)
-		return {"s": best_s, "distance": sqrt(best_sq), "point": best_point}
+			if d_sq < _found_sq:
+				_found_sq = d_sq
+				_found_distance = sqrt(d_sq)
+				_found_point = Vector3(candidate.x, world_position.y,
+					candidate.y)
+				_found_s = wrap_distance(cumulative[index]
+					+ sqrt(length_sq) * t)
+			return
+		var chord: Vector3 = b - a
+		var chord_sq: float = chord.length_squared()
+		var t3: float = 0.0
+		if chord_sq > 0.000001:
+			t3 = clampf((world_position - a).dot(chord) / chord_sq, 0.0, 1.0)
+		var point: Vector3 = a + chord * t3
+		var distance_sq: float = world_position.distance_squared_to(point)
+		if distance_sq < _found_sq:
+			_found_sq = distance_sq
+			_found_distance = sqrt(distance_sq)
+			_found_point = point
+			_found_s = wrap_distance(cumulative[index] + sqrt(chord_sq) * t3)
+
+
+	## Whole-polyline scan used only when the bucket index is unavailable.
+	func _scan_whole_polyline(world_position: Vector3, plan_only: bool) -> void:
+		for index in _count:
+			_evaluate_segment(index, world_position, plan_only)
 
 
 	func _segment_at(s: float) -> int:
@@ -1528,7 +1671,7 @@ static func _build_ramp_structures(holder: Node3D, tiles: Array[Dictionary],
 					Vector3(RAMP_WALL_THICKNESS, 0.32, TILE_SIZE - 0.6),
 					Color("e8c34a"))
 			continue
-		var ramp_height: float = _ramp_face_height()
+		var ramp_height: float = ramp_top_height("J")
 		var wall_color := Color("e8c34a")
 		for side: float in [-1.0, 1.0]:
 			_append_ramp_wall(verts, normals, colors, frame,
@@ -1989,43 +2132,63 @@ static func _tilted_box(deck: Vector3, yaw: float, pitch: float,
 	return Transform3D(basis, deck + basis * Vector3.DOWN * (size.y * 0.5))
 
 
-## Jump cells get a wedge that rises to the exit; bump cells get a hump. Both
-## match the visible Kenney road piece, so the kart drives the slope it sees.
-## The entry and exit rows take the tile's two deck heights, so ramps and jumps
-## work on an elevated grid as well as on the flat fallback.
+## Jump cells get a wedge that rises to the exit; bump cells get a hump. The
+## collider is built from the *measured* top surface of the Kenney piece, not
+## from a hand-typed height, so the kart always drives the slope it sees. The
+## old version multiplied a model AABB by a scale that belonged to a different
+## piece: on Glacier Pass the collider rose 0.68 m over a visible 2.86 m kicker
+## and karts drove straight through the mesh. The strip spans the whole piece
+## width for the same reason: the visible ramp is 22 m wide, so a kart on the
+## verge must not fall through the shoulder either.
+##
+## `heights` are metres above the tile's lane deck, entry row first (model +Z)
+## and exit row last (model -Z, the direction of travel).
 static func _append_ramp_faces(faces: PackedVector3Array, tile: Dictionary,
 		hump: bool) -> void:
+	var profile: Dictionary = _ramp_surface_profile("B" if hump else "J")
+	if not bool(profile.get("ok", false)):
+		return
+	var heights: PackedFloat32Array = profile["heights"] as PackedFloat32Array
+	var half_length: float = float(profile["half_length"])
+	var half_width: float = float(profile["half_width"])
+	if heights.size() < 2 or half_length <= 0.0 or half_width <= 0.0:
+		return
+	var rows: int = heights.size() - 1
 	var center: Vector3 = _cell_center(tile["cell"])
 	var din: Vector3 = -_edge_3d(int(tile["entry"]))
 	var right: Vector3 = din.cross(Vector3.UP).normalized()
-	var entry_center: Vector3 = center - din * HALF_TILE \
-		+ Vector3.UP * (float(tile.get("height_in", 0.0)) + ROAD_SURFACE)
-	var exit_center: Vector3 = center + din * HALF_TILE \
-		+ Vector3.UP * (float(tile.get("height_out", 0.0)) + ROAD_SURFACE)
-	var e_l: Vector3 = entry_center - right * ROAD_HALF
-	var e_r: Vector3 = entry_center + right * ROAD_HALF
-	var x_l: Vector3 = exit_center - right * ROAD_HALF
-	var x_r: Vector3 = exit_center + right * ROAD_HALF
-	var height: float = _bump_face_height() if hump else _ramp_face_height()
-	var mid: Vector3 = entry_center.lerp(exit_center, 0.5)
-	if hump:
-		var m_l: Vector3 = mid - right * ROAD_HALF + Vector3.UP * height
-		var m_r: Vector3 = mid + right * ROAD_HALF + Vector3.UP * height
-		_tri(faces, e_l, e_r, m_r)
-		_tri(faces, e_l, m_r, m_l)
-		_tri(faces, m_l, m_r, x_r)
-		_tri(faces, m_l, x_r, x_l)
-		_tri(faces, e_l, m_l, x_l)
-		_tri(faces, e_r, x_r, m_r)
-	else:
-		var t_l: Vector3 = x_l + Vector3.UP * height
-		var t_r: Vector3 = x_r + Vector3.UP * height
-		_tri(faces, e_l, e_r, t_r)
-		_tri(faces, e_l, t_r, t_l)
-		_tri(faces, e_l, t_l, x_l)
-		_tri(faces, e_r, x_r, t_r)
-		_tri(faces, x_l, x_r, t_r)
-		_tri(faces, x_l, t_r, t_l)
+	var lane: Vector3 = center + Vector3.UP * (float(tile.get("height_in", 0.0))
+		+ ROAD_SURFACE)
+	# Row points, entry to exit, along the whole piece width.
+	var left: Array[Vector3] = []
+	var right_edge: Array[Vector3] = []
+	var left_deck: Array[Vector3] = []
+	var right_deck: Array[Vector3] = []
+	for row in rows + 1:
+		var along: float = -half_length + 2.0 * half_length * float(row) \
+			/ float(rows)
+		var top: float = heights[row]
+		var at: Vector3 = lane + din * along
+		left.append(at - right * half_width + Vector3.UP * top)
+		right_edge.append(at + right * half_width + Vector3.UP * top)
+		left_deck.append(at - right * half_width)
+		right_deck.append(at + right * half_width)
+	for row in rows:
+		# Top surface strip.
+		_tri(faces, left[row], right_edge[row], right_edge[row + 1])
+		_tri(faces, left[row], right_edge[row + 1], left[row + 1])
+		# Side faces, so the ramp is a solid wedge and a kart cannot cut into it
+		# from the shoulder at deck height.
+		_tri(faces, left[row], left[row + 1], left_deck[row + 1])
+		_tri(faces, left[row], left_deck[row + 1], left_deck[row])
+		_tri(faces, right_edge[row], right_deck[row + 1],
+			right_edge[row + 1])
+		_tri(faces, right_edge[row], right_deck[row], right_deck[row + 1])
+	if not hump:
+		# The visible kicker ends in a vertical lip at the exit edge: close the
+		# wedge down to the deck so the kart never wedges under the crest.
+		_tri(faces, left[rows], right_edge[rows], right_deck[rows])
+		_tri(faces, left[rows], right_deck[rows], left_deck[rows])
 
 
 static func _tri(faces: PackedVector3Array, a: Vector3, b: Vector3,
@@ -2045,24 +2208,103 @@ static func _add_box_shape(body: StaticBody3D, xform: Transform3D,
 	body.add_child(collision)
 
 
-static func _ramp_face_height() -> float:
-	if _ramp_height < 0.0:
-		_ramp_height = _model_height("roadRamp") * TileCatalog.road_scale("J").y
-	return _ramp_height
-
-
-static func _bump_face_height() -> float:
-	if _bump_height < 0.0:
-		_bump_height = _model_height("roadBump") * TileCatalog.road_scale("B").y
-	return _bump_height
-
-
-static func _model_height(model: String) -> float:
-	var info: Dictionary = TileCatalog.model_info(model)
-	if not bool(info.get("ok", false)):
+## Visible crest height of a jump/bump piece above its lane deck, in metres.
+##
+## Measured from the GLB's top surface (not from the AABB: the AABB of the
+## walled kicker includes the side-wall lip) so a theme that launches a kart
+## over the crest uses exactly the height the collider and the mesh carry.
+static func ramp_top_height(tile_char: String = "J") -> float:
+	var profile: Dictionary = _ramp_surface_profile(tile_char)
+	if not bool(profile.get("ok", false)):
 		return 0.0
+	var heights: PackedFloat32Array = profile["heights"] as PackedFloat32Array
+	return heights[heights.size() - 1] if not heights.is_empty() else 0.0
+
+
+## Top surface profile of a jump/bump piece, sampled from its mesh once.
+##
+## Returns {ok, half_length, half_width, heights}. `heights[row]` is metres
+## above the lane plane, the entry row (model +Z) first and the exit row (model
+## -Z, the direction of travel) last. The collider builder and the ramp-detail
+## pass both read this, so the painted lip, the wedge and the art cannot drift
+## apart again.
+static func _ramp_surface_profile(tile_char: String, rows: int = 10) -> Dictionary:
+	var cache_key: String = "%s:%d" % [tile_char, rows]
+	if _ramp_profiles.has(cache_key):
+		return _ramp_profiles[cache_key] as Dictionary
+	var out: Dictionary = {"ok": false, "half_length": 0.0, "half_width": 0.0,
+		"heights": PackedFloat32Array()}
+	_ramp_profiles[cache_key] = out
+	var model: String = TileCatalog.road_model(tile_char)
+	var scale: Vector3 = TileCatalog.road_scale(tile_char) * TILE_SIZE
+	var info: Dictionary = TileCatalog.model_info(model)
+	if not bool(info.get("ok", false)) or scale.z <= 0.0 or scale.y <= 0.0:
+		return out
 	var aabb: AABB = info["aabb"]
-	return aabb.size.y * TILE_SIZE
+	var center: Vector2 = info["center"]
+	var tris := PackedVector3Array()
+	for part: Dictionary in info["parts"] as Array:
+		var mesh: Mesh = part["mesh"] as Mesh
+		var part_xform: Transform3D = part["transform"]
+		if mesh == null:
+			continue
+		for surface in mesh.get_surface_count():
+			var arrays: Array = mesh.surface_get_arrays(surface)
+			if arrays.is_empty():
+				continue
+			var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+			var indices := PackedInt32Array()
+			if arrays[Mesh.ARRAY_INDEX] is PackedInt32Array:
+				indices = arrays[Mesh.ARRAY_INDEX]
+			var tri_count: int = indices.size() / 3 if not indices.is_empty() \
+				else verts.size() / 3
+			for tri in tri_count:
+				var i0: int = indices[tri * 3] if not indices.is_empty() \
+					else tri * 3
+				var i1: int = indices[tri * 3 + 1] \
+					if not indices.is_empty() else tri * 3 + 1
+				var i2: int = indices[tri * 3 + 2] \
+					if not indices.is_empty() else tri * 3 + 2
+				tris.append(part_xform * verts[i0])
+				tris.append(part_xform * verts[i1])
+				tris.append(part_xform * verts[i2])
+	if tris.is_empty():
+		return out
+	var half_length: float = aabb.size.z * absf(scale.z) * 0.5
+	var half_width: float = aabb.size.x * absf(scale.x) * 0.5
+	var heights := PackedFloat32Array()
+	heights.resize(rows + 1)
+	for row in rows + 1:
+		# Travel is local -Z, so a row `along` metres forward of the tile centre
+		# is at model z = centre - along / scale.z.
+		var along: float = -half_length + 2.0 * half_length * float(row) \
+			/ float(rows)
+		var model_z: float = center.y - along / scale.z
+		var top: float = _model_plan_top(tris, Vector3(center.x, 0.0, model_z))
+		heights[row] = maxf(top, 0.0) * scale.y
+	out["ok"] = true
+	out["half_length"] = half_length
+	out["half_width"] = half_width
+	out["heights"] = heights
+	_ramp_profiles[cache_key] = out
+	return out
+
+
+## Highest model-space triangle y under a model-space plan point.
+static func _model_plan_top(tris: PackedVector3Array, q: Vector3) -> float:
+	var best: float = -INF
+	var index: int = 0
+	var count: int = tris.size() / 3
+	while index < count:
+		var a: Vector3 = tris[index * 3]
+		var b: Vector3 = tris[index * 3 + 1]
+		var c: Vector3 = tris[index * 3 + 2]
+		index += 1
+		var bary: Vector3 = _plan_barycentric(a, b, c, q)
+		if bary.x < -0.001 or bary.y < -0.001 or bary.z < -0.001:
+			continue
+		best = maxf(best, bary.x * a.y + bary.y * b.y + bary.z * c.y)
+	return best
 
 
 # --------------------------------------------------------------------------

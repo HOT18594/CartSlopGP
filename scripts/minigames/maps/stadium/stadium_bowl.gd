@@ -233,9 +233,17 @@ static func ring_face_yaw(ring_path: Dictionary, path: float,
 ## ring's own tangent instead of the centreline forward: on a corner the ring
 ## position no longer matches the lap distance the forward was sampled at, and
 ## a stand yawed from the wrong lap cuts through its neighbour.
+##
+## A ring site's yaw maps the model's local +X onto the ring tangent, and a
+## Kenney grandstand's open seating faces local +Z (measured from the GLB: the
+## seat rows step DOWN toward +Z). At a site that yaw therefore points +Z along
+## the ring's right vector, so a stand on the right of the lap (side > 0) has to
+## turn a further PI to face back across the road, and a stand on the left
+## (side < 0) already faces the road. The old form had the two cases swapped,
+## which turned every bowl tier inside-out: the chase camera saw the solid back
+## wall and the seats opened away from the circuit.
 static func ring_stand_yaw(site: Dictionary, side: float) -> float:
-	return float(site["yaw"]) - PI * 0.5 \
-		+ (PI * 0.5 if side > 0.0 else -PI * 0.5)
+	return float(site["yaw"]) - PI * (1.0 if side > 0.0 else 0.0)
 
 
 ## Appends a transform to the batch for `model`, creating the batch on demand.

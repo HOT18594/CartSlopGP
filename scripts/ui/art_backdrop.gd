@@ -1,20 +1,42 @@
 extends Control
-## Full-bleed static cover-cropped menu artwork slideshow with smooth crossfades,
+## Self-timed, shuffled full-bleed menu artwork slideshow with smooth crossfades,
 ## soft dim tint, and a subtle cinematic edge vignette.
 ##
 ## Drawn directly via `_draw()` (`draw_texture_rect`, `position = Vector2.ZERO`)
 ## with zero pan/zoom wobble and zero particle noise so menu artwork stays
 ## rock-steady and pixel-crisp.
+##
+## This is the one and only owner of menu backdrop changes (0.8.7 correction):
+## the slideshow cycles on its own timer and is deliberately INDEPENDENT of the
+## UI - hovering, clicking or focusing a button/card never calls into this node
+## and can never pause it, retarget it or swap the art. Each screen only supplies
+## its own texture pool through `set_slides()` (via `MenuBackground`).
+##
+## Timing: one randomized 8-12 s beat per slide (`slide_seconds_min/max`), a
+## smooth crossfade (`fade_seconds`), and a shuffled order bag so the same plate
+## never appears twice in a row. Reduced motion (`GameSettings.reduce_motion`)
+## holds a still plate (no auto-advance, no Ken Burns drift) while still leaving
+## the art on screen; hover/focus independence is identical in both modes.
 
 const ART_DIR: String = "res://assets/ui/art/"
+const MIN_SLIDE_SECONDS: float = 8.0
+const MAX_SLIDE_SECONDS: float = 12.0
 
 @export var texture_names: PackedStringArray = PackedStringArray()
-@export var slide_seconds: float = 8.5
+@export var slide_seconds_min: float = MIN_SLIDE_SECONDS
+@export var slide_seconds_max: float = MAX_SLIDE_SECONDS
 @export var fade_seconds: float = 1.15
 @export var dim: float = 0.10 ## Extra darkening over the art, 0..1.
 @export var left_scrim: float = 0.44 ## Left-rail racing-sim contrast gradient.
 @export var enable_overlay: bool = true
 @export var enable_ken_burns: bool = true
+## The slideshow is always on for menus. Kept as an explicit flag only so a
+## future non-menu host can freeze on one plate; nothing in the menu code is
+## allowed to toggle it any more.
+@export var auto_advance: bool = true
+## Randomized next-slide order. `true` = shuffled bag, never the same plate twice
+## in a row; `false` = straight 0..N loop (kept for single-screen hosts/tests).
+@export var shuffle: bool = true
 
 var _textures: Array[Texture2D] = []
 var _names: Array[String] = []
@@ -23,8 +45,11 @@ var _next_index: int = -1
 var _fade_progress: float = 0.0
 var _fading: bool = false
 var _timer: float = 0.0
+var _slide_delay: float = 8.5
 var _drift_time: float = 0.0
 var _last_size: Vector2 = Vector2.ZERO
+var _advances: int = 0
+var _shuffle_bag: Array[int] = []
 
 
 func _ready() -> void:
@@ -34,6 +59,7 @@ func _ready() -> void:
 	_load_textures()
 	resized.connect(queue_redraw)
 	_fit()
+	_slide_delay = roll_slide_delay()
 	queue_redraw()
 
 
@@ -47,31 +73,78 @@ func _load_textures() -> void:
 			if texture != null:
 				_textures.append(texture)
 				_names.append(file_name)
+	_shuffle_bag.clear()
 
 
-func crossfade_to(file_name: String) -> void:
-	## Smoothly transition the full-bleed backdrop to a specific key-art slide.
-	var idx: int = _names.find(file_name)
-	if idx < 0:
-		var path: String = ART_DIR + file_name
-		if ResourceLoader.exists(path):
-			var tex: Texture2D = load(path) as Texture2D
-			if tex != null:
-				_textures.append(tex)
-				_names.append(file_name)
-				idx = _textures.size() - 1
-	if idx < 0:
+func set_slides(names: PackedStringArray) -> void:
+	## Replace this backdrop's texture pool. Called by `MenuBackground` with the
+	## current screen's own art set; the slideshow keeps cycling by itself.
+	if names == texture_names:
 		return
-	if idx == _current_index and not _fading:
-		_timer = 0.0
-		return
-	if _fading and idx == _next_index:
-		return
-	_next_index = idx
+	texture_names = names
+	_load_textures()
+	_current_index = 0
+	_next_index = -1
 	_fade_progress = 0.0
-	_fading = true
+	_fading = false
 	_timer = 0.0
+	_slide_delay = roll_slide_delay()
 	queue_redraw()
+
+
+func roll_slide_delay() -> float:
+	## One randomized 8-12 s beat. Exposed so headless checks can prove the
+	## cadence band without waiting out a real slide.
+	var lo: float = clampf(minf(slide_seconds_min, slide_seconds_max),
+		0.05, 600.0)
+	var hi: float = clampf(maxf(slide_seconds_min, slide_seconds_max),
+		lo, 600.0)
+	return randf_range(lo, hi)
+
+
+func slide_names() -> PackedStringArray:
+	## Names of the plates actually loaded for this backdrop (missing files are
+	## skipped, so a typo can never wedge the slideshow on an empty pool).
+	return PackedStringArray(_names)
+
+
+func current_index() -> int:
+	return _current_index
+
+
+func current_slide_name() -> String:
+	if _names.is_empty():
+		return ""
+	return _names[clampi(_current_index, 0, _names.size() - 1)]
+
+
+func advance_count() -> int:
+	## Number of completed/started slide changes; lets a headless check prove the
+	## timer really advances without waiting slide by slide.
+	return _advances
+
+
+func next_slide_delay() -> float:
+	return _slide_delay
+
+
+func reset_schedule() -> void:
+	## Restart the current beat from zero (used by checks after retiming the
+	## cadence exports, and by any future screen that swaps its pool mid-beat).
+	_timer = 0.0
+	_slide_delay = roll_slide_delay()
+
+
+func reduced_motion() -> bool:
+	return _is_reduce_motion()
+
+
+func ken_burns_active() -> bool:
+	return enable_ken_burns and not _is_reduce_motion()
+
+
+func has_art() -> bool:
+	return not _textures.is_empty()
 
 
 func _is_reduce_motion() -> bool:
@@ -94,18 +167,30 @@ func _fit() -> void:
 	queue_redraw()
 
 
-func has_art() -> bool:
-	return not _textures.is_empty()
+func _pick_next_index() -> int:
+	## Randomized order with no immediate repeat: a shuffled bag of every index
+	## except the one on screen, refilled only once the bag is empty, so each
+	## plate is seen once per cycle.
+	var count: int = _textures.size()
+	if count <= 1:
+		return _current_index
+	if not shuffle:
+		return (_current_index + 1) % count
+	if _shuffle_bag.is_empty():
+		for index in count:
+			if index != _current_index:
+				_shuffle_bag.append(index)
+		_shuffle_bag.shuffle()
+	return _shuffle_bag.pop_back()
 
 
-func show_still(index: int) -> void:
-	if _textures.is_empty():
+func _begin_next_slide() -> void:
+	_next_index = _pick_next_index()
+	if _next_index < 0 or _next_index == _current_index:
 		return
-	_current_index = clampi(index, 0, _textures.size() - 1)
-	_next_index = -1
 	_fade_progress = 0.0
-	_fading = false
-	_timer = 0.0
+	_fading = true
+	_advances += 1
 	queue_redraw()
 
 
@@ -127,15 +212,15 @@ func _process(delta: float) -> void:
 			_fading = false
 		queue_redraw()
 		return
-	if _textures.size() < 2 or reduced:
+	# Reduced motion (and a single-plate pool) hold a still slide: no automated
+	# crossfade. Hover/focus never reaches this node either way.
+	if _textures.size() < 2 or reduced or not auto_advance:
 		return
 	_timer += delta
-	if _timer >= slide_seconds:
+	if _timer >= _slide_delay:
 		_timer = 0.0
-		_next_index = (_current_index + 1) % _textures.size()
-		_fade_progress = 0.0
-		_fading = true
-		queue_redraw()
+		_slide_delay = roll_slide_delay()
+		_begin_next_slide()
 
 
 func _draw() -> void:

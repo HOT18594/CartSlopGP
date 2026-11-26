@@ -11,6 +11,7 @@ extends RefCounted
 const PropBatch := preload("res://scripts/minigames/scenery/prop_batch.gd")
 const SceneryKit := preload("res://scripts/minigames/scenery/scenery_kit.gd")
 const CollisionLayers := preload("res://scripts/systems/collision_layers.gd")
+const AmbientParticles := preload("res://scripts/effects/ambient_particles.gd")
 
 
 static func add_tri_outward(batch: PropBatch, a: Vector3, b: Vector3, c: Vector3,
@@ -1469,94 +1470,45 @@ static func step_animations(anim: Dictionary, time: float, delta: float) -> void
 
 static func add_biome_particles(parent: Node3D, biome: String, center: Vector3,
 		extent_xz: float = 160.0) -> GPUParticles3D:
-	## Lightweight ambient biome particle emitter (skipped in headless).
-	if parent == null or DisplayServer.get_name() == "headless":
+	## Themed ambient weather for the minigame arenas and the sandbox. Delegates
+	## to the shared AmbientParticles system (2-3 quality-tiered GPU layers with
+	## wind, turbulence and lifetime variance) and returns the primary emitter
+	## for callers that only want the node handle.
+	##
+	## A scene that already built an AmbientWorld keeps that single weather set:
+	## several arenas call both builders, and doubling 3 GPU layers would blow
+	## the draw/particle budget for no visual gain.
+	if parent == null:
 		return null
-	var gp := GPUParticles3D.new()
-	gp.name = "BiomeParticles_" + biome
-	gp.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	gp.visibility_aabb = AABB(Vector3(-extent_xz, -20.0, -extent_xz),
-		Vector3(extent_xz * 2.0, 80.0, extent_xz * 2.0))
-	gp.position = center + Vector3(0.0, 14.0, 0.0)
+	var existing: GPUParticles3D = _existing_ambient_emitter(parent)
+	if existing != null:
+		return existing
+	var stats: Dictionary = AmbientParticles.build(parent, biome, center, extent_xz)
+	var emitters: Array = stats.get("emitters", [])
+	for raw: Variant in emitters:
+		var emitter: GPUParticles3D = raw as GPUParticles3D
+		if is_instance_valid(emitter):
+			return emitter
+	return null
 
-	var proc := ParticleProcessMaterial.new()
-	proc.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_BOX
-	proc.emission_box_extents = Vector3(extent_xz * 0.75, 10.0, extent_xz * 0.75)
 
-	var quad := QuadMesh.new()
-	var mat := StandardMaterial3D.new()
-	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	mat.billboard_mode = BaseMaterial3D.BILLBOARD_PARTICLES
+static func _existing_ambient_emitter(node: Node) -> GPUParticles3D:
+	## Finds the scene's AmbientWorld, if it has one, and returns its primary
+	## weather emitter. `find_child` runs once per arena build, not per frame.
+	var tree: SceneTree = node.get_tree()
+	if tree == null:
+		return null
+	var scene_root: Node = node
+	while scene_root.get_parent() != null and scene_root.get_parent() != tree.root:
+		scene_root = scene_root.get_parent()
+	var world: Node = scene_root.find_child("AmbientWorld", true, false)
+	if world == null:
+		return null
+	var stats: Dictionary = world.get_meta("ambient_fx_stats", {})
+	var emitters: Array = stats.get("emitters", [])
+	for raw: Variant in emitters:
+		var emitter: GPUParticles3D = raw as GPUParticles3D
+		if is_instance_valid(emitter):
+			return emitter
+	return null
 
-	match biome:
-		"glacier", "snowfield", "ko_iceberg":
-			gp.amount = 220
-			gp.lifetime = 4.5
-			proc.direction = Vector3(0.45, -1.0, 0.25)
-			proc.spread = 22.0
-			proc.initial_velocity_min = 3.5
-			proc.initial_velocity_max = 6.5
-			proc.gravity = Vector3(1.2, -1.8, 0.5)
-			quad.size = Vector2(0.28, 0.28)
-			mat.albedo_color = Color(0.95, 0.99, 1.0, 0.85)
-		"canyon", "bt_labyrinth":
-			gp.amount = 140
-			gp.lifetime = 5.0
-			proc.direction = Vector3(1.0, 0.12, 0.35)
-			proc.spread = 28.0
-			proc.initial_velocity_min = 4.0
-			proc.initial_velocity_max = 8.0
-			proc.gravity = Vector3(0.6, -0.2, 0.2)
-			quad.size = Vector2(0.32, 0.18)
-			mat.albedo_color = Color(1.0, 0.80, 0.48, 0.60)
-		"dockyard", "harbour", "bt_ferries":
-			gp.amount = 120
-			gp.lifetime = 4.0
-			proc.direction = Vector3(0.7, 0.2, 0.3)
-			proc.spread = 35.0
-			proc.initial_velocity_min = 2.0
-			proc.initial_velocity_max = 4.5
-			proc.gravity = Vector3(0.4, 0.1, 0.1)
-			quad.size = Vector2(0.45, 0.45)
-			mat.albedo_color = Color(0.84, 0.96, 1.0, 0.42)
-		"foundry", "ko_foundry":
-			gp.amount = 180
-			gp.lifetime = 3.6
-			proc.direction = Vector3(0.1, 1.0, 0.1)
-			proc.spread = 26.0
-			proc.initial_velocity_min = 3.0
-			proc.initial_velocity_max = 6.8
-			proc.gravity = Vector3(0.2, 2.2, 0.0)
-			quad.size = Vector2(0.26, 0.26)
-			mat.albedo_color = Color(1.0, 0.55, 0.18, 0.90)
-			mat.emission_enabled = true
-			mat.emission = Color(1.0, 0.45, 0.12)
-			mat.emission_energy_multiplier = 1.8
-		"stadium", "bt_plaza":
-			gp.amount = 130
-			gp.lifetime = 4.8
-			proc.direction = Vector3(0.2, -0.6, 0.15)
-			proc.spread = 45.0
-			proc.initial_velocity_min = 1.5
-			proc.initial_velocity_max = 3.2
-			proc.gravity = Vector3(0.2, -0.9, 0.1)
-			quad.size = Vector2(0.28, 0.16)
-			mat.albedo_color = Color(1.0, 0.88, 0.35, 0.78)
-		_:
-			gp.amount = 130
-			gp.lifetime = 5.2
-			proc.direction = Vector3(0.5, 0.15, 0.2)
-			proc.spread = 45.0
-			proc.initial_velocity_min = 1.2
-			proc.initial_velocity_max = 2.8
-			proc.gravity = Vector3(0.3, -0.25, 0.15)
-			quad.size = Vector2(0.22, 0.22)
-			mat.albedo_color = Color(0.98, 0.95, 0.62, 0.74)
-
-	quad.material = mat
-	gp.process_material = proc
-	gp.draw_pass_1 = quad
-	gp.emitting = true
-	parent.add_child(gp)
-	return gp

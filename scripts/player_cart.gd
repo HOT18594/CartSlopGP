@@ -150,6 +150,21 @@ const FALL_RESET_HEIGHT: float = -4.0
 @export var mesh_tilt_amount: float = 0.14 ## Outward body roll from cornering and lateral acceleration.
 @export var mesh_pitch_amount: float = 0.12 ## Nose lift/dive from acceleration and braking.
 
+## Remote-ghost cartoon flex. A ghost only has replicated position, yaw and
+## velocity, so its squash/roll/compression is DERIVED from those instead of
+## input: the change between two replicated velocities gives longitudinal and
+## lateral g, the yaw rate gives the cornering load, and a reversed vertical
+## velocity gives the landing compression. Everything here is visual: only
+## `_mesh_root` and per-instance spring scratch vars are written, never the
+## body, its velocity or any replicated state, so host and client run identical
+## visuals from identical packets and no physics can diverge.
+const REMOTE_FLEX_ACCEL_G: float = 2.2 ## Max g derived from replicated velocity used for flex.
+const REMOTE_FLEX_ACCEL_SMOOTH: float = 8.0 ## Damping rate (1/s) of the derived accel.
+const REMOTE_FLEX_YAW_RATE_MAX: float = 8.0 ## Cap (rad/s) on the derived yaw rate.
+const REMOTE_LANDING_MIN_FALL: float = 2.5 ## Fall speed (m/s) that reads as a landing.
+const REMOTE_LANDING_SQUASH: float = 0.55 ## Landing squash impulse scale for a ghost.
+const REMOTE_LANDING_SUSP: float = 0.35 ## Suspension dip (m/s) on a ghost landing.
+
 @export_group("Props")
 @export var push_force: float = 5.5 ## Ram strength as the velocity change (m/s) given to a rammed prop at full cart speed.
 @export var push_lift: float = 0.85 ## Upward share of the push - how high small props pop into the air.
@@ -327,6 +342,11 @@ var _ai_chicane_timer: float = 0.0
 var _hop_offset: float = 0.0
 var _hop_vel: float = 0.0
 var _hop_active: bool = false
+## Remote-ghost flex scratch: previous replicated velocity/yaw, used to derive
+## acceleration without touching anything the netcode replicates.
+var _remote_visual_velocity: Vector3 = Vector3.ZERO
+var _remote_visual_yaw: float = 0.0
+var _remote_has_visual_state: bool = false
 var _was_handbraking: bool = false
 var _was_manual_boosting: bool = false
 var _boost_kick_cooldown: float = 0.0
@@ -464,6 +484,9 @@ func setup_remote(peer_id: int) -> void:
 	net_position = global_position
 	net_yaw = rotation.y
 	net_velocity = Vector3.ZERO
+	_remote_visual_velocity = Vector3.ZERO
+	_remote_visual_yaw = rotation.y
+	_remote_has_visual_state = false
 	_net_sample_position = global_position
 	_net_sample_yaw = rotation.y
 	_net_sample_prev_position = global_position
@@ -584,6 +607,7 @@ func _update_remote_state(delta: float) -> void:
 		if now - _net_last_receive_ms > GHOST_STREAM_TIMEOUT_MS:
 			contact_enabled = false
 			collision_layer = 0
+		_update_remote_visuals(delta)
 		return
 	if not _net_sample_position.is_finite():
 		# Only a corrupt pipeline can get here (set_net_state validates), but a
@@ -591,6 +615,7 @@ func _update_remote_state(delta: float) -> void:
 		_net_has_sample = false
 		contact_enabled = false
 		collision_layer = 0
+		_update_remote_visuals(delta)
 		return
 	var sample_seconds: float = maxf(float(_net_sample_ms - _net_sample_prev_ms), 1.0) / 1000.0
 	var velocity: Vector3 = net_velocity
@@ -627,6 +652,7 @@ func _update_remote_state(delta: float) -> void:
 		global_position = target
 		rotation.y = target_yaw
 		reset_physics_interpolation()
+		_update_remote_visuals(delta)
 		return
 	var blend: float = 1.0 - exp(-16.0 * delta)
 	# The ghost is script-placed, so a big prediction correction could hop it
@@ -635,6 +661,7 @@ func _update_remote_state(delta: float) -> void:
 	_move_ghost_towards(target, blend)
 	rotation.y = lerp_angle(rotation.y, target_yaw, blend)
 	net_velocity = velocity
+	_update_remote_visuals(delta)
 
 
 func _move_ghost_towards(target: Vector3, blend: float) -> void:
@@ -1034,6 +1061,14 @@ func _resize_collision(entry: Dictionary) -> void:
 	## The cart scene has one collider; scale it to the catalog length so a
 	## box truck genuinely takes up more road than a shopping cart. Width grows
 	## with the square root so heavy vehicles do not become absurdly wide.
+	##
+	## The horizontal body capsule has to keep its belly ON the wheel contact
+	## plane. Scaling its centre only by `y_scale` while its radius is the mean
+	## of the two scales made the capsule dip below the wheels for every vehicle
+	## whose height scale is smaller than its width scale, which lifted the whole
+	## body: measured hover was 5.6 cm (taxi), 7.6 cm (sedan), 9.9 cm (sports) and
+	## 14.2 cm (pro race car) above the road. The capsule centre is now placed at
+	## its own radius instead, so its lowest point is exactly y = 0 for any art.
 	if _collision_shapes.is_empty():
 		return
 	var length: float = float(entry.get("length", 2.26))
@@ -1052,6 +1087,9 @@ func _resize_collision(entry: Dictionary) -> void:
 		if not _collision_base.has(key):
 			continue
 		var base_value: Variant = _collision_base[key]
+		## Set for the horizontal body capsule: its centre must sit one radius
+		## above the contact plane (see the docstring above).
+		var capsule_radius: float = -1.0
 		if base_value is Vector3:
 			var base_size: Vector3 = base_value as Vector3
 			var box := BoxShape3D.new()
@@ -1065,6 +1103,7 @@ func _resize_collision(entry: Dictionary) -> void:
 			var capsule := CapsuleShape3D.new()
 			capsule.radius = base_capsule.x * (x_scale + y_scale) * 0.5
 			capsule.height = base_capsule.y * z_scale
+			capsule_radius = capsule.radius
 			node.shape = capsule
 		else:
 			var sphere := SphereShape3D.new()
@@ -1072,7 +1111,8 @@ func _resize_collision(entry: Dictionary) -> void:
 			node.shape = sphere
 		var rest: Transform3D = _collision_base_transforms[index]
 		rest.origin.x *= x_scale
-		rest.origin.y *= y_scale
+		rest.origin.y = capsule_radius if capsule_radius > 0.0 \
+			else rest.origin.y * y_scale
 		rest.origin.z *= z_scale
 		_collision_rest_transforms[index] = rest
 		node.transform = rest
@@ -2064,14 +2104,6 @@ func _update_visuals(steer_input: float, delta: float) -> void:
 				_susp_vel -= 0.14
 	var stretch: float = (accel_stretch * 0.6 + _stretch_impulse) * squash_amount
 	var squash: float = (brake_squash * 0.6 + _squash_impulse) * squash_amount
-	var target_scale: Vector3 = Vector3(
-		1.0 - stretch * 0.4 + squash * 0.5,
-		1.0 - stretch * 0.3 - squash,
-		1.0 + stretch - squash * 0.5)
-	target_scale = target_scale.clamp(
-		Vector3.ONE * (1.0 - squash_amount), Vector3.ONE * (1.0 + squash_amount))
-	var blend: float = 1.0 - exp(-squash_smooth_speed * delta)
-	_mesh_root.scale = _mesh_root.scale.lerp(target_scale, blend)
 	var measured_accel: Vector3 = (velocity - _frame_start_velocity) / maxf(delta, 0.0001)
 	_longitudinal_accel = lerpf(_longitudinal_accel, clampf(measured_accel.dot(forward_dir), -gravity, gravity), 1.0 - exp(-8.0 * delta))
 	_lateral_accel = lerpf(_lateral_accel, clampf(measured_accel.dot(right_dir), -gravity, gravity), 1.0 - exp(-8.0 * delta))
@@ -2081,6 +2113,29 @@ func _update_visuals(steer_input: float, delta: float) -> void:
 	if current_state != CartState.DRIVING or not is_on_floor():
 		target_pitch = 0.0
 		target_roll = 0.0
+	_drive_visual_flex(delta, target_pitch, target_roll, squash, stretch)
+	_update_collision_shapes()
+
+
+func _drive_visual_flex(delta: float, target_pitch: float, target_roll: float,
+		squash: float, stretch: float) -> void:
+	## The one cartoon-flex integrator shared by local and remote carts.
+	##
+	## Visual-only by contract: it writes `_mesh_root` (position/rotation/scale)
+	## and the per-cart spring scratch, never the body, its collision shapes'
+	## vertices, its velocity or any replicated state. `squash`/`stretch` are the
+	## final 0..`squash_amount` weights. The springs are delta-integrated
+	## (`suspension_stiffness`/`suspension_damping` are 1/s), so the pose is
+	## frame-rate independent and identical on every platform (no threads, no
+	## compute, no render-only APIs).
+	var target_scale: Vector3 = Vector3(
+		1.0 - stretch * 0.4 + squash * 0.5,
+		1.0 - stretch * 0.3 - squash,
+		1.0 + stretch - squash * 0.5)
+	target_scale = target_scale.clamp(
+		Vector3.ONE * (1.0 - squash_amount), Vector3.ONE * (1.0 + squash_amount))
+	var blend: float = 1.0 - exp(-squash_smooth_speed * delta)
+	_mesh_root.scale = _mesh_root.scale.lerp(target_scale, blend)
 	_base_pitch_vel += ((target_pitch - _base_pitch) * suspension_stiffness - _base_pitch_vel * suspension_damping) * delta
 	_base_roll_vel += ((target_roll - _base_roll) * suspension_stiffness - _base_roll_vel * suspension_damping) * delta
 	_base_pitch = clampf(_base_pitch + _base_pitch_vel * delta, -0.32, 0.32)
@@ -2090,7 +2145,69 @@ func _update_visuals(steer_input: float, delta: float) -> void:
 	_mesh_root.position.y = SUSPENSION_PIVOT_HEIGHT + _susp_pos + _hop_offset
 	_mesh_root.rotation.z = _base_roll + _slope_roll + _tumble_roll
 	_mesh_root.rotation.x = _base_pitch + _slope_pitch + _tumble_pitch
-	_update_collision_shapes()
+
+
+func _update_remote_visuals(delta: float) -> void:
+	## Visual-only cartoon flex for a remote ghost, derived entirely from the
+	## replicated pose/velocity `_update_remote_state` just consumed.
+	##
+	## This is the multiplayer half of `_update_visuals`: a local cart reads input
+	## and its physics body, a ghost has neither, so acceleration is differenced
+	## from two replicated velocities and the cornering load comes from the
+	## replicated yaw rate. Nothing here writes `velocity`, `global_position`,
+	## `net_*`, collision layers or anything the netcode replicates: host and
+	## every client run this same function on the same packets, so a ghost's flex
+	## is identical on every peer and can never feed back into physics or the
+	## authoritative server state.
+	if not is_finite(delta) or delta <= 0.0:
+		return
+	var forward_dir: Vector3 = -global_transform.basis.z
+	var right_dir: Vector3 = global_transform.basis.x
+	var yaw_now: float = rotation.y
+	var yaw_rate: float = 0.0
+	var accel_world: Vector3 = Vector3.ZERO
+	if _remote_has_visual_state:
+		yaw_rate = clampf(wrapf(yaw_now - _remote_visual_yaw, -PI, PI) / delta,
+			-REMOTE_FLEX_YAW_RATE_MAX, REMOTE_FLEX_YAW_RATE_MAX)
+		accel_world = (net_velocity - _remote_visual_velocity) / delta
+	if not accel_world.is_finite() or not is_finite(yaw_rate):
+		accel_world = Vector3.ZERO
+		yaw_rate = 0.0
+	var speed: float = Vector2(net_velocity.x, net_velocity.z).length()
+	var long_accel: float = accel_world.dot(forward_dir)
+	var lat_accel: float = accel_world.dot(right_dir) + yaw_rate * speed
+	var long_g: float = clampf(long_accel / maxf(gravity, 0.001),
+		-REMOTE_FLEX_ACCEL_G, REMOTE_FLEX_ACCEL_G)
+	var lat_g: float = clampf(lat_accel / maxf(gravity, 0.001),
+		-REMOTE_FLEX_ACCEL_G, REMOTE_FLEX_ACCEL_G)
+	var blend: float = 1.0 - exp(-REMOTE_FLEX_ACCEL_SMOOTH * delta)
+	_longitudinal_accel = lerpf(_longitudinal_accel, long_g * gravity, blend)
+	_lateral_accel = lerpf(_lateral_accel, lat_g * gravity, blend)
+	# Landing compression: a replicated vertical velocity that reverses after a
+	# fall dips and squashes the ghost, matching the local cart's landing.
+	if _remote_has_visual_state:
+		var fall_speed: float = maxf(-_remote_visual_velocity.y, 0.0)
+		var rebounded: bool = net_velocity.y > _remote_visual_velocity.y + 0.8
+		if fall_speed > REMOTE_LANDING_MIN_FALL and rebounded:
+			_squash_impulse = maxf(_squash_impulse,
+				clampf(fall_speed * 0.06, 0.15, 1.0) * REMOTE_LANDING_SQUASH)
+			_susp_vel -= clampf(fall_speed * 0.03, 0.05,
+				REMOTE_LANDING_SUSP)
+	_squash_impulse = move_toward(_squash_impulse, 0.0, 2.5 * delta)
+	_stretch_impulse = move_toward(_stretch_impulse, 0.0, 2.5 * delta)
+	var stretch: float = clampf(long_g * 0.5, 0.0, 1.0) * squash_amount
+	var squash: float = clampf(-long_g * 0.5, 0.0, 1.0) * squash_amount
+	var contact: bool = _support_count > 0
+	var target_pitch: float = 0.0
+	var target_roll: float = 0.0
+	if contact:
+		target_pitch = clampf(long_g, -1.0, 1.0) * mesh_pitch_amount
+		target_roll = clampf(lat_g, -1.0, 1.0) * mesh_tilt_amount
+	_update_ground_tilt(delta)
+	_drive_visual_flex(delta, target_pitch, target_roll, squash, stretch)
+	_remote_visual_velocity = net_velocity
+	_remote_visual_yaw = yaw_now
+	_remote_has_visual_state = true
 
 
 func _update_collision_shapes() -> void:
@@ -2159,7 +2276,13 @@ func _normal_tilt(normal: Vector3) -> Vector2:
 
 
 func _update_ground_tilt(delta: float) -> void:
+	## Visual support-plane tilt. A remote ghost is script-placed and never runs
+	## move_and_slide, so `is_on_floor()` is always false for it: its contact is
+	## decided by the same four support rays (the track below its replicated
+	## pose) and its flight attitude by the replicated velocity instead of the
+	## local body's. Everything written here is visual-only.
 	_sample_wheel_supports()
+	var current_velocity: Vector3 = net_velocity if remote_mode else velocity
 	var front_h: float = 0.0
 	var front_n: float = 0.0
 	var rear_h: float = 0.0
@@ -2187,7 +2310,8 @@ func _update_ground_tilt(delta: float) -> void:
 	var target_pitch: float = _slope_pitch
 	var target_roll: float = _slope_roll
 	var response: float = air_tilt_smooth_speed
-	var grounded: bool = is_on_floor() and current_state == CartState.DRIVING
+	var grounded: bool = current_state == CartState.DRIVING and (
+		is_on_floor() or (remote_mode and _support_count > 0))
 	if grounded:
 		response = slope_smooth_speed
 		var normal_tilt: Vector2 = _normal_tilt(_ground_normal)
@@ -2214,9 +2338,11 @@ func _update_ground_tilt(delta: float) -> void:
 		if _previous_support_count == 4 and _support_count < 4:
 			_susp_vel -= 0.035 * float(4 - _support_count)
 	elif current_state == CartState.DRIVING:
-		var horizontal_speed: float = Vector2(velocity.x, velocity.z).length()
+		var horizontal_speed: float = Vector2(current_velocity.x,
+			current_velocity.z).length()
 		if horizontal_speed > 1.0:
-			target_pitch = clampf(atan2(velocity.y, horizontal_speed), -0.55, 0.55)
+			target_pitch = clampf(atan2(current_velocity.y,
+				horizontal_speed), -0.55, 0.55)
 		target_roll = 0.0
 	else:
 		target_pitch = 0.0
@@ -2329,6 +2455,9 @@ func _reset_cart(restore_props: bool = true) -> void:
 	_slope_roll = 0.0
 	_susp_pos = 0.0
 	_susp_vel = 0.0
+	_remote_visual_velocity = Vector3.ZERO
+	_remote_visual_yaw = rotation.y
+	_remote_has_visual_state = false
 	_support_count = 4
 	_previous_support_count = 4
 	for i in 4:

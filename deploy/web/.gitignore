@@ -1,0 +1,9 @@
+# Generated/build artifacts of the deploy package - never commit these.
+dist/
+build/
+node_modules/
+.wrangler/
+.dev.vars
+*.log
+__pycache__/
+*.pyc

@@ -3,6 +3,10 @@ const UiAnim := preload("res://scripts/ui/ui_anim.gd")
 ## PLAY screen: two hero cards (SOLO / MULTIPLAYER) with zero middleman submenus.
 ## SOLO jumps straight to SELECT MODE (all 5 modes front-and-center);
 ## MULTIPLAYER jumps straight to the room lobby.
+##
+## Background (0.8.7): the backdrop shuffles its two hero plates on its own
+## 8-12 s beat and is independent of hover/focus - the cards keep only their
+## local hover/focus animation.
 
 const UiPalette := preload("res://scripts/ui/ui_palette.gd")
 const PLAY_CARD := "res://scripts/ui/play_card.gd"
@@ -11,8 +15,14 @@ const MAIN_MENU_SCENE: String = "res://scenes/ui/main_menu.tscn"
 const LOBBY_SCENE: String = "res://scenes/ui/lobby_menu.tscn"
 const MINIGAMES_SCENE: String = "res://scenes/ui/minigames_menu.tscn"
 const BACK_BAR_WIDTH: float = 220.0
+## The play screen's own two-hero pool (SOLO = paddock, MULTIPLAYER = arena).
+const BACKGROUND_ART: Array[String] = [
+	"bg_hero_paddock.png",
+	"bg_hero_arena.png",
+]
 
 @onready var _body: VBoxContainer = $Center/Panel/Body
+@onready var _background: Control = $Background
 
 var _title: Label
 var _cards_row: HBoxContainer
@@ -25,14 +35,19 @@ func _ready() -> void:
 	CursorController.set_menu_mode(true)
 	var panel := get_node_or_null("Center/Panel") as PanelContainer
 	if panel != null:
-		panel.add_theme_stylebox_override("panel",
-			UiKit.slanted_panel(Color(0.056, 0.068, 0.156, 0.94),
-				Color(0.24, 0.84, 0.96, 0.52), 0.05, 4, 6, 38.0, 28.0))
+		panel.add_theme_stylebox_override("panel", UiKit.modal_panel(38.0, 28.0, 0.05))
 	_build_ui()
+	_configure_background_slides()
 	_mark_mode_cards()
 	call_deferred("_enter")
 	if OS.get_environment("CART_UI_MEASURE") == "1":
 		_report_layout.call_deferred()
+
+
+func _configure_background_slides() -> void:
+	## One-way handshake: the two hero plates, cycled by ArtBackdrop itself.
+	if _background != null and _background.has_method("set_slide_pool"):
+		_background.call("set_slide_pool", PackedStringArray(BACKGROUND_ART))
 
 
 func _report_layout() -> void:
@@ -57,16 +72,10 @@ func _enter() -> void:
 
 
 func _build_ui() -> void:
-	_body.add_theme_constant_override("separation", 20)
+	_body.add_theme_constant_override("separation", UiKit.SPACING)
 	_body.alignment = BoxContainer.ALIGNMENT_CENTER
 
-	_title = Label.new()
-	_title.theme_type_variation = &"TitleLabel"
-	_title.add_theme_font_size_override("font_size", UiKit.TITLE_SIZE)
-	_title.add_theme_color_override("font_color", UiPalette.YELLOW)
-	_title.add_theme_color_override("font_outline_color", UiPalette.INK)
-	_title.add_theme_constant_override("outline_size", 8)
-	_title.text = "PLAY"
+	_title = UiKit.page_title("PLAY", UiPalette.YELLOW)
 	_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_body.add_child(_title)
 
@@ -85,7 +94,7 @@ func _build_ui() -> void:
 	_multi_card.pressed.connect(_on_multi_card)
 	_cards_row.add_child(_multi_card)
 
-	_back_bar = _button("BACK", UiPalette.RED, 52, 19)
+	_back_bar = _button("BACK", UiPalette.RED, 48, UiKit.COMPACT_FONT)
 	_back_bar.name = "BackButton"
 	UiKit.cap_button(_back_bar, BACK_BAR_WIDTH)
 	_back_bar.pressed.connect(_on_back)

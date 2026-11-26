@@ -1,11 +1,18 @@
 extends Control
 ## Unified Slanted Parallelogram Racing-Sim Hub Main Menu:
-## - Full-bleed living Ken Burns key-art backdrop with dynamic hover crossfades
+## - Full-bleed living Ken Burns key-art backdrop that shuffles all four hero
+##   plates on its own randomized 8-12 s beat (smooth crossfades). It is
+##   completely independent of the UI: hovering/focusing any option never
+##   retargets or pauses it (0.8.7 user correction), and each option keeps only
+##   its own local hover/focus animation.
 ## - Floating top-left curved-corner icon + slanted version tag (zero redundant title bar)
 ## - Floating top-right slanted parallelogram utility tabs (UPDATE / SETTINGS / NOTES / QUIT)
-## - Left asymmetric hero wordmark + slanted parallelogram launch rail (SOLO / MULTIPLAYER / GARAGE)
+## - Left asymmetric hero wordmark + slanted parallelogram launch rail
+##   (SINGLEPLAYER / MULTIPLAYER / MAPMAKER / GARAGE). MAPMAKER is a greyed-out
+##   lock teaser that stays clickable and opens the "COMING SOON :D" popup with
+##   a single one-shot confetti burst (scripts/ui/mapmaker_teaser.gd).
 ## - Bottom floating row of 5 TRUE slanted parallelogram preview cards (UV-mapped art inside
-##   skewed parallelograms, upward hover lift, diagonal gloss sweep, slanted focus halo)
+##   skewed parallelograms, upward hover lift, soft diagonal gloss sweep, slanted focus glow)
 ## - Zero rectangular focus rings, zero floating spotlight clutter, zero ghost text.
 
 const UiAnim := preload("res://scripts/ui/ui_anim.gd")
@@ -25,13 +32,53 @@ const VEHICLE_SCENE: String = "res://scenes/ui/vehicle_select.tscn"
 const SANDBOX_SCENE: String = "res://scenes/sandbox/sandbox.tscn"
 const MAIN_MENU_SCENE: String = "res://scenes/ui/main_menu.tscn"
 const ART_DIR: String = "res://assets/ui/art/"
+## The main menu cycles the full hero key-art set; ArtBackdrop shuffles this pool
+## on its own 8-12 s beat. This is the ONLY handshake with the backdrop.
+const BACKGROUND_ART: Array[String] = [
+	"bg_hero_paddock.png",
+	"bg_hero_canyon.png",
+	"bg_hero_arena.png",
+	"bg_hero_glacier.png",
+]
+const MAPMAKER_TEASER_SCENE: String = "res://scenes/ui/mapmaker_teaser.tscn"
 
+## Hero-rail density for the 4-tile layout (0.8.7). At the 1280x720 design box
+## the rail is 424 px tall inside the 430 px left column: wordmark + four
+## slanted launcher tiles + four UiKit.SPACING_MED gaps. The taller rail still
+## clears the bottom dock (top edge 568 px) and the top utility bar (bottom 74
+## px), so 1080p and ultrawide only re-centre the same composition.
+const HERO_RAIL_OFFSET_TOP: float = -224.0 ## Rail top at 360 - 224 = 136 px.
+const HERO_RAIL_OFFSET_BOTTOM: float = 200.0 ## Rail bottom at 560 px (dock at 568).
+const HERO_TILE_WIDTH: float = 374.0 ## One shared launcher width for the column.
+const HERO_PRIMARY_HEIGHT: float = 70.0 ## SINGLEPLAYER: the one filled primary tile.
+const HERO_TILE_HEIGHT: float = 62.0 ## MULTIPLAYER: secondary tile.
+const HERO_TEASER_HEIGHT: float = 60.0 ## MAPMAKER: greyed lock teaser.
+const HERO_LAST_HEIGHT: float = 58.0 ## GARAGE: quietest launcher of the four.
+const WORDMARK_HEIGHT: float = 118.0 ## CART SLOP GP wordmark box above the rail.
+
+## Web builds are solo-only (README): a browser has no raw UDP sockets for ENet,
+## cannot close its own tab from script and has no desktop updater. Instead of
+## routing the player into a broken flow, the menu turns those entries into
+## honest hints (WS5-03). The env override exists so the headless suites can
+## measure the web variant: OS.has_feature("web") is only true in a real export.
+const WEB_FORCE_ENV: String = "CSGP_FORCE_WEB"
+
+
+static func is_web_build() -> bool:
+	## True in a web export, or when a headless suite forces it through the env.
+	if OS.get_environment(WEB_FORCE_ENV) == "1":
+		return true
+	return OS.has_feature("web")
+
+## The five bottom dock cards are mode shortcuts with their own local hover
+## lift/gloss animation. They deliberately carry NO backdrop dependency: the
+## background shuffles on its own timer and ignores pointer/focus entirely.
 const QUICK_MODES: Array[Dictionary] = [
-	{"id": "racing", "name": "RACING", "accent": Color("4fbf52"), "thumb": "preview_stadium.png", "hero": "bg_hero_paddock.png"},
-	{"id": "knockout", "name": "KNOCKOUT", "accent": Color("ff922b"), "thumb": "preview_knockout.png", "hero": "bg_hero_arena.png"},
-	{"id": "cargo_rush", "name": "DELIVER", "accent": Color("38d6f0"), "thumb": "preview_cargo_rush.png", "hero": "bg_hero_glacier.png"},
-	{"id": "bomb_tag", "name": "BLAST TAG", "accent": Color("f26ca7"), "thumb": "preview_bomb_tag.png", "hero": "bg_hero_canyon.png"},
-	{"id": "sandbox", "name": "SANDBOX", "accent": Color("ffd22e"), "thumb": "preview_sandbox.png", "hero": "bg_hero_paddock.png"},
+	{"id": "racing", "name": "RACING", "accent": Color("4fbf52"), "thumb": "preview_stadium.png"},
+	{"id": "knockout", "name": "KNOCKOUT", "accent": Color("ff922b"), "thumb": "preview_knockout.png"},
+	{"id": "cargo_rush", "name": "DELIVER", "accent": Color("38d6f0"), "thumb": "preview_cargo_rush.png"},
+	{"id": "bomb_tag", "name": "BLAST TAG", "accent": Color("f26ca7"), "thumb": "preview_bomb_tag.png"},
+	{"id": "sandbox", "name": "SANDBOX", "accent": Color("ffd22e"), "thumb": "preview_sandbox.png"},
 ]
 
 
@@ -94,9 +141,14 @@ class _SlashTag extends Control:
 class _SimHeroTile extends Button:
 	## Slanted racing-sim hero launcher tile with true parallelogram focus halo,
 	## zero duplicate Button text, hover slide-right, and diagonal sheen sweep.
+	## `teaser` renders the same geometry in a greyed "locked / coming soon" skin
+	## with a crisp procedural padlock instead of the launch chevron. It stays a
+	## live Button on purpose: the tile must still click, focus and answer the
+	## pointer like every other rail option (only the art says "not yet").
 	var label_text: String = ""
 	var accent_color: Color = Color("ffd22e")
 	var primary_fill: bool = false
+	var teaser: bool = false
 	var _hovered: bool = false
 	var _held: bool = false
 	var _hover_t: float = 0.0
@@ -108,6 +160,9 @@ class _SimHeroTile extends Button:
 		clip_contents = false
 		set_meta("skip_kit", true)
 		set_meta("custom_focus", true)
+		if teaser:
+			set_meta("locked_teaser", true)
+			tooltip_text = "MAPMAKER - COMING SOON :D"
 		var empty := StyleBoxEmpty.new()
 		for st: String in ["normal", "hover", "pressed", "disabled", "focus"]:
 			add_theme_stylebox_override(st, empty)
@@ -149,6 +204,16 @@ class _SimHeroTile extends Button:
 		elif absf(_hover_t - target) > 0.004:
 			queue_redraw()
 
+	func _draw_lock(center: Vector2, col: Color) -> void:
+		## Crisp vector padlock: shackle arc + body plate + keyhole. No assets.
+		draw_arc(center + Vector2(0.0, -4.5), 7.0, PI, TAU, 16, col, 3.2, true)
+		var body := Rect2(center + Vector2(-9.0, -2.5), Vector2(18.0, 14.0))
+		draw_rect(body, col, true)
+		draw_rect(body, UiPalette.INK, false, 1.8)
+		draw_circle(center + Vector2(0.0, 3.0), 1.9, UiPalette.INK)
+		draw_rect(Rect2(center + Vector2(-0.9, 3.5), Vector2(1.8, 4.5)),
+			UiPalette.INK, true)
+
 	func _draw() -> void:
 		var w: float = size.x
 		var h: float = size.y
@@ -188,19 +253,29 @@ class _SimHeroTile extends Button:
 			])
 			var hcl := halo.duplicate()
 			hcl.append(halo[0])
-			var ring_col: Color = Color.WHITE if primary_fill else accent_color
-			draw_polyline(hcl, Color(0.04, 0.04, 0.12, 0.90), 8.0, true)
-			draw_polyline(hcl, ring_col, 3.6, true)
+			var ring_col: Color = Color.WHITE if primary_fill \
+				else (UiPalette.YELLOW if teaser else accent_color)
+			# Soft outer glow instead of two hard polylines: the halo melts into
+			# the plate behind it and never shows a clipped edge.
+			UiAnim.draw_soft_outline(self, hcl, Color(0.04, 0.04, 0.12, 0.90),
+				8.0, Color(0.04, 0.04, 0.12), 3, 1.8, 0.20)
+			UiAnim.draw_soft_outline(self, hcl, ring_col, 3.6, ring_col, 4, 2.2, 0.15)
 
 		# Clean unified parallelogram fill (no side accent stripe!)
-		var base_col: Color = accent_color if primary_fill else Color(0.085, 0.095, 0.195, 0.94)
-		if primary_fill:
-			base_col = base_col.lightened(_hover_t * 0.10)
+		var base_col: Color
+		if teaser:
+			# Greyed "locked" plate: desaturated slate that only warms slightly
+			# on hover, so the tile reads unavailable but never dead.
+			base_col = Color(0.112, 0.118, 0.178, 0.95) \
+				.lerp(Color(0.150, 0.158, 0.238, 0.98), _hover_t)
+		elif primary_fill:
+			base_col = accent_color.lightened(_hover_t * 0.10)
 		else:
-			base_col = base_col.lerp(Color(0.16, 0.18, 0.34, 0.98), _hover_t)
+			base_col = Color(0.085, 0.095, 0.195, 0.94) \
+				.lerp(Color(0.16, 0.18, 0.34, 0.98), _hover_t)
 		draw_colored_polygon(pts, base_col)
 
-		# Subtle top glass sheen
+		# Subtle top glass sheen (vertical alpha fade, no hard bottom edge)
 		var gloss_h: float = bh * 0.34
 		var gloss := PackedVector2Array([
 			Vector2(x0 + sk + 2.0, y0 + 2.0),
@@ -208,9 +283,10 @@ class _SimHeroTile extends Button:
 			Vector2(x0 + sk * 0.66 + bw - 2.0, y0 + 2.0 + gloss_h),
 			Vector2(x0 + sk * 0.66 + 2.0, y0 + 2.0 + gloss_h),
 		])
-		draw_colored_polygon(gloss, Color(1.0, 1.0, 1.0, 0.16 if primary_fill else 0.08))
+		UiAnim.draw_vertical_fade(self, gloss, Color.WHITE,
+			0.05 if teaser else (0.16 if primary_fill else 0.08))
 
-		# Animated diagonal shine sweep on hover/focus
+		# Animated diagonal shine sweep on hover/focus: soft gradient band.
 		if _shine_t >= -0.35 and _shine_t <= 1.35:
 			var sx: float = lerpf(x0 - 20.0, x0 + bw + 30.0, _shine_t)
 			var sw: float = 36.0
@@ -220,14 +296,14 @@ class _SimHeroTile extends Button:
 				Vector2(clampf(sx + sw, x0, x0 + bw), y0 + bh - 2.0),
 				Vector2(clampf(sx, x0, x0 + bw), y0 + bh - 2.0),
 			])
-			if shine[1].x > shine[0].x + 2.0:
-				draw_colored_polygon(shine, Color(1.0, 1.0, 1.0, 0.25))
+			if shine[1].x > shine[0].x + 2.0 and shine[2].x > shine[3].x + 2.0:
+				UiAnim.draw_soft_band(self, shine, Color.WHITE, 0.25)
 
 		# Bold ink border + subtle active inner stroke
 		var closed := pts.duplicate()
 		closed.append(pts[0])
 		draw_polyline(closed, UiPalette.INK, 4.5, true)
-		if _hover_t > 0.08 and not primary_fill:
+		if _hover_t > 0.08 and not primary_fill and not teaser:
 			var inner := PackedVector2Array([
 				Vector2(x0 + sk + 2.5, y0 + 2.5),
 				Vector2(x0 + sk + bw - 2.5, y0 + 2.5),
@@ -236,23 +312,38 @@ class _SimHeroTile extends Button:
 			])
 			var icl := inner.duplicate()
 			icl.append(inner[0])
-			draw_polyline(icl, Color(1.0, 1.0, 1.0, 0.35 * _hover_t), 2.0, true)
+			UiAnim.draw_soft_outline(self, icl,
+				Color(1.0, 1.0, 1.0, 0.35 * _hover_t), 2.0,
+				Color.WHITE, 2, 1.8, 0.10 * _hover_t)
 
-		# Animated chevron on right edge
-		var cx: float = x0 + bw - 22.0 + _hover_t * 6.0
-		var cy: float = y0 + bh * 0.5
-		var arrow_col: Color = UiPalette.INK if primary_fill else UiPalette.CREAM
-		var chev := PackedVector2Array([
-			Vector2(cx - 5.0, cy - 8.5),
-			Vector2(cx + 5.5, cy),
-			Vector2(cx - 5.0, cy + 8.5),
-		])
-		draw_polyline(chev, arrow_col, 3.8, true)
+		# Right-edge glyph: launching chevron on live tiles, crisp padlock on the
+		# MAPMAKER teaser (drawn in vector, zero binary assets).
+		if teaser:
+			var lock_col: Color = UiPalette.TEXT_DIM.lerp(
+				Color(1.0, 0.97, 0.90, 0.95), _hover_t * 0.5)
+			_draw_lock(Vector2(x0 + bw - 29.0 + _hover_t * 3.0,
+				y0 + bh * 0.5 - 1.0), lock_col)
+		else:
+			var cx: float = x0 + bw - 22.0 + _hover_t * 6.0
+			var cy: float = y0 + bh * 0.5
+			var arrow_col: Color = UiPalette.INK if primary_fill else UiPalette.CREAM
+			var chev := PackedVector2Array([
+				Vector2(cx - 5.0, cy - 8.5),
+				Vector2(cx + 5.5, cy),
+				Vector2(cx - 5.0, cy + 8.5),
+			])
+			draw_polyline(chev, arrow_col, 3.8, true)
 
 		# Crisp title text with roomier sizing and zero overflow
 		var caption: String = label_text if not label_text.is_empty() else text
 		var font_sz: int = 33 if primary_fill else 26
-		var txt_col: Color = UiPalette.INK if primary_fill else UiPalette.CREAM
+		var txt_col: Color
+		if teaser:
+			txt_col = UiPalette.TEXT_DIM.lerp(UiPalette.CREAM, _hover_t * 0.35)
+		elif primary_fill:
+			txt_col = UiPalette.INK
+		else:
+			txt_col = UiPalette.CREAM
 		var text_x: float = x0 + sk + 22.0
 		var avail_w: float = maxf(bw - 64.0, 40.0)
 		while font_sz > 16 and TITLE_FONT.get_string_size(caption, HORIZONTAL_ALIGNMENT_LEFT, -1, font_sz).x > avail_w:
@@ -339,10 +430,11 @@ class _TopSlashButton extends Button:
 			])
 			var hcl := halo.duplicate()
 			hcl.append(halo[0])
-			draw_polyline(hcl, UiPalette.YELLOW, 3.2, true)
+			UiAnim.draw_soft_outline(self, hcl, UiPalette.YELLOW, 3.2,
+				UiPalette.YELLOW, 3, 2.0, 0.14)
 		var bg: Color = Color(0.085, 0.095, 0.200, 0.92).lerp(accent_color, _hover_t * 0.92)
 		draw_colored_polygon(pts, bg)
-		# Gloss sweep
+		# Gloss sweep (soft gradient band, no clipped rectangle edge)
 		if _shine_t >= -0.35 and _shine_t <= 1.35:
 			var sx: float = lerpf(x0 - 16.0, x0 + bw + 16.0, _shine_t)
 			var sw: float = 22.0
@@ -351,10 +443,10 @@ class _TopSlashButton extends Button:
 			var x_br: float = clampf(sx + sw, x0, x0 + bw)
 			var x_bl: float = clampf(sx, x0, x0 + bw)
 			if x_tr > x_tl + 2.0 and x_br > x_bl + 2.0:
-				draw_colored_polygon(PackedVector2Array([
+				UiAnim.draw_soft_band(self, PackedVector2Array([
 					Vector2(x_tl, y0 + 2.0), Vector2(x_tr, y0 + 2.0),
 					Vector2(x_br, y0 + bh - 2.0), Vector2(x_bl, y0 + bh - 2.0),
-				]), Color(1.0, 1.0, 1.0, 0.24))
+				]), Color.WHITE, 0.24)
 		var cl := pts.duplicate()
 		cl.append(pts[0])
 		draw_polyline(cl, UiPalette.INK, 3.5, true)
@@ -452,7 +544,7 @@ class _QuickModeTile extends Button:
 		])
 		draw_colored_polygon(sh, Color(0.02, 0.02, 0.09, 0.72))
 
-		# Slanted parallelogram focus glow ring
+		# Slanted parallelogram focus glow ring (soft outward fade)
 		if focused or _hover_t > 0.06:
 			var halo := PackedVector2Array([
 				Vector2(x0 + sk - 3.5, y0 - 3.5),
@@ -463,8 +555,11 @@ class _QuickModeTile extends Button:
 			var hcl := halo.duplicate()
 			hcl.append(halo[0])
 			var ring_col: Color = UiPalette.YELLOW if focused else accent_color
-			draw_polyline(hcl, Color(0.04, 0.04, 0.12, 0.85), 7.5, true)
-			draw_polyline(hcl, Color(ring_col, 1.0 if focused else _hover_t), 3.4, true)
+			UiAnim.draw_soft_outline(self, hcl, Color(0.04, 0.04, 0.12, 0.85),
+				7.5, Color(0.04, 0.04, 0.12), 3, 1.6, 0.18)
+			UiAnim.draw_soft_outline(self, hcl,
+				Color(ring_col, 1.0 if focused else _hover_t), 3.4,
+				ring_col, 4, 2.0, (0.16 if focused else 0.12 * _hover_t))
 
 		# Base dark fill
 		draw_colored_polygon(pts, Color(0.07, 0.08, 0.17, 0.98))
@@ -507,7 +602,7 @@ class _QuickModeTile extends Button:
 		])
 		draw_colored_polygon(rib, Color(0.055, 0.065, 0.155, 0.92))
 
-		# Diagonal sheen sweep across the slanted card
+		# Diagonal sheen sweep across the slanted card (soft gradient band)
 		if _shine_t >= -0.30 and _shine_t <= 1.35:
 			var sx: float = lerpf(x0 - 24.0, x0 + bw + 24.0, _shine_t)
 			var sw: float = 34.0
@@ -516,10 +611,10 @@ class _QuickModeTile extends Button:
 			var x_br: float = clampf(sx + sw, x0, x0 + bw)
 			var x_bl: float = clampf(sx, x0, x0 + bw)
 			if x_tr > x_tl + 2.0 and x_br > x_bl + 2.0:
-				draw_colored_polygon(PackedVector2Array([
+				UiAnim.draw_soft_band(self, PackedVector2Array([
 					Vector2(x_tl, y0 + 2.0), Vector2(x_tr, y0 + 2.0),
 					Vector2(x_br, y0 + bh - 2.0), Vector2(x_bl, y0 + bh - 2.0),
-				]), Color(1.0, 1.0, 1.0, 0.24))
+				]), Color.WHITE, 0.24)
 
 		# Mode name only (crisp, larger, auto-fitted so zero overflow)
 		var fsz: int = 19
@@ -551,36 +646,47 @@ var _version_tag: _SlashTag
 
 var _play_button: _SimHeroTile
 var _multi_button: _SimHeroTile
+var _mapmaker_button: _SimHeroTile
 var _garage_button: _SimHeroTile
+var _mapmaker_teaser: Control = null
 var _settings_button: _TopSlashButton
 var _changelog_button: _TopSlashButton
 var _quit_button: _TopSlashButton
 var _update_button: _TopSlashButton
 var _dock_tiles: Array[Button] = []
 var _update_auto_opened: bool = false
+## Web-only hint line above the hero rail (never built on desktop).
+var _web_notice: Label = null
+var _web_notice_tween: Tween = null
 
 
 func _ready() -> void:
 	CursorController.set_menu_mode(true)
 	_build_hub_ui()
+	_configure_background_slides()
 	_version_tag.set_tag("v" + UpdateChecker.read_version_file())
-	_update_button.visible = false
+	if _update_button != null:
+		_update_button.visible = false
 
 	_settings_menu.closed.connect(_on_modal_closed)
 	_update_panel.closed.connect(_on_modal_closed)
 	_changelog_panel.closed.connect(_on_modal_closed)
 
-	UpdateChecker.update_available.connect(
-		func(version: String, _release_url: String, _download_url: String) -> void:
-			_on_update_available(version))
-	if UpdateChecker.has_update():
-		_on_update_available(UpdateChecker.latest_version)
+	# The updater only exists on desktop: a web build is refreshed with the
+	# browser, so checking for a desktop download here would be a dead end.
+	if not is_web_build():
+		UpdateChecker.update_available.connect(
+			func(version: String, _release_url: String, _download_url: String) -> void:
+				_on_update_available(version))
+		if UpdateChecker.has_update():
+			_on_update_available(UpdateChecker.latest_version)
 
-	UpdateChecker.check_for_updates()
+		UpdateChecker.check_for_updates()
 	call_deferred("_enter")
 
 
 func _build_hub_ui() -> void:
+	var web: bool = is_web_build()
 	var shell := Control.new()
 	shell.name = "HubShell"
 	shell.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -638,7 +744,9 @@ func _build_hub_ui() -> void:
 	_update_button.accent_color = UiPalette.GRASS
 	_update_button.custom_minimum_size = Vector2(138, 46)
 	_update_button.pressed.connect(_on_update_pressed)
-	_top_right_bar.add_child(_update_button)
+	# A browser build has no desktop updater to offer: refresh the tab instead.
+	if not web:
+		_top_right_bar.add_child(_update_button)
 
 	_settings_button = _TopSlashButton.new()
 	_settings_button.name = "SettingsButton"
@@ -662,10 +770,21 @@ func _build_hub_ui() -> void:
 	_quit_button.accent_color = UiPalette.RED
 	_quit_button.custom_minimum_size = Vector2(106, 46)
 	_quit_button.pressed.connect(_on_quit_pressed)
-	_top_right_bar.add_child(_quit_button)
+	# A web page cannot close itself: show a WEB tag instead of a dead QUIT.
+	if web:
+		var web_tag := _SlashTag.new()
+		web_tag.name = "WebTag"
+		web_tag.set_tag("WEB")
+		web_tag.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		_top_right_bar.add_child(web_tag)
+	else:
+		_top_right_bar.add_child(_quit_button)
 
 	# ------------------------------------------------------------------
 	# 3. Left Asymmetric Hero Title + Slanted Parallelogram Launch Rail
+	#    Four tiles share one width and the kit's related-row gap, so the rail
+	#    reads as one column at every aspect ratio instead of four drifting
+	#    button sizes. Sizes cascade 70 -> 62 -> 60 -> 58 (hero hierarchy).
 	_hero_rail = VBoxContainer.new()
 	_hero_rail.name = "HeroRail"
 	_hero_rail.anchor_left = 0.0
@@ -673,15 +792,15 @@ func _build_hub_ui() -> void:
 	_hero_rail.anchor_bottom = 0.5
 	_hero_rail.offset_left = 38.0
 	_hero_rail.offset_right = 468.0
-	_hero_rail.offset_top = -222.0
-	_hero_rail.offset_bottom = 138.0
-	_hero_rail.add_theme_constant_override("separation", 14)
+	_hero_rail.offset_top = HERO_RAIL_OFFSET_TOP
+	_hero_rail.offset_bottom = HERO_RAIL_OFFSET_BOTTOM
+	_hero_rail.add_theme_constant_override("separation", UiKit.SPACING_MED)
 	_hero_rail.alignment = BoxContainer.ALIGNMENT_CENTER
 	_hero_rail.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	shell.add_child(_hero_rail)
 
 	var logo_box := Control.new()
-	logo_box.custom_minimum_size = Vector2(420, 128)
+	logo_box.custom_minimum_size = Vector2(420, WORDMARK_HEIGHT)
 	logo_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_hero_rail.add_child(logo_box)
 
@@ -707,15 +826,13 @@ func _build_hub_ui() -> void:
 	word_row.add_child(_word_label("GP", 76, UiPalette.YELLOW, -0.04))
 
 	_play_button = _SimHeroTile.new()
-	_play_button.name = "PlayButton"
-	_play_button.label_text = "SOLO"
+	_play_button.name = "SingleplayerButton"
+	_play_button.label_text = "SINGLEPLAYER"
 	_play_button.accent_color = UiPalette.YELLOW
 	_play_button.primary_fill = true
-	_play_button.custom_minimum_size = Vector2(374, 74)
+	_play_button.custom_minimum_size = Vector2(HERO_TILE_WIDTH, HERO_PRIMARY_HEIGHT)
 	_play_button.set_meta("sfx_confirm", true)
 	_play_button.pressed.connect(_on_solo_pressed)
-	_play_button.mouse_entered.connect(_focus_hero.bind("bg_hero_paddock.png"))
-	_play_button.focus_entered.connect(_focus_hero.bind("bg_hero_paddock.png"))
 	_hero_rail.add_child(_play_button)
 
 	_multi_button = _SimHeroTile.new()
@@ -723,22 +840,32 @@ func _build_hub_ui() -> void:
 	_multi_button.label_text = "MULTIPLAYER"
 	_multi_button.accent_color = UiPalette.CYAN
 	_multi_button.primary_fill = false
-	_multi_button.custom_minimum_size = Vector2(374, 64)
+	_multi_button.custom_minimum_size = Vector2(HERO_TILE_WIDTH, HERO_TILE_HEIGHT)
 	_multi_button.set_meta("sfx_confirm", true)
 	_multi_button.pressed.connect(_on_multiplayer_pressed)
-	_multi_button.mouse_entered.connect(_focus_hero.bind("bg_hero_canyon.png"))
-	_multi_button.focus_entered.connect(_focus_hero.bind("bg_hero_canyon.png"))
+	if web:
+		_multi_button.tooltip_text = "MULTIPLAYER NEEDS THE DESKTOP DOWNLOAD"
 	_hero_rail.add_child(_multi_button)
+
+	# MAPMAKER teaser: deliberately greyed / padlocked, but a live Button. It
+	# opens the "COMING SOON :D" popup instead of a scene (single-scope teaser).
+	_mapmaker_button = _SimHeroTile.new()
+	_mapmaker_button.name = "MapmakerButton"
+	_mapmaker_button.label_text = "MAPMAKER"
+	_mapmaker_button.accent_color = Color(0.72, 0.76, 0.90)
+	_mapmaker_button.primary_fill = false
+	_mapmaker_button.teaser = true
+	_mapmaker_button.custom_minimum_size = Vector2(HERO_TILE_WIDTH, HERO_TEASER_HEIGHT)
+	_mapmaker_button.pressed.connect(_on_mapmaker_pressed)
+	_hero_rail.add_child(_mapmaker_button)
 
 	_garage_button = _SimHeroTile.new()
 	_garage_button.name = "GarageButton"
 	_garage_button.label_text = "GARAGE"
 	_garage_button.accent_color = UiPalette.PINK
 	_garage_button.primary_fill = false
-	_garage_button.custom_minimum_size = Vector2(374, 62)
+	_garage_button.custom_minimum_size = Vector2(HERO_TILE_WIDTH, HERO_LAST_HEIGHT)
 	_garage_button.pressed.connect(_on_garage_pressed)
-	_garage_button.mouse_entered.connect(_focus_hero.bind("bg_hero_glacier.png"))
-	_garage_button.focus_entered.connect(_focus_hero.bind("bg_hero_glacier.png"))
 	_hero_rail.add_child(_garage_button)
 
 	# ------------------------------------------------------------------
@@ -772,12 +899,43 @@ func _build_hub_ui() -> void:
 		tile.size_flags_vertical = Control.SIZE_EXPAND_FILL
 		tile.set_meta("sfx_confirm", true)
 		var m_id: String = str(mode["id"])
-		var m_hero: String = str(mode["hero"])
 		tile.pressed.connect(_on_quick_mode_pressed.bind(m_id))
-		tile.mouse_entered.connect(_focus_hero.bind(m_hero))
-		tile.focus_entered.connect(_focus_hero.bind(m_hero))
 		_dock_bar.add_child(tile)
 		_dock_tiles.append(tile)
+
+	# Web-only hint line, directly under the hero rail so it reads as part of the
+	# launch rail. It uses the same title font / ink outline as the rest of the
+	# menu (no legacy dialog) and never steals a click.
+	if web:
+		_web_notice = Label.new()
+		_web_notice.name = "WebNotice"
+		_web_notice.anchor_left = 0.0
+		_web_notice.anchor_right = 0.0
+		_web_notice.anchor_top = 0.5
+		_web_notice.anchor_bottom = 0.5
+		_web_notice.offset_left = 38.0
+		_web_notice.offset_right = 468.0
+		# Sit the hint between the top-left bar and the taller (4-tile) hero rail.
+		_web_notice.offset_top = HERO_RAIL_OFFSET_TOP - 62.0
+		_web_notice.offset_bottom = HERO_RAIL_OFFSET_TOP - 28.0
+		_web_notice.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		_web_notice.add_theme_font_override("font", TITLE_FONT)
+		_web_notice.add_theme_font_size_override("font_size", 18)
+		_web_notice.add_theme_color_override("font_color", UiPalette.YELLOW)
+		_web_notice.add_theme_color_override("font_outline_color", UiPalette.INK)
+		_web_notice.add_theme_constant_override("outline_size", 6)
+		_web_notice.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_web_notice.visible = false
+		shell.add_child(_web_notice)
+
+
+func _configure_background_slides() -> void:
+	## One-way handshake with the backdrop: hand it the full hero key-art set and
+	## let ArtBackdrop shuffle/cycle it on its own 8-12 s beat. Nothing here (or
+	## anywhere else in the menu) follows hover or focus - button-local hover
+	## animation stays entirely inside the tiles.
+	if _background != null and _background.has_method("set_slide_pool"):
+		_background.call("set_slide_pool", PackedStringArray(BACKGROUND_ART))
 
 
 func _word_label(text_val: String, fsz: int, col: Color, rot: float) -> Label:
@@ -795,16 +953,11 @@ func _word_label(text_val: String, fsz: int, col: Color, rot: float) -> Label:
 	return lbl
 
 
-func _focus_hero(hero_file: String) -> void:
-	if _background != null and _background.has_method("focus_art"):
-		_background.call("focus_art", hero_file)
-
-
 func _enter() -> void:
 	UiAnim.slide_in(_top_left_bar, Vector2(-28.0, -18.0), 0.28)
 	UiAnim.slide_in(_top_right_bar, Vector2(28.0, -18.0), 0.28)
-	UiAnim.stagger_slide([_play_button, _multi_button, _garage_button],
-		Vector2(-42.0, 0.0), 0.055, 0.30)
+	UiAnim.stagger_slide([_play_button, _multi_button, _mapmaker_button,
+		_garage_button], Vector2(-42.0, 0.0), 0.055, 0.30)
 	UiAnim.stagger_slide(_dock_tiles, Vector2(0.0, 34.0), 0.045, 0.28)
 	MenuNav.refresh()
 	MenuNav.focus(_play_button)
@@ -819,8 +972,58 @@ func _on_solo_pressed() -> void:
 
 
 func _on_multiplayer_pressed() -> void:
+	if is_web_build():
+		# Browsers cannot open raw UDP sockets for ENet, so entering the lobby
+		# would dead-end in a generic join error. Say so instead (WS5-03).
+		_show_web_notice("MULTIPLAYER NEEDS THE DESKTOP DOWNLOAD")
+		return
 	GameSettings.set_play_mode(GameSettings.MODE_MULTIPLAYER)
 	SceneLoader.go_to(LOBBY_SCENE, "MULTIPLAYER", "")
+
+
+func _on_mapmaker_pressed() -> void:
+	## Teaser only: stays on this screen and says so, no scene change.
+	open_mapmaker_teaser()
+
+
+func open_mapmaker_teaser() -> Control:
+	## Lazy-build the "COMING SOON :D" overlay once, then open it (confetti is
+	## fired by the overlay itself, exactly one burst per open). Public so the
+	## headless UI audit / WS2 checks can open the same real path the tile uses.
+	if _mapmaker_teaser == null or not is_instance_valid(_mapmaker_teaser):
+		if not ResourceLoader.exists(MAPMAKER_TEASER_SCENE):
+			return null
+		var packed: PackedScene = load(MAPMAKER_TEASER_SCENE) as PackedScene
+		if packed == null:
+			return null
+		_mapmaker_teaser = packed.instantiate() as Control
+		if _mapmaker_teaser == null:
+			return null
+		_mapmaker_teaser.name = "MapmakerTeaser"
+		_mapmaker_teaser.closed.connect(_on_mapmaker_closed)
+		add_child(_mapmaker_teaser)
+	_mapmaker_teaser.call("open")
+	return _mapmaker_teaser
+
+
+func mapmaker_teaser_node() -> Control:
+	## Stable test/audit contract: the lazily built teaser overlay (may be null).
+	return _mapmaker_teaser
+
+
+func hero_option_buttons() -> Array[Button]:
+	## Stable test/audit contract: the four launch-rail options in display order.
+	var buttons: Array[Button] = []
+	buttons.append(_play_button)
+	buttons.append(_multi_button)
+	buttons.append(_mapmaker_button)
+	buttons.append(_garage_button)
+	return buttons
+
+
+func _on_mapmaker_closed() -> void:
+	MenuNav.refresh()
+	MenuNav.focus(_mapmaker_button)
 
 
 func _on_garage_pressed() -> void:
@@ -854,11 +1057,37 @@ func _on_changelog_pressed() -> void:
 
 
 func _on_quit_pressed() -> void:
+	if is_web_build():
+		# The QUIT tab is not built on web; this guard is the belt-and-braces
+		# path if anything else calls it.
+		_show_web_notice("CLOSE THIS TAB TO EXIT")
+		return
 	get_tree().quit()
 
 
 func _on_update_pressed() -> void:
+	if is_web_build():
+		return
 	_update_panel.open()
+
+
+func _show_web_notice(message: String) -> void:
+	## Web-only hint line above the hero rail. Soft fade out, reduced-motion aware
+	## through UiAnim's own tween defaults; never a modal, so navigation keeps
+	## working behind it.
+	if _web_notice == null:
+		return
+	_web_notice.text = message
+	_web_notice.visible = true
+	_web_notice.modulate.a = 1.0
+	if _web_notice_tween != null and _web_notice_tween.is_valid():
+		_web_notice_tween.kill()
+	_web_notice_tween = create_tween()
+	_web_notice_tween.tween_interval(2.6)
+	_web_notice_tween.tween_property(_web_notice, "modulate:a", 0.0, 0.5)
+	_web_notice_tween.tween_callback(func() -> void:
+		if _web_notice != null:
+			_web_notice.visible = false)
 
 
 func _on_modal_closed() -> void:
@@ -867,6 +1096,9 @@ func _on_modal_closed() -> void:
 
 
 func _on_update_available(version: String) -> void:
+	if _update_button == null:
+		# Web builds never create the updater tab.
+		return
 	_update_button.label_text = "v%s" % version
 	_update_button.tooltip_text = "Install v%s" % version
 	_update_button.visible = true

@@ -1,17 +1,21 @@
 class_name ToggleSwitch
 extends Control
 const UiAnim := preload("res://scripts/ui/ui_anim.gd")
-## Tactile arcade switch used by Settings: dark recessed OFF track, glowing
+## Tactile arcade switch used by Settings: slanted dark-glass OFF track, glowing
 ## emerald ON track with crisp inner rim, smooth damped thumb slide, and soft
-## layered thumb shadow.
+## layered thumb shadow. The track and its focus halo carry the shared 0.14
+## skew so the toggle matches the black-slanted parallelogram theme.
 
 signal toggled(on: bool)
 
-const INK := Color("1e1b3a")
-const TRACK_OFF := Color(0.16, 0.18, 0.28, 0.88)
+const UiPalette := preload("res://scripts/ui/ui_palette.gd")
+
+const INK := UiPalette.INK
+const TRACK_OFF := UiPalette.SURFACE_CHIP
 const TRACK_ON := Color("3ed65c")
-const KNOB := Color("fff8ea")
-const RING := Color("ffd22e")
+const KNOB := UiPalette.CREAM
+const RING := UiPalette.YELLOW
+const SKEW: float = 0.14 ## Same slant as the button family.
 
 var on: bool = false:
 	set(value):
@@ -36,16 +40,19 @@ func _ready() -> void:
 
 	_track.set_border_width_all(2)
 	_track.border_color = INK
+	_track.skew = Vector2(SKEW, 0.0)
 	_track.anti_aliasing = true
 
 	_inner_glow.draw_center = false
 	_inner_glow.set_border_width_all(2)
+	_inner_glow.skew = Vector2(SKEW, 0.0)
 	_inner_glow.anti_aliasing = true
 
 	_ring.draw_center = false
 	_ring.bg_color = Color(0, 0, 0, 0)
 	_ring.border_color = RING
 	_ring.set_border_width_all(3)
+	_ring.skew = Vector2(SKEW, 0.0)
 	_ring.shadow_color = Color(0.06, 0.05, 0.14, 0.65)
 	_ring.shadow_size = 3
 	_ring.expand_margin_left = 3.0

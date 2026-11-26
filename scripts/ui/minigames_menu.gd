@@ -8,6 +8,12 @@ const UiAnim := preload("res://scripts/ui/ui_anim.gd")
 ## - Page 2b (SELECT MAP): 3 big side-by-side visual MapCards for DELIVER, KNOCKOUT,
 ##   and BLAST TAG, each displaying its own 16:9 screenshot, map name, layout
 ##   description, and "✓ SELECTED" badge.
+##
+## Background (0.8.7): ArtBackdrop shuffles this screen's own mode/map preview
+## pool on its own 8-12 s beat; hovering/focusing cards never changes or pauses
+## it (they keep only their local lift/zoom animation). The pool follows the page:
+## mode previews on SELECT MODE, the current mode's track/arena previews on SELECT
+## TRACK / SELECT MAP.
 
 const TrackDefs := preload("res://scripts/minigames/track_defs.gd")
 const Catalog := preload("res://scripts/vehicles/vehicle_catalog.gd")
@@ -22,6 +28,23 @@ const RACE_SCENE: String = "res://scenes/minigames/grass_race.tscn"
 const PREVIEW_DIR: String = "res://assets/ui/minigames/"
 const ART_PREVIEW_DIR: String = "res://assets/ui/art/"
 const FALLBACK_PREVIEW: String = "meadow_loop.png"
+
+## SELECT MODE background pool: one 16:9 screenshot per mode card.
+const BACKGROUND_ART_GAMES: Array[String] = [
+	"preview_stadium.png",
+	"preview_knockout.png",
+	"preview_cargo_rush.png",
+	"preview_bomb_tag.png",
+	"preview_sandbox.png",
+]
+## Every page pool falls back to the hero key-art set when a page has fewer than
+## two descendant previews (the slideshow must always have something to shuffle).
+const BACKGROUND_ART_FALLBACK: Array[String] = [
+	"bg_hero_paddock.png",
+	"bg_hero_arena.png",
+	"bg_hero_canyon.png",
+	"bg_hero_glacier.png",
+]
 
 const PAGE_GAMES: String = "games"
 const GAME_RACING: String = "racing"
@@ -151,7 +174,8 @@ class _AnimatedPreviewCanvas extends Control:
 		])
 		draw_colored_polygon(rib, Color(0.055, 0.065, 0.16, 0.92))
 
-		# Animated diagonal gloss sweep on hover (clipped strictly inside parallelogram)
+		# Animated diagonal gloss sweep on hover: soft gradient band, never a
+		# clipped straight edge (the old flat-alpha quad ended on a hard line).
 		if _shine_t >= -0.35 and _shine_t <= 1.35:
 			var sx: float = lerpf(x0 - 24.0, x0 + bw + 24.0, _shine_t)
 			var sw: float = 36.0
@@ -160,10 +184,10 @@ class _AnimatedPreviewCanvas extends Control:
 			var x_br: float = clampf(sx + sw, x0, x0 + bw)
 			var x_bl: float = clampf(sx, x0, x0 + bw)
 			if x_tr > x_tl + 2.0 and x_br > x_bl + 2.0:
-				draw_colored_polygon(PackedVector2Array([
+				UiAnim.draw_soft_band(self, PackedVector2Array([
 					Vector2(x_tl, y0 + 2.0), Vector2(x_tr, y0 + 2.0),
 					Vector2(x_br, y0 + bh - 2.0), Vector2(x_bl, y0 + bh - 2.0),
-				]), Color(1.0, 1.0, 1.0, 0.24))
+				]), Color.WHITE, 0.24)
 
 		# Crisp bold auto-fitted title inside the slanted ribbon (zero overflow!)
 		if not title_text.is_empty() and title_font != null:
@@ -282,6 +306,8 @@ var _restored_map_id: String = ""
 var _restored_theme: String = ""
 var _opened_direct_from_lobby: bool = false
 
+var _background: Control = null
+
 
 static func open_for_mode(page_id: String) -> void:
 	## Allows LobbyMenu or VehicleSelect return flows to open either Page 1
@@ -297,6 +323,7 @@ func _ready() -> void:
 	_tune_panel_chrome()
 	var resume: String = _consume_return_state()
 	_build_ui()
+	_background = get_node_or_null("Background")
 	_initial_state()
 	resized.connect(_fit_panel)
 	_fit_panel()
@@ -317,11 +344,71 @@ func _ready() -> void:
 func _tune_panel_chrome() -> void:
 	if _panel == null:
 		return
-	_panel.add_theme_stylebox_override("panel",
-		UiKit.slanted_panel(Color(0.058, 0.068, 0.152, 0.92),
-			Color(0.24, 0.84, 0.96, 0.50), 0.042, 4, 6, 36.0, 22.0))
+	_panel.add_theme_stylebox_override("panel", UiKit.modal_panel(36.0, 22.0, 0.042))
 	if _body != null:
-		_body.add_theme_constant_override("separation", 14)
+		_body.add_theme_constant_override("separation", UiKit.SPACING_MED)
+
+
+func _set_background_slides(names: PackedStringArray) -> void:
+	## One-way handshake with the backdrop for the page that is becoming visible.
+	## The slideshow then shuffles this pool itself; no card event can change it.
+	if _background == null:
+		return
+	if not _background.has_method("set_slide_pool"):
+		return
+	_background.call("set_slide_pool", _with_slide_fallback(names))
+
+
+func _with_slide_fallback(names: PackedStringArray) -> PackedStringArray:
+	## Guarantee >= 2 real plates so the timer always has something to shuffle.
+	var out: PackedStringArray = PackedStringArray()
+	for file_name: String in names:
+		if file_name != "" and ResourceLoader.exists(ART_PREVIEW_DIR + file_name) \
+				and not out.has(file_name):
+			out.append(file_name)
+	for fallback: String in BACKGROUND_ART_FALLBACK:
+		if out.size() >= 2:
+			break
+		if not out.has(fallback):
+			out.append(fallback)
+	return out
+
+
+func _map_slide_pool() -> PackedStringArray:
+	## SELECT TRACK: every visible circuit's own 16:9 preview plate.
+	var out: PackedStringArray = PackedStringArray()
+	for position in _map_indexes.size():
+		var art: String = _preview_art_name(_preset_at_map_slot(position))
+		if art != "" and not out.has(art):
+			out.append(art)
+	return out
+
+
+func _arena_slide_pool() -> PackedStringArray:
+	## SELECT MAP: the current mode's 3 arena plates.
+	var out: PackedStringArray = PackedStringArray()
+	for arena: Dictionary in _arena_entries:
+		var arena_id: String = str(arena.get("id", ""))
+		if arena_id == "":
+			continue
+		var candidate: String = "preview_%s.png" % arena_id
+		if ResourceLoader.exists(ART_PREVIEW_DIR + candidate) \
+				and not out.has(candidate):
+			out.append(candidate)
+	return out
+
+
+func _preview_art_name(preset: Dictionary) -> String:
+	## `<preview_<id>.png>` first, then the preset's own preview filename.
+	var id: String = str(preset.get("id", ""))
+	if id != "":
+		var candidate: String = "preview_%s.png" % id
+		if ResourceLoader.exists(ART_PREVIEW_DIR + candidate):
+			return candidate
+	var file_name: String = str(preset.get("preview", ""))
+	if file_name != "" and ResourceLoader.exists(ART_PREVIEW_DIR + file_name):
+		return file_name
+	return ""
 
 
 func _fit_panel() -> void:
@@ -1222,6 +1309,7 @@ func _show_games(animate: bool = true) -> void:
 	_fit_page_heights()
 	call_deferred("_fit_page_heights")
 	_refresh_vehicle()
+	_set_background_slides(PackedStringArray(BACKGROUND_ART_GAMES))
 	if animate:
 		_page_in(_games_page)
 		UiAnim.stagger_slide(_game_cards, Vector2(0.0, 20.0), 0.04, 0.24)
@@ -1246,11 +1334,13 @@ func _show_selector(game_id: String) -> void:
 		_title.text = "TRACKS"
 		_selector_caption.text = ""
 		_selector_caption.visible = false
+		_set_background_slides(_map_slide_pool())
 		UiAnim.stagger_slide(_map_cards, Vector2(0.0, 20.0), 0.04, 0.24)
 	else:
 		_show_minigame_page(entry)
 		_title.text = str(entry.get("name", "ARENAS")).to_upper()
 		_selector_caption.text = ""
+		_set_background_slides(_arena_slide_pool())
 		UiAnim.stagger_slide(_arena_cards, Vector2(0.0, 20.0), 0.045, 0.24)
 		_selector_caption.visible = false
 	_selector_scroll.scroll_vertical = 0

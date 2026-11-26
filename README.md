@@ -18,14 +18,22 @@ Hop-drift a twin-thruster Hero Shopping Cart or custom-painted Pro Racer across 
 
 ---
 
-## Highlights in v0.8.6 — Glacier Pass Alpine Overhaul, Full Slanted UI & macOS Fix
+## Highlights in v0.8.7 — LAN Latency Fix, Authoritative Leaderboards, Cartoon Feel, Living Worlds & Browser Overhaul
 
 ![Glacier Pass Northern Lights](assets/ui/art/preview_glacier.png)
 
-- **Glacier Pass Complete 3D Alpine Night Overhaul & Twin Chasm Jumps** — Rebuilt Glacier Pass into an `1,813 m` cliffside mountain pass ringed by a sculpted 3D ridged-multifractal alpine mountain range, multi-tone winter snow valleys under a midnight Northern Lights sky, and twin `17.35 m` broken-bridge chasm jumps with weight-balanced launch physics across every vehicle.
-- **100% Slanted Dark-Glass UI Unification** — Refreshed the **Room Browser**, **Pause Menu**, **Settings**, **Update Dialog**, **Changelog**, **Play Menu**, and **all 4 Game-End Screens** (Racing, Knockout, Deliver, Blast Tag) so every screen — including outer panel borders, inputs, cards, rows, and focus halos — shares one crisp slanted racing-sim telemetry aesthetic, plus multiplayer host rematch support across every mode.
-- **Critical macOS ARM-64 Crash Fix** — Eliminated the `0.8.5` release-build `EXC_BAD_ACCESS (0x450)` crash in `Viewport::set_input_as_handled()` when pressing `ESC` / backing out of menus during scene swaps, and verified all 4 platform builds (`Windows`, `macOS Universal`, `Linux`, `Web`).
-- **Unified `PRO RACER` Paint Shop, Hero Shopping Cart & 6-Track OST** — 8-color live paint shop, coaxial twin-thruster Shopping Cart, `PICK OWN` vs `SHARED` multiplayer vehicle freedom, `[E]` Combat & Ability Dock, and 6 custom-mastered OGG tracks with DJ crossfades.
+- **Same-LAN ping slashed from 50-70 ms to 6-7 ms** — online rooms now connect **directly** between LAN peers instead of relaying every packet through the Pi (3 s direct probe with silent relay fallback), the Cloudflare WARP/public-relay hairpin is fixed, TCP_NODELAY is actually applied to the host tunnel (it was silently rejected), every live probe/stream rides one persistent HTTP keep-alive connection, and **Pi server 1.9.0** removes a relay-budget bug that was dropping ~13% of datagrams at normal load. Forced-relay LAN ping measures ~27-34 ms; relay RTT p95 is 10.86 ms.
+- **One authoritative leaderboard — no more different final standings** — the host now broadcasts revisioned, deterministic final standings to every client; finishes are reported on a reliable channel so a race can no longer stall on "WAITING FOR 1 PLAYER", close finishes are RTT-compensated instead of packet-arrival ordered, tied knockout/HUD orders are deterministic, and car selection / paint / tune / `PICK OWN`-`SHARED` policy resync when each player enters the match.
+- **Cartoon vehicle feel & accurate physics** — fixed the Glacier Pass ramp collider (it was 0.68 m against a 2.82 m visible kicker, so karts drove through the top of the jump), fixed the inside-out Stadium Circuit grandstands, removed the residual vehicle hover (up to 142 mm on the race car), audited every map's geometry/colliders and hitboxes, and added squash-and-stretch, body roll, landing compression and springy suspension flex for **your cart and every remote cart** — purely visual, no extra netcode.
+- **Living worlds & expressive effects** — 7 themed layered GPU ambient systems (blizzard, dust, chaff, embers, sea mist, confetti, leaves) with wind, turbulence and performance tiers; per-car tyre/drift marks with unique tread widths/styles, seven surface palettes and **one draw per cart** (remote carts included); subtle main-menu particles; and a three-deck music engine with equal-power crossfades so audio never hard-cuts.
+- **Browser builds that stay current, lean and branded** — a dedicated **Web Low-Spec** profile (auto-detected: 0.5× render scale, 30 fps, ETC2-only textures, no MSAA/shadows, 1600×900 canvas cap) and a Cloudflare **R2 + CDN Worker** package bring first-load transfer to **111 MB gzip / 106.5 MB Brotli** (−33 %) with immutable caching and Brotli/Gzip negotiation while the Pi stays dedicated to relay/API. Every web export is stamped with `version.json`, and the build/stage/deploy/`/play` paths refuse or flag a stale client — plus a new official-branding website and logo parity across `/play`, login and console pages.
+- **Main menu gains MAPMAKER & living backdrops** — the rail is now **`SINGLEPLAYER` → `MULTIPLAYER` → `MAPMAKER` → `GARAGE`**. `MAPMAKER` is a padlocked greyed teaser that opens a slanted **`COMING SOON :D`** dialog with a single confetti burst, and menu/lobby backdrops are now independent shuffled slideshows (random 8-12 s beat, smooth crossfades, no back-to-back repeats) that mouse hover/focus can no longer disturb.
+- **Lobby, end screens, bot slots and caret polish** — the lobby map preview is a black-slanted card with subtle 3D-like sway, emotes are now chrome-free bold coloured text + a small sender name (random spawn, wiggle up, fade out, fully synced), host/guest end screens are split cleanly (hosts keep lobby controls; guests get an animated `Waiting for host...` + a confirmed `LEAVE LOBBY`), bots occupy real 8-slot lobby seats as **`BOT 1…5`** with a robot icon, host-movable teams and Auto-Arrange parity across peers, and every text field has a visible 0.5 s high-contrast caret.
+- **100% black slanted UI, including all four multiplayer end screens** — shared `UiKit`/`SlantedShell` primitives replace duplicated hand-painted shells, legacy cream/rounded theme fallbacks are removed, and every game-end card (Racing, Knockout, Deliver, Blast Tag) is rebuilt on one `ResultScreen` builder with scrolling standings capped to the 720p safe box, a uniform button matrix and a closed keyboard/gamepad focus ring.
+- **Bug fixes across all three passes** — multiplayer **RACE AGAIN / PLAY AGAIN** now really restarts the match on every peer in all four modes, `settings.cfg` saves atomically (power-loss safe), gamepad can open the scoreboard (Select/View), Web builds hide dead MULTIPLAYER/QUIT/UPDATE paths, solo play auto-pauses on focus loss, late joiners receive the final standings, version-gated joins reject mismatched builds, and host-loss/host-disconnect now shows a **HOST DISCONNECTED** overlay instead of dumping everyone to a fresh lobby.
+- **Server v2.0.0 prepared (not deployed)** — repository server source now has compact/cached APIs, a Health admin tab, `/play` Range/resume delivery, capacity-aware room admission (bots occupy seats), and a corrected TLS relay pump, wire-compatible with all 0.8.x clients.
+
+> **Quality-of-life roadmap:** the prioritised backlog from this audit lives in [`docs/QOL_RECOMMENDATIONS.md`](docs/QOL_RECOMMENDATIONS.md).
 ---
 
 ## 5 High-Verticality Racing Circuits
@@ -87,10 +95,10 @@ Grab the latest self-contained release from the [**Releases page**](https://gith
 
 | Platform | Package | How to Run |
 | :--- | :--- | :--- |
-| **Windows** (x64) | `CartSlopGP_v0.8.5_windows.zip` | Extract and run `CartSlopGP.exe` (single self-contained executable with embedded data pack). If SmartScreen warns on unsigned builds: **More info → Run anyway**. |
-| **macOS** (Universal) | `CartSlopGP_v0.8.5_macos.zip` | Extract and open `Cart Slop GP.app`. If Gatekeeper blocks the ad-hoc build, right-click **Open** or run `xattr -dr com.apple.quarantine "/path/to/Cart Slop GP.app"`. **LAN multiplayer:** on first launch macOS 14/15 asks to allow **Local Network** access — click **Allow** (if you missed it: **System Settings → Privacy & Security → Local Network**). Without that permission macOS silently blocks LAN discovery and LAN joins. |
-| **Linux** (x86_64) | `CartSlopGP_v0.8.5_linux.zip` | Extract and run `./CartSlopGP.x86_64` (`0755` executable bit preserved in zip; data pack embedded). |
-| **Web** (HTML5) | `CartSlopGP_v0.8.5_web.zip` | Serve over HTTP (e.g. `python3 -m http.server 8000`) and open in a modern browser. Solo modes only (browsers lack raw UDP sockets). |
+| **Windows** (x64) | `CartSlopGP_v0.8.7_windows.zip` | Extract and run `CartSlopGP.exe` (single self-contained executable with embedded data pack). If SmartScreen warns on unsigned builds: **More info → Run anyway**. |
+| **macOS** (Universal) | `CartSlopGP_v0.8.7_macos.zip` | Extract and open `Cart Slop GP.app`. If Gatekeeper blocks the ad-hoc build, right-click **Open** or run `xattr -dr com.apple.quarantine "/path/to/Cart Slop GP.app"`. **LAN multiplayer:** on first launch macOS 14/15 asks to allow **Local Network** access — click **Allow** (if you missed it: **System Settings → Privacy & Security → Local Network**). Without that permission macOS silently blocks LAN discovery and LAN joins. |
+| **Linux** (x86_64) | `CartSlopGP_v0.8.7_linux.zip` | Extract and run `./CartSlopGP.x86_64` (`0755` executable bit preserved in zip; data pack embedded). |
+| **Web** (HTML5) | `CartSlopGP_v0.8.7_web.zip` | Serve over HTTP (e.g. `python3 -m http.server 8000`) and open in a modern browser. Solo modes only (browsers lack raw UDP sockets). |
 
 ### Automatic Updates & Save Data
 Desktop builds check for new releases automatically (or via **SETTINGS → CHECK FOR UPDATES**), verify the download's **SHA-256** digest, swap the binary in place, and relaunch with one click. Local settings and lap records are stored in:
@@ -115,6 +123,7 @@ Keyboard (WASD, one-hand Arrow cluster, or Mouse) and Gamepad work seamlessly ac
 | **Horn** | `H` | Right Bumper (`R1` / `RB`) |
 | **Reset Cart** | `R` or `/` | `Y` / Triangle |
 | **Scoreboard / Ping** *(hold)* | `Tab` | Select / View |
+| **Lobby reaction** *(in room)* | `1`–`5` | D-pad + `A` on the reaction strip |
 | **Pause / Menu** | `Esc` | Start / Menu |
 
 ---
@@ -142,6 +151,8 @@ Open **PLAY → MULTIPLAYER**, customize your driver name and tag colour, and co
 1. **Online Room (5-Letter Code)** — Press **CREATE ONLINE ROOM** to open an outbound relay tunnel (zero port forwarding required) and share your 5-letter room code (e.g. `SLOPZ`), or toggle the room public so friends can join from **BROWSE ROOMS**.
 2. **Same Wi-Fi / LAN** — Press **CREATE LAN ROOM** for zero-internet local play; friends on the same network discover the room automatically under **BROWSE ROOMS**.
 3. **Full Mode & Arena Picker** — Inside the 2-column room lobby, the host can switch freely between **Racing**, **Knockout**, **Blast Tag**, **Deliver**, and **Sandbox**, preview all **15 maps** with live screenshots, configure bot count or team assignments, and launch straight into the match.
+4. **Lobby Reactions & Ready Gate** — While waiting, everyone can spam one of five synced reactions (`GG!`, `START!`, `LOVE`, `SLOP!`, `HONK!`) with mouse, keys **1–5** or gamepad; each one pops up as bold coloured text with the sender's name, floats up with a playful wiggle and fades out (no boxes, no bars), and is rate-limited. The host also gets a ready/presence gate (WAITING / AWAY / START ANYWAY) so a match can't launch while a player is still in the garage or loading.
+5. **Bots Occupy Real Seats** — the 8 lobby seats are shared between humans and bots: with 3 bots, only 5 humans can join (enforced by the host and the room server, with a clear "room is full" reason). Bots appear in the roster as **`BOT 1…5`** with a robot icon, can be moved between ALPHA/BETA by the host exactly like humans, and Auto-Arrange balances everyone across teams live on every player's screen.
 
 **Bots with a brain.** Set Easy, Normal, or Hard per room: hunters intercept, runners juke, rivals defend lines and boost jump ramps — all in the same karts with the same rules as you.
 
@@ -173,13 +184,30 @@ scenes/
 scripts/
   minigames/   Spline/grid circuit builder, 5 track themes & 3 party modes
   vehicles/    7-vehicle catalog, procedural 4-gear audio & toon visuals
+  effects/     Layered GPU ambient systems, FX quality tiers & budget probes
+  feedback/    Per-car batched drift marks, skid audio & impact feedback
   ui/          Slop-Slash custom-drawn HUD gauges, parallelogram bars & cards
-  net/         ENet LAN + UDP relay tunnel client & authoritative clock sync
-  systems/     Settings, scene loader & SHA-256 verified self-updater
+  net/         ENet LAN + UDP relay tunnel client, authoritative clock sync & standings
+  systems/     Settings (atomic save), scene loader & SHA-256 verified self-updater
 assets/        CC0/open models, PBR surfaces, shaders, audio, fonts & 18 map renders
 ```
 
 ---
+
+## Website & Web Hosting
+
+- **Website:** the static marketing site is served from [`docs/`](docs/) and
+  published to GitHub Pages (classic `docs/` folder deployment) →
+  **https://hot18594.github.io/CartSlopGP/**. Brand assets (favicons, app icons,
+  OpenGraph/Twitter images) are generated reproducibly from the official game art
+  with `python docs/tools/build_brand_assets.py` (add `--check` to verify).
+- **Browser client hosting:** the Godot Web export is delivered from Cloudflare
+  **R2 + a CDN Worker** (Cloudflare Pages cannot host the ~121 MB data pack); the
+  reference deployment package, version-parity model and manual Cloudflare/DNS
+  steps are documented in [`deploy/web/`](deploy/web/). The Pi keeps the live
+  relay/API/console and can serve `/play` over HTTPS as a fallback. Web exports
+  are stamped with `version.json`, so a stale `/play` client is refused at build,
+  stage, deploy and launcher level.
 
 ## Credits & License
 

@@ -24,6 +24,7 @@ const MeadowLandmarks := preload("res://scripts/minigames/meadow_landmarks.gd")
 const RaceEffects := preload("res://scripts/minigames/race_effects.gd")
 const VehicleVisual := preload("res://scripts/vehicles/vehicle_visual.gd")
 const UiPalette := preload("res://scripts/ui/ui_palette.gd")
+const ResultScreen := preload("res://scripts/ui/result_screen.gd")
 const ART_BACKDROP := preload("res://scripts/ui/art_backdrop.gd")
 const VisualGrade := preload("res://scripts/systems/visual_grade.gd")
 const Backdrop := preload("res://scripts/systems/backdrop.gd")
@@ -39,7 +40,6 @@ const PBR_TEX: String = "res://assets/textures/polyhaven/"
 const BOOST_PAD_SCENE: String = "res://scenes/track/boost_pad.tscn"
 const CONE_MODEL: String = "res://assets/models/kenney_car-kit/Models/GLB format/cone.glb"
 const CHECKER_SHADER: String = "res://assets/materials/checker.gdshader"
-const CANDY_BUTTON: String = "res://scripts/ui/candy_button.gd"
 const CHECKER_FLAG: String = "res://scripts/ui/checker_flag.gd"
 const THEME: String = "res://assets/ui/theme.tres"
 const TITLE_FONT: String = "res://assets/ui/fonts/LuckiestGuy-Regular.ttf"
@@ -52,6 +52,25 @@ const FOREST_AMBIENCE: AudioStream = preload("res://assets/audio/ambience/forest
 const NET_SYNC_INTERVAL: float = 0.05
 const CART_IDLE_SPEED: float = 1.0
 const CART_IDLE_INTERVAL: float = 0.20
+## Host-authoritative final standings. The host owns the only canonical
+## finishing order; it re-broadcasts a revisioned reliable snapshot at this
+## cadence while results are live, and force-finalises after the settle
+## deadline so a lost packet or a stalled racer can never freeze the result
+## card on "WAITING FOR ...".
+const STANDINGS_BROADCAST_INTERVAL: float = 1.0
+const STANDINGS_FINALIZE_TIMEOUT: float = 12.0
+## Close-finish ordering (WS5-02). The reliable finish report is the single
+## authoritative source for a human's crossing; the 20 Hz *unreliable* progress
+## stream only latches a provisional fallback, because packet arrival through a
+## relay can jitter by more than the gap between two close finishes. The report
+## carries the peer's own race clock, which starts one countdown-broadcast
+## delay after the host's clock, so the host re-aligns it with half the measured
+## RTT. The clamps below bound a modified client's ability to claim any time it
+## likes: a report may only slightly beat the host's observed crossing.
+const FINISH_PROGRESS_SLACK: float = 0.6 ## s a report may beat/lag the progress latch
+const FINISH_REPORT_SLACK: float = 2.0 ## s a reliable report may trail the crossing
+const FINISH_ONE_WAY_MAX: float = 1.0 ## s cap on the RTT/2 clock re-alignment
+const StandingsReconciler := preload("res://scripts/net/standings_reconciler.gd")
 ## Host -> Pi live position batch cadence (server race only).
 const STATE_STREAM_INTERVAL: float = 0.10
 ## A spoofed far-future sender stamp must not permanently freeze a peer's
@@ -69,14 +88,6 @@ const SERVER_BOT_MAX_EXTRAPOLATION: float = 0.35
 ## A correction larger than this is a respawn or a warp, not network jitter.
 const SERVER_BOT_SNAP_DISTANCE: float = 8.0
 
-## One UI scale for every card and badge in this scene: 24 px outer margins,
-## 16 px section gaps, 8 px quiet gaps, 16 px corner radius and no divider
-## lines. The result card is measured against these numbers so it cannot clip
-## at 1280x720.
-const UI_MARGIN: int = 24
-const UI_GAP: int = 16
-const UI_GAP_SMALL: int = 8
-const UI_RADIUS: int = 16
 ## A landing only puffs tyre smoke when it is a real hit: enough air time to
 ## leave the ground and enough downward speed to matter.
 const LANDING_SMOKE_MIN_AIR: float = 0.24
@@ -221,8 +232,25 @@ var _was_off_track: bool = false
 ## Placements compare this instead of the leftover metres of an overshooting
 ## progress value, so an earlier finisher is never passed by a later one.
 var _finish_time: float = -1.0
-## Peer id -> race time at which that peer's progress reached the finish.
+## Peer id -> host-clock race time at which that peer's progress first reached
+## the finish line. This is an arrival-jittered *fallback* only: the reliable
+## _net_report_finish replaces it with the authoritative crossing stamp.
+var _remote_finish_provisional: Dictionary = {}
+## Peer id -> authoritative host-clock crossing time, from the reliable finish
+## report (or the provisional fallback until that report lands).
 var _remote_finish_time: Dictionary = {}
+## Host-authoritative final standings (see STANDINGS_* above). The snapshot is
+## the single source of truth for places once it arrives; every client renders
+## it instead of its own guess, so all result cards agree.
+var _standings_snapshot: Dictionary = {}
+var _standings_rev: int = 0
+var _standings_epoch: int = 0
+var _standings_timer: float = 0.0
+var _standings_wait: float = 0.0
+var _standings_finalized: bool = false
+var _finish_reported: bool = false
+## Sentinel: reliable finish report from each peer (total + best lap).
+var _peer_result_extra: Dictionary = {}
 ## The Pi's official result owns the big placement once it lands; the local
 ## 2 Hz standings refresh must not overwrite it.
 var _official_applied: bool = false
@@ -289,6 +317,8 @@ var _offtrack_label: Label
 var _impact_label: Label
 var _impact_timer: float = 0.0
 var _result_root: Control
+var _result_ui ## Scripts/ui/result_screen.gd builder for the shared card layout.
+var _result_card: Dictionary = {}
 var _result_title: Label
 var _result_subtitle: Label
 var _result_total: Label
@@ -334,11 +364,28 @@ func _exit_tree() -> void:
 	GameSettings.selected_vehicle = _saved_vehicle
 
 
+## WS5P3-04: the room ended while this scene was streaming. Never start a
+## silent offline race; return to the lobby with the disconnect notice instead.
+func _abort_stale_session_load() -> void:
+	SceneLoader.go_to(Network.LOBBY_SCENE, "SESSION ENDED",
+		"The room ended before the match could start.",
+		SceneLoader.network_priority())
+
+
 func _ready() -> void:
+	# WS5P3-04 guard: only an authoritative (network-priority) load can be
+	# stale-session; a solo start is never cancelled by this check.
+	if SceneLoader.active_priority() > 0 \
+			and Network.consume_session_ended_during_load():
+		call_deferred("_abort_stale_session_load")
+		return
 	# Decide the session type before building the map: in a session the host's
 	# Network session map decides the layout for every peer.
 	_multiplayer = Network.is_session_active()
 	_is_host = Network.is_host
+	# Same epoch on every peer: the replicated race seed. It only has to change
+	# between races inside one scene instance, which a reload never reuses.
+	_standings_epoch = Network.race_seed
 	# In a session both peers build the host's session map, so the host and
 	# every client race the same layout. Solo uses the local map pick.
 	var map_id: String = GameSettings.selected_map
@@ -2294,6 +2341,13 @@ func _cart_is_ahead(finished: bool, finish_time: float, progress: float) -> bool
 
 
 func _place() -> int:
+	# The host's canonical standings own the place once they land; every peer
+	# then shows the same number for the same cart.
+	if _multiplayer and not _standings_snapshot.is_empty():
+		var canonical: Dictionary = StandingsReconciler.places(_standings_snapshot)
+		var local_id: int = multiplayer.get_unique_id()
+		if canonical.has(local_id):
+			return int(canonical[local_id])
 	var position: int = 1
 	for rival: Dictionary in _rivals:
 		if _cart_is_ahead(bool(rival["finished"]), float(rival["finish_time"]),
@@ -2308,7 +2362,12 @@ func _place() -> int:
 
 
 func _field_size() -> int:
-	return 1 + _rivals.size() + _remote_progress.size()
+	var count: int = 1 + _rivals.size() + _remote_progress.size()
+	# A peer whose progress packet has not arrived yet is still part of the
+	# host's canonical field, so the "/ N" suffix must not shrink mid-race.
+	if _multiplayer and not _standings_snapshot.is_empty():
+		count = maxi(count, (_standings_snapshot.get("rows", []) as Array).size())
+	return count
 
 
 # --------------------------------------------------------------------------
@@ -2355,15 +2414,36 @@ func _build_overlay() -> void:
 	_impact_label.text = "BARRIER!  ·  EASE OFF"
 	_impact_label.visible = false
 
-	_result_root = Control.new()
-	_result_root.set_anchors_preset(Control.PRESET_FULL_RECT)
-	_result_root.mouse_filter = Control.MOUSE_FILTER_STOP
-	_result_root.visible = false
-	# Registering the card as a nav scope lets MenuNav build a focus map for
-	# its buttons; the race scene root is a Node3D, so the fallback finds
-	# nothing on its own.
-	_result_root.add_to_group("nav_scope")
-	root.add_child(_result_root)
+	_result_ui = ResultScreen.new()
+	_result_card = _result_ui.build(root, {
+		"name": "ResultCard",
+		"title": "RACE COMPLETE",
+		"subtitle": _result_summary_text(),
+		"multiplayer": _multiplayer,
+		"is_host": _is_host,
+		"primary_text": "RACE AGAIN" if (not _multiplayer or _is_host) else "",
+		"primary_color": UiPalette.YELLOW,
+		"on_primary": _on_race_again,
+		"secondary_text": "BACK TO LOBBY" if _multiplayer else "BACK TO MODES",
+		"secondary_color": UiPalette.CYAN if (not _multiplayer or _is_host) else UiPalette.YELLOW,
+		"on_secondary": _on_back_to_lobby,
+		"tertiary_text": "MAIN MENU",
+		"tertiary_color": UiPalette.RED,
+		"on_tertiary": _on_main_menu,
+		# 0.8.7 host/non-host contract (resolved in result_screen.gd): the host's
+		# MAIN MENU is confirm-gated while a live room is active; a client gets
+		# the animated "Waiting for host..." status + LEAVE LOBBY instead of any
+		# host-only navigation, so `on_leave` is the same leave-session callback.
+		"confirm_main_menu": _multiplayer,
+		"on_leave": _on_main_menu,
+		# The canonical standings table is built by _build_result_standings()
+		# from _result_entries(); the helper only supplies the column slot.
+		"standings_columns": [],
+		"standings_slot": _multiplayer,
+	})
+	_result_root = _result_card["root"] as Control
+	_result_title = _result_card["title"] as Label
+	_result_subtitle = _result_card["subtitle"] as Label
 	# The pause menu is a nav scope too. Keep the card out of the way while it
 	# is open, or MenuNav would pick the deeper result card and arrow keys
 	# would move focus behind the pause panel.
@@ -2371,44 +2451,15 @@ func _build_overlay() -> void:
 	if pause_menu != null:
 		pause_menu.visibility_changed.connect(_on_pause_visibility_changed)
 
-	# Finish-line artwork behind the card, matching the menu art set. The plain
-	# scrim on top keeps the card readable and still lets the art show through.
+	# Finish-line artwork behind the card, matching the menu art set. The shared
+	# result scrim sits above it so the card stays readable.
 	var art: Control = ART_BACKDROP.new()
 	art.set("texture_names", PackedStringArray(["preview_" + _preset_id + ".png", "bg_parking.png"]))
 	art.set("dim", 0.14)
 	_result_root.add_child(art)
+	_result_root.move_child(art, 0)
 
-	var dim := ColorRect.new()
-	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
-	dim.color = Color(0.06, 0.09, 0.19, 0.42)
-	_result_root.add_child(dim)
-
-	var center := CenterContainer.new()
-	center.set_anchors_preset(Control.PRESET_FULL_RECT)
-	_result_root.add_child(center)
-
-	var panel := PanelContainer.new()
-	# Multiplayer grows a second column for the standings so the buttons never
-	# get pushed below the 720p safe height.
-	panel.custom_minimum_size = Vector2(900 if _multiplayer else 560, 0)
-	panel.add_theme_stylebox_override("panel", _make_result_panel_style())
-	center.add_child(panel)
-
-	var pad := MarginContainer.new()
-	pad.add_theme_constant_override("margin_left", UI_MARGIN)
-	pad.add_theme_constant_override("margin_right", UI_MARGIN)
-	pad.add_theme_constant_override("margin_top", UI_MARGIN)
-	pad.add_theme_constant_override("margin_bottom", UI_MARGIN)
-	panel.add_child(pad)
-
-	var body := HBoxContainer.new()
-	body.add_theme_constant_override("separation", UI_GAP)
-	pad.add_child(body)
-
-	var column := VBoxContainer.new()
-	column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	column.add_theme_constant_override("separation", UI_GAP)
-	body.add_child(column)
+	var telemetry: VBoxContainer = _result_card["telemetry"] as VBoxContainer
 
 	var flag := Control.new()
 	flag.custom_minimum_size = Vector2(190, 30)
@@ -2418,117 +2469,39 @@ func _build_overlay() -> void:
 	flag.set("wave_amount", 0.0)
 	flag.set("columns", 8)
 	flag.set("rows", 3)
-	column.add_child(flag)
+	var header: VBoxContainer = _result_card["header"] as VBoxContainer
+	header.add_child(flag)
+	header.move_child(flag, 0)
 
-	var title_banner := PanelContainer.new()
-	title_banner.add_theme_stylebox_override("panel",
-		_make_result_banner_style(UiPalette.YELLOW))
-	column.add_child(title_banner)
-	_result_title = Label.new()
-	_result_title.theme_type_variation = &"TitleLabel"
-	_result_title.add_theme_font_size_override("font_size", 34)
-	_result_title.add_theme_color_override("font_color", UiPalette.INK)
-	_result_title.add_theme_constant_override("outline_size", 0)
-	_result_title.text = "RACE COMPLETE"
-	_result_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title_banner.add_child(_result_title)
-
-	_result_subtitle = Label.new()
-	_result_subtitle.text = _result_summary_text()
-	_result_subtitle.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_result_subtitle.add_theme_font_size_override("font_size", 14)
-	_result_subtitle.add_theme_color_override("font_color", UiPalette.CYAN)
-	column.add_child(_result_subtitle)
-
-	# One caption row over one value row: no divider lines, just the shared
-	# 16 px column gap.
-	var stats := GridContainer.new()
-	stats.columns = 4
-	stats.add_theme_constant_override("h_separation", UI_GAP)
-	stats.add_theme_constant_override("v_separation", UI_GAP_SMALL)
-	column.add_child(stats)
-	for caption_text: String in ["RACE TIME", "BEST LAP", "POSITION", "LAPS"]:
-		var caption := Label.new()
-		caption.text = caption_text
-		caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		caption.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		caption.add_theme_font_size_override("font_size", 14)
-		caption.add_theme_color_override("font_color", UiPalette.TEXT_DIM)
-		stats.add_child(caption)
-	_result_total = _make_result_value()
-	_result_best = _make_result_value()
-	_result_place = _make_result_value()
-	_result_laps = _make_result_value()
-	stats.add_child(_result_total)
-	stats.add_child(_result_best)
-	stats.add_child(_result_place)
-	stats.add_child(_result_laps)
+	# One caption row over one value row, from the shared UiKit telemetry grid.
+	var stats: Dictionary = _result_ui.make_stat_tiles(
+		["RACE TIME", "BEST LAP", "POSITION", "LAPS"])
+	telemetry.add_child(stats["grid"])
+	var stat_values: Array = stats["values"]
+	_result_total = stat_values[0] as Label
+	_result_best = stat_values[1] as Label
+	_result_place = stat_values[2] as Label
+	_result_laps = stat_values[3] as Label
 
 	# Lap table: lap name, time, delta to the previous lap. The best lap is
 	# tinted instead of separated by a rule.
-	var lap_header := HBoxContainer.new()
-	lap_header.add_theme_constant_override("separation", UI_GAP_SMALL)
-	column.add_child(lap_header)
-	lap_header.add_child(_make_lap_caption("LAP", 0.0,
-		HORIZONTAL_ALIGNMENT_LEFT, true))
-	lap_header.add_child(_make_lap_caption("TIME", 96.0,
-		HORIZONTAL_ALIGNMENT_RIGHT))
-	lap_header.add_child(_make_lap_caption("DELTA", 76.0,
-		HORIZONTAL_ALIGNMENT_RIGHT))
-	_result_lap_rows = VBoxContainer.new()
-	_result_lap_rows.add_theme_constant_override("separation", UI_GAP_SMALL)
-	column.add_child(_result_lap_rows)
+	var lap_table: Dictionary = _result_ui.make_table([
+		{"label": "LAP", "expand": true, "align": HORIZONTAL_ALIGNMENT_LEFT},
+		{"label": "TIME", "width": 96.0, "align": HORIZONTAL_ALIGNMENT_RIGHT},
+		{"label": "DELTA", "width": 76.0, "align": HORIZONTAL_ALIGNMENT_RIGHT},
+	])
+	telemetry.add_child(lap_table["box"])
+	_result_lap_rows = lap_table["rows"] as VBoxContainer
 
 	if _multiplayer:
-		var standings_column := VBoxContainer.new()
-		standings_column.custom_minimum_size = Vector2(380, 0)
-		standings_column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		standings_column.add_theme_constant_override("separation", UI_GAP_SMALL)
-		body.add_child(standings_column)
+		var standings_column: VBoxContainer = _result_card["standings_slot"] as VBoxContainer
 		_build_result_standings(standings_column)
 	else:
 		# The shared refresh path still expects the node to exist, just hidden.
 		# Keep it in the tree (hidden) so it is freed with the scene.
 		_result_standings_section = VBoxContainer.new()
 		_result_standings_section.visible = false
-		column.add_child(_result_standings_section)
-
-	if _multiplayer:
-		if _is_host:
-			var again: Button = _make_button("RACE AGAIN", UiPalette.YELLOW, 54.0)
-			again.set_meta("nav_default", true)
-			again.pressed.connect(_on_race_again)
-			column.add_child(again)
-		var secondary := HBoxContainer.new()
-		secondary.add_theme_constant_override("separation", UI_GAP)
-		column.add_child(secondary)
-		var lobby: Button = _make_button("BACK TO LOBBY",
-			UiPalette.CYAN if _is_host else UiPalette.YELLOW, 52.0)
-		if not _is_host:
-			lobby.set_meta("nav_default", true)
-		lobby.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		lobby.pressed.connect(_on_back_to_lobby)
-		secondary.add_child(lobby)
-		var menu: Button = _make_button("MAIN MENU", UiPalette.RED, 52.0)
-		menu.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		menu.pressed.connect(_on_main_menu)
-		secondary.add_child(menu)
-	else:
-		var again: Button = _make_button("RACE AGAIN", UiPalette.YELLOW, 56.0)
-		again.set_meta("nav_default", true)
-		again.pressed.connect(_on_race_again)
-		column.add_child(again)
-		var secondary := HBoxContainer.new()
-		secondary.add_theme_constant_override("separation", UI_GAP)
-		column.add_child(secondary)
-		var lobby: Button = _make_button("BACK TO MODES", UiPalette.CYAN, 52.0)
-		lobby.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		lobby.pressed.connect(_on_back_to_lobby)
-		secondary.add_child(lobby)
-		var menu: Button = _make_button("MAIN MENU", UiPalette.RED, 52.0)
-		menu.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		menu.pressed.connect(_on_main_menu)
-		secondary.add_child(menu)
+		telemetry.add_child(_result_standings_section)
 
 
 func _build_result_standings(parent: VBoxContainer) -> void:
@@ -2537,7 +2510,7 @@ func _build_result_standings(parent: VBoxContainer) -> void:
 	## distance behind the leader; the card never invents a time for another
 	## player. The wait banner sits above the table so it never covers a row.
 	_result_standings_section = VBoxContainer.new()
-	_result_standings_section.add_theme_constant_override("separation", UI_GAP_SMALL)
+	_result_standings_section.add_theme_constant_override("separation", UiKit.SPACING_TIGHT)
 	_result_standings_section.visible = false
 	parent.add_child(_result_standings_section)
 
@@ -2564,11 +2537,11 @@ func _build_result_standings(parent: VBoxContainer) -> void:
 	_result_wait_banner.add_child(_result_wait_label)
 
 	var standings_header_pad := MarginContainer.new()
-	standings_header_pad.add_theme_constant_override("margin_left", UI_GAP_SMALL)
-	standings_header_pad.add_theme_constant_override("margin_right", UI_GAP_SMALL)
+	standings_header_pad.add_theme_constant_override("margin_left", UiKit.SPACING_TIGHT)
+	standings_header_pad.add_theme_constant_override("margin_right", UiKit.SPACING_TIGHT)
 	_result_standings_section.add_child(standings_header_pad)
 	var standings_header := HBoxContainer.new()
-	standings_header.add_theme_constant_override("separation", UI_GAP_SMALL)
+	standings_header.add_theme_constant_override("separation", UiKit.SPACING_TIGHT)
 	standings_header_pad.add_child(standings_header)
 	standings_header.add_child(_make_standings_header("POS", 30.0,
 		HORIZONTAL_ALIGNMENT_CENTER))
@@ -2586,37 +2559,19 @@ func _build_result_standings(parent: VBoxContainer) -> void:
 	var standings_scroll := ScrollContainer.new()
 	standings_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	standings_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
-	# Eight rows fit without a scrollbar (a full 2-human + 5-bot field is 7), so
-	# the header and rows keep the same width and never shift when a row lands.
-	standings_scroll.custom_minimum_size = Vector2(0, 344)
+	# Fit whatever vertical budget the result helper left above the action
+	# footer; a full field therefore scrolls instead of pushing the buttons
+	# past the 720p safe height.
+	standings_scroll.custom_minimum_size = Vector2(0.0,
+		minf(344.0, float(_result_ui.table_cap(_result_card))))
 	_result_standings_section.add_child(standings_scroll)
 	_result_standings_rows = VBoxContainer.new()
 	_result_standings_rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_result_standings_rows.add_theme_constant_override("separation", UI_GAP_SMALL)
+	_result_standings_rows.add_theme_constant_override("separation", UiKit.SPACING_TIGHT)
 	standings_scroll.add_child(_result_standings_rows)
 
-	_result_row_style = StyleBoxFlat.new()
-	_result_row_style.bg_color = Color(0.095, 0.112, 0.225, 0.88)
-	_result_row_style.border_color = Color(1.0, 1.0, 1.0, 0.10)
-	_result_row_style.set_border_width_all(1)
-	_result_row_style.set_corner_radius_all(4)
-	_result_row_style.skew = Vector2(0.14, 0.0)
-	_result_row_style.content_margin_left = 16.0
-	_result_row_style.content_margin_right = 16.0
-	_result_row_style.content_margin_top = 8.0
-	_result_row_style.content_margin_bottom = 8.0
-	_result_row_style.anti_aliasing = true
-	_result_local_row_style = StyleBoxFlat.new()
-	_result_local_row_style.bg_color = Color(0.14, 0.26, 0.42, 0.94)
-	_result_local_row_style.border_color = UiPalette.CYAN
-	_result_local_row_style.set_border_width_all(2)
-	_result_local_row_style.set_corner_radius_all(4)
-	_result_local_row_style.skew = Vector2(0.14, 0.0)
-	_result_local_row_style.content_margin_left = 16.0
-	_result_local_row_style.content_margin_right = 16.0
-	_result_local_row_style.content_margin_top = 8.0
-	_result_local_row_style.content_margin_bottom = 8.0
-	_result_local_row_style.anti_aliasing = true
+	_result_row_style = UiKit.row_style(false)
+	_result_local_row_style = UiKit.row_style(true)
 
 
 func _result_summary_text() -> String:
@@ -2656,71 +2611,20 @@ func _make_label(parent: Control, font_size: int, color: Color,
 	return label
 
 
-func _make_button(text: String, color: Color, height: float = 52.0) -> Button:
-	var button := Button.new()
-	button.set_script(load(CANDY_BUTTON))
-	button.set("fill_color", color)
-	button.text = text
-	button.custom_minimum_size = Vector2(0, height)
-	button.add_theme_font_size_override("font_size", 22)
-	return button
-
-
-func _make_result_panel_style() -> StyleBoxFlat:
-	var style := StyleBoxFlat.new()
-	style.bg_color = Color(0.056, 0.068, 0.156, 0.95)
-	style.border_color = Color(0.24, 0.84, 0.96, 0.56)
-	style.set_border_width_all(4)
-	style.set_corner_radius_all(6)
-	style.skew = Vector2(0.05, 0.0)
-	style.content_margin_left = 12.0
-	style.content_margin_top = 8.0
-	style.content_margin_right = 12.0
-	style.content_margin_bottom = 8.0
-	style.shadow_color = Color(0.02, 0.02, 0.08, 0.72)
-	style.shadow_size = 14
-	style.shadow_offset = Vector2(5, 10)
-	style.anti_aliasing = true
-	return style
-
-
 func _make_result_banner_style(color: Color) -> StyleBoxFlat:
+	## Slanted accent banner behind the standings wait/done slot.
 	var style := StyleBoxFlat.new()
 	style.bg_color = color
 	style.border_color = UiPalette.OUTLINE
 	style.set_border_width_all(3)
 	style.set_corner_radius_all(5)
 	style.skew = Vector2(0.14, 0.0)
-	style.content_margin_left = float(UI_GAP)
-	style.content_margin_right = float(UI_GAP)
-	style.content_margin_top = float(UI_GAP_SMALL)
-	style.content_margin_bottom = float(UI_GAP_SMALL)
+	style.content_margin_left = float(UiKit.SPACING)
+	style.content_margin_right = float(UiKit.SPACING)
+	style.content_margin_top = float(UiKit.SPACING_TIGHT)
+	style.content_margin_bottom = float(UiKit.SPACING_TIGHT)
 	style.anti_aliasing = true
 	return style
-
-
-func _make_result_value() -> Label:
-	var label := Label.new()
-	label.text = "—"
-	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	label.add_theme_font_size_override("font_size", 22)
-	label.add_theme_color_override("font_color", UiPalette.CREAM)
-	return label
-
-
-func _make_lap_caption(text: String, width: float, align: int,
-		expand: bool = false) -> Label:
-	## Quiet table caption; the 8 px gap aligns it with the lap rows.
-	var label := Label.new()
-	label.text = text
-	label.custom_minimum_size = Vector2(width, 0)
-	label.horizontal_alignment = align
-	if expand:
-		label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	label.add_theme_font_size_override("font_size", 12)
-	label.add_theme_color_override("font_color", UiPalette.CYAN)
-	return label
 
 
 func _make_standings_header(text: String, width: float, align: int,
@@ -2741,7 +2645,7 @@ func _make_standings_row() -> Dictionary:
 	panel.custom_minimum_size = Vector2(0, 36)
 	panel.add_theme_stylebox_override("panel", _result_row_style)
 	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", UI_GAP_SMALL)
+	row.add_theme_constant_override("separation", UiKit.SPACING_TIGHT)
 	panel.add_child(row)
 	var place := Label.new()
 	place.custom_minimum_size = Vector2(30, 0)
@@ -2865,6 +2769,10 @@ func _result_entries() -> Array[Dictionary]:
 			"total": -1.0,
 			"best": -1.0,
 		})
+	# The host's canonical standings own order and finish times once a snapshot
+	# has arrived. Before that (and in solo) the local deterministic sort runs.
+	if _multiplayer and not _standings_snapshot.is_empty():
+		return _entries_from_standings(entries)
 	entries.sort_custom(Callable(self, "_standings_before"))
 	for index in entries.size():
 		entries[index]["place"] = index + 1
@@ -2961,6 +2869,23 @@ func _on_pause_visibility_changed() -> void:
 func _waiting_peer_count() -> int:
 	if not _multiplayer:
 		return 0
+	# Canonical standings are the waiting source once they exist: the host has
+	# already force-finalised them after the settle deadline, so a lost final
+	# state packet can no longer pin the result card on "WAITING FOR ...".
+	if not _standings_snapshot.is_empty():
+		if bool(_standings_snapshot.get("final", false)):
+			return 0
+		var local_id: int = multiplayer.get_unique_id()
+		var canonical_waiting: int = 0
+		for row_value: Variant in (_standings_snapshot.get("rows", []) as Array):
+			if not (row_value is Dictionary):
+				continue
+			var row: Dictionary = row_value as Dictionary
+			if int(row.get("id", 0)) == local_id:
+				continue
+			if not bool(row.get("finished", false)):
+				canonical_waiting += 1
+		return canonical_waiting
 	var local_id: int = multiplayer.get_unique_id()
 	var waiting: int = 0
 	for peer_id: int in Network.participants():
@@ -3018,7 +2943,7 @@ func _fill_result_laps() -> void:
 			best_index = index
 	for index in _total_laps:
 		var row := HBoxContainer.new()
-		row.add_theme_constant_override("separation", UI_GAP_SMALL)
+		row.add_theme_constant_override("separation", UiKit.SPACING_TIGHT)
 		var caption := Label.new()
 		caption.text = "LAP %d" % (index + 1)
 		caption.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -3176,6 +3101,8 @@ func _on_net_peer_disconnected(peer_id: int) -> void:
 	_remote_progress.erase(peer_id)
 	_remote_progress_ms.erase(peer_id)
 	_remote_finish_time.erase(peer_id)
+	_remote_finish_provisional.erase(peer_id)
+	_peer_result_extra.erase(peer_id)
 	_race_relay_ms.erase(peer_id)
 
 
@@ -3287,6 +3214,14 @@ func _net_race_ready(vehicle_id: String) -> void:
 	if sender <= 1 or sender == multiplayer.get_unique_id():
 		return
 	Network.mark_peer_scene_ready(sender)
+	# WS5-10: the standings keepalive stops once a snapshot is final, so a peer
+	# that finished loading late would never receive the canonical result. Send
+	# the current snapshot directly now that the peer can receive scene RPCs.
+	if _is_host and not _standings_snapshot.is_empty():
+		rpc_id(sender, "_net_standings", int(_standings_snapshot.get("epoch", 0)),
+			int(_standings_snapshot.get("rev", 0)),
+			_standings_snapshot.get("rows", []) as Array,
+			bool(_standings_snapshot.get("final", false)))
 	var clean_vid: String = _race_vehicle if (_is_host and Network.is_shared_vehicle_mode()) \
 		else GameSettings.sanitize_racing_vehicle_id(vehicle_id)
 	_store_net_vehicle(sender, clean_vid)
@@ -3475,10 +3410,18 @@ func _accept_remote_race_state(peer_id: int, cart: CartPlayer, position: Vector3
 	var finish_line: float = _race_finish_distance()
 	if clamped_progress >= finish_line - 2.0:
 		# A crossed cart is not an obstacle, and it must stay that way even
-		# though it keeps streaming state until the race ends. Latch the time
-		# so a late packet cannot reorder the finished field.
+		# though it keeps streaming state until the race ends. This stream is
+		# unreliable and sampled at 20 Hz, so the stamp it leaves is a
+		# provisional fallback only: the reliable _net_report_finish owns the
+		# ordering time and overwrites it (WS5-02).
+		if not _remote_finish_provisional.has(peer_id):
+			_remote_finish_provisional[peer_id] = _race_time
 		if not _remote_finish_time.has(peer_id):
 			_remote_finish_time[peer_id] = _race_time
+			if _is_host:
+				# Publish the live order now; the reliable report re-broadcasts
+				# a corrected revision for every peer.
+				_broadcast_standings(_all_humans_finished())
 		cart.mark_race_finished()
 
 
@@ -3679,6 +3622,272 @@ func _net_bot_states(positions: PackedVector3Array, yaws: PackedFloat32Array,
 
 
 # --------------------------------------------------------------------------
+# host-authoritative final standings
+#
+# Root cause this fixes: every peer used to rank the field from its own
+# unreliable progress feed and from `_race_time` sampled when a finish packet
+# happened to arrive, so close finishes (and any dropped final packet) produced
+# different final standings on different screens. Now the host latches the
+# crossing order, builds one canonical snapshot and every client renders it.
+
+
+func _canonical_standings_rows() -> Array:
+	## Host only: one row per competitor from the host's authoritative view.
+	var rows: Array = []
+	if _cart == null:
+		return rows
+	var local_id: int = multiplayer.get_unique_id() if _multiplayer else 0
+	rows.append(_canonical_human_row(local_id))
+	for peer_id: int in _remote_progress:
+		if peer_id == local_id:
+			continue
+		rows.append(_canonical_human_row(peer_id))
+	for index in _rivals.size():
+		var rival: Dictionary = _rivals[index]
+		var label: Label3D = rival["label"] as Label3D
+		rows.append({
+			"id": -1 - index,
+			"name": label.text if label != null else "RIVAL %d" % (index + 1),
+			"finished": bool(rival["finished"]),
+			"finish_time": float(rival["finish_time"]),
+			"progress": float(rival["progress"]),
+			"total": -1.0,
+			"best": -1.0,
+		})
+	return rows
+
+
+func _canonical_human_row(peer_id: int) -> Dictionary:
+	var local_id: int = multiplayer.get_unique_id() if _multiplayer else 0
+	var finished: bool
+	var finish_time: float
+	var progress: float
+	var total: float = -1.0
+	var best: float = -1.0
+	if peer_id == local_id:
+		finished = _finish_time >= 0.0
+		finish_time = _finish_time if finished else -1.0
+		progress = _unwrapped
+		total = _race_time if finished else -1.0
+		best = _best_lap_time()
+	else:
+		finished = _remote_finished(peer_id)
+		finish_time = float(_remote_finish_time.get(peer_id, -1.0)) if finished else -1.0
+		progress = float(_remote_progress.get(peer_id, 0.0))
+		var extra: Dictionary = {}
+		if _peer_result_extra.has(peer_id):
+			extra = _peer_result_extra[peer_id] as Dictionary
+		if finished:
+			total = float(extra.get("total", -1.0))
+			best = float(extra.get("best", -1.0))
+	return {
+		"id": peer_id,
+		"name": Network.name_of(peer_id),
+		"finished": finished,
+		"finish_time": finish_time,
+		"progress": progress,
+		"total": total,
+		"best": best,
+	}
+
+
+func _broadcast_standings(final: bool = false) -> void:
+	## Host only. One reliable revisioned snapshot to every scene-ready peer.
+	if not _is_host or not _multiplayer or not Network.is_session_active():
+		return
+	_standings_rev += 1
+	var snapshot: Dictionary = StandingsReconciler.build(_standings_epoch,
+		_standings_rev, _canonical_standings_rows(), final)
+	_standings_snapshot = snapshot
+	for target: int in multiplayer.get_peers():
+		if Network.is_scene_ready(target):
+			rpc_id(target, "_net_standings", int(snapshot["epoch"]),
+				int(snapshot["rev"]), snapshot["rows"] as Array,
+				bool(snapshot["final"]))
+	_apply_standings_snapshot(snapshot)
+
+
+@rpc("authority", "reliable")
+func _net_standings(epoch: int, rev: int, rows: Array, final: bool) -> void:
+	## Client side. StandingsReconciler.accept() rejects stale/duplicate/older
+	## revisions, so a reordered late packet can never move a finished place.
+	if _is_host or not _multiplayer:
+		return
+	var incoming: Dictionary = {"epoch": epoch, "rev": rev, "rows": rows,
+		"final": final}
+	var merged: Dictionary = StandingsReconciler.accept(_standings_snapshot,
+		incoming)
+	if merged == _standings_snapshot:
+		return
+	_standings_snapshot = merged
+	_apply_standings_snapshot(merged)
+	if bool(merged.get("final", false)):
+		_standings_finalized = true
+		_refresh_result_standings()
+
+
+func _apply_standings_snapshot(snapshot: Dictionary) -> void:
+	## Mirror the canonical places onto the live HUD/result placement. The Pi's
+	## official server-race result still owns the big placement when it exists
+	## (_official_applied), but the standings rows always follow the snapshot.
+	if snapshot.is_empty():
+		return
+	var places_map: Dictionary = StandingsReconciler.places(snapshot)
+	var local_id: int = multiplayer.get_unique_id() if _multiplayer else 0
+	if places_map.has(local_id):
+		_hud_last_place = -1
+		if _result_place != null and not _official_applied:
+			var place: int = int(places_map[local_id])
+			_result_place.text = "%s / %d" % [_ordinal(place), _field_size()]
+			if _phase == Phase.FINISHED:
+				_set_result_title(place)
+
+
+static func compensated_finish_time(reported_s: float, one_way_ms: float,
+		host_now_s: float, provisional_s: float) -> float:
+	## WS5-02: turn a peer's reliable finish report into one canonical host-clock
+	## crossing stamp (seconds). All ordering for human finishers goes through
+	## this single value, so two finishes can no longer be ordered by the arrival
+	## time of an unreliable 20 Hz packet.
+	##
+	## `reported_s` is the peer's own race time (its clock starts one
+	## countdown-broadcast delay after the host's, hence the re-alignment),
+	## `host_now_s` is the host clock when the report was processed and
+	## `provisional_s` is the host clock when the progress stream first showed
+	## the crossing (-1.0 when it never did). Pure so the ordering can be
+	## asserted headlessly.
+	var one_way_s: float = clampf(one_way_ms / 1000.0, 0.0, FINISH_ONE_WAY_MAX)
+	var reported: float = clampf(reported_s, 0.0, 86400.0)
+	var host_now: float = clampf(host_now_s, 0.0, 86400.0)
+	var estimate: float = reported + one_way_s
+	if provisional_s >= 0.0:
+		# The progress latch sampled the host clock after the real crossing
+		# (packet delay), so the compensated report may only slightly beat it.
+		estimate = clampf(estimate, maxf(provisional_s - FINISH_PROGRESS_SLACK, 0.0),
+			provisional_s + FINISH_PROGRESS_SLACK)
+	else:
+		# No progress sample to compare against: bound how far behind the report
+		# may claim the crossing was, so a modified client cannot win by
+		# reporting an implausibly short race.
+		estimate = clampf(estimate,
+			maxf(host_now - FINISH_REPORT_SLACK - one_way_s, 0.0), host_now)
+	return estimate
+
+
+@rpc("any_peer", "reliable")
+func _net_report_finish(reported_total_s: float, reported_best_s: float) -> void:
+	## Host side. A client's crossing is reported reliably: the unreliable final
+	## state packet can be dropped, and its arrival time jitters by more than the
+	## gap of a close finish. This report is the *authoritative* ordering source
+	## for humans (WS5-02): it replaces any provisional stamp the progress stream
+	## left, delay-compensated onto the host clock. Only the first report per peer
+	## per race is accepted, so a duplicate re-report cannot reorder the field.
+	if not _is_host or not _multiplayer:
+		return
+	var sender: int = _rpc_sender()
+	if sender <= 1 or not _remote_carts.has(sender):
+		return
+	if not is_finite(reported_total_s) or not is_finite(reported_best_s):
+		return
+	if _peer_result_extra.has(sender):
+		# Already latched for this race: monotonic, first report wins.
+		return
+	var provisional: float = float(_remote_finish_provisional.get(sender, -1.0))
+	_remote_finish_time[sender] = compensated_finish_time(reported_total_s,
+		float(Network.peer_rtt_ms(sender)) * 0.5, _race_time, provisional)
+	_remote_finish_provisional.erase(sender)
+	var extra: Dictionary = {}
+	extra["total"] = clampf(reported_total_s, 0.0, 86400.0)
+	extra["best"] = clampf(reported_best_s, 0.0, 86400.0)
+	_peer_result_extra[sender] = extra
+	var cart: CartPlayer = _remote_carts.get(sender) as CartPlayer
+	if cart != null and is_instance_valid(cart):
+		cart.mark_race_finished()
+	_broadcast_standings(_all_humans_finished())
+
+
+func _all_humans_finished() -> bool:
+	if not _multiplayer:
+		return true
+	if _finish_time < 0.0:
+		return false
+	var local_id: int = multiplayer.get_unique_id()
+	for peer_id: int in Network.participants():
+		if peer_id == local_id:
+			continue
+		if Network.is_host and not Network.is_scene_ready(peer_id):
+			continue
+		# Only the reliable report finalises a human place; the provisional
+		# progress latch is not enough, or the terminal final snapshot could
+		# freeze an arrival-jittered order (WS5-02). A lost report is covered by
+		# STANDINGS_FINALIZE_TIMEOUT in _tick_standings.
+		if not _peer_result_extra.has(peer_id):
+			return false
+	return true
+
+
+func _tick_standings(delta: float) -> void:
+	## Host re-broadcast/keepalive loop. Runs from _process once any finish has
+	## been latched, so a client that crossed the line while the host was still
+	## racing also sees the updated order on its waiting result card.
+	if not _is_host or not _multiplayer or _standings_finalized:
+		return
+	if _finish_time < 0.0 and _remote_finish_time.is_empty():
+		return
+	_standings_timer += delta
+	if _phase == Phase.FINISHED:
+		_standings_wait += delta
+	var final: bool = _phase == Phase.FINISHED \
+		and (_all_humans_finished() or _standings_wait >= STANDINGS_FINALIZE_TIMEOUT)
+	if final or _standings_timer >= STANDINGS_BROADCAST_INTERVAL:
+		_standings_timer = 0.0
+		_broadcast_standings(final)
+		if final:
+			_standings_finalized = true
+
+
+func _entries_from_standings(local_entries: Array[Dictionary]) -> Array[Dictionary]:
+	## Merge the canonical snapshot over the locally built rows: the snapshot
+	## owns order, finish state and times; local rows fill in colour/(YOU)/best
+	## for competitors the snapshot does not mention.
+	var by_id: Dictionary = {}
+	for entry: Dictionary in local_entries:
+		by_id[int(entry["id"])] = entry
+	var ordered: Array[Dictionary] = []
+	var used: Dictionary = {}
+	var rows: Array = _standings_snapshot.get("rows", []) as Array
+	for row_value: Variant in rows:
+		if not (row_value is Dictionary):
+			continue
+		var row: Dictionary = row_value as Dictionary
+		var id: int = int(row.get("id", 0))
+		if not by_id.has(id) or used.has(id):
+			continue
+		used[id] = true
+		var entry: Dictionary = by_id[id]
+		entry["finished"] = bool(row.get("finished", false))
+		entry["finish_time"] = float(row.get("finish_time", -1.0))
+		entry["progress"] = float(row.get("progress", 0.0))
+		if float(row.get("total", -1.0)) >= 0.0:
+			entry["total"] = float(row["total"])
+		if float(row.get("best", -1.0)) >= 0.0:
+			entry["best"] = float(row["best"])
+		ordered.append(entry)
+	# Anything the snapshot did not cover keeps the local deterministic order.
+	var leftovers: Array[Dictionary] = []
+	for entry: Dictionary in local_entries:
+		if not used.has(int(entry["id"])):
+			leftovers.append(entry)
+	leftovers.sort_custom(Callable(self, "_standings_before"))
+	ordered.append_array(leftovers)
+	for index in ordered.size():
+		ordered[index]["place"] = index + 1
+	return ordered
+
+
+
+
+# --------------------------------------------------------------------------
 # race loop
 
 
@@ -3776,6 +3985,9 @@ func _process(delta: float) -> void:
 		if _state_stream_timer >= STATE_STREAM_INTERVAL:
 			_state_stream_timer = 0.0
 			_push_server_state()
+	# Host-owned final standings: re-broadcast while any finish is live, and
+	# force-finalise after the settle deadline so no result card waits forever.
+	_tick_standings(delta)
 	match _phase:
 		Phase.FINISHED:
 			# Peers keep streaming their progress after we cross the line, so
@@ -3826,7 +4038,15 @@ func _reset_race_progress(force: bool = false) -> void:
 	_go_time = 0.0
 	_finish_time = -1.0
 	_remote_finish_time.clear()
+	_remote_finish_provisional.clear()
 	_official_applied = false
+	_standings_snapshot = {}
+	_standings_rev = 0
+	_standings_timer = 0.0
+	_standings_wait = 0.0
+	_standings_finalized = false
+	_finish_reported = false
+	_peer_result_extra.clear()
 	_impact_timer = 0.0
 	if _impact_label != null:
 		_impact_label.visible = false
@@ -4553,6 +4773,16 @@ func _finish() -> void:
 			rpc_id(1, "_net_race_cart_state", multiplayer.get_unique_id(),
 				_cart.global_position, _cart.rotation.y, _unwrapped,
 				Time.get_ticks_msec(), _cart.velocity)
+	# Authoritative result publication. The host stamps its own crossing and
+	# broadcasts the canonical order; a client reports its crossing reliably so
+	# the host can never miss a finish (the unreliable final state above may be
+	# dropped). This is the packet that keeps every result card in agreement.
+	if _multiplayer and Network.is_session_active() and Network.is_connected_to_server():
+		if _is_host:
+			_broadcast_standings(_all_humans_finished())
+		elif not _finish_reported:
+			_finish_reported = true
+			rpc_id(1, "_net_report_finish", _race_time, _best_lap_time())
 	CursorController.set_menu_mode(true)
 	_offtrack_label.visible = false
 	_impact_label.visible = false
@@ -4581,11 +4811,7 @@ func _finish() -> void:
 	_result_standings_section.visible = _multiplayer
 	if _multiplayer:
 		_refresh_result_standings()
-	_result_root.visible = true
-	_result_root.modulate.a = 0.0
-	var fade := create_tween()
-	fade.tween_property(_result_root, "modulate:a", 1.0, 0.22) \
-		.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	_result_ui.present(_result_card)
 	_hud.call("set_race_time", _race_time, best)
 	_hud.call("set_lap", _total_laps, _total_laps)
 	var pause_menu: Control = get_node_or_null("PauseMenu/Root") as Control
@@ -4652,7 +4878,9 @@ func _ordinal(place: int) -> String:
 func _on_race_again() -> void:
 	if _multiplayer:
 		if _is_host:
-			Network.start_game(RACE_SCENE, GameSettings.GAME_MINIGAMES)
+			# restart = true: the current scene IS the race scene, so the
+			# normal start would be swallowed by the begin-game retry guard.
+			Network.start_game(RACE_SCENE, GameSettings.GAME_MINIGAMES, true)
 		return
 	SceneLoader.go_to(RACE_SCENE, _race_title(), "GET READY")
 

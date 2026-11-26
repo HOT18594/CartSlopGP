@@ -3,6 +3,11 @@ extends RefCounted
 ## screen invented its own durations and easing, so panels snapped while
 ## buttons bounced. Everything here is frame-rate independent and keeps running
 ## while the tree is paused (the pause menu is animated too).
+##
+## The `draw_*` helpers at the bottom are the soft-gradient primitives for
+## custom `_draw()` UI: sheen sweeps, gloss fades, focus glows and comic
+## shadows. They replace the flat-alpha polygons/polylines that used to end on a
+## visible clipped edge mid-animation.
 
 const FADE: float = 0.20
 const POP: float = 0.20
@@ -223,3 +228,87 @@ static func damp(current: float, target: float, delta: float, speed: float = 12.
 static func damp_color(current: Color, target: Color, delta: float,
 		speed: float = 12.0) -> Color:
 	return current.lerp(target, 1.0 - exp(-speed * delta))
+
+
+# --------------------------------------------------------------------------
+# Soft gradient drawing primitives.
+#
+# The old sheen sweeps were flat-alpha polygons (and the focus halos were two
+# hard polylines), so every animation ended on a visible straight edge. These
+# helpers draw the same shapes as vertex-colour gradients: alpha ramps to a
+# peak in the middle and fades to zero at both edges, which reads as a moving
+# band of light instead of a clipped rectangle. They are pure `_draw` calls and
+# cost the same number of primitives as the hard-edged versions.
+
+
+static func draw_soft_band(canvas: CanvasItem, quad: PackedVector2Array,
+		tint: Color = Color(1.0, 1.0, 1.0), peak_alpha: float = 0.24,
+		pad: float = 0.0) -> void:
+	## One slanted sheen band with a smooth left/right falloff. `quad` is a
+	## 4-point parallelogram ordered TL, TR, BR, BL; `pad` insets it vertically.
+	if canvas == null or not is_instance_valid(canvas) or quad.size() < 4:
+		return
+	if peak_alpha <= 0.001:
+		return
+	var tl: Vector2 = quad[0]
+	var tr: Vector2 = quad[1]
+	var br: Vector2 = quad[2]
+	var bl: Vector2 = quad[3]
+	if pad > 0.0:
+		var inset := Vector2(0.0, pad)
+		tl += inset
+		tr += inset
+		br -= inset
+		bl -= inset
+	var mid_top: Vector2 = tl.lerp(tr, 0.5)
+	var mid_bottom: Vector2 = bl.lerp(br, 0.5)
+	var clear := Color(tint.r, tint.g, tint.b, 0.0)
+	var peak := Color(tint.r, tint.g, tint.b, peak_alpha)
+	canvas.draw_polygon(PackedVector2Array([tl, mid_top, mid_bottom, bl]),
+		PackedColorArray([clear, peak, peak, clear]))
+	canvas.draw_polygon(PackedVector2Array([mid_top, tr, br, mid_bottom]),
+		PackedColorArray([peak, clear, clear, peak]))
+
+
+static func draw_vertical_fade(canvas: CanvasItem, quad: PackedVector2Array,
+		tint: Color = Color(1.0, 1.0, 1.0), top_alpha: float = 0.22) -> void:
+	## Flat-fill replacement for gloss/lip bands: opaque at the top edge, fully
+	## transparent at the bottom edge, so the band melts into the plate instead
+	## of ending on a hard horizontal line.
+	if canvas == null or not is_instance_valid(canvas) or quad.size() < 4:
+		return
+	if top_alpha <= 0.001:
+		return
+	var clear := Color(tint.r, tint.g, tint.b, 0.0)
+	var top := Color(tint.r, tint.g, tint.b, top_alpha)
+	canvas.draw_polygon(quad, PackedColorArray([top, top, clear, clear]))
+
+
+static func draw_soft_outline(canvas: CanvasItem, closed_pts: PackedVector2Array,
+		core_color: Color, core_width: float = 3.4, glow_color: Color = Color.WHITE,
+		glow_layers: int = 4, glow_step: float = 2.4, glow_alpha: float = 0.16) -> void:
+	## Focus halo as an outward-fading glow: a bright core line plus concentric
+	## wider, dimmer passes. No hard polyline ends the halo at full opacity.
+	if canvas == null or not is_instance_valid(canvas) or closed_pts.size() < 2:
+		return
+	for layer in range(glow_layers, 0, -1):
+		var width: float = core_width + glow_step * float(layer)
+		var alpha: float = glow_alpha / float(layer)
+		canvas.draw_polyline(closed_pts,
+			Color(glow_color.r, glow_color.g, glow_color.b, alpha * 0.85),
+			width, true)
+	canvas.draw_polyline(closed_pts, core_color, core_width, true)
+
+
+static func draw_soft_shadow(canvas: CanvasItem, closed_pts: PackedVector2Array,
+		shadow_color: Color = Color(0.03, 0.03, 0.10, 0.55), layers: int = 3,
+		step: float = 2.6) -> void:
+	## Comic drop shadow with a soft falloff instead of one flat silhouette.
+	if canvas == null or not is_instance_valid(canvas) or closed_pts.size() < 2:
+		return
+	for layer in range(layers, 0, -1):
+		var width: float = step * float(layer)
+		var alpha: float = shadow_color.a / float(layer + 1)
+		canvas.draw_polyline(closed_pts,
+			Color(shadow_color.r, shadow_color.g, shadow_color.b, alpha),
+			width, true)

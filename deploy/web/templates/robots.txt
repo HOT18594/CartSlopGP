@@ -1,0 +1,6 @@
+# Cart Slop GP Web build (static game client on the CDN).
+# The marketing site lives in website/ and is a separate Pages project; this
+# host only serves the wasm/pck payload and the version pointer, so it does not
+# need to be indexable. The launcher (/play) links here directly.
+User-agent: *
+Disallow: /

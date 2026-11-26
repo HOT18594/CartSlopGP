@@ -1,0 +1,307 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cart Slop GP — Arcade Kart Racing &amp; 8-Player Party Mayhem</title>
+<meta name="description" content="Cart Slop GP v0.8.7: comic-arcade kart racing and 8-player party mayhem across 5 living circuits and 9 arenas. Windows, macOS, Linux and Web.">
+<meta name="theme-color" content="#0a0d1a">
+<meta name="color-scheme" content="dark">
+<meta name="author" content="Cart Slop GP">
+<!-- Canonical/OG URLs point at the GitHub Pages deployment. -->
+<link rel="canonical" href="https://hot18594.github.io/CartSlopGP/">
+
+<!-- Favicons: generated from godot_project/assets/ui/cart_icon.png by
+     website/tools/build_brand_assets.py (official art only). -->
+<link rel="icon" href="assets/favicon.ico" sizes="any">
+<link rel="icon" type="image/png" sizes="16x16" href="assets/favicon-16x16.png">
+<link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="48x48" href="assets/favicon-48x48.png">
+<link rel="apple-touch-icon" sizes="180x180" href="assets/apple-touch-icon.png">
+<link rel="manifest" href="site.webmanifest">
+
+<!-- OpenGraph / Twitter -->
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Cart Slop GP">
+<meta property="og:title" content="Cart Slop GP — Arcade Kart Racing &amp; 8-Player Party Mayhem">
+<meta property="og:description" content="Hop-drift a twin-thruster shopping cart across 5 living circuits, brawl in 9 party arenas, and race 8 players on LAN or online. v0.8.7 is out.">
+<meta property="og:url" content="https://hot18594.github.io/CartSlopGP/">
+<meta property="og:image" content="https://hot18594.github.io/CartSlopGP/assets/og-image.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Cart Slop GP — an arcade shopping-cart racer, v0.8.7">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Cart Slop GP — Arcade Kart Racing &amp; 8-Player Party Mayhem">
+<meta name="twitter:description" content="5 living circuits. 9 party arenas. 8 players. v0.8.7: LAN races now join direct at 6-7 ms, one authoritative leaderboard, and 5x faster loads.">
+<meta name="twitter:image" content="https://hot18594.github.io/CartSlopGP/assets/og-image.png">
+<meta name="twitter:image:alt" content="Cart Slop GP — an arcade shopping-cart racer, v0.8.7">
+
+<link rel="preload" href="assets/fonts/LuckiestGuy-Regular.ttf" as="font" type="font/ttf" crossorigin>
+<link rel="preload" href="assets/fonts/Fredoka-Medium.ttf" as="font" type="font/ttf" crossorigin>
+<link rel="preload" href="assets/hero.webp" as="image" type="image/webp">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+
+<header class="site-header">
+  <div class="shell nav-shell">
+    <a class="brand" href="#top" aria-label="Cart Slop GP home">
+      <img src="assets/brand/logo-64.png" alt="Cart Slop GP app icon" width="32" height="32">
+      <span class="brand-word">CART SLOP <em>GP</em></span>
+    </a>
+    <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" id="navToggle">
+      <span class="nav-toggle-bar" aria-hidden="true"></span>
+      <span class="nav-toggle-bar" aria-hidden="true"></span>
+      <span class="nav-toggle-bar" aria-hidden="true"></span>
+      <span class="sr-only">Menu</span>
+    </button>
+    <nav class="site-nav" id="site-nav" aria-label="Primary">
+      <a href="#highlights">What's new</a>
+      <a href="#features">Features</a>
+      <a href="#modes">Modes</a>
+      <a href="#multiplayer">Multiplayer</a>
+      <a href="#download">Download</a>
+      <a class="nav-cta" href="https://github.com/HOT18594/CartSlopGP/releases/latest" rel="noopener">Get 0.8.7</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+
+<section class="hero" id="top" aria-labelledby="hero-title">
+  <div class="hero-art" aria-hidden="true">
+    <picture>
+      <source srcset="assets/hero.webp" type="image/webp">
+      <img src="assets/hero.jpg" alt="" width="1280" height="720" fetchpriority="high">
+    </picture>
+  </div>
+  <div class="hero-shade" aria-hidden="true"></div>
+  <div class="shell hero-inner">
+    <p class="eyebrow"><span class="eyebrow-chip">v0.8.7</span> <span class="eyebrow-text">THE LAN LATENCY &amp; LEADERBOARD UPDATE</span></p>
+    <h1 class="display" id="hero-title">CART SLOP <span class="accent">GP</span></h1>
+    <p class="hero-tagline">High-energy comic-arcade kart racing and <strong>8-player party mayhem</strong>. Hop-drift a twin-thruster shopping cart through five living circuits, then brawl across nine 3D arenas in Knockout, Blast Tag and Deliver.</p>
+    <div class="hero-actions">
+      <a class="btn btn-primary" href="https://github.com/HOT18594/CartSlopGP/releases/latest" rel="noopener">Download v0.8.7</a>
+      <a class="btn btn-ghost" href="#download">All platforms &amp; Web</a>
+    </div>
+    <ul class="hero-stats" aria-label="Game at a glance">
+      <li><strong>8</strong><span>players</span></li>
+      <li><strong>5</strong><span>circuits</span></li>
+      <li><strong>9</strong><span>arenas</span></li>
+      <li><strong>4</strong><span>platforms</span></li>
+    </ul>
+  </div>
+</section>
+
+<div class="ticker" aria-hidden="true">
+  <div class="ticker-track">
+    <span>DIRECT-LAN JOINS · 6–7&nbsp;MS</span><i></i>
+    <span>ONE AUTHORITATIVE LEADERBOARD</span><i></i>
+    <span>UP TO 5× FASTER RACE LOADS</span><i></i>
+    <span>100% BLACK-SLANTED UI</span><i></i>
+    <span>8-PLAYER ONLINE &amp; LAN</span><i></i>
+    <span>DIRECT-LAN JOINS · 6–7&nbsp;MS</span><i></i>
+    <span>ONE AUTHORITATIVE LEADERBOARD</span><i></i>
+    <span>UP TO 5× FASTER RACE LOADS</span><i></i>
+    <span>100% BLACK-SLANTED UI</span><i></i>
+    <span>8-PLAYER ONLINE &amp; LAN</span><i></i>
+  </div>
+</div>
+
+<section class="section" id="highlights" aria-labelledby="highlights-title">
+  <div class="shell">
+    <header class="section-head reveal">
+      <p class="kicker">PATCH NOTES · 2026-11-25</p>
+      <h2 class="display" id="highlights-title">WHAT'S NEW IN <span class="accent">0.8.7</span></h2>
+      <p class="section-lede">A multiplayer-correctness, latency and load-time release. Same karts, same chaos — sharper under the hood and behind the wheel.</p>
+    </header>
+    <div class="highlight-grid">
+      <article class="panel reveal">
+        <p class="panel-tag">LATENCY</p>
+        <h3>LAN races join direct</h3>
+        <p class="panel-metric">50–70&nbsp;ms → <span class="good">6–7&nbsp;ms</span></p>
+        <p>Same-network players now try a direct ENet link before the relay. Behind the Pi's relay the round trip still dropped to ~27–34&nbsp;ms, and TCP_NODELAY + keep-alive removed the hidden stalls.</p>
+      </article>
+      <article class="panel reveal">
+        <p class="panel-tag">FAIRNESS</p>
+        <h3>One leaderboard for everyone</h3>
+        <p class="panel-metric">Host-authoritative <span class="good">standings</span></p>
+        <p>The host builds a single revisioned standings snapshot every client accepts in order. Finish times are RTT-compensated and ties break deterministically, so close racing ends identically on every screen.</p>
+      </article>
+      <article class="panel reveal">
+        <p class="panel-tag">PERFORMANCE</p>
+        <h3>Up to 5× faster race loads</h3>
+        <p class="panel-metric">Stadium <span class="good">10.8s → 2.8s</span></p>
+        <p>A bucketed centreline index makes nearest-point queries 13.5× faster, with a permanent spline-index audit proving the fast answer matches a brute-force scan on every map.</p>
+      </article>
+      <article class="panel reveal">
+        <p class="panel-tag">UI</p>
+        <h3>100% black-slanted UI</h3>
+        <p class="panel-metric">All <span class="good">56 screens</span> audited</p>
+        <p>Every menu, pause screen, settings page and multiplayer end card now shares one crisp slanted dark-glass language — verified at 1280×720 and 1920×1080 with zero layout overflows.</p>
+      </article>
+    </div>
+  </div>
+</section>
+
+<section class="section section-alt" id="features" aria-labelledby="features-title">
+  <div class="shell">
+    <header class="section-head reveal">
+      <p class="kicker">THE GAME</p>
+      <h2 class="display" id="features-title">BUILT FOR <span class="accent">MAYHEM</span></h2>
+    </header>
+    <div class="feature-grid">
+      <article class="feature reveal">
+        <span class="feature-num">01</span>
+        <h3>Hop-drift &amp; boost</h3>
+        <p>Snap the cart sideways, land the drift and fire the twin thrusters. Weighty arcade handling with per-vehicle physics and a boosting ability dock.</p>
+      </article>
+      <article class="feature reveal">
+        <span class="feature-num">02</span>
+        <h3>Hero cart &amp; paint shop</h3>
+        <p>Race the coaxial twin-thruster Hero Shopping Cart or a Pro Racer, then take it to the 8-colour live paint shop before the race starts.</p>
+      </article>
+      <article class="feature reveal">
+        <span class="feature-num">03</span>
+        <h3>Living worlds</h3>
+        <p>Seven themed ambient FX palettes — blizzard, sand, pollen, embers, sea mist and more — with quality tiers that keep a browser tab playable.</p>
+      </article>
+      <article class="feature reveal">
+        <span class="feature-num">04</span>
+        <h3>Six-track OST</h3>
+        <p>Custom-mastered OGG tracks with a three-deck equal-power crossfade engine. Music never hard-cuts between menus, races and results.</p>
+      </article>
+      <article class="feature reveal">
+        <span class="feature-num">05</span>
+        <h3>Split-second feedback</h3>
+        <p>Per-cart tyre marks, squash-and-stretch body roll, landing compression and springy suspension — purely visual, driven from replicated state.</p>
+      </article>
+      <article class="feature reveal">
+        <span class="feature-num">06</span>
+        <h3>Cross-platform</h3>
+        <p>Windows, macOS (universal), Linux and Web from one Godot 4.7.2 project. The browser build auto-detects low-end hardware and trims itself.</p>
+      </article>
+    </div>
+  </div>
+</section>
+
+<section class="section" id="modes" aria-labelledby="modes-title">
+  <div class="shell">
+    <header class="section-head reveal">
+      <p class="kicker">FIVE WAYS TO RACE</p>
+      <h2 class="display" id="modes-title">PICK YOUR <span class="accent">CHAOS</span></h2>
+    </header>
+    <div class="mode-list">
+      <article class="mode reveal" style="--mode:#45b6f0">
+        <h3><span>RACING</span><small>5 circuits</small></h3>
+        <p>Stadium circuit, Glacier Pass, Dockyard, Canyon and Meadow — each a real 3D circuit with jumps, elevation and a different weather palette.</p>
+      </article>
+      <article class="mode reveal" style="--mode:#ffd22e">
+        <h3><span>DELIVER</span><small>cargo rush</small></h3>
+        <p>Two teams, one cart, far too much cargo. Grab, ferry and smash deliveries into the target while the other team does its best to ruin the day.</p>
+      </article>
+      <article class="mode reveal" style="--mode:#f2545b">
+        <h3><span>KNOCKOUT</span><small>bumper royale</small></h3>
+        <p>Knock rivals out of the arena ring by ring until one cart is left standing. No laps, no mercy.</p>
+      </article>
+      <article class="mode reveal" style="--mode:#ff922b">
+        <h3><span>BLAST TAG</span><small>hot potato</small></h3>
+        <p>A lit fuse bounces between players. Hold it too long and the arena will remember you fondly.</p>
+      </article>
+      <article class="mode reveal" style="--mode:#a06cff">
+        <h3><span>SANDBOX</span><small>stunt park</small></h3>
+        <p>The SlopMart Stunt Park: ramps, loops and free-play mayhem with no rules to obey.</p>
+      </article>
+    </div>
+  </div>
+</section>
+
+<section class="section section-alt" id="multiplayer" aria-labelledby="mp-title">
+  <div class="shell mp-shell">
+    <div class="mp-copy reveal">
+      <p class="kicker">ONLINE &amp; LAN</p>
+      <h2 class="display" id="mp-title">EIGHT PLAYERS, <span class="accent">ONE CART-PILE</span></h2>
+      <p>Host a room, share a five-letter code, and friends are in — through the relay from anywhere, or straight across the home network. The Pi keeps the lobby and the scoreboard honest; every client renders the same authoritative result.</p>
+      <ul class="check-list">
+        <li>5-letter room codes and a LAN room browser</li>
+        <li>Direct-LAN shortcut when peers share a network</li>
+        <li>Host-authoritative standings with RTT compensation</li>
+        <li>Synced car pick, paint and team auto-arrange</li>
+      </ul>
+    </div>
+    <div class="mp-card reveal" aria-hidden="true">
+      <div class="mp-card-top">
+        <span class="mp-dot"></span><span>ROOM FOUND</span>
+      </div>
+      <p class="mp-code">SLOP!</p>
+      <dl class="mp-readout">
+        <div><dt>PING</dt><dd>6<span>ms</span></dd></div>
+        <div><dt>PLAYERS</dt><dd>8<span>/8</span></dd></div>
+        <div><dt>MODE</dt><dd>KO</dd></div>
+      </dl>
+      <p class="mp-note">LAN direct · leaderboard synced</p>
+    </div>
+  </div>
+</section>
+
+<section class="section download" id="download" aria-labelledby="download-title">
+  <div class="shell">
+    <header class="section-head reveal">
+      <p class="kicker">RELEASE 0.8.7</p>
+      <h2 class="display" id="download-title">GET THE <span class="accent">GAME</span></h2>
+      <p class="section-lede">Free to download, no account needed. Pick a platform or play instantly in the browser.</p>
+    </header>
+    <div class="download-grid">
+      <a class="platform reveal" href="https://github.com/HOT18594/CartSlopGP/releases/latest" rel="noopener">
+        <span class="platform-name">Windows</span>
+        <span class="platform-detail">64-bit · self-contained .exe</span>
+        <span class="platform-arrow" aria-hidden="true">→</span>
+      </a>
+      <a class="platform reveal" href="https://github.com/HOT18594/CartSlopGP/releases/latest" rel="noopener">
+        <span class="platform-name">macOS</span>
+        <span class="platform-detail">Apple Silicon + Intel · universal .app</span>
+        <span class="platform-arrow" aria-hidden="true">→</span>
+      </a>
+      <a class="platform reveal" href="https://github.com/HOT18594/CartSlopGP/releases/latest" rel="noopener">
+        <span class="platform-name">Linux</span>
+        <span class="platform-detail">x86_64 · executable binary</span>
+        <span class="platform-arrow" aria-hidden="true">→</span>
+      </a>
+      <a class="platform reveal" href="https://cartslop.local:42777/play" rel="noopener" title="Browser launcher hosted on the Cart Slop Pi (local network). A public Cloudflare-hosted link is prepared in web_deploy/.">
+        <span class="platform-name">Web</span>
+        <span class="platform-detail">Godot Web export · play in a browser</span>
+        <span class="platform-arrow" aria-hidden="true">→</span>
+      </a>
+    </div>
+    <div class="download-foot reveal">
+      <a class="btn btn-primary" href="https://github.com/HOT18594/CartSlopGP/releases/latest" rel="noopener">Latest release on GitHub</a>
+      <p>Windows builds are unsigned (SmartScreen may warn). macOS builds are ad-hoc signed and ask for Local Network access on first LAN play — allow it for multiplayer.</p>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer class="site-footer">
+  <div class="shell footer-shell">
+    <div class="footer-brand">
+      <img src="assets/brand/logo-64.png" alt="" width="40" height="40" loading="lazy">
+      <div>
+        <p class="footer-word">CART SLOP GP</p>
+        <p class="footer-tag">Arcade kart racing &amp; party mayhem</p>
+      </div>
+    </div>
+    <nav class="footer-nav" aria-label="Footer">
+      <a href="#highlights">What's new</a>
+      <a href="#modes">Modes</a>
+      <a href="#download">Download</a>
+      <a href="https://github.com/HOT18594/CartSlopGP" rel="noopener">GitHub</a>
+    </nav>
+    <p class="footer-legal">© <span id="year">2026</span> Cart Slop GP · Built with Godot 4.7.2 · MIT licensed. All brand art © the project.</p>
+  </div>
+</footer>
+
+<script src="main.js" defer></script>
+</body>
+</html>

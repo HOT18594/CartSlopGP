@@ -125,7 +125,20 @@ func _rpc_sender() -> int:
 	## a null multiplayer peer.
 	return multiplayer.get_remote_sender_id() if multiplayer.multiplayer_peer != null else 0
 
+## WS5P3-04: the room ended while this scene was streaming. Never start a
+## silent offline sandbox; return to the lobby with the disconnect notice instead.
+func _abort_stale_session_load() -> void:
+	SceneLoader.go_to(Network.LOBBY_SCENE, "SESSION ENDED",
+		"The room ended before the match could start.",
+		SceneLoader.network_priority())
+
 func _ready() -> void:
+	# WS5P3-04 guard: only an authoritative (network-priority) load can be
+	# stale-session; a solo sandbox start is never cancelled by this check.
+	if SceneLoader.active_priority() > 0 \
+			and Network.consume_session_ended_during_load():
+		call_deferred("_abort_stale_session_load")
+		return
 	CursorController.set_menu_mode(false)
 	VisualGrade.apply($WorldEnvironment, "sandbox")
 	VisualGrade.apply_sun($Sun)

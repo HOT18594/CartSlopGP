@@ -18,6 +18,8 @@ extends Node
 
 const HOST_WAIT_MS: int = 25000
 const CLIENT_WAIT_MS: int = 25000
+## Deterministic standings reconciliation shared by the ranked modes.
+const StandingsReconciler := preload("res://scripts/net/standings_reconciler.gd")
 
 var _failures: int = 0
 var _mode: String = "unit"
@@ -79,6 +81,8 @@ func _run_unit() -> void:
 	_run_relay_url_checks()
 	_run_platform_checks()
 	_run_multiplayer_sync_checks()
+	_run_standings_reconciliation_checks()
+	_run_lan_route_checks()
 
 
 func _run_multiplayer_sync_checks() -> void:
@@ -129,6 +133,143 @@ func _run_multiplayer_sync_checks() -> void:
 	Network.clear_scene_ready()
 	Network.is_client = false
 	Network.in_game = false
+
+
+func _run_standings_reconciliation_checks() -> void:
+	## Owner-visible bug: "players see different final standings after the same
+	## race". The fix is one canonical host snapshot with deterministic ordering
+	## and strictly monotonic client acceptance; these checks pin that contract.
+	var rows: Array = [
+		{"id": 5, "name": "E", "finished": false, "progress": 100.0},
+		{"id": 2, "name": "B", "finished": true, "finish_time": 61.5},
+		{"id": 9, "name": "D", "finished": true, "finish_time": 60.0},
+		{"id": 3, "name": "A", "finished": false, "progress": 100.0},
+		{"id": 7, "name": "C", "finished": false, "progress": 140.0},
+	]
+	var sorted: Array[Dictionary] = StandingsReconciler.sort_rows(rows)
+	_check(int(sorted[0]["id"]) == 9, "standings: earliest finisher ranks first")
+	_check(int(sorted[1]["id"]) == 2, "standings: later finisher ranks second")
+	_check(int(sorted[2]["id"]) == 7, "standings: racing leader ranks by distance")
+	_check(int(sorted[3]["id"]) == 3, "standings: equal-distance tie breaks by id asc")
+	_check(int(sorted[4]["id"]) == 5, "standings: remaining racer follows")
+	_check(int(sorted[0]["place"]) == 1 and int(sorted[4]["place"]) == 5,
+		"standings: every row gets a 1-based place")
+	var shuffled: Array = [rows[3], rows[0], rows[2], rows[4], rows[1]]
+	var sorted_again: Array[Dictionary] = StandingsReconciler.sort_rows(shuffled)
+	for index in sorted.size():
+		_check(int(sorted_again[index]["id"]) == int(sorted[index]["id"]),
+			"standings: order is identical for pasted-in-different-order rows")
+	# Equal crossing times must still produce one order on every peer.
+	var tie: Array[Dictionary] = StandingsReconciler.sort_rows([
+		{"id": 8, "name": "H", "finished": true, "finish_time": 30.0},
+		{"id": 4, "name": "F", "finished": true, "finish_time": 30.0},
+	])
+	_check(int(tie[0]["id"]) == 4 and int(tie[1]["id"]) == 8,
+		"standings: equal finish times tie break by id asc")
+	# Sanitising: a hostile/corrupt row cannot poison the HUD or shrink the field.
+	var clean: Dictionary = StandingsReconciler.sanitize_row({
+		"id": 4, "name": "X".repeat(64), "finished": true,
+		"finish_time": NAN, "progress": INF, "total": -3.0, "best": 12.0,
+	})
+	_check(not clean.is_empty() and int(clean["id"]) == 4,
+		"standings: a corrupt row is clamped instead of dropped")
+	_check(not bool(clean["finished"]) and float(clean["finish_time"]) == -1.0,
+		"standings: non-finite finish time is rejected")
+	_check(float(clean["progress"]) == 0.0, "standings: non-finite progress is clamped")
+	_check(str(clean["name"]).length() <= 24, "standings: long names are truncated")
+	_check(StandingsReconciler.sanitize_row({"name": "no id"}).is_empty(),
+		"standings: a row without an id is rejected")
+	_check(StandingsReconciler.sanitize_row("garbage").is_empty(),
+		"standings: a non-dictionary row is rejected")
+	var capped: Array = []
+	for i in 40:
+		capped.append({"id": i + 1, "name": "P%d" % i, "finished": false,
+			"progress": float(i)})
+	_check(StandingsReconciler.sort_rows(capped).size() == StandingsReconciler.MAX_ROWS,
+		"standings: row count is capped")
+
+	# Revisioned snapshot acceptance: duplicates/stale/older packets are ignored
+	# and an epoch change starts a new race.
+	var first: Dictionary = StandingsReconciler.build(7, 1, rows, false)
+	var state: Dictionary = StandingsReconciler.accept(
+		StandingsReconciler.new_snapshot(7), first)
+	_check(int(state["rev"]) == 1 and int(state["epoch"]) == 7,
+		"standings: first snapshot is accepted")
+	var stale: Dictionary = StandingsReconciler.accept(state, first)
+	_check(int(stale["rev"]) == 1, "standings: a duplicate snapshot is ignored")
+	var older: Dictionary = StandingsReconciler.build(7, 0, rows, true)
+	_check(int(StandingsReconciler.accept(state, older)["rev"]) == 1,
+		"standings: a zero-revision packet is ignored")
+	var newer: Dictionary = StandingsReconciler.build(7, 2, rows, true)
+	var accepted: Dictionary = StandingsReconciler.accept(state, newer)
+	_check(int(accepted["rev"]) == 2 and bool(accepted["final"]),
+		"standings: a newer final snapshot is accepted")
+	var reopened: Dictionary = StandingsReconciler.accept(accepted,
+		StandingsReconciler.build(7, 3, rows, false))
+	_check(bool(reopened["final"]) and int(reopened["rev"]) == 2,
+		"standings: a non-final revision never reopens a final result")
+	var next_race: Dictionary = StandingsReconciler.accept(accepted,
+		StandingsReconciler.build(8, 1, rows, false))
+	_check(int(next_race["epoch"]) == 8 and int(next_race["rev"]) == 1,
+		"standings: a new epoch resets revision tracking")
+	_check(int(StandingsReconciler.accept(accepted,
+		{"epoch": 7, "rev": 5, "rows": "not-an-array"})["rev"]) == 2,
+		"standings: a malformed row array is ignored")
+	var places: Dictionary = StandingsReconciler.places(accepted)
+	_check(int(places.get(9, 0)) == 1, "standings: places map exposes first place")
+	_check(StandingsReconciler.rows_by_id(accepted).has(2),
+		"standings: rows_by_id exposes every competitor")
+
+
+func _run_lan_route_checks() -> void:
+	## Same-LAN peers must be able to prefer a LAN/direct path. The owner's Pi
+	## journal showed a WARP/public registration (`host=172.3.167.243`) while
+	## both PCs sat on 192.168.1.0/24; these checks pin the address-selection
+	## pieces of that fix without needing a live relay.
+	_check(Network._interface_score({"name": "{GUID}", "friendly": "CloudflareWARP"}) < 0,
+		"Cloudflare WARP adapter is rejected as a LAN interface")
+	_check(Network._interface_score({"name": "warp-svc", "friendly": ""}) < 0,
+		"WARP service adapter is rejected")
+	var local: String = Network._local_ip()
+	if Network._valid_ip(local) and not local.begins_with("127."):
+		var on_lan: String = Network._lan_relay_candidate(
+			{"lan_ip": local, "http_port": 42777})
+		_check(on_lan == "http://%s:42777" % local,
+			"LAN relay candidate is the Pi LAN address when on our subnet")
+		var direct: Dictionary = Network._room_direct_endpoint(
+			{"host_ip": local, "host_port": 8910})
+		_check(str(direct.get("host", "")) == local
+			and int(direct.get("port", 0)) == 8910,
+			"direct LAN endpoint accepts a same-subnet host address")
+	else:
+		print("PASS  SKIP  local LAN address checks (no physical LAN address here)")
+	_check(Network._lan_relay_candidate(
+		{"lan_ip": "68.204.45.1", "http_port": 42777}) == "",
+		"public relay address is never used as a LAN relay candidate")
+	_check(Network._lan_relay_candidate(
+		{"lan_ip": "100.64.1.1", "http_port": 42777}) == "",
+		"CGNAT/VPN overlay address is never used as a LAN relay candidate")
+	_check(Network._room_direct_endpoint(
+		{"host_ip": "68.204.45.1", "host_port": 8910}).is_empty(),
+		"direct LAN endpoint rejects a public host address")
+	_check(Network._room_direct_endpoint(
+		{"host_ip": "192.168.1.4"}).is_empty(),
+		"direct LAN endpoint requires a port")
+	_check(Network._room_direct_endpoint({}).is_empty(),
+		"direct LAN endpoint is empty on a 1.8.0 room row (relay join)")
+	_check(not Network.is_direct_link(),
+		"solo/idle session does not claim a direct link")
+	# Relay tunnel: TCP_NODELAY must not be attempted before the socket exists
+	# (the old call was silently rejected by the engine, leaving Nagle on).
+	var tunnel: Node = Network.RelayTunnel.new()
+	Network.add_child(tunnel)
+	tunnel._apply_no_delay()
+	_check(not bool(tunnel._nodelay_applied),
+		"relay tunnel defers TCP_NODELAY until the socket is connected")
+	tunnel.queue_free()
+	# The relay fallback must be a harmless no-op when no direct join is live.
+	Network._fallback_to_relay_join()
+	_check(true, "direct-join relay fallback is a no-op without a direct attempt")
 
 
 func _run_address_checks() -> void:

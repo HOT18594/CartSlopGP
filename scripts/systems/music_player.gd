@@ -20,6 +20,16 @@ const BOOT_FADE_IN: float = 1.4 ## Gentle initial bloom on startup.
 const LOOP_BLEND_SEC: float = 4.0 ## Overlap crossfade when a song wraps around.
 const MUSIC_LEVEL_DB: float = -6.5 ## Balanced headroom under SFX and engines.
 const SILENT_DB: float = -72.0
+## A three-deck pool: two decks for the audible crossfade, one spare so a track
+## change that arrives mid-fade never has to hard-stop the outgoing stream. The
+## spare deck is what removes the click when menus are clicked through quickly.
+const DECK_COUNT: int = 3
+## A pre-blended destination track holds while its scene loads. This is a safety
+## cap only: the hold normally ends when the target scene becomes current.
+const TRANSITION_LOCK_MAX: float = 12.0
+## Retired decks (interrupted crossfades) fade out over this window so no
+## stream is ever cut while it is still audible.
+const RETIRE_FADE_SEC: float = 0.9
 
 const FILTER_OPEN_HZ: float = 20500.0
 const FILTER_TRANSITION_HZ: float = 4600.0
@@ -42,6 +52,13 @@ var _xfade_to: int = -1
 var _xfade_is_loop: bool = false
 var _xfade_has_outgoing: bool = false
 var _fading_out_only: bool = false
+## Linear gain the outgoing deck had when this crossfade began (1.0 for a fresh
+## swap). Re-entering a fade from a partly faded deck therefore starts from the
+## current level instead of jumping back to full volume.
+var _xfade_out_start_gain: float = 1.0
+## Decks from an interrupted crossfade. Each keeps fading to silence on its own
+## envelope instead of being stopped mid-note by the next `play_track()`.
+var _retiring: Array[Dictionary] = []
 
 ## Remember menu playback offset so returning from races feels fresh rather
 ## than hearing the first 5 seconds of the menu theme every time.
@@ -52,6 +69,7 @@ var _lowpass: AudioEffectLowPassFilter
 var _filter_hz: float = FILTER_OPEN_HZ
 var _duck_db: float = 0.0
 var _transition_target_track: String = ""
+var _transition_target_scene: String = ""
 var _transition_lock_timer: float = 0.0
 
 
@@ -64,7 +82,7 @@ func _ready() -> void:
 	_ensure_music_bus()
 	_ensure_music_filter()
 	process_mode = Node.PROCESS_MODE_ALWAYS
-	for _index in 2:
+	for _index in DECK_COUNT:
 		var player := AudioStreamPlayer.new()
 		player.bus = "Music"
 		player.volume_db = SILENT_DB
@@ -109,10 +127,7 @@ func _reroute_players() -> void:
 
 func _process(delta: float) -> void:
 	var dt: float = minf(delta, 0.1)
-	if _transition_lock_timer > 0.0:
-		_transition_lock_timer = maxf(_transition_lock_timer - dt, 0.0)
-		if _transition_lock_timer <= 0.0:
-			_transition_target_track = ""
+	_update_transition_hold(dt)
 
 	_update_crossfade(dt)
 	_update_loop_blend()
@@ -135,6 +150,31 @@ func _process(delta: float) -> void:
 	var wanted: String = _track_for_current_scene()
 	if wanted != current_track:
 		play_track(wanted)
+
+
+func _current_scene_path() -> String:
+	var tree: SceneTree = get_tree()
+	if tree == null or tree.current_scene == null:
+		return ""
+	return tree.current_scene.scene_file_path
+
+
+func _update_transition_hold(dt: float) -> void:
+	## The hold normally ends the moment the destination scene becomes current,
+	## so a long load can never outlive the lock and bounce back to the outgoing
+	## screen's track. TRANSITION_LOCK_MAX is only a safety net for a load that
+	## fails outright.
+	if _transition_target_scene != "" \
+			and _current_scene_path() == _transition_target_scene:
+		_transition_target_scene = ""
+		_transition_target_track = ""
+		_transition_lock_timer = 0.0
+		return
+	if _transition_lock_timer > 0.0:
+		_transition_lock_timer = maxf(_transition_lock_timer - dt, 0.0)
+		if _transition_lock_timer <= 0.0:
+			_transition_target_track = ""
+			_transition_target_scene = ""
 
 
 func _track_for_current_scene() -> String:
@@ -168,7 +208,8 @@ func transition_to_scene(scene_path: String) -> void:
 	if wanted == "" or wanted == current_track:
 		return
 	_transition_target_track = wanted
-	_transition_lock_timer = 3.0
+	_transition_target_scene = scene_path
+	_transition_lock_timer = TRANSITION_LOCK_MAX
 	play_track(wanted, FADE_TIME + 0.4)
 
 
@@ -195,6 +236,10 @@ func stop_music(fade: float = FADE_TIME) -> void:
 	var active_player: AudioStreamPlayer = _players[_active]
 	if not active_player.playing:
 		return
+	# A crossfade already in flight has a second audible deck: retire it on its
+	# own envelope so this stop can never cut it mid-note.
+	if _xfading and _xfade_from != -1 and _xfade_from != _active:
+		_retire_deck(_xfade_from)
 	_xfading = true
 	_fading_out_only = true
 	_xfade_is_loop = false
@@ -203,6 +248,7 @@ func stop_music(fade: float = FADE_TIME) -> void:
 	_xfade_from = _active
 	_xfade_to = -1
 	_xfade_has_outgoing = true
+	_xfade_out_start_gain = _current_deck_gain(_active)
 
 
 func play_track(track_name: String, fade: float = FADE_TIME) -> void:
@@ -225,7 +271,12 @@ func play_track(track_name: String, fade: float = FADE_TIME) -> void:
 		stop_music(fade)
 		return
 
-	var next_index: int = 1 - _active
+	# An interrupted crossfade leaves the previous outgoing deck playing. Let it
+	# finish fading on a spare deck instead of stopping it mid-note, then pick a
+	# free deck for the new track.
+	if _xfading and _xfade_from != -1 and _xfade_from != old_index:
+		_retire_deck(_xfade_from)
+	var next_index: int = _free_deck(old_index)
 	var next: AudioStreamPlayer = _players[next_index]
 	next.stop()
 	next.stream = stream
@@ -243,7 +294,7 @@ func play_track(track_name: String, fade: float = FADE_TIME) -> void:
 	next.play(start_pos)
 	_active = next_index
 
-	var had_outgoing: bool = old.playing and prev_track != ""
+	var had_outgoing: bool = old.playing and prev_track != "" and old_index != next_index
 	var dur: float = fade if had_outgoing else minf(fade, BOOT_FADE_IN)
 	_xfading = true
 	_fading_out_only = false
@@ -253,6 +304,97 @@ func play_track(track_name: String, fade: float = FADE_TIME) -> void:
 	_xfade_from = old_index if had_outgoing else -1
 	_xfade_to = next_index
 	_xfade_has_outgoing = had_outgoing
+	_xfade_out_start_gain = _current_deck_gain(old_index) if had_outgoing else 0.0
+
+
+func _current_deck_gain(index: int) -> float:
+	## Linear gain of a deck relative to the current music level, clamped to
+	## 0..1 so re-entering a fade from a partly faded stream starts where it is.
+	if index < 0 or index >= _players.size():
+		return 0.0
+	var peak_db: float = MUSIC_LEVEL_DB + _duck_db
+	var gain: float = db_to_linear(_players[index].volume_db - peak_db)
+	return clampf(gain, 0.0, 1.0)
+
+
+func _free_deck(avoid: int) -> int:
+	## First deck that is neither the outgoing deck, the audible target, a
+	## mid-fade deck nor a retiring deck. With DECK_COUNT = 3 that is normally
+	## the spare, which is why fast menu clicks never hard-stop a stream.
+	var busy: Dictionary = {}
+	busy[avoid] = true
+	if _xfading:
+		if _xfade_from != -1:
+			busy[_xfade_from] = true
+		if _xfade_to != -1:
+			busy[_xfade_to] = true
+	for item: Dictionary in _retiring:
+		busy[int(item.get("player", -1))] = true
+	for index in _players.size():
+		if not busy.has(index):
+			return index
+	# Rapid track spam can occupy every deck. Reuse the quietest one: it is the
+	# least audible cut possible, and it is already near silence.
+	var quietest: int = -1
+	var quietest_db: float = INF
+	for index in _players.size():
+		if index == avoid:
+			continue
+		var level: float = _players[index].volume_db
+		if level < quietest_db:
+			quietest_db = level
+			quietest = index
+	if quietest == -1:
+		quietest = (avoid + 1) % _players.size()
+	for item_index in range(_retiring.size() - 1, -1, -1):
+		if int(_retiring[item_index].get("player", -1)) == quietest:
+			_retiring.remove_at(item_index)
+	_players[quietest].stop()
+	_players[quietest].volume_db = SILENT_DB
+	return quietest
+
+
+func _retire_deck(index: int) -> void:
+	## Hands one deck to the retiring list: it fades to silence over
+	## RETIRE_FADE_SEC and is then stopped, so no stream is ever cut while
+	## audible.
+	if index < 0 or index >= _players.size():
+		return
+	for item: Dictionary in _retiring:
+		if int(item.get("player", -1)) == index:
+			return
+	var player: AudioStreamPlayer = _players[index]
+	if not player.playing:
+		player.volume_db = SILENT_DB
+		return
+	_retiring.append({
+		"player": index,
+		"start_db": player.volume_db,
+		"elapsed": 0.0,
+		"duration": RETIRE_FADE_SEC,
+	})
+
+
+func _update_retiring(dt: float) -> void:
+	for index in range(_retiring.size() - 1, -1, -1):
+		var item: Dictionary = _retiring[index]
+		var player_index: int = int(item.get("player", -1))
+		if player_index < 0 or player_index >= _players.size():
+			_retiring.remove_at(index)
+			continue
+		var player: AudioStreamPlayer = _players[player_index]
+		var duration: float = maxf(float(item.get("duration", RETIRE_FADE_SEC)), 0.05)
+		item["elapsed"] = float(item.get("elapsed", 0.0)) + dt
+		var t: float = clampf(float(item["elapsed"]) / duration, 0.0, 1.0)
+		var smooth: float = t * t * (3.0 - 2.0 * t)
+		var start_db: float = float(item.get("start_db", SILENT_DB))
+		if is_instance_valid(player) and player.playing:
+			player.volume_db = lerpf(start_db, SILENT_DB, smooth)
+		if not is_instance_valid(player) or not player.playing or t >= 1.0:
+			if is_instance_valid(player):
+				player.stop()
+				player.volume_db = SILENT_DB
+			_retiring.remove_at(index)
 
 
 func _trigger_self_loop_blend() -> void:
@@ -263,7 +405,7 @@ func _trigger_self_loop_blend() -> void:
 	if old.stream == null or not old.playing:
 		return
 
-	var next_index: int = 1 - _active
+	var next_index: int = _free_deck(old_index)
 	var next: AudioStreamPlayer = _players[next_index]
 	next.stop()
 	next.stream = old.stream
@@ -279,11 +421,14 @@ func _trigger_self_loop_blend() -> void:
 	_xfade_from = old_index
 	_xfade_to = next_index
 	_xfade_has_outgoing = true
+	_xfade_out_start_gain = 1.0
 
 
 func _update_crossfade(dt: float) -> void:
 	if _players.size() < 2:
 		return
+	# Retired decks keep fading even when no primary crossfade is running.
+	_update_retiring(dt)
 	var target_db: float = MUSIC_LEVEL_DB + _duck_db
 	if not _xfading:
 		var active_p: AudioStreamPlayer = _players[_active]
@@ -302,7 +447,10 @@ func _update_crossfade(dt: float) -> void:
 	if _xfade_from != -1:
 		var out_p: AudioStreamPlayer = _players[_xfade_from]
 		if out_p.playing:
-			out_p.volume_db = _gain_to_db(out_gain, target_db)
+			# Start from the gain the outgoing deck actually had: a fade that was
+			# interrupted mid-way must not jump back to full volume.
+			var shaped: float = clampf(_xfade_out_start_gain * out_gain, 0.0, 1.0)
+			out_p.volume_db = _gain_to_db(shaped, target_db)
 
 	if not _fading_out_only and _xfade_to != -1:
 		var in_p: AudioStreamPlayer = _players[_xfade_to]
@@ -323,6 +471,7 @@ func _update_crossfade(dt: float) -> void:
 		_xfade_is_loop = false
 		_xfade_from = -1
 		_xfade_to = -1
+		_xfade_out_start_gain = 0.0
 
 
 func _update_loop_blend() -> void:

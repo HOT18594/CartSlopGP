@@ -5,14 +5,22 @@ extends Node
 ## (>= 120 px tall) are left alone.
 ##
 ## The system is deliberately small: one corner radius (16), one spacing scale
-## (8 / 16 / 24), one accent (yellow) and three text sizes (title, label,
+## (10 / 14 / 18 / 28), one accent (yellow) and three text sizes (title, label,
 ## caption). Pages group content with gaps and tint blocks, never with rules or
-## boxed-in rows.
+## boxed-in rows. Every modal shell and result card is built from
+## `modal_panel()` / `row_style()` / `banner_style()` so screens cannot drift
+## apart again.
 ##
 ## Controls are keyboard/gamepad focusable. This kit installs one bright,
 ## high-contrast focus ring (a yellow outline with a dark halo) so the engine's
 ## focus navigation and MenuNav's explicit neighbour map are always visible,
 ## including on yellow candy buttons where the old white ring disappeared.
+##
+## Every LineEdit that enters the tree is also snapped to the shared text-cursor
+## contract in `style_text_input()`: a 0.5 s blink (a caret that never blinks
+## reads as frozen text) and a caret colour picked for real contrast against the
+## field's own fill. The old shared override used `FOCUS_RING_DARK` (#1e1b3a),
+## which is ~1.3:1 on the dark input wells — effectively an invisible caret.
 
 const BUTTON_HEIGHT: float = 60.0
 const BUTTON_MIN_HEIGHT: float = 44.0 ## Floor: roomy enough for crisp slanted typography.
@@ -24,7 +32,13 @@ const FIELD_FONT: int = 19
 const CORNER_RADIUS: int = 16 ## One radius for every tile, control and row.
 const SPACING: int = 18 ## Gap between form rows / screen blocks.
 const SPACING_TIGHT: int = 10 ## Gap inside one row or card.
+const SPACING_MED: int = 14 ## Gap between related rows inside one section.
 const SPACING_WIDE: int = 28 ## Gap between a page and the next big block.
+const MODAL_PAD_H: float = 36.0 ## Inner horizontal padding of a modal shell.
+const MODAL_PAD_V: float = 26.0 ## Inner vertical padding of a modal shell.
+const MODAL_MARGIN: float = 44.0 ## Safe inset around a centered modal page.
+const COMPACT_FONT: int = 18 ## Font size for secondary / compact action pills.
+const TITLE_OUTLINE: int = 8 ## Ink outline on the one page-title style.
 const CAPTION_SIZE: int = 15 ## Secondary explanation line.
 const TITLE_SIZE: int = 40 ## The one page-title size.
 const TILE_MIN_WIDTH: float = 76.0 ## Equal square tiles in an option strip.
@@ -37,6 +51,16 @@ const FOCUS_RING_DARK: Color = Color("1e1b3a")
 const CANDY_BUTTON: String = "res://scripts/ui/candy_button.gd"
 const OPTION_TILES: String = "res://scripts/ui/pill_cycler.gd"
 const UiPalette := preload("res://scripts/ui/ui_palette.gd")
+## Text-cursor contract (see the file docstring): 0.5 s = two blinks a second,
+## fast enough to read as a live cursor and slow enough to stay calm.
+const CARET_BLINK_SECONDS: float = 0.5
+## Caret on a dark input well. UiPalette.YELLOW is ~13:1 against FIELD_FILL
+## (#0d1022) and is visibly different from the cream/white field text.
+const CARET_ON_DARK: Color = UiPalette.YELLOW
+## Caret on a light field (no current screen has one, but the helper must stay
+## correct if a theme ever inverts a field): ink on cream.
+const CARET_ON_LIGHT: Color = UiPalette.INK
+const CARET_LIGHT_LUMINANCE: float = 0.35 ## Above this the field counts as light.
 const SFX_HOVER_PATH: String = "res://assets/audio/sfx/ui/ui_hover.wav"
 const SFX_CLICK_PATH: String = "res://assets/audio/sfx/ui/ui_click.wav"
 const SFX_CONFIRM_PATH: String = "res://assets/audio/sfx/ui/ui_confirm.ogg"
@@ -202,6 +226,86 @@ func glass_panel(bg: Color = UiPalette.SURFACE_GLASS, border: Color = UiPalette.
 	return style
 
 
+func modal_panel(pad_h: float = MODAL_PAD_H, pad_v: float = MODAL_PAD_V,
+		skew: float = 0.045, border_w: int = 4) -> StyleBoxFlat:
+	## The one dark-glass slanted modal shell: canonical fill, cyan glass rim and
+	## the shared drop shadow. Every modal and page panel calls this instead of
+	## re-typing the same six magic numbers.
+	return slanted_panel(UiPalette.SURFACE_MODAL, UiPalette.MODAL_BORDER, skew,
+		border_w, 6, pad_h, pad_v)
+
+
+func modal_shell_style(pad_h: float = MODAL_PAD_H + 6.0,
+		pad_v: float = MODAL_PAD_V + 4.0) -> StyleBoxFlat:
+	## Transparent content-padding box for a PanelContainer whose plate is drawn
+	## by scripts/ui/slanted_shell.gd (Pause / Settings / result cards).
+	var style := StyleBoxFlat.new()
+	style.draw_center = false
+	style.bg_color = Color(0, 0, 0, 0)
+	style.content_margin_left = pad_h
+	style.content_margin_right = pad_h
+	style.content_margin_top = pad_v
+	style.content_margin_bottom = pad_v + 4.0
+	return style
+
+
+func apply_scrim(rect: ColorRect) -> void:
+	## One dim colour for every modal / result card; never hand-pick a scrim.
+	if rect == null or not is_instance_valid(rect):
+		return
+	rect.color = UiPalette.SCRIM
+	rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+
+func row_style(local: bool = false, border: Color = UiPalette.ROW_BORDER,
+		border_w: int = 1) -> StyleBoxFlat:
+	## One list / standings / telemetry row plate: slanted dark glass, cyan rim
+	## when the row belongs to the local player.
+	var style := StyleBoxFlat.new()
+	style.bg_color = UiPalette.SURFACE_ROW_LOCAL if local else UiPalette.SURFACE_ROW
+	style.border_color = UiPalette.CYAN if local else border
+	style.set_border_width_all(2 if local else border_w)
+	style.set_corner_radius_all(5)
+	style.skew = Vector2(0.14, 0.0)
+	style.content_margin_left = 18.0
+	style.content_margin_right = 18.0
+	style.content_margin_top = 8.0
+	style.content_margin_bottom = 8.0
+	style.anti_aliasing = true
+	return style
+
+
+func banner_style(color: Color) -> StyleBoxFlat:
+	## Accent banner behind a result / page headline: accent plate, ink border
+	## and the same 0.14 slant as the button family.
+	var style := StyleBoxFlat.new()
+	style.bg_color = color
+	style.border_color = UiPalette.OUTLINE
+	style.set_border_width_all(3)
+	style.set_corner_radius_all(5)
+	style.skew = Vector2(0.14, 0.0)
+	style.content_margin_left = float(SPACING)
+	style.content_margin_right = float(SPACING)
+	style.content_margin_top = float(SPACING_TIGHT)
+	style.content_margin_bottom = float(SPACING_TIGHT)
+	style.anti_aliasing = true
+	return style
+
+
+func page_title(text_val: String, color: Color = UiPalette.YELLOW) -> Label:
+	## The one page-title style: display font, TITLE_SIZE, ink outline.
+	var node := label(text_val, TITLE_SIZE, color)
+	node.theme_type_variation = &"TitleLabel"
+	node.add_theme_color_override("font_outline_color", UiPalette.OUTLINE)
+	node.add_theme_constant_override("outline_size", TITLE_OUTLINE)
+	return node
+
+
+func compact_button(text_val: String, fill: Color, height: float = 48.0) -> Button:
+	## Secondary / compact action pill (Back, Refresh, All Versions...).
+	return tile(text_val, fill, height, COMPACT_FONT)
+
+
 func _on_node_added(node: Node) -> void:
 	if node is Button or node is LineEdit or node is CheckButton:
 		call_deferred("_style_node", node)
@@ -280,8 +384,52 @@ func apply_focus_ring(control: Control, corner_radius: int = CORNER_RADIUS) -> v
 	var radius: int = clampi(corner_radius, 2, 40)
 	control.add_theme_stylebox_override("focus", _focus_style(radius))
 	if control is LineEdit:
-		control.add_theme_color_override("caret_color", FOCUS_RING_DARK)
-		control.add_theme_color_override("selection_color", Color(FOCUS_RING, 0.35))
+		style_text_input(control as LineEdit)
+
+
+func style_text_input(field: LineEdit) -> void:
+	## One caret policy for every text input in the game. Screens that build
+	## their own LineEdit (lobby name/join, room-browser search, the meadow
+	## waiting room) get this through `_style_node`, so nobody has to remember a
+	## per-screen caret token. It is safe to call again after a screen re-styles
+	## its field: the colour is re-derived from that field's own background.
+	if field == null or not is_instance_valid(field):
+		return
+	field.caret_blink = true ## Godot defaults to true, but a screen could disable it.
+	field.caret_blink_interval = CARET_BLINK_SECONDS
+	field.add_theme_color_override("caret_color", caret_color_for(field))
+	field.add_theme_color_override("selection_color", Color(FOCUS_RING, 0.35))
+
+
+func caret_color_for(field: LineEdit) -> Color:
+	## Crisp caret against the field's OWN fill: bright yellow on the dark input
+	## wells, ink if a screen ever inverts the well to a light colour.
+	if field == null or not is_instance_valid(field):
+		return CARET_ON_DARK
+	return CARET_ON_LIGHT if _relative_luminance(field_background(field)) \
+		> CARET_LIGHT_LUMINANCE else CARET_ON_DARK
+
+
+func field_background(field: LineEdit) -> Color:
+	## The fill the text actually sits on (ignoring alpha, the window behind the
+	## menu is always darker than the field itself).
+	if field == null or not is_instance_valid(field):
+		return UiPalette.FIELD_FILL
+	var box: StyleBox = field.get_theme_stylebox("normal")
+	if box is StyleBoxFlat:
+		var flat := box as StyleBoxFlat
+		return Color(flat.bg_color.r, flat.bg_color.g, flat.bg_color.b, 1.0)
+	return UiPalette.FIELD_FILL
+
+
+func _relative_luminance(color: Color) -> float:
+	## WCAG relative luminance, used only to pick a caret colour per field.
+	var channels: Array[float] = [color.r, color.g, color.b]
+	for index in 3:
+		var value: float = channels[index]
+		channels[index] = value / 12.92 if value <= 0.03928 \
+			else pow((value + 0.055) / 1.055, 2.4)
+	return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2]
 
 
 func _focus_style(radius: int) -> StyleBoxFlat:

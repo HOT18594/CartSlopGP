@@ -16,8 +16,6 @@ const NOTE_INK: String = "#c5d2eb"
 
 const PANEL_MAX_WIDTH: float = 860.0
 const PANEL_MAX_HEIGHT: float = 600.0
-const PANEL_MARGIN_X: float = 64.0
-const PANEL_MARGIN_Y: float = 56.0
 const SCROLL_PAD_X: float = 20.0 ## 10 px left + 10 px right inside ScrollPad.
 const PHOTO_WIDTH: int = 380
 const PHOTO_HEIGHT: int = 214
@@ -41,10 +39,9 @@ var _selected_release: int = -1
 func _ready() -> void:
 	add_to_group("nav_scope")
 	hide()
+	UiKit.apply_scrim(get_node_or_null("Dim") as ColorRect)
 	if _panel != null:
-		_panel.add_theme_stylebox_override("panel",
-			UiKit.slanted_panel(Color(0.056, 0.068, 0.156, 0.95),
-				Color(0.24, 0.84, 0.96, 0.56), 0.042, 4, 6, 36.0, 26.0))
+		_panel.add_theme_stylebox_override("panel", UiKit.modal_panel())
 	_back_button.pressed.connect(close)
 	_all_versions_button.pressed.connect(_show_list)
 	_compact_button(_back_button, float(UiKit.SPACING), float(UiKit.SPACING_TIGHT))
@@ -60,8 +57,9 @@ func _fit_panel() -> void:
 	var vp: Vector2 = get_viewport_rect().size
 	if vp.x < 1.0 or vp.y < 1.0:
 		return
-	var w: float = minf(PANEL_MAX_WIDTH, maxf(320.0, vp.x - PANEL_MARGIN_X))
-	var h: float = minf(PANEL_MAX_HEIGHT, maxf(320.0, vp.y - PANEL_MARGIN_Y))
+	var margin: float = UiKit.SCREEN_MARGIN * 2.0
+	var w: float = minf(PANEL_MAX_WIDTH, maxf(320.0, vp.x - margin))
+	var h: float = minf(PANEL_MAX_HEIGHT, maxf(320.0, vp.y - margin))
 	var cx: float = vp.x * 0.5
 	var cy: float = vp.y * 0.5
 	_panel.anchor_left = (cx - w * 0.5) / vp.x
@@ -138,7 +136,7 @@ func _build_version_list() -> void:
 		child.queue_free()
 	_release_buttons.clear()
 	var vp_w: float = get_viewport_rect().size.x
-	var card_w: float = minf(PANEL_MAX_WIDTH, maxf(320.0, vp_w - PANEL_MARGIN_X))
+	var card_w: float = minf(PANEL_MAX_WIDTH, maxf(320.0, vp_w - UiKit.SCREEN_MARGIN * 2.0))
 	var inner_w: float = maxf(220.0,
 		card_w - _panel_content_margin() * 2.0 - SCROLL_PAD_X - _scrollbar_reserve())
 	var stacked: bool = inner_w < 580.0
@@ -317,7 +315,7 @@ func _append_photo(out: PackedStringArray, path: String, caption: String) -> voi
 	if not ResourceLoader.exists(resolved):
 		return
 	var vp_w: float = get_viewport_rect().size.x
-	var card_w: float = minf(PANEL_MAX_WIDTH, maxf(320.0, vp_w - PANEL_MARGIN_X))
+	var card_w: float = minf(PANEL_MAX_WIDTH, maxf(320.0, vp_w - UiKit.SCREEN_MARGIN * 2.0))
 	var photo_w: int = int(maxf(180.0, minf(float(PHOTO_WIDTH), card_w - 104.0)))
 	var photo_h: int = int(roundf(float(photo_w) * float(PHOTO_HEIGHT)
 		/ float(PHOTO_WIDTH)))

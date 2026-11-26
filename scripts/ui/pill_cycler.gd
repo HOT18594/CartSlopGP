@@ -127,10 +127,11 @@ func _draw() -> void:
 
 	var track_pts: PackedVector2Array = _para(x0, y0, bw, bh, sk)
 
-	# Focus slanted halo
+	# Focus slanted halo (soft outward glow, no hard clipped line)
 	if focused:
 		var halo: PackedVector2Array = _para(x0 - 3.0, y0 - 2.5, bw + 6.0, bh + 5.0, sk)
-		draw_polyline(_closed(halo), UiPalette.YELLOW, 3.2, true)
+		UiAnim.draw_soft_outline(self, _closed(halo), UiPalette.YELLOW, 3.2,
+			UiPalette.YELLOW, 3, 2.0, 0.14)
 
 	# Dark slanted track background
 	var track_col: Color = TRACK_HOVER if ((_hovered or focused) and not disabled) else TRACK
@@ -170,7 +171,9 @@ func _draw() -> void:
 			var gh: float = maxf((bh - inset * 2.0) * 0.36, 2.0)
 			var gloss: PackedVector2Array = _para(cx + inset + sk * 0.50, y0 + inset + 1.0,
 				maxf(tile_w - inset * 2.0 - 2.0, 4.0), gh, sk * 0.32)
-			draw_colored_polygon(gloss, Color(1.0, 1.0, 1.0, 0.28))
+			# Vertical alpha fade: the active tile's gloss melts into the plate
+			# instead of ending on a hard horizontal line.
+			UiAnim.draw_vertical_fade(self, gloss, Color.WHITE, 0.28)
 			draw_polyline(_closed(cell_pts), UiPalette.INK, 2.5, true)
 		var txt_col: Color = TEXT_ON if selected else TEXT_OFF
 		if disabled and not selected:

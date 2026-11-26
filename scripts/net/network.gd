@@ -35,6 +35,14 @@ signal race_state_stream_changed(receiving: bool, updates: int)
 ## Client-side notification that the host has entered `scene_path` and can
 ## accept scene-level RPCs without "Node not found" errors.
 signal host_scene_ready(scene_path: String)
+## WS5-13: a peer's lobby presence (ready-to-start) state changed. Host side it
+## fires for a client report; clients do not receive the host's copy today.
+signal lobby_presence_changed()
+## WS5-07: the client was dropped out of a live match because the host left.
+## The match scene is kept (frozen) so its local standings stay readable; the
+## shared pause menu shows the disconnect overlay. Emitted only from a match
+## scene - the lobby/other screens still hard-swap to the lobby as before.
+signal match_host_lost(reason: String)
 
 const DEFAULT_PORT: int = 8910
 const PORT_RANGE: int = 40
@@ -44,6 +52,11 @@ const RACE_SCENE: String = "res://scenes/minigames/grass_race.tscn"
 const CARGO_SCENE: String = "res://scenes/minigames/cargo_rush.tscn"
 const KNOCKOUT_SCENE: String = "res://scenes/minigames/knockout.tscn"
 const BOMB_TAG_SCENE: String = "res://scenes/minigames/bomb_tag.tscn"
+## Scenes whose own result/HUD is worth keeping on screen when the host leaves
+## mid-match (WS5-07): the shared pause menu shows a HOST DISCONNECTED overlay
+## instead of a hard swap to a fresh lobby, so local standings are not lost.
+const MATCH_SCENES: PackedStringArray = [GAME_SCENE, RACE_SCENE, CARGO_SCENE,
+	KNOCKOUT_SCENE, BOMB_TAG_SCENE]
 ## A MINIGAMES room runs one of the four party/racing modes. The event is
 ## part of the session config so every peer picks the host's scene; it is never
 ## inferred from a client's own saved menu pick.
@@ -72,7 +85,12 @@ const RELAY_HEARTBEAT_INTERVAL: float = 10.0
 const HEARTBEAT_MAX_FAILURES: int = 4
 const HEARTBEAT_TIMEOUT: float = 8.0
 ## Relay latency sampling (host ping / client clock probe) and its smoothing.
-const RELAY_PROBE_INTERVAL: float = 8.0
+## Godot's HTTPRequest closes its TCP connection after every response, so the
+## probe path uses one persistent HTTPClient instead (see _keepalive_json) and
+## polls faster than the Pi's 2.5 s keep-alive idle timeout. This is what makes
+## the HUD honest: an HTTPRequest-based probe measured ~35 ms on a LAN whose
+## real round trip is ~7 ms, because every sample paid a fresh TCP handshake.
+const RELAY_PROBE_INTERVAL: float = 2.0
 const RELAY_RTT_ALPHA: float = 0.25
 const RELAY_JITTER_ALPHA: float = 0.2
 ## Relay tunnel supervisor: rebuild a dead tunnel with exponential backoff.
@@ -110,6 +128,13 @@ const LAN_BEACON_INTERVAL: float = 1.5
 const LAN_WARMUP_PROBES: int = 3
 const LAN_WARMUP_INTERVAL: float = 1.0
 const RELAY_HTTP_TIMEOUT: float = 4.0
+## Same-LAN peers should never pay the Pi relay hop when they can reach the
+## host's ENet server directly. A direct handshake only gets this long before
+## the relay join takes over, so a Windows Firewall block (the reason the relay
+## tunnel exists) costs one short pause instead of a failed join.
+const DIRECT_JOIN_TIMEOUT_MS: int = 3000
+## A verified LAN relay route is not re-probed more often than this.
+const LAN_UPGRADE_RETRY_MS: int = 30000
 ## Built-in relay address, used for internet joins when LAN discovery finds
 ## nothing. It is never shown to the player and never typed into a field;
 ## CARTSLOP_RELAY can point a build at a different relay for testing.
@@ -123,6 +148,11 @@ const ALLOWED_SCENES: Array[String] = [
 	BOMB_TAG_SCENE,
 ]
 const MAX_BOT_COUNT: int = 5
+## Phase-3 slot budget: a bot is NOT a free extra. Humans and bots share the
+## same MAX_PLAYERS real seats, so a room with N bots can only ever seat
+## MAX_PLAYERS - N humans. The host enforces this live (joining humans shrink
+## the bot field) and the Pi re-checks the same rule from register/heartbeat so
+## a room's advertised capacity can never be gamed by an edited client.
 const MAX_LOBBY_ENTRIES: int = 200
 const MAX_HTTP_BODY: int = 1024 * 1024
 const RelayTunnel := preload("res://scripts/net/relay_tunnel.gd")
@@ -134,6 +164,9 @@ const VehicleCatalog := preload("res://scripts/vehicles/vehicle_catalog.gd")
 # the retry bounded: a peer stuck in the lobby must not be spammed forever.
 const SCENE_RETRY_INTERVAL: float = 1.0
 const SCENE_RETRY_MAX: int = 16
+## WS5-13 lobby presence reports are one reliable bool per peer per state change;
+## this floor stops a buggy/hostile client from using them as a reliable flood.
+const PRESENCE_MIN_INTERVAL_MS: int = 400
 const WORLD_BOUND_SQ: float = 5000.0 * 5000.0
 ## Maximum believable body speed for solver input. The game's boost cap is
 ## ~26 m/s; a larger finite value is corruption/desync and is clamped rather
@@ -184,6 +217,10 @@ var player_colors: Dictionary = {} ## peer id -> name tag Color
 var player_vehicles: Dictionary = {} ## peer id -> { sandbox, racing, minigame, racer_color, allocation }
 var ping_table: Dictionary = {} ## peer id -> that peer's ping to the server (ms)
 var join_pending: bool = false
+## Last explicit host refusal reason received just before a disconnect (capacity
+## admission, WS5P3-13). Consumed by _on_server_disconnected() so the lobby can
+## show the real cause instead of "the host ended the session".
+var _join_refused_reason: String = ""
 var room_state: String = "lobby" ## "lobby" | "playing" | "finished"
 ## Host's room discovery setting. Private rooms are joinable by code only;
 ## public rooms appear in the browser and can be joined with one click.
@@ -219,9 +256,29 @@ var scene_ready_peers: Dictionary = {}
 ## Peers that deliberately returned to the lobby. The host must not keep
 ## forcing them back into a race they chose to leave.
 var _left_scene_peers: Dictionary = {}
+## WS5-13 lobby presence gate. Host side: peer id -> true once that peer has
+## reported sitting in the room lobby (false/missing = still connecting or away
+## in the Garage/map picker). Client side: the last value it reported.
+var lobby_presence: Dictionary = {}
+var _lobby_presence_sent: bool = false
+var _presence_stamp: Dictionary = {} ## host side: sender -> last accepted report ms
 var _scene_sync_timer: float = 0.0
 var _scene_load_path: String = ""
+## Scene path of a host-issued same-scene rematch (result cards' RACE AGAIN /
+## PLAY AGAIN). Set by start_game(..., restart = true) until every peer has
+## re-entered that scene; it tells the begin-game retry guard that the scene
+## instance is being replaced on purpose rather than already loaded.
+var _restart_scene_path: String = ""
+var _session_sync_scene: String = ""
 var host_scene_ready_path: String = ""
+## WS5P3-01: a host-left notice that arrived while no pause menu could consume it
+## (the incoming match scene had not been readied yet). The next PauseMenu._ready
+## consumes it and opens the frozen-match overlay instead of losing the event.
+var _match_host_lost_pending: String = ""
+## WS5P3-04: a match load was aborted because its session ended while it was
+## streaming. If the engine had already committed the scene swap, the incoming
+## mode scene's _ready guard consumes this and refuses to start an offline race.
+var _session_ended_during_load: bool = false
 var _active_scene_node: Node = null
 var _active_scene_path: String = ""
 ## Pair key -> last solver impulse time. Rate-limits resting contact and
@@ -257,6 +314,22 @@ var relay_tunnel_active: bool = false
 var _relay_tunnel: Node = null
 var _lan_listener: PacketPeerUDP = null
 var _relay_forced: bool = false
+## True when the live ENet link goes straight to the host (LAN room, or the
+## Pi-room direct shortcut below) instead of through the Pi relay.
+var connection_direct: bool = false
+## Direct-LAN join attempt bookkeeping (Pi room whose /api/room row exposed the
+## host's observed LAN address). The relay fallback owns the join if the direct
+## handshake does not come up within DIRECT_JOIN_TIMEOUT_MS.
+var _direct_join_active: bool = false
+var _direct_join_host: String = ""
+var _direct_join_port: int = 0
+var _relay_join_host: String = ""
+var _relay_join_port: int = 0
+var _connect_target_direct: bool = false
+## A public/tunnel route that was replaced by a verified LAN route, kept so a
+## later failure can fall back instead of losing the server entirely.
+var _relay_public_fallback: String = ""
+var _lan_upgrade_attempt_ms: int = -100000
 ## HTTP status of the last completed relay call. Callers read it immediately
 ## after their own await (single-threaded signal resume), which lets the
 ## heartbeat tell a slow Pi (timeout) from an expired room (404).
@@ -264,6 +337,18 @@ var _relay_http_status: int = 0
 var _http_idle: Array[HTTPRequest] = []
 var _relay_probe_timer: float = 0.0
 var _relay_probe_pending: bool = false
+## Recent raw probe samples. The HUD shows the BEST of the last few: the probe
+## measures on the game frame, so a sample always includes 0..1 frame of poll
+## latency on top of the real network RTT. The minimum is the honest floor and
+## converges on the true round trip instead of showing ~16 ms of frame jitter.
+const RTT_SAMPLE_WINDOW: int = 5
+var _rtt_samples: Array[int] = []
+## One persistent HTTP/1.1 connection to a plain-http relay (the LAN Pi path).
+## Reused by the latency probes, the clock sync and the host race-state stream;
+## the control plane (register, heartbeat, lobby list) still uses HTTPRequest.
+var _keepalive_http: HTTPClient = null
+var _keepalive_base: String = ""
+var _keepalive_failures: int = 0
 var _relay_rtt_ema: float = -1.0
 var _relay_jitter_ema: float = 0.0
 var _relay_last_rtt: float = -1.0
@@ -312,9 +397,22 @@ var session_minigame: String = ""
 ## Host-owned assignments survive individual departures and lobby returns.
 ## Only leave()/a brand-new session clears them; never derive teams from order.
 var _peer_teams: Dictionary = {} ## peer id -> 0 (ALPHA / blue) or 1 (BETA / red)
+## Host-owned BOT slot assignments (bot index 0..n-1 -> team 0/1), parallel to
+## _peer_teams above. Bots occupy real lobby slots but have no ENet peer id, so
+## they cannot live in the peer-keyed table. Replicated by the additive
+## `_net_bot_teams` RPC (kept separate from the frozen 16-argument
+## session-config packet, WS5P3-12) and pushed by the same host call sites;
+## clients never write it.
+var _bot_teams: Array[int] = []
 ## Auto-balance is on by default. The host locks the current split when the
 ## room should keep manual teams; joins/leaves then never move anyone.
 var teams_locked: bool = false
+## Last slot budget the Pi 2.0.0 room row reported back to this host. -1 means
+## the server is an older build (or did not answer) and the local rule stands;
+## a value >= 0 is authoritative and caps the live bot field.
+var server_max_bots: int = -1
+var server_max_humans: int = -1
+var server_slots_used: int = -1
 ## Last map/theme the host picker wrote, so configure_session can tell a new
 ## DELIVER pick from a new RACE pick without a second settings field. Cleared
 ## by leave(); this is menu bookkeeping, not replicated state.
@@ -393,6 +491,18 @@ func _ready() -> void:
 	# editor pause before the first frame cannot look like a system sleep.
 	_last_tick_ms = Time.get_ticks_msec()
 	_last_wall_ms = int(Time.get_unix_time_from_system() * 1000.0)
+	# SceneLoader is registered after Network in the autoload order, so the
+	# terminal-failure callback (WS5P3-11) is wired on the next idle frame.
+	call_deferred("_connect_scene_loader")
+
+
+func _connect_scene_loader() -> void:
+	## WS5P3-11: roll the room back when a match scene cannot be loaded.
+	var loader: Node = get_node_or_null("/root/SceneLoader")
+	if loader == null or not loader.has_signal("load_failed"):
+		return
+	if not loader.is_connected("load_failed", _on_scene_load_failed):
+		loader.connect("load_failed", _on_scene_load_failed)
 
 
 func _process(delta: float) -> void:
@@ -404,6 +514,13 @@ func _process(delta: float) -> void:
 	# macOS needs the longer join window because the first LAN connect can sit
 	# behind the Local Network permission alert (see DISCOVERY_TIMEOUT_MACOS_MS).
 	var join_timeout: int = JOIN_TIMEOUT_MACOS_MS if _is_macos() else JOIN_TIMEOUT_MS
+	# A direct-LAN shortcut that cannot complete is not a failed join: switch to
+	# the relay well before the generic join deadline so the player waits one
+	# short pause at most (a blocked Windows Firewall handshake never answers).
+	if join_pending and _direct_join_active \
+			and Time.get_ticks_msec() - _join_started_ms > DIRECT_JOIN_TIMEOUT_MS:
+		_fallback_to_relay_join()
+		return
 	if join_pending and Time.get_ticks_msec() - _join_started_ms > join_timeout:
 		join_pending = false
 		var was_lan: bool = connection_mode == "lan"
@@ -461,6 +578,27 @@ func is_session_active() -> bool:
 	return is_host or is_client
 
 
+func has_match_host_lost_pending() -> bool:
+	## WS5P3-01: a client saw the host leave during a match (re)load. The notice
+	## stays pending until the pause menu of the scene that actually mounts reads
+	## it, so a load that swaps the scene cannot swallow the overlay.
+	return _match_host_lost_pending != ""
+
+
+func consume_match_host_lost_pending() -> String:
+	var reason: String = _match_host_lost_pending
+	_match_host_lost_pending = ""
+	return reason
+
+
+func consume_session_ended_during_load() -> bool:
+	## WS5P3-04: the mode scenes' _ready guard. True only when a match load was
+	## cancelled by a session teardown; consumed on the first read.
+	var value: bool = _session_ended_during_load
+	_session_ended_during_load = false
+	return value
+
+
 func bot_difficulty() -> int:
 	return clampi(session_bot_difficulty if is_session_active() \
 		else GameSettings.minigame_difficulty, 0, 2)
@@ -476,6 +614,7 @@ func clear_scene_ready() -> void:
 	_impact_closing.clear()
 	_last_good_position.clear()
 	_scene_load_path = ""
+	_session_sync_scene = ""
 	host_scene_ready_path = ""
 	_active_scene_node = null
 	_active_scene_path = ""
@@ -1015,6 +1154,11 @@ func notify_scene_ready(scene_node: Node = null, explicit_path: String = "") -> 
 		scene_path = current.scene_file_path
 	if scene_path == "" and in_game:
 		scene_path = game_scene
+	if scene_path != "" and scene_path == _restart_scene_path:
+		# The forced-reload scene is live again: the intentional-restart marker
+		# has done its job. From here the begin-game retry guard may resume
+		# re-announcing a peer that is already on this scene.
+		_restart_scene_path = ""
 	if current != null:
 		_active_scene_node = current
 	if scene_path != "":
@@ -1034,6 +1178,14 @@ func notify_scene_ready(scene_node: Node = null, explicit_path: String = "") -> 
 			scene_ready_peers[1] = true
 		else:
 			scene_ready_peers.erase(1)
+		# Re-request the authoritative session/loadout snapshot for this scene.
+		# The host's first push can race the client's scene load; this makes
+		# car selection, paint, tune and vehicle policy idempotent per scene.
+		if scene_path != "" and scene_path != _session_sync_scene \
+				and is_connected_to_server() \
+				and multiplayer.multiplayer_peer is ENetMultiplayerPeer:
+			_session_sync_scene = scene_path
+			rpc_id(1, "_net_request_session_sync")
 	_scene_load_path = ""
 
 
@@ -1077,10 +1229,209 @@ func is_connected_to_server() -> bool:
 		== MultiplayerPeer.CONNECTION_CONNECTED
 
 
+func peer_rtt_ms(peer_id: int) -> int:
+	## Last measured round trip to a peer (0 when it has not been sampled yet).
+	## The host holds every client's self-measured value in ping_table; a client
+	## knows only its own and the host's (key 1) entries. Used to delay-compensate
+	## authoritative finish stamps in the race mode.
+	return clampi(int(ping_table.get(peer_id, 0)), 0, 5000)
+
+
 func peer_count() -> int:
 	if not is_session_active():
 		return 0
 	return multiplayer.get_peers().size() + 1
+
+
+# --------------------------------------------------------------------------
+# lobby slot budget (Phase-3 WS4)
+#
+# Humans and bots share the same eight seats. The host is authoritative inside
+# a session: every peer derives the roster from the replicated
+# session_bot_count plus its own ENet peer list, so every machine shows the
+# same numbers without a second packet. The Pi re-checks the same arithmetic
+# for relay-hosted rooms (register/heartbeat carry humans + bots, the relay
+# refuses a new client once the room is full, and the heartbeat answers with
+# the authoritative bot cap). The helpers are static so the headless harness
+# can assert the whole slot table without a live ENet session.
+
+
+static func clamp_bot_count(bots: int) -> int:
+	## The bot setting's own ceiling, independent of the slot budget.
+	return clampi(bots, 0, MAX_BOT_COUNT)
+
+
+static func active_bot_count_for(enabled: bool, count: int) -> int:
+	## A disabled bot field means zero bots on the field even when the
+	## remembered count is nonzero (matches GameSettings.effective_bot_count).
+	return clamp_bot_count(count) if enabled else 0
+
+
+static func max_humans_for_bots(bots: int) -> int:
+	## Seats still available to humans once `bots` bots occupy their slots.
+	return clampi(MAX_PLAYERS - clamp_bot_count(bots), 0, MAX_PLAYERS)
+
+
+static func bot_cap_for_humans(humans: int) -> int:
+	## Most bots a room may deploy without pushing a human out of its seats.
+	var seated: int = clampi(humans, 0, MAX_PLAYERS)
+	return clampi(mini(MAX_PLAYERS - seated, MAX_BOT_COUNT), 0, MAX_BOT_COUNT)
+
+
+static func slots_used_for(humans: int, bots: int) -> int:
+	return clampi(humans, 0, MAX_PLAYERS) + clamp_bot_count(bots)
+
+
+static func slots_free_for(humans: int, bots: int) -> int:
+	return maxi(MAX_PLAYERS - slots_used_for(humans, bots), 0)
+
+
+static func lobby_full_for(humans: int, bots: int) -> bool:
+	return slots_free_for(humans, bots) <= 0
+
+
+static func bot_label(bot_index: int) -> String:
+	## Stable roster identity: index 0 is "BOT 1" on every peer. Labels are
+	## derived from the replicated bot count, never from spawn order.
+	if bot_index < 0 or bot_index >= MAX_BOT_COUNT:
+		return ""
+	return "BOT %d" % (bot_index + 1)
+
+
+static func default_bot_team(bot_index: int) -> int:
+	## Deterministic fallback split. Used only before an authoritative table
+	## arrives (old host build / first config frame), so peers still agree.
+	return posmod(bot_index, TEAM_COUNT)
+
+
+static func sanitize_bot_teams(raw: Variant, bot_count: int) -> Array[int]:
+	## Receive-side validation for the wire table: only 0/1 values survive,
+	## missing slots are padded with the deterministic default and the result
+	## is exactly as long as the live bot field. Never trust an RPC array.
+	var clean: Array[int] = []
+	var count: int = clamp_bot_count(bot_count)
+	var values: Array = []
+	if raw is Array:
+		values = raw as Array
+	elif raw is PackedInt32Array:
+		for value: Variant in raw as PackedInt32Array:
+			values.append(value)
+	for index in mini(count, values.size()):
+		var value: Variant = values[index]
+		clean.append(1 if (value is int or value is float) and int(value) == 1 else 0)
+	while clean.size() < count:
+		clean.append(default_bot_team(clean.size()))
+	return clean
+
+
+static func room_capacity(room: Dictionary) -> Dictionary:
+	## Slot budget advertised by a room row (Pi /api/room, /api/lobbies, or a
+	## LAN discovery record). The Phase-3 fields are additive: an older host or
+	## server sends only `players`, so the legacy rule (that many humans, no
+	## visible bots) is the honest fallback and still refuses a genuinely full
+	## 8-player room. Returns a uniform dictionary for the join paths.
+	var known: bool = room.has("bots") or room.has("humans") or room.has("slots") \
+		or room.has("max_humans")
+	var humans: int = clampi(int(room.get("humans", room.get("players", 1))),
+		0, MAX_PLAYERS)
+	var bots: int = clamp_bot_count(int(room.get("bots", 0)))
+	if not known:
+		return {
+			"known": false,
+			"humans": humans,
+			"bots": 0,
+			"slots": humans,
+			"max_humans": MAX_PLAYERS,
+			"full": humans >= MAX_PLAYERS,
+		}
+	var slots: int = clampi(int(room.get("slots", slots_used_for(humans, bots))),
+		0, MAX_PLAYERS)
+	var max_humans: int = int(room.get("max_humans", max_humans_for_bots(bots)))
+	return {
+		"known": true,
+		"humans": humans,
+		"bots": bots,
+		"slots": slots,
+		"max_humans": max_humans,
+		"full": bool(room.get("full", false)) or humans >= max_humans \
+			or slots >= MAX_PLAYERS,
+	}
+
+
+static func room_full_reason(capacity: Dictionary) -> String:
+	## One clear join rejection for every path (code, browser, LAN row). It
+	## names the human+bot arithmetic so the player knows bots are the reason
+	## and what to ask the host for.
+	if not bool(capacity.get("known", false)):
+		return "That room is full. Pick another room or wait for a slot. Hint: try a different room."
+	return ("That room is full: %d of %d slots are taken (%d player%s + %d bot%s). " \
+		+ "Ask the host to lower the bot count, or pick another room. " \
+		+ "Hint: try a different room.") % [
+			int(capacity.get("slots", MAX_PLAYERS)), MAX_PLAYERS,
+			int(capacity.get("humans", 0)),
+			"" if int(capacity.get("humans", 0)) == 1 else "s",
+			int(capacity.get("bots", 0)),
+			"" if int(capacity.get("bots", 0)) == 1 else "s"]
+
+
+static func host_join_refusal_reason(humans_after_join: int) -> String:
+	## WS5P3-13: direct-LAN admission rule. Empty when the joining human fits in
+	## the 8 real seats; otherwise the clear rejection `_on_peer_connected` sends
+	## before dropping the peer. Humans alone fill the room => there is no bot to
+	## trim, so a 9th human must be refused (the old code accepted it and the
+	## overbook was invisible: slots_used_for() clamped the display to 8).
+	## Pure so the headless harness can pin the rule without nine ENet clients.
+	if humans_after_join <= MAX_PLAYERS:
+		return ""
+	return ("That room is full: all %d seats are taken by players, so there is " \
+		+ "no seat for another player. Ask the host to free one up or pick " \
+		+ "another room. Hint: try a different room.") % MAX_PLAYERS
+
+
+func human_count() -> int:
+	## Humans in the session, host included. An offline/idle screen is a
+	## one-human lobby so the same slot math drives the idle bot controls.
+	if not is_session_active():
+		return 1
+	return maxi(participants().size(), 1)
+
+
+func active_bot_count() -> int:
+	## Bots actually deployed in this room right now (offline: the saved solo
+	## bot setting, so the idle lobby shows the same field it will host with).
+	if not is_session_active():
+		return GameSettings.effective_bot_count()
+	return active_bot_count_for(session_bots, session_bot_count)
+
+
+func lobby_slots_used() -> int:
+	return slots_used_for(human_count(), active_bot_count())
+
+
+func lobby_slots_free() -> int:
+	return slots_free_for(human_count(), active_bot_count())
+
+
+func lobby_is_full() -> bool:
+	## True when every one of the 8 seats is taken by a human or a bot. A host
+	## in that state must not be able to add another bot; a joiner is refused.
+	return lobby_full_for(human_count(), active_bot_count())
+
+
+func max_lobby_humans() -> int:
+	## Live `max_humans = 8 - active_bot_count` for the roster/room record.
+	return max_humans_for_bots(active_bot_count())
+
+
+func bot_team(bot_index: int) -> int:
+	## 0 = ALPHA, 1 = BETA, always in range. A table shorter than the live bot
+	## count (config in flight) falls back to the deterministic default so a
+	## visible row can never index outside the two columns.
+	if bot_index < 0:
+		return 0
+	if bot_index < _bot_teams.size():
+		return 1 if int(_bot_teams[bot_index]) == 1 else 0
+	return default_bot_team(bot_index)
 
 
 # --------------------------------------------------------------------------
@@ -1225,6 +1576,25 @@ func set_peer_team(peer_id: int, team: int) -> void:
 	teams_changed.emit()
 
 
+func set_bot_team(bot_index: int, team: int) -> void:
+	## Host only. A bot is moved between teams exactly like a human: the move
+	## is authoritative, it sticks across re-publishes while the split stays
+	## within one seat, and the same reliable config push carries it to every
+	## peer (late joiners get it from _push_session_config_to).
+	if not is_host or not is_session_active():
+		return
+	if team < 0 or team >= TEAM_COUNT:
+		return
+	_ensure_bot_teams()
+	if bot_index < 0 or bot_index >= _bot_teams.size():
+		return
+	if bot_team(bot_index) == team:
+		return
+	_bot_teams[bot_index] = team
+	_push_session_config()
+	teams_changed.emit()
+
+
 func set_teams_locked(locked: bool) -> void:
 	## Host only. Locking freezes the current split; unlocking balances once.
 	if not is_host or not is_session_active():
@@ -1236,6 +1606,19 @@ func set_teams_locked(locked: bool) -> void:
 	teams_changed.emit()
 
 
+func auto_arrange_teams() -> bool:
+	## Host only. Re-runs the deterministic human+bot auto-arrange and syncs it
+	## in one reliable packet. Refused while the host LOCKED the teams (the
+	## lock means "keep this split"), so the lobby control and the harness can
+	## tell an arranged pass from a locked no-op.
+	if not is_host or not is_session_active() or teams_locked:
+		return false
+	_balance_teams()
+	_push_session_config()
+	teams_changed.emit()
+	return true
+
+
 func refresh_session_config() -> void:
 	## Re-broadcast the host's current setup (mode, scene, teams) without
 	## re-deriving it from local settings. Used when a peer joins the room.
@@ -1244,46 +1627,154 @@ func refresh_session_config() -> void:
 	_push_session_config()
 
 
+# --------------------------------------------------------------------------
+# deterministic team arrangement (humans + bots share one pass)
+
+
+static func arrange_teams(peer_teams: Dictionary, bot_teams: Array,
+		humans: Array[int], bot_count: int) -> Dictionary:
+	## Deterministic human+bot team arranger, pure so the headless harness can
+	## pin the contract without a live ENet session. Inputs are copied, never
+	## mutated. Humans are consumed in the given order (callers pass sorted peer
+	## ids) and bots follow in slot order; each newcomer is assigned to the
+	## currently smaller side, so two runs over the same inputs produce byte
+	## identical tables on every peer. Manual assignments survive as long as the
+	## split stays within one seat; a real imbalance is corrected with the same
+	## mover rules as the human-only Phase-2 pass (last non-host human first,
+	## then the highest-index bot on the crowded side, then the host last).
+	var count: int = clamp_bot_count(bot_count)
+	var teams: Dictionary = {}
+	for peer_id: int in humans:
+		if peer_teams.has(peer_id):
+			teams[peer_id] = 1 if int(peer_teams[peer_id]) == 1 else 0
+	var counts: Array[int] = [0, 0]
+	for peer_id: int in teams:
+		counts[int(teams[peer_id])] += 1
+	var bots: Array[int] = []
+	for index in mini(count, bot_teams.size()):
+		var value: Variant = bot_teams[index]
+		var side: int = 1 if (value is int or value is float) and int(value) == 1 else 0
+		bots.append(side)
+		counts[side] += 1
+	for peer_id: int in humans:
+		if teams.has(peer_id):
+			continue
+		var side: int = 0 if counts[0] <= counts[1] else 1
+		teams[peer_id] = side
+		counts[side] += 1
+	while bots.size() < count:
+		var side: int = 0 if counts[0] <= counts[1] else 1
+		bots.append(side)
+		counts[side] += 1
+	for _guard in humans.size() + count + TEAM_COUNT:
+		counts = [0, 0]
+		for peer_id: int in humans:
+			counts[int(teams.get(peer_id, 0))] += 1
+		for side: int in bots:
+			counts[side] += 1
+		if absi(counts[0] - counts[1]) <= 1:
+			break
+		var crowded: int = 0 if counts[0] > counts[1] else 1
+		var moved: bool = false
+		var mover: int = -1
+		for peer_id: int in humans:
+			if peer_id != 1 and int(teams.get(peer_id, 0)) == crowded:
+				mover = peer_id
+		if mover > 0:
+			teams[mover] = 1 - crowded
+			continue
+		for index in range(bots.size() - 1, -1, -1):
+			if bots[index] == crowded:
+				bots[index] = 1 - crowded
+				moved = true
+				break
+		if moved:
+			continue
+		if humans.has(1) and int(teams.get(1, 0)) == crowded:
+			teams[1] = 1 - crowded
+		else:
+			break
+	return {"teams": teams, "bots": bots}
+
+
+func _smaller_team_now() -> int:
+	## Smaller side from ASSIGNED occupants only. Unlike _smaller_team() this
+	## ignores not-yet-filled slots, so padding a table cannot bias itself.
+	var counts: Array[int] = [0, 0]
+	for peer_id: int in participants():
+		if _peer_teams.has(peer_id):
+			counts[team_for_peer(peer_id)] += 1
+	for index in _bot_teams.size():
+		counts[1 if int(_bot_teams[index]) == 1 else 0] += 1
+	return 0 if counts[0] <= counts[1] else 1
+
+
 func _smaller_team() -> int:
 	var counts: Array[int] = _team_counts()
 	return 0 if counts[0] <= counts[1] else 1
 
 
 func _team_counts() -> Array[int]:
+	## ALPHA/BETA seat counts over every occupant of the room, humans + bots.
+	## Used by the team headers, so the numbers match the rows on every peer.
 	var counts: Array[int] = [0, 0]
 	for peer_id: int in participants():
 		if _peer_teams.has(peer_id):
 			var team: int = team_for_peer(peer_id)
 			counts[team] = counts[team] + 1
+	for bot_index in active_bot_count():
+		counts[bot_team(bot_index)] += 1
 	return counts
 
 
+func _ensure_bot_teams() -> void:
+	## Keep the parallel bot table exactly as long as the live bot field:
+	## shrinking drops trailing assignments, growing pads NEW slots onto the
+	## currently smaller side without moving anyone already placed. Called on
+	## every bot-count change, including a LOCKED room where _balance_teams()
+	## must not shuffle the existing split.
+	var count: int = active_bot_count()
+	var resized: Array[int] = []
+	for index in mini(count, _bot_teams.size()):
+		resized.append(1 if int(_bot_teams[index]) == 1 else 0)
+	_bot_teams = resized
+	while _bot_teams.size() < count:
+		_bot_teams.append(_smaller_team_now())
+
+
 func _balance_teams() -> void:
-	## Host only, auto mode only. Every live peer gets a side, departed peers
-	## lose theirs, and the counts never differ by more than one. The host is
-	## moved last, so a late joiner is the one who switches sides.
+	## Host only, auto mode only. One deterministic pass over every occupant:
+	## humans first (sorted peer ids from participants()), then bots. The host
+	## is moved last, so a late joiner is the one who switches sides.
 	if not is_host or teams_locked:
 		return
-	var ids: Array[int] = participants()
-	for peer_id: int in ids:
-		if not _peer_teams.has(peer_id):
-			_peer_teams[peer_id] = _smaller_team()
-	for _guard in ids.size() + TEAM_COUNT:
-		var counts: Array[int] = _team_counts()
-		if absi(counts[0] - counts[1]) <= 1:
-			break
-		var crowded: int = 0 if counts[0] > counts[1] else 1
-		var mover: int = -1
-		for peer_id: int in ids:
-			if peer_id != 1 and team_for_peer(peer_id) == crowded:
-				mover = peer_id
-		if mover < 0:
-			for peer_id: int in ids:
-				if team_for_peer(peer_id) == crowded:
-					mover = peer_id
-		if mover < 0:
-			break
-		_peer_teams[mover] = 1 - crowded
+	_ensure_bot_teams()
+	var result: Dictionary = arrange_teams(_peer_teams, _bot_teams,
+		participants(), active_bot_count())
+	_peer_teams = result["teams"] as Dictionary
+	var bots: Array = result["bots"] as Array
+	_bot_teams.clear()
+	for side: Variant in bots:
+		_bot_teams.append(1 if int(side) == 1 else 0)
+
+
+func _clamp_session_bots_to_capacity() -> bool:
+	## Host only. A human joining pushes bots out of the room's seat budget:
+	## shrink the live bot field to MAX_PLAYERS - human_count (and never past
+	## the Pi's authoritative cap) and let the caller publish the new count in
+	## its reliable config packet. The host's saved bot setting is untouched, so
+	## one click restores the field once there is room again.
+	if not is_host or not is_session_active():
+		return false
+	var cap: int = bot_cap_for_humans(human_count())
+	if server_max_bots >= 0:
+		cap = mini(cap, server_max_bots)
+	if session_bot_count <= cap:
+		return false
+	session_bot_count = cap
+	_ensure_bot_teams()
+	session_config_changed.emit()
+	return true
 
 
 # --------------------------------------------------------------------------
@@ -1315,7 +1806,10 @@ func host_game(mode: String = "pi") -> void:
 	public_address = ""
 	session_mode = GameSettings.multiplayer_mode
 	session_bots = GameSettings.bots_enabled
-	session_bot_count = GameSettings.effective_bot_count()
+	# A brand-new room is one human (the host), so the bot field starts within
+	# the seat budget: bots may occupy at most MAX_PLAYERS - 1 seats.
+	session_bot_count = clampi(GameSettings.effective_bot_count(), 0,
+		bot_cap_for_humans(1))
 	session_bot_difficulty = clampi(GameSettings.minigame_difficulty, 0, 2)
 	# The room carries its event/scene from the very first host frame. A
 	# DELIVER room hosts CARGO RUSH; everything else keeps its race/sandbox
@@ -1325,10 +1819,12 @@ func host_game(mode: String = "pi") -> void:
 	session_minigame = _sanitize_minigame_theme(session_event, GameSettings.selected_minigame) \
 		if session_event in MINIGAME_EVENTS else ""
 	session_map_id = GameSettings.sanitize_map_id(GameSettings.selected_map)
-	# A fresh room starts with a clean, balanced team split.
+	# A fresh room starts with a clean, balanced team split (humans + bots).
 	_peer_teams.clear()
+	_bot_teams.clear()
 	teams_locked = false
 	_peer_teams[1] = 0
+	_ensure_bot_teams()
 	_balance_teams()
 	session_racing_car_id = sanitize_racing_car_id(
 		GameSettings.racing_vehicle_id())
@@ -1403,10 +1899,217 @@ func _abort_host(reason: String) -> void:
 	host_failed.emit(reason)
 
 
+func _http_get_base(url: String, timeout: float) -> Dictionary:
+	## Absolute-URL GET through the pooled HTTPRequest. Used only for the LAN
+	## relay upgrade probes, so a plain http:// LAN address is the only shape
+	## this needs to support (the https tunnel keeps using _relay_get()).
+	var http: HTTPRequest = _acquire_http(timeout)
+	var error: Error = http.request(url, [], HTTPClient.METHOD_GET)
+	if error != OK:
+		_release_http(http)
+		return {}
+	var response: Array = await http.request_completed
+	_release_http(http)
+	if int(response[0]) != HTTPRequest.RESULT_SUCCESS or int(response[1]) != 200:
+		return {}
+	var parsed: Variant = JSON.parse_string(
+		(response[3] as PackedByteArray).get_string_from_utf8())
+	return parsed as Dictionary if parsed is Dictionary else {}
+
+
+func _lan_relay_candidate(status: Dictionary) -> String:
+	## The Pi's own LAN address, when /api/status names one on a subnet this
+	## machine is attached to. Empty when the server did not report one or when
+	## the address is not reachable locally (CGNAT/VPN overlays are excluded).
+	var lan_ip: String = _strip_host_brackets(str(status.get("lan_ip", "")))
+	var http_port: int = int(status.get("http_port", 0))
+	if lan_ip == "" or http_port <= 0 or http_port > 65535:
+		return ""
+	if not _valid_ip(lan_ip) or _is_cgnat_ipv4(lan_ip):
+		return ""
+	if not _is_local_subnet(lan_ip):
+		return ""
+	return "http://%s:%d" % [lan_ip, http_port]
+
+
+func _switch_relay_route_to_lan(lan_host: String, http_port: int) -> bool:
+	## Re-point the whole relay HTTP route at the Pi's LAN endpoint after a
+	## cheap /api/status handshake proves it answers. This is the fix for the
+	## owner-reported WARP registration: with the route on 68.204.45.1 the
+	## register/heartbeat requests egressed through Cloudflare WARP, so the Pi
+	## recorded a WARP source address as the host and relayed every packet back
+	## out to the internet even for same-LAN players.
+	if lan_host == "" or http_port <= 0 or http_port > 65535:
+		return false
+	if _relay_forced or OS.get_environment("CARTSLOP_RELAY").strip_edges() != "":
+		# An explicitly configured relay is intentional (tests/dev); never
+		# silently replace it with a discovered LAN endpoint.
+		return false
+	var candidate: String = "http://%s:%d" % [_strip_host_brackets(lan_host),
+		http_port]
+	if not relay_base_public and relay_base == candidate:
+		return true
+	var probe: Dictionary = await _http_get_base(candidate + "/api/status", 1.5)
+	if probe.is_empty() or str(probe.get("service", "")) != "cartslop":
+		return false
+	if relay_base_public and relay_base != "":
+		_relay_public_fallback = relay_base
+	relay_base = candidate
+	relay_base_public = false
+	relay_lan_ip = _strip_host_brackets(lan_host)
+	_lan_upgrade_attempt_ms = Time.get_ticks_msec()
+	return true
+
+
+func _prefer_lan_relay(status: Dictionary) -> bool:
+	## Called right after a public/tunnel fallback route is established. When
+	## the relay reports a LAN address on this machine's own subnet, switch to
+	## it before registering/joining so the server sees a LAN source address.
+	if not relay_base_public:
+		return not relay_base_public
+	var candidate: String = _lan_relay_candidate(status)
+	if candidate == "":
+		return false
+	var lan_ip: String = _strip_host_brackets(str(status.get("lan_ip", "")))
+	var http_port: int = int(status.get("http_port", 42777))
+	return await _switch_relay_route_to_lan(lan_ip, http_port)
+
+
+func _room_direct_endpoint(room: Dictionary) -> Dictionary:
+	## The host's own ENet endpoint, when a newer server exposes it to LAN
+	## clients only (1.9.0+). Missing fields on 1.8.0 are normal: the relay
+	## join then runs exactly as before with no added latency.
+	## CSGP_FORCE_RELAY=1 is a diagnostic switch (and the fallback-verification
+	## hook): it disables the shortcut and joins through the relay exactly like
+	## a host whose firewall refuses the direct handshake.
+	if OS.get_environment("CSGP_FORCE_RELAY").strip_edges() == "1":
+		return {}
+	var host: String = ""
+	for key: String in ["host_ip", "host_lan_ip", "direct_host"]:
+		host = _strip_host_brackets(str(room.get(key, "")))
+		if host != "":
+			break
+	var direct_port: int = int(room.get("host_port", room.get("direct_port", 0)))
+	if host == "" or direct_port <= 0 or direct_port > 65535:
+		return {}
+	if not _is_local_subnet(host):
+		# Only a host on this machine's own subnet can be reached directly;
+		# anything else is the relay's job (and may be behind CGNAT).
+		return {}
+	# Diagnostic hook: pretend the server hinted a different (closed) port, so
+	# the direct-probe -> relay fallback can be exercised without touching the
+	# host's Windows Firewall. Never set in normal play.
+	var fake_port_text: String = OS.get_environment(
+		"CSGP_FAKE_DIRECT_PORT").strip_edges()
+	if fake_port_text.is_valid_int() and int(fake_port_text) > 0 \
+			and int(fake_port_text) <= 65535:
+		direct_port = int(fake_port_text)
+	return {"host": host, "port": direct_port}
+
+
+func _resolve_join_route(room: Dictionary) -> Dictionary:
+	## Pick the relay endpoint for a Pi room. A client that shares the Pi's
+	## subnet talks to the Pi's LAN address (never the public/WARP one), and
+	## the HTTP clock/ping route is moved there too. Returns
+	## {relay_host, relay_port, direct_host, direct_port}.
+	var lan_host: String = _strip_host_brackets(str(room.get("lan_host", "")))
+	var http_port: int = int(room.get("http_port", 42777))
+	var relay_port: int = int(room.get("relay_port", 0))
+	var relay_host: String = ""
+	if _is_local_subnet(lan_host):
+		relay_host = lan_host
+		if relay_base_public or relay_base == "":
+			# Best effort: the ENet join itself only needs `relay_host`; the
+			# LAN switch makes the clock/ping path local as well.
+			await _switch_relay_route_to_lan(lan_host, http_port)
+	elif relay_base_public:
+		relay_host = _strip_host_brackets(relay_server_host)
+		if relay_host == "":
+			relay_host = _strip_host_brackets(str(room.get("public_host", "")))
+	if relay_host == "":
+		relay_host = lan_host
+	var direct: Dictionary = _room_direct_endpoint(room)
+	return {
+		"relay_host": relay_host,
+		"relay_port": relay_port,
+		"direct_host": str(direct.get("host", "")),
+		"direct_port": int(direct.get("port", 0)),
+	}
+
+
+func _start_room_join(route: Dictionary) -> void:
+	## Join the room over its resolved ENet relay endpoint, trying the direct
+	## LAN shortcut first when the room exposed the host's address.
+	var relay_host: String = str(route.get("relay_host", ""))
+	var relay_port: int = int(route.get("relay_port", 0))
+	if relay_host == "" or relay_port <= 0:
+		join_pending = false
+		join_failed.emit("That room is not accepting players yet. Try again.")
+		return
+	var direct_host: String = str(route.get("direct_host", ""))
+	var direct_port: int = int(route.get("direct_port", 0))
+	if direct_host != "" and direct_port > 0 and direct_host != relay_host:
+		_try_direct_then_relay(direct_host, direct_port, relay_host, relay_port)
+		return
+	_connect_to(relay_host, relay_port, "pi")
+
+
+func _try_direct_then_relay(direct_host: String, direct_port: int,
+		relay_host: String, relay_port: int) -> void:
+	## Same-LAN shortcut: ENet straight to the host, skipping the Pi relay's two
+	## frame quantisations and Wi-Fi hop. A blocked handshake (Windows
+	## Firewall) falls back to the relay automatically in _process/_on_connection_failed.
+	direct_host = _strip_host_brackets(direct_host)
+	if not _is_ip_literal(direct_host):
+		_connect_to(relay_host, relay_port, "pi")
+		return
+	join_status_changed.emit("Trying a direct LAN link...")
+	_connect_to(direct_host, direct_port, "direct")
+	if not join_pending:
+		# _connect_to refused the socket synchronously: go straight to relay.
+		_connect_to(relay_host, relay_port, "pi")
+		return
+	_direct_join_active = true
+	_direct_join_host = direct_host
+	_direct_join_port = direct_port
+	_relay_join_host = relay_host
+	_relay_join_port = relay_port
+
+
+func _fallback_to_relay_join() -> void:
+	## The direct LAN handshake did not come up (firewall, host moved, stale
+	## room row). Re-join through the relay with the normal lifecycle.
+	if not _direct_join_active:
+		return
+	_direct_join_active = false
+	var relay_host: String = _relay_join_host
+	var relay_port: int = _relay_join_port
+	var direct_host: String = _direct_join_host
+	if relay_host == "" or relay_port <= 0:
+		leave()
+		join_failed.emit("Could not reach the host directly or through the server. Try again.")
+		return
+	join_status_changed.emit("Direct link unavailable - joining through the server relay...")
+	_connect_to(relay_host, relay_port, "pi")
+	if OS.get_environment("CART_DEBUG_NET") == "1":
+		print("NET_JOIN direct_fallback host=", direct_host,
+			" relay=", relay_host, ":", relay_port)
+
+
 func _discover_relay() -> bool:
 	## A manually configured public server wins; otherwise UDP broadcast to
 	## the Pi's discovery port (no DNS/.local dependency).
 	if relay_base != "":
+		# A cached route may be a public/tunnel one from an earlier fallback.
+		# Give the LAN endpoint a chance once in a while so a transient
+		# discovery miss cannot pin the whole session to the WARP path.
+		if relay_base_public and not _relay_forced:
+			var now_ms: int = Time.get_ticks_msec()
+			if now_ms - _lan_upgrade_attempt_ms >= LAN_UPGRADE_RETRY_MS:
+				_lan_upgrade_attempt_ms = now_ms
+				var cached_status: Dictionary = await _relay_get("/api/status", 2.0)
+				if not cached_status.is_empty():
+					await _prefer_lan_relay(cached_status)
 		return true
 	if relay_server_url != "":
 		relay_base = relay_server_url
@@ -1421,6 +2124,7 @@ func _discover_relay() -> bool:
 			var public_probe: Dictionary = await _relay_get("/api/status", 3.0)
 			if not public_probe.is_empty():
 				discovery_hint = ""
+				await _prefer_lan_relay(public_probe)
 				return true
 			_clear_default_public_relay()
 		return false
@@ -1486,6 +2190,7 @@ func _discover_relay() -> bool:
 		var probe: Dictionary = await _relay_get("/api/status", 3.0)
 		if not probe.is_empty():
 			discovery_hint = ""
+			await _prefer_lan_relay(probe)
 			return true
 		_clear_default_public_relay()
 	return false
@@ -1547,6 +2252,7 @@ func _invalidate_relay_route() -> void:
 	## The cached route points at a server that just failed. Drop it so the
 	## next attempt rediscovers instead of retrying a dead address for every
 	## browse/join click. A user-forced server is kept and re-resolved.
+	_keepalive_reset()
 	relay_base = ""
 	if not _relay_forced:
 		relay_server_url = ""
@@ -1604,12 +2310,20 @@ func _lan_beacon_tick(delta: float) -> void:
 
 func _lan_room_record() -> Dictionary:
 	## One shared room description for discovery replies and beacons.
+	## The Phase-3 capacity fields are additive: a Phase-2 client ignores them
+	## and keeps using `players` (humans only), while a Phase-3 client can show
+	## and enforce the human+bot seat budget before it ever connects.
 	return {
 		"service": "cartslop-lan",
 		"name": GameSettings.player_name,
 		"host": local_address if _valid_ip(local_address) else _local_ip(),
 		"port": port,
 		"players": peer_count(),
+		"humans": human_count(),
+		"bots": active_bot_count(),
+		"slots": lobby_slots_used(),
+		"max_humans": max_lobby_humans(),
+		"full": lobby_is_full(),
 		"mode": session_mode,
 		"event": session_event,
 		"state": room_state,
@@ -1761,8 +2475,18 @@ func join_lan_room(room: Dictionary) -> void:
 	if not _is_lan_peer_address(host) or open_port <= 0:
 		join_failed.emit("That LAN room is no longer available. Scan again.")
 		return
-	if int(room.get("players", 1)) >= MAX_PLAYERS:
-		join_failed.emit("That LAN room is full. Pick another room or wait for a slot. Hint: try a different room.")
+	var capacity: Dictionary = room_capacity(room)
+	if bool(capacity.get("full", false)):
+		# Bots occupy real seats: a 3-human + 5-bot room has no room for a
+		# fourth human even though "players" only reads 3.
+		join_failed.emit(room_full_reason(capacity))
+		return
+	# WS5P3-05: LAN discovery already filters mismatched builds; a row handed
+	# straight to this entry point (or a stale browser/LAN cache) must get the
+	# same clear early rejection instead of RPC arity errors after connecting.
+	var version_reason: String = room_build_mismatch_reason(room)
+	if version_reason != "":
+		join_failed.emit(version_reason)
 		return
 	if str(room.get("state", "lobby")) != "lobby":
 		join_failed.emit("That LAN match already started. Ask the host to return to the lobby. Hint: wait for the lobby.")
@@ -1881,6 +2605,131 @@ func _relay_get(path: String, timeout: float = RELAY_HTTP_TIMEOUT) -> Dictionary
 	return {}
 
 
+func _relay_plain_host_port() -> Dictionary:
+	## host/port of a plain-http relay base ("http://192.168.1.22:42777").
+	## HTTPS/tunnel and browser builds keep the HTTPRequest path.
+	if not relay_base.begins_with("http://"):
+		return {}
+	var rest: String = relay_base.substr(7).trim_suffix("/")
+	rest = rest.get_slice("/", 0)
+	var host: String = ""
+	var port: int = 0
+	if rest.begins_with("["):
+		var close_idx: int = rest.find("]")
+		if close_idx <= 1:
+			return {}
+		host = _strip_host_brackets(rest.substr(0, close_idx + 1))
+		if close_idx + 1 < rest.length() and rest[close_idx + 1] == ":":
+			port = int(rest.substr(close_idx + 2))
+		else:
+			port = 80
+	elif rest.contains(":"):
+		var parts: PackedStringArray = rest.split(":")
+		host = _strip_host_brackets(parts[0])
+		port = int(parts[1])
+	else:
+		host = rest
+		port = 80
+	if host == "" or port <= 0 or port > 65535:
+		return {}
+	return {"host": host, "port": port}
+
+
+func _keepalive_reset() -> void:
+	if _keepalive_http != null:
+		_keepalive_http.close()
+	_keepalive_http = null
+	_keepalive_base = ""
+
+
+func _keepalive_json(method: int, path: String, payload: Dictionary,
+		timeout_ms: int = 2500) -> Dictionary:
+	## Persistent-connection JSON request for the hot paths (latency probes,
+	## clock sync, host race-state stream, server bot polls).
+	##
+	## Why this exists: Godot's HTTPRequest opens a NEW TCP connection for every
+	## request. On Wi-Fi a fresh handshake measured ~35 ms against a LAN whose
+	## real RTT is ~7 ms, so the old probes inflated the HUD ping by ~25-30 ms
+	## and the 10 Hz race-state stream opened ~10 sockets every second (the Pi's
+	## per-IP accept budget was being hit). One HTTPClient is reused here; the
+	## Pi closes an idle keep-alive connection after 2.5 s, so every caller polls
+	## faster than that and the connection survives the whole session.
+	if OS.has_feature("web") or relay_base.begins_with("https://"):
+		if method == HTTPClient.METHOD_POST:
+			return await _relay_post(path, payload, float(timeout_ms) / 1000.0)
+		return await _relay_get(path, float(timeout_ms) / 1000.0)
+	var target: Dictionary = _relay_plain_host_port()
+	if target.is_empty():
+		if method == HTTPClient.METHOD_POST:
+			return await _relay_post(path, payload, float(timeout_ms) / 1000.0)
+		return await _relay_get(path, float(timeout_ms) / 1000.0)
+	var deadline: int = Time.get_ticks_msec() + timeout_ms
+	if _keepalive_http == null or _keepalive_base != relay_base \
+			or _keepalive_http.get_status() != HTTPClient.STATUS_CONNECTED:
+		_keepalive_reset()
+		var client := HTTPClient.new()
+		if client.connect_to_host(str(target["host"]), int(target["port"])) != OK:
+			return {}
+		_keepalive_http = client
+		_keepalive_base = relay_base
+		while _keepalive_http.get_status() == HTTPClient.STATUS_RESOLVING \
+				or _keepalive_http.get_status() == HTTPClient.STATUS_CONNECTING:
+			_keepalive_http.poll()
+			if Time.get_ticks_msec() > deadline:
+				_keepalive_reset()
+				return {}
+			await get_tree().process_frame
+		if _keepalive_http.get_status() != HTTPClient.STATUS_CONNECTED:
+			_keepalive_reset()
+			return {}
+	var request_error: Error
+	if payload.is_empty():
+		request_error = _keepalive_http.request(method, path,
+			PackedStringArray())
+	else:
+		var headers: PackedStringArray = ["Content-Type: application/json"]
+		request_error = _keepalive_http.request_raw(method, path, headers,
+			JSON.stringify(payload).to_utf8_buffer())
+	if request_error != OK:
+		_keepalive_reset()
+		return {}
+	while _keepalive_http.get_status() == HTTPClient.STATUS_REQUESTING:
+		_keepalive_http.poll()
+		if Time.get_ticks_msec() > deadline:
+			_keepalive_reset()
+			return {}
+		await get_tree().process_frame
+	if not _keepalive_http.has_response():
+		_keepalive_reset()
+		return {}
+	var code: int = _keepalive_http.get_response_code()
+	_relay_http_status = code
+	if code != 200:
+		_keepalive_failures += 1
+		return {}
+	var body_bytes: PackedByteArray = PackedByteArray()
+	while true:
+		_keepalive_http.poll()
+		if _keepalive_http.get_status() != HTTPClient.STATUS_BODY:
+			break
+		var chunk: PackedByteArray = _keepalive_http.read_response_body_chunk()
+		if chunk.size() > 0:
+			# Drain every buffered chunk before waiting on the next frame: the
+			# old loop awaited a frame after each read, adding a whole frame of
+			# latency to every latency probe.
+			body_bytes.append_array(chunk)
+			continue
+		if Time.get_ticks_msec() > deadline:
+			_keepalive_reset()
+			return {}
+		await get_tree().process_frame
+	_keepalive_failures = 0
+	if body_bytes.is_empty():
+		return {}
+	var parsed: Variant = JSON.parse_string(body_bytes.get_string_from_utf8())
+	return parsed as Dictionary if parsed is Dictionary else {}
+
+
 func _relay_parse_response(response: Array) -> Dictionary:
 	var status: int = int(response[1])
 	if status != 200:
@@ -1966,10 +2815,11 @@ func sync_server_clock(samples: int = 7) -> bool:
 				or sync_ticket != _host_ticket + _join_ticket:
 			break
 		var t0: int = Time.get_ticks_msec()
-		var data: Dictionary = await _relay_get("/api/ping?t=%d" % t0, 2.0)
+		var data: Dictionary = await _keepalive_json(HTTPClient.METHOD_GET,
+			"/api/ping?t=%d" % t0, {}, 2000)
 		if data.is_empty() and relay_base == sync_base \
 				and sync_ticket == _host_ticket + _join_ticket:
-			data = await _relay_get("/api/time", 2.0)
+			data = await _keepalive_json(HTTPClient.METHOD_GET, "/api/time", {}, 2000)
 		var t1: int = Time.get_ticks_msec()
 		if relay_base == "" or relay_base != sync_base \
 				or sync_ticket != _host_ticket + _join_ticket:
@@ -1995,6 +2845,19 @@ func sync_server_clock(samples: int = 7) -> bool:
 	server_rtt_ms = rtts[rtts.size() / 2]
 	server_clock_ready = true
 	return true
+
+
+func _filtered_rtt(sample_ms: int) -> int:
+	## Best-of-window filter; see RTT_SAMPLE_WINDOW. Keeps the HUD number close
+	## to the real network round trip even though the sampling loop is frame
+	## quantised (a raw sample can carry up to one 60 Hz frame of extra wait).
+	_rtt_samples.append(clampi(sample_ms, 0, 5000))
+	if _rtt_samples.size() > RTT_SAMPLE_WINDOW:
+		_rtt_samples.pop_front()
+	var best: int = _rtt_samples[0]
+	for value: int in _rtt_samples:
+		best = mini(best, value)
+	return best
 
 
 func _note_relay_rtt(sample_ms: int) -> void:
@@ -2027,14 +2890,15 @@ func _probe_relay_latency() -> void:
 		return
 	_relay_probe_pending = true
 	var started: int = Time.get_ticks_msec()
-	var data: Dictionary = await _relay_get("/api/ping?t=%d" % started, 2.0)
+	var data: Dictionary = await _keepalive_json(HTTPClient.METHOD_GET,
+		"/api/ping?t=%d" % started, {}, 2000)
 	if data.is_empty():
-		data = await _relay_get("/api/time", 2.0)
+		data = await _keepalive_json(HTTPClient.METHOD_GET, "/api/time", {}, 2000)
 	var rtt: int = maxi(Time.get_ticks_msec() - started, 0)
 	_relay_probe_pending = false
 	if data.is_empty() or not is_session_active():
 		return
-	_note_relay_rtt(rtt)
+	_note_relay_rtt(_filtered_rtt(rtt))
 
 
 func server_bot_poll_interval() -> float:
@@ -2087,8 +2951,8 @@ func stream_race_state(race_id: String, secret: String, rows: Array) -> void:
 		"t": server_now_ms(),
 		"p": rows,
 	}
-	var response: Dictionary = await _relay_post("/api/race/pos", payload,
-		STATE_POST_TIMEOUT)
+	var response: Dictionary = await _keepalive_json(HTTPClient.METHOD_POST,
+		"/api/race/pos", payload, int(STATE_POST_TIMEOUT * 1000.0))
 	if generation != _race_state_generation:
 		# A new race or a disconnect owns the stream now. A late reply must not
 		# clear the newer request's busy flag or count toward its HUD.
@@ -2191,7 +3055,10 @@ func fetch_server_race(race_id: String) -> Dictionary:
 func fetch_server_bots(race_id: String) -> Dictionary:
 	if relay_base == "" or race_id == "":
 		return {}
-	var response: Dictionary = await _relay_get("/api/race/" + race_id + "/bots", 2.0)
+	# 6-12 Hz poll on the persistent connection instead of a new TCP socket per
+	# poll (the old path opened up to 12 connections a second per host).
+	var response: Dictionary = await _keepalive_json(HTTPClient.METHOD_GET,
+		"/api/race/" + race_id + "/bots", {}, 2000)
 	var bots: Variant = response.get("bots", {})
 	return bots as Dictionary if bots is Dictionary else {}
 
@@ -2262,11 +3129,21 @@ func _register_relay(local_port: int) -> bool:
 		"mode": session_mode,
 		"event": session_event,
 		"map": _advertised_room_map(),
+		# Phase-3 slot budget (additive; a 1.x server ignores the two fields and
+		# keeps using "players"). Humans + bots must fit in MAX_PLAYERS seats.
+		"humans": human_count(),
+		"bots": active_bot_count(),
+		# Host game build (WS5P3-05). Additive: a 1.9.0 server ignores it and
+		# answers room rows without it; a 2.0.0 server echoes it in the room
+		# snapshot so typed-code/online joiners can apply the same exact-build
+		# check LAN discovery already uses. Sanitised server-side to ASCII.
+		"version": str(ProjectSettings.get_setting("application/config/version", "")),
 	})
 	if ticket != _host_ticket:
 		return false
 	if response.is_empty():
 		return false
+	_apply_server_capacity(response)
 	relay_token = str(response.get("token", ""))
 	relay_room_code = str(response.get("room_code", ""))
 	relay_port = int(response.get("relay_port", 0))
@@ -2282,6 +3159,31 @@ func _register_relay(local_port: int) -> bool:
 			and relay_tunnel_port > 0:
 		_start_relay_tunnel()
 	return relay_token != "" and relay_port > 0
+
+
+func _apply_server_capacity(response: Dictionary) -> void:
+	## Consume the additive capacity block a 2.0.0 Pi answers register/heartbeat
+	## with. Older servers omit it, so the counters stay -1 and the host keeps
+	## its own local rule (bots still occupy seats; nothing breaks). A newer
+	## server is authoritative: its `max_bots` immediately trims the live bot
+	## field, and the clamp is published in the next reliable config packet.
+	if not is_host:
+		return
+	if not response.has("max_bots") and not response.has("slots_used"):
+		server_max_bots = -1
+		server_max_humans = -1
+		server_slots_used = -1
+		return
+	server_max_bots = clampi(int(response.get("max_bots", -1)), -1, MAX_BOT_COUNT)
+	server_max_humans = clampi(int(response.get("max_humans", -1)), -1, MAX_PLAYERS)
+	server_slots_used = clampi(int(response.get("slots_used", -1)), -1, MAX_PLAYERS)
+	if server_max_bots < 0:
+		return
+	if _clamp_session_bots_to_capacity():
+		_push_session_config()
+		_push_room_state()
+		teams_changed.emit()
+		session_config_changed.emit()
 
 
 func _start_relay_tunnel() -> void:
@@ -2367,6 +3269,8 @@ func _relay_heartbeat_tick(delta: float) -> void:
 		"token": token,
 		"state": room_state,
 		"players": peer_count(),
+		"humans": human_count(),
+		"bots": active_bot_count(),
 		"public": room_public,
 		"mode": session_mode,
 		"event": session_event,
@@ -2403,6 +3307,10 @@ func _relay_heartbeat_tick(delta: float) -> void:
 			_on_relay_room_lost()
 		return
 	_heartbeat_failures = 0
+	# The Pi re-checks the human+bot seat budget on every heartbeat and answers
+	# with the authoritative bot cap. Apply it before anything else so the
+	# joined players / room browser see one consistent capacity.
+	_apply_server_capacity(response)
 
 
 func _on_relay_room_lost() -> void:
@@ -2413,7 +3321,8 @@ func _on_relay_room_lost() -> void:
 	session_ended.emit("The room expired on the game server. Host a new room.")
 	if was_in_game:
 		SceneLoader.go_to(LOBBY_SCENE, "ROOM LOST",
-			"The game server lost this room. Host a new one.")
+			"The game server lost this room. Host a new one.",
+			SceneLoader.network_priority())
 
 
 func set_room_state(state: String) -> void:
@@ -2453,6 +3362,9 @@ func _push_room_state() -> void:
 		"token": relay_token,
 		"state": room_state,
 		"players": peer_count(),
+		# Phase-3 capacity: the room row/relay admission uses these live counts.
+		"humans": human_count(),
+		"bots": active_bot_count(),
 		"public": room_public,
 		"mode": session_mode,
 		"event": session_event,
@@ -2896,6 +3808,28 @@ func _lan_version_matches(room_version: String) -> bool:
 	return room_version.strip_edges() == local
 
 
+func room_build_mismatch_reason(room: Dictionary) -> String:
+	## WS5P3-05: typed-code / online joins used to accept a room from ANY build.
+	## The Pi room row carries the host game build (server 2.0.0 copies the
+	## registering client's version into the room snapshot; LAN discovery always
+	## did), but this path never compared it -- only LAN discovery did. Apply the
+	## same exact-build rule here and fail BEFORE any transport is created, with
+	## a message that names both builds and the fix.
+	##
+	## Empty versions are allowed: an old server (1.9.0 and earlier returns no
+	## version) or an old host that does not report one cannot be verified, and
+	## refusing every such room would break the documented backward-compatible
+	## path. The split bot-team RPC keeps mixed old/new rooms functional and the
+	## version string is sanitised server-side, so this check is advisory-safe.
+	var local: String = str(ProjectSettings.get_setting("application/config/version", "")).strip_edges()
+	var advertised: String = str(room.get("version", "")).strip_edges()
+	if local == "" or advertised == "" or advertised == local:
+		return ""
+	return ("That room is on Cart Slop %s, but you have %s. Both players need " \
+		+ "the same build to play together. Hint: update the game (or ask the " \
+		+ "host to update) and try again.") % [advertised, local]
+
+
 func _parse_lan_room_reply(packet_text: String, sender_ip: String) -> Dictionary:
 	## Parse a LAN discovery answer/beacon. The packet SOURCE address wins over
 	## the advertised "host" field: the reply is guaranteed routable back to the
@@ -2940,6 +3874,15 @@ func _parse_lan_room_reply(packet_text: String, sender_ip: String) -> Dictionary
 		"host": host,
 		"port": open_port,
 		"players": clampi(int(room.get("players", 1)), 1, MAX_PLAYERS),
+		# Phase-3 capacity (additive; a Phase-2 record simply omits it and the
+		# legacy `players` rule applies). Clamped here so a hostile LAN packet
+		# can never advertise a negative/oversized seat budget.
+		"humans": clampi(int(room.get("humans", room.get("players", 1))),
+			0, MAX_PLAYERS),
+		"bots": clamp_bot_count(int(room.get("bots", 0))),
+		"slots": clampi(int(room.get("slots", 0)), 0, MAX_PLAYERS),
+		"max_humans": clampi(int(room.get("max_humans", MAX_PLAYERS)), 0, MAX_PLAYERS),
+		"full": bool(room.get("full", false)),
 		"mode": clean_mode,
 		"event": clean_event,
 		"state": clean_state,
@@ -3217,9 +4160,17 @@ func join_public_room(room: Dictionary) -> void:
 		join_pending = false
 		join_failed.emit("That match already started. Ask the host to return to the lobby. Hint: wait for the lobby.")
 		return
-	if int(room.get("players", 1)) >= MAX_PLAYERS:
+	var capacity: Dictionary = room_capacity(room)
+	if bool(capacity.get("full", false)):
 		join_pending = false
-		join_failed.emit("That room is full. Pick another room or wait for a slot. Hint: try a different room.")
+		join_failed.emit(room_full_reason(capacity))
+		return
+	# WS5P3-05: a stale browser row from another build must fail early with a
+	# clear update message, like LAN discovery already does.
+	var version_reason: String = room_build_mismatch_reason(room)
+	if version_reason != "":
+		join_pending = false
+		join_failed.emit(version_reason)
 		return
 	if room.has("public") and not bool(room.get("public")):
 		join_pending = false
@@ -3252,25 +4203,22 @@ func join_public_room(room: Dictionary) -> void:
 		join_pending = false
 		join_failed.emit("That match already started. Ask the host to return to the lobby. Hint: wait for the lobby.")
 		return
-	if int(room.get("players", 1)) >= MAX_PLAYERS:
+	var live_capacity: Dictionary = room_capacity(room)
+	if bool(live_capacity.get("full", false)):
 		join_pending = false
-		join_failed.emit("That room is full. Pick another room or wait for a slot. Hint: try a different room.")
+		join_failed.emit(room_full_reason(live_capacity))
 		return
-	var host: String = ""
-	if relay_base_public:
-		host = relay_server_host
-		if host == "":
-			host = str(room.get("public_host", ""))
-	if host == "":
-		host = str(room.get("lan_host", ""))
-	var relay_port: int = int(room.get("relay_port", 0))
-	if host == "" or relay_port <= 0:
+	var live_version_reason: String = room_build_mismatch_reason(room)
+	if live_version_reason != "":
 		join_pending = false
-		join_failed.emit("That room is not accepting players yet. Try again.")
+		join_failed.emit(live_version_reason)
+		return
+	var route: Dictionary = await _resolve_join_route(room)
+	if ticket != _join_ticket or not join_pending:
 		return
 	set_meta("last_join_code", "")
 	join_status_changed.emit("Joining the room...")
-	_connect_to(host, relay_port, "pi")
+	_start_room_join(route)
 
 
 func join_game(raw_code: String) -> void:
@@ -3329,29 +4277,28 @@ func join_game(raw_code: String) -> void:
 		else:
 			join_failed.emit("Room %s was not found. Ask the host for a fresh code." % text)
 		return
-	if int(room.get("players", 1)) >= MAX_PLAYERS:
+	# WS5P3-05: typed-code joins must check the host build exactly like LAN
+	# discovery, BEFORE any transport exists. A mismatch here is what turns the
+	# frozen-config-RPC compatibility work into a player-visible break.
+	var version_reason: String = room_build_mismatch_reason(room)
+	if version_reason != "":
 		join_pending = false
-		join_failed.emit("That room is full. Pick another room or wait for a slot. Hint: try a different room.")
+		join_failed.emit(version_reason)
+		return
+	var capacity: Dictionary = room_capacity(room)
+	if bool(capacity.get("full", false)):
+		join_pending = false
+		join_failed.emit(room_full_reason(capacity))
 		return
 	var state: String = str(room.get("state", "lobby")).to_lower()
 	if state != "lobby":
 		join_pending = false
 		join_failed.emit("That match already started. Ask the host to return to the lobby. Hint: wait for the lobby.")
 		return
-	var host: String = str(room.get("lan_host", ""))
-	if relay_base_public:
-		# The client reached the Pi at its public address; the relay lives there.
-		host = relay_server_host if relay_server_host != "" else str(room.get("public_host", ""))
-		if host == "":
-			host = str(room.get("lan_host", ""))
-	var relay_port: int = int(room.get("relay_port", 0))
-	if host == "" or relay_port <= 0:
-		join_pending = false
-		join_failed.emit("That room is not accepting players yet. Try again.")
-		return
+	var route: Dictionary = await _resolve_join_route(room)
 	if ticket != _join_ticket or not join_pending:
 		return
-	_connect_to(host, relay_port, "pi")
+	_start_room_join(route)
 
 
 func _connect_to(connect_ip: String, connect_port: int, mode: String) -> void:
@@ -3361,6 +4308,7 @@ func _connect_to(connect_ip: String, connect_port: int, mode: String) -> void:
 	var keep_relay: String = relay_base if mode != "lan" else ""
 	var keep_public: bool = relay_base_public if mode != "lan" else false
 	var intended_lan: bool = mode == "lan"
+	var intended_direct: bool = mode == "direct"
 	leave()
 	var ticket: int = _join_ticket
 	if keep_relay != "":
@@ -3402,6 +4350,8 @@ func _connect_to(connect_ip: String, connect_port: int, mode: String) -> void:
 	_peer = peer
 	multiplayer.multiplayer_peer = peer
 	connection_mode = "lan" if intended_lan else "pi"
+	_connect_target_direct = intended_direct
+	connection_direct = false
 	is_client = true
 	in_game = false
 	room_state = "lobby"
@@ -3409,10 +4359,25 @@ func _connect_to(connect_ip: String, connect_port: int, mode: String) -> void:
 
 
 func leave() -> void:
+	var was_active: bool = is_session_active()
+	# WS5P3-01/-04: if a match scene is still streaming when the session dies,
+	# abort that load instead of mounting a live-but-sessionless race with no
+	# explanation. Mark it for the mode scene's _ready guard as well, in case the
+	# engine had already committed the scene swap before this teardown.
+	if SceneLoader.cancel_gameplay_load("session ended") and was_active:
+		_session_ended_during_load = true
+	# A stale host-left notice belongs to the previous session; a new lobby must
+	# not open the HOST DISCONNECTED overlay from it.
+	_match_host_lost_pending = ""
 	_host_ticket += 1 ## Cancels an in-flight host_game() await chain.
 	_join_ticket += 1 ## Cancels an in-flight join_game() await chain.
 	_stop_lan_listener()
 	clear_scene_ready()
+	# Lobby presence belongs to the session that just ended; never let a stale
+	# "ready" carry over to the next room (WS5-13).
+	lobby_presence.clear()
+	_lobby_presence_sent = false
+	_presence_stamp.clear()
 	room_state = "lobby"
 	if relay_active and relay_token != "":
 		_relay_unregister_async(relay_token, relay_base)
@@ -3426,6 +4391,19 @@ func leave() -> void:
 	is_client = false
 	in_game = false
 	join_pending = false
+	# A refusal reason belongs to the join that just ended; _on_server_disconnected
+	# reads it before calling leave(), so clearing here cannot lose it.
+	_join_refused_reason = ""
+	# Direct-LAN join bookkeeping belongs to the join that just ended. The relay
+	# route itself is cleared below, so a fallback would have nothing to use.
+	_direct_join_active = false
+	_direct_join_host = ""
+	_direct_join_port = 0
+	_relay_join_host = ""
+	_relay_join_port = 0
+	_connect_target_direct = false
+	connection_direct = false
+	_relay_public_fallback = ""
 	join_code = ""
 	relay_active = false
 	relay_token = ""
@@ -3434,6 +4412,7 @@ func leave() -> void:
 	relay_public_host = ""
 	relay_room_code = ""
 	relay_base = ""
+	_keepalive_reset()
 	_heartbeat_failures = 0
 	if not _relay_forced:
 		relay_server_url = ""
@@ -3459,6 +4438,7 @@ func leave() -> void:
 	_relay_rtt_ema = -1.0
 	_relay_jitter_ema = 0.0
 	_relay_last_rtt = -1.0
+	_rtt_samples.clear()
 	_relay_probe_timer = 0.0
 	_relay_probe_pending = false
 	_relay_http_status = 0
@@ -3500,7 +4480,12 @@ func leave() -> void:
 	session_event = ""
 	session_minigame = ""
 	_peer_teams.clear()
+	_bot_teams.clear()
 	teams_locked = false
+	# Capacity the previous Pi reported belongs to the room that just closed.
+	server_max_bots = -1
+	server_max_humans = -1
+	server_slots_used = -1
 	# Keep _last_pick_map/_last_pick_theme/_last_pick_event: they are the
 	# local picker's memory, not session state, and re-hosting should default
 	# to the game the host confirmed last.
@@ -3521,7 +4506,12 @@ func configure_session(mode: String, bots: bool, count: int,
 		return
 	session_mode = mode
 	session_bots = bots
-	session_bot_count = clampi(count, 0, MAX_BOT_COUNT)
+	# Bots are seats: a room with N humans can field at most MAX_PLAYERS - N of
+	# them. Clamp before the value is published so the pill, the roster and the
+	# Pi room row all agree, and never let one extra click overbook the room.
+	session_bot_count = clampi(count, 0, bot_cap_for_humans(human_count()))
+	if server_max_bots >= 0:
+		session_bot_count = mini(session_bot_count, server_max_bots)
 	session_bot_difficulty = clampi(GameSettings.minigame_difficulty, 0, 2)
 	# The map is sanitised before it leaves this machine. An empty override
 	# means "use the host's current pick", which is what older call sites do.
@@ -3551,7 +4541,11 @@ func configure_session(mode: String, bots: bool, count: int,
 	session_shared_vehicle = GameSettings.vehicle_for_channel(active_vehicle_channel())
 	session_shared_racer_color = GameSettings.racer_color
 	player_vehicles[1] = _local_loadout_dict()
+	_ensure_bot_teams()
 	_push_session_config()
+	# The room row carries the live human+bot split, so a joiner's pre-check
+	# sees the new seat budget immediately instead of on the next heartbeat.
+	_push_room_state()
 
 
 func _note_pick_snapshot() -> void:
@@ -3614,6 +4608,13 @@ func _push_session_config() -> void:
 	## One reliable host -> peer config packet. The trailing racing fields are
 	## optional on the receiver so a peer without them still gets mode, bots and
 	## map, then falls back to its local racing build.
+	##
+	## WIRE CONTRACT: this packet keeps the Phase-2 17-argument signature on
+	## purpose. Godot dispatches RPCs arity-strict, so an 18th argument makes an
+	## older peer drop the WHOLE config packet (mode/map/bots/teams/vehicle
+	## policy). The Phase-3 bot team table therefore travels in the separate
+	## additive `_net_bot_teams` RPC below: an older peer logs one unknown-method
+	## warning and ignores just that call, keeping the room fully configurable.
 	if not is_session_active() or multiplayer.multiplayer_peer == null \
 			or not is_connected_to_server():
 		return
@@ -3622,6 +4623,62 @@ func _push_session_config() -> void:
 		session_event, session_scene, session_minigame, room_public,
 		_peer_teams.duplicate(), teams_locked, session_bot_difficulty,
 		session_vehicle_mode, session_shared_vehicle, session_shared_racer_color)
+	_push_bot_teams()
+
+
+func _push_session_config_to(peer_id: int) -> void:
+	## Same payload for exactly one peer (join/resync path).
+	if not is_host or peer_id <= 0 or not is_connected_to_server():
+		return
+	rpc_id(peer_id, "_net_session_config", session_mode, session_bots,
+		session_bot_count, session_map_id, session_racing_car_id,
+		session_racing_allocation, session_event, session_scene,
+		session_minigame, room_public, _peer_teams.duplicate(), teams_locked,
+		session_bot_difficulty, session_vehicle_mode, session_shared_vehicle,
+		session_shared_racer_color)
+	_push_bot_teams(peer_id)
+
+
+func _push_bot_teams(peer_id: int = 0) -> void:
+	## Additive Phase-3 RPC, deliberately OUTSIDE the frozen config signature
+	## (WS5P3-12). Host only. A Phase-2 peer has no `_net_bot_teams` method: the
+	## engine drops that one reliable call (one warning) and every other field
+	## still arrives through `_net_session_config`; the old peer's bots use the
+	## documented deterministic fallback split of `default_bot_team()`.
+	## `peer_id > 0` targets exactly one peer (join/resync), otherwise everyone.
+	if not is_host or not is_session_active() or _bot_teams.is_empty():
+		return
+	if multiplayer.multiplayer_peer == null or not is_connected_to_server():
+		return
+	if peer_id > 0:
+		rpc_id(peer_id, "_net_bot_teams", _bot_teams.duplicate())
+	else:
+		rpc("_net_bot_teams", _bot_teams.duplicate())
+
+
+@rpc("any_peer", "reliable")
+func _net_request_session_sync() -> void:
+	## Client -> host. Idempotent full snapshot request: config (mode/scene/map/
+	## vehicle policy/host build) plus the name, tag colour and Garage loadout
+	## tables. Sent when the client's link comes up and again when a gameplay
+	## scene becomes ready, so car selection, PRO RACER paint and the PICK OWN /
+	## SHARED policy are applied in every mode even when the first config push
+	## landed before the client scene existed (the old lobby -> match ordering
+	## bug: a joiner could load the race with its own saved car).
+	if not is_host or not is_connected_to_server():
+		return
+	var sender: int = _rpc_sender()
+	if sender <= 1 or not multiplayer.get_peers().has(sender):
+		return
+	_push_session_config_to(sender)
+	for peer_id: int in player_names:
+		rpc_id(sender, "_net_set_name", peer_id, str(player_names[peer_id]))
+	for peer_id: int in player_colors:
+		rpc_id(sender, "_net_set_tag_color", peer_id,
+			(player_colors[peer_id] as Color).to_html(false))
+	for peer_id: int in player_vehicles:
+		rpc_id(sender, "_net_set_vehicle_loadout", peer_id,
+			player_vehicles[peer_id])
 
 
 @rpc("authority", "call_local", "reliable")
@@ -3635,6 +4692,10 @@ func _net_session_config(mode: String, bots: bool, count: int,
 	if mode != GameSettings.GAME_SANDBOX and mode != GameSettings.GAME_MINIGAMES:
 		return
 	count = clampi(count, 0, MAX_BOT_COUNT)
+	# Defense in depth: even a hostile/broken host packet cannot overbook the
+	# room. Bots are real seats, so the replicated field never exceeds the seats
+	# the connected humans leave free (the host already clamps before sending).
+	count = mini(count, bot_cap_for_humans(human_count()))
 	session_mode = mode
 	session_bots = bots
 	session_bot_count = count
@@ -3677,12 +4738,50 @@ func _net_session_config(mode: String, bots: bool, count: int,
 	var assignment_changed: bool = clean_teams != _peer_teams
 	_peer_teams = clean_teams
 	teams_locked = locked
-	if assignment_changed or lock_changed:
+	# Bot teams are NOT part of this frozen 17-argument config packet (WS5P3-12):
+	# they arrive in the additive `_net_bot_teams` RPC. Keep the local parallel
+	# table exactly as long as the live bot field; until that authoritative table
+	# arrives (old host build, first config frame) the deterministic fallback
+	# split of `default_bot_team()` keeps every peer's roster identical.
+	var bots_now: int = active_bot_count_for(bots, count)
+	var resized_bot_teams: Array[int] = sanitize_bot_teams(_bot_teams, bots_now)
+	var bot_changed: bool = resized_bot_teams != _bot_teams
+	_bot_teams = resized_bot_teams
+	if is_host:
+		# call_local: the host's authoritative table must stay canonical
+		# (length == live bot field, new slots on the smaller side).
+		_ensure_bot_teams()
+	if assignment_changed or lock_changed or bot_changed:
 		teams_changed.emit()
 	if is_host:
 		GameSettings.set_session_config(GameSettings.MODE_MULTIPLAYER, mode,
 			bots, count, session_map_id)
 	session_config_changed.emit()
+
+
+@rpc("authority", "call_local", "reliable")
+func _net_bot_teams(raw_teams: Array) -> void:
+	## Host -> peers: the Phase-3 bot team table. Kept as its OWN validated RPC
+	## instead of an 18th `_net_session_config` argument (WS5P3-12): Godot RPC
+	## dispatch is arity-strict, so widening the config signature makes an older
+	## Phase-2 peer silently drop the entire config packet. A separate method is
+	## additive -- an older peer ignores one unknown call and keeps the whole room
+	## config, with bots on the documented deterministic fallback split.
+	##
+	## Receive-side validation: `sanitize_bot_teams()` keeps only legal 0/1 sides
+	## and sizes the table to the live replicated bot field, so a malformed or
+	## hostile array can never grow the roster or index a third team.
+	var bots_now: int = active_bot_count()
+	var clean: Array[int] = sanitize_bot_teams(raw_teams, bots_now)
+	var changed: bool = clean != _bot_teams
+	_bot_teams = clean
+	if is_host:
+		# call_local: pad/trim the host's canonical copy after the receive
+		# sanitizer ran on it (no-op in the normal path, which already sends a
+		# table exactly as long as the field).
+		_ensure_bot_teams()
+	if changed:
+		teams_changed.emit()
 
 
 func _sanitize_teams(raw: Dictionary) -> Dictionary:
@@ -3709,14 +4808,28 @@ func is_lan() -> bool:
 	return connection_mode == "lan"
 
 
+func is_direct_link() -> bool:
+	## True when ENet talks straight to the host, so the UI can honestly label
+	## the path (LAN room, or a Pi room joined through the same-LAN shortcut).
+	return connection_direct or connection_mode == "lan"
+
+
 # --------------------------------------------------------------------------
 # session flow
 
 
-func start_game(scene_path: String = "", mode: String = "") -> void:
+func start_game(scene_path: String = "", mode: String = "",
+		restart: bool = false) -> void:
 	## Host-only. Picks the scene from the host's session mode when omitted,
 	## then pushes the exact configuration to every peer before loading.
+	## `restart` asks for a fresh match in the same scene (the result cards'
+	## RACE AGAIN / PLAY AGAIN): it goes through the forced-reload RPC because
+	## the begin-game retry guard would otherwise swallow a same-scene start.
 	if not is_host:
+		return
+	if restart and _restart_scene_path != "" and SceneLoader.is_busy():
+		# The first rematch press is already streaming a scene; a second one
+		# must not broadcast another forced reload to every peer.
 		return
 	var target: String = scene_path
 	var chosen_mode: String = mode
@@ -3745,7 +4858,12 @@ func start_game(scene_path: String = "", mode: String = "") -> void:
 	game_scene = target
 	session_mode = chosen_mode
 	session_bots = GameSettings.bots_enabled
-	session_bot_count = GameSettings.effective_bot_count()
+	# Final seat-budget clamp at the moment of launch: the match must never
+	# spawn more bots than the room has room for.
+	session_bot_count = clampi(GameSettings.effective_bot_count(), 0,
+		bot_cap_for_humans(human_count()))
+	if server_max_bots >= 0:
+		session_bot_count = mini(session_bot_count, server_max_bots)
 	session_bot_difficulty = clampi(GameSettings.minigame_difficulty, 0, 2)
 	session_map_id = GameSettings.sanitize_map_id(GameSettings.selected_map)
 	session_minigame = _sanitize_minigame_theme(session_event, GameSettings.selected_minigame) \
@@ -3760,17 +4878,42 @@ func start_game(scene_path: String = "", mode: String = "") -> void:
 	_balance_teams()
 	race_seed = Time.get_ticks_msec()
 	clear_scene_ready()
+	# A same-scene rematch (the result cards' RACE AGAIN / PLAY AGAIN) must
+	# replace the live scene instance, which the begin-game retry guard would
+	# otherwise treat as "already loaded". Mark the deliberate restart so the
+	# restart RPC below forces the reload on every peer.
+	_restart_scene_path = target if restart else ""
 	set_room_state("playing")
 	# Refresh the config so a build changed in the garage after the last peer
 	# change still reaches every peer before the scene starts (reliable and
 	# ordered ahead of the begin-game packet).
 	_push_session_config()
-	rpc("_net_begin_game", target, chosen_mode, session_bots, session_bot_count, race_seed)
+	if restart:
+		rpc("_net_restart_game", target, chosen_mode, session_bots,
+			session_bot_count, race_seed)
+	else:
+		rpc("_net_begin_game", target, chosen_mode, session_bots,
+			session_bot_count, race_seed)
 
 
 @rpc("authority", "call_local", "reliable")
 func _net_begin_game(scene_path: String, mode: String, bots: bool, count: int,
 		seed_value: int = 0) -> void:
+	_begin_game_common(scene_path, mode, bots, count, seed_value, false)
+
+
+@rpc("authority", "call_local", "reliable")
+func _net_restart_game(scene_path: String, mode: String, bots: bool, count: int,
+		seed_value: int = 0) -> void:
+	## Host -> every peer, result cards' RACE AGAIN / PLAY AGAIN. Its only
+	## difference from _net_begin_game is that it never takes the "already on
+	## this scene" early return: a rematch must reload the match scene. The
+	## payload is validated by _begin_game_common exactly like begin-game.
+	_begin_game_common(scene_path, mode, bots, count, seed_value, true)
+
+
+func _begin_game_common(scene_path: String, mode: String, bots: bool, count: int,
+		seed_value: int, restart: bool) -> void:
 	# A malicious host must not be able to load an arbitrary scene or spawn
 	# billions of bots on a joining client.
 	if scene_path not in ALLOWED_SCENES:
@@ -3780,9 +4923,16 @@ func _net_begin_game(scene_path: String, mode: String, bots: bool, count: int,
 	count = clampi(count, 0, MAX_BOT_COUNT)
 	var current: Node = _active_gameplay_scene()
 	var active_path: String = _active_gameplay_scene_path(current)
-	if current != null and active_path == scene_path and in_game:
+	if restart:
+		# Remember the pending restart before the load guard below: a retried
+		# begin-game must not re-announce the outgoing scene instance as ready.
+		_restart_scene_path = scene_path
+	elif current != null and active_path == scene_path and in_game \
+			and _restart_scene_path != scene_path:
 		# The first ready RPC can reach the host before its scene exists. On a
 		# retry, announce through the loaded scene again once the host is ready.
+		# A deliberate restart deliberately does NOT take this path: the scene
+		# instance on screen is the one being replaced.
 		notify_scene_ready(current, scene_path)
 		if not is_host:
 			_send_client_scene_ready(current, scene_path)
@@ -3791,6 +4941,9 @@ func _net_begin_game(scene_path: String, mode: String, bots: bool, count: int,
 		# A previous retry already asked SceneLoader for this scene. It may
 		# still be streaming; queueing it again would load the scene twice.
 		return
+	# A fresh authoritative start clears any stale teardown marker from a
+	# previous aborted match load (WS5P3-04).
+	_session_ended_during_load = false
 	_scene_load_path = scene_path
 	if not is_host:
 		scene_ready_peers.erase(1)
@@ -3811,6 +4964,12 @@ func _net_begin_game(scene_path: String, mode: String, bots: bool, count: int,
 	# name save would silently persist the host's mode and bot count.
 	if is_host:
 		GameSettings.set_session_config(GameSettings.MODE_MULTIPLAYER, mode, bots, count)
+	SceneLoader.go_to(scene_path, _start_title(scene_path, mode),
+		"Syncing players...", SceneLoader.network_priority())
+
+
+func _start_title(scene_path: String, mode: String) -> String:
+	## Loading-overlay heading for a match start; shared by begin and restart.
 	var title: String = "STARTING SANDBOX"
 	if mode == GameSettings.GAME_MINIGAMES:
 		match scene_path:
@@ -3822,14 +4981,15 @@ func _net_begin_game(scene_path: String, mode: String, bots: bool, count: int,
 				title = "STARTING BLAST TAG"
 			_:
 				title = "STARTING RACE"
-	SceneLoader.go_to(scene_path, title, "Syncing players...")
+	return title
 
 
 func return_to_lobby(reason: String = "") -> void:
 	if is_session_active():
 		leave()
 	session_ended.emit(reason)
-	SceneLoader.go_to(LOBBY_SCENE, "MULTIPLAYER")
+	SceneLoader.go_to(LOBBY_SCENE, "MULTIPLAYER", "",
+		SceneLoader.network_priority())
 
 
 func return_to_lobby_keep_session() -> void:
@@ -3837,7 +4997,8 @@ func return_to_lobby_keep_session() -> void:
 	## a client waits in its own lobby while the connection stays open.
 	clear_scene_ready()
 	if not is_session_active():
-		SceneLoader.go_to(LOBBY_SCENE, "MULTIPLAYER")
+		SceneLoader.go_to(LOBBY_SCENE, "MULTIPLAYER", "",
+		SceneLoader.network_priority())
 		return
 	if is_host:
 		in_game = false
@@ -3847,7 +5008,8 @@ func return_to_lobby_keep_session() -> void:
 		# Tell the host we left the race scene so it stops sending cart-state
 		# RPCs to a node that no longer exists.
 		rpc_id(1, "_net_client_left_scene")
-		SceneLoader.go_to(LOBBY_SCENE, "MULTIPLAYER")
+		SceneLoader.go_to(LOBBY_SCENE, "MULTIPLAYER", "",
+		SceneLoader.network_priority())
 
 
 @rpc("any_peer", "call_remote", "reliable")
@@ -3865,11 +5027,98 @@ func _net_return_lobby() -> void:
 	clear_scene_ready()
 	input_locked = false
 	in_game = false
-	SceneLoader.go_to(LOBBY_SCENE, "MULTIPLAYER")
+	SceneLoader.go_to(LOBBY_SCENE, "MULTIPLAYER", "",
+		SceneLoader.network_priority())
+
+
+# --------------------------------------------------------------------------
+# lobby presence / ready gate (WS5-13)
+#
+# The host could always press START while a client was still connecting, in the
+# Garage or picking a map, and that client then arrived late (or not at all) for
+# the grid. A client now reports one bool through a validated, rate-limited
+# reliable RPC: true while it sits in the room lobby, false when the lobby scene
+# is left (Garage/map picker) or the session is gone. The lobby UI gates START on
+# it with a deliberate "start anyway" second press.
+# No payload can be smuggled: sender identity + a boolean + a throttle only.
+
+
+func set_lobby_presence(present: bool) -> void:
+	## Client-only. Called by the lobby screen when it enters/leaves the room
+	## lobby. Offline and host calls are no-ops, and a duplicate report is skipped
+	## so the host never sees a reliable packet for an unchanged state.
+	if is_host or not is_client or not is_session_active() \
+			or multiplayer.multiplayer_peer == null:
+		return
+	if present == _lobby_presence_sent:
+		return
+	_lobby_presence_sent = present
+	if is_connected_to_server():
+		rpc_id(1, "_net_lobby_presence", present)
+
+
+func is_lobby_peer_present(peer_id: int) -> bool:
+	## Ready-to-start predicate used by the lobby gate. The host is always
+	## present; a client only after it reported being in the room lobby.
+	if peer_id <= 1:
+		return true
+	var local_id: int = multiplayer.get_unique_id() \
+		if multiplayer.multiplayer_peer != null else 0
+	if peer_id == local_id:
+		return _lobby_presence_sent
+	return bool(lobby_presence.get(peer_id, false))
+
+
+func lobby_peers_not_present() -> Array[int]:
+	## Host-only: connected peers that are not in the lobby right now. Sorted so
+	## the warning label and the gate are deterministic.
+	var missing: Array[int] = []
+	if not is_host or not is_session_active():
+		return missing
+	for peer_id: int in multiplayer.get_peers():
+		if not bool(lobby_presence.get(peer_id, false)):
+			missing.append(peer_id)
+	missing.sort()
+	return missing
+
+
+@rpc("any_peer", "call_remote", "reliable")
+func _net_lobby_presence(present: bool) -> void:
+	## Client -> host. Validated sender, per-sender floor, idempotent state store
+	## and a signal for the lobby UI. Never relays: the payload stays one bool.
+	if not is_host or not is_session_active():
+		return
+	var sender: int = _rpc_sender()
+	if sender <= 1 or not multiplayer.get_peers().has(sender):
+		return
+	var now_ms: int = Time.get_ticks_msec()
+	if now_ms - int(_presence_stamp.get(sender, -100000)) < PRESENCE_MIN_INTERVAL_MS:
+		return
+	_presence_stamp[sender] = now_ms
+	if bool(lobby_presence.get(sender, false)) == present:
+		return
+	lobby_presence[sender] = present
+	lobby_presence_changed.emit()
 
 
 # --------------------------------------------------------------------------
 # signals
+
+
+func _refuse_peer(peer_id: int, reason: String) -> void:
+	## WS5P3-13: tell a joining peer WHY it is being dropped, then disconnect it.
+	## The reason RPC is reliable and `disconnect_peer()` without `force` queues
+	## the disconnect after pending reliable packets, so the client actually
+	## receives the reason and can show it instead of the generic
+	## "host ended the session".
+	if peer_id <= 0:
+		return
+	if _peer != null:
+		rpc_id(peer_id, "_net_join_refused", reason)
+		_peer.disconnect_peer(peer_id)
+	# The real state cleanup happens once ENet reports the disconnection in
+	# _on_peer_disconnected(); the caller must not push config/roster to a peer
+	# that is already on its way out.
 
 
 func _on_peer_connected(id: int) -> void:
@@ -3882,6 +5131,22 @@ func _on_peer_connected(id: int) -> void:
 	_color_stamp.erase(id)
 	_vehicle_stamp.erase(id)
 	_ping_request_stamp.erase(id)
+	_presence_stamp.erase(id)
+	if is_host:
+		# A newcomer is not lobby-ready until it reports in (WS5-13): a client
+		# still connecting must not be able to satisfy the START gate.
+		lobby_presence[id] = false
+	if is_host and is_session_active():
+		# Slot budget admission (WS5P3-13): humans and bots SHARE the 8 seats.
+		# Once the connected humans alone fill every seat there is no bot left
+		# to trim, so the newcomer is a 9th human the room cannot seat -- refuse
+		# it with a clear reason BEFORE it becomes part of the roster/config fan
+		# out. (If only seats held by bots are contested, the join is legal: the
+		# bot field is clamped below to hand its seat to the human.)
+		var refusal: String = host_join_refusal_reason(human_count())
+		if refusal != "":
+			_refuse_peer(id, refusal)
+			return
 	if is_host and in_game and game_scene == RACE_SCENE:
 		# Meadow Loop does not support joining mid-race: a peer that arrives
 		# after the start would sit on a frozen WAITING screen. Drop it
@@ -3890,15 +5155,20 @@ func _on_peer_connected(id: int) -> void:
 			_peer.disconnect_peer(id)
 		return
 	peers_changed.emit()
+	if is_host and is_session_active():
+		# Slot budget: a human joining takes a seat back from the bots. Clamp
+		# the live bot field BEFORE the config push below so the newcomer's very
+		# first config already reflects the room it actually joined.
+		_clamp_session_bots_to_capacity()
 	_push_room_state()
 	if is_host and is_session_active():
 		# Deliver rooms are team games: a joiner gets a side immediately, the
 		# split is balanced again unless the host locked it, and the whole
 		# table travels in the same config packet as the mode and scene. Push
 		# this BEFORE any begin-game packet so the new peer can read its team
-		# as soon as the arena loads.
+		# as soon as the arena loads. Bots join the same pass.
 		if not _peer_teams.has(id):
-			_peer_teams[id] = _smaller_team()
+			_peer_teams[id] = _smaller_team_now()
 		_balance_teams()
 		_push_session_config()
 		teams_changed.emit()
@@ -4011,6 +5281,8 @@ func _on_peer_disconnected(id: int) -> void:
 	_color_stamp.erase(id)
 	_vehicle_stamp.erase(id)
 	_ping_request_stamp.erase(id)
+	_presence_stamp.erase(id)
+	lobby_presence.erase(id)
 	peers_changed.emit()
 	names_changed.emit()
 	tag_colors_changed.emit()
@@ -4020,7 +5292,9 @@ func _on_peer_disconnected(id: int) -> void:
 	if is_host and is_session_active():
 		_broadcast_ping_table()
 		# A departure can unbalance a deliver room. Rebalance unless locked
-		# and let every remaining peer redraw its team columns.
+		# and let every remaining peer redraw its team columns. The freed seat
+		# does NOT auto-raise the bot field: the host's last explicit bot pick
+		# stays authority, exactly like a manual human move survives a rebalance.
 		_balance_teams()
 		_push_session_config()
 		teams_changed.emit()
@@ -4029,6 +5303,19 @@ func _on_peer_disconnected(id: int) -> void:
 func _on_connected_to_server() -> void:
 	is_client = true
 	join_pending = false
+	# A direct-LAN shortcut either came up right here or it never will; the
+	# relay fallback owns the join from now on.
+	connection_direct = _connect_target_direct
+	_direct_join_active = false
+	_direct_join_host = ""
+	_direct_join_port = 0
+	_relay_join_host = ""
+	_relay_join_port = 0
+	# Ask the host for the full session snapshot now that the link is up. This
+	# is idempotent and makes a late/again join converge on the host's room
+	# config, vehicles, paints and policy even if the initial push raced the
+	# lobby scene load.
+	rpc_id(1, "_net_request_session_sync")
 	# The connection answered, so the macOS permission retry budget resets.
 	_lan_join_retry = 0
 	_lan_join_host = ""
@@ -4043,6 +5330,11 @@ func _on_connected_to_server() -> void:
 
 
 func _on_connection_failed() -> void:
+	## The direct-LAN attempt is a probe, not a commitment: fall back to the
+	## relay before reporting a failed join.
+	if _direct_join_active:
+		_fallback_to_relay_join()
+		return
 	## macOS 15+ can refuse the first direct LAN connect while the Local
 	## Network permission alert is on screen. Retry once, after the player has
 	## had a moment to answer, instead of dumping them back to the menu with a
@@ -4078,17 +5370,95 @@ func _join_failure_reason(was_lan: bool) -> String:
 	return reason
 
 
+@rpc("authority", "reliable")
+func _net_join_refused(reason: String) -> void:
+	## Host -> a client it is dropping because the room cannot seat it (WS5P3-13
+	## direct-LAN capacity). Stored until the disconnect lands so the lobby shows
+	## the real reason instead of the generic "host ended the session". The
+	## disconnect itself arrives right after this reliable packet because
+	## `_refuse_peer()` drops the peer without forcing (pending reliable data is
+	## flushed first). Sanitised + bounded: it is rendered as one status line.
+	if not is_client:
+		return
+	var clean: String = reason.strip_edges()
+	if clean.length() > 180:
+		clean = clean.substr(0, 180)
+	_join_refused_reason = clean
+
+
 func _on_server_disconnected() -> void:
 	in_game = false
 	var was_client: bool = is_client
+	var was_joining: bool = join_pending
+	# Consume the host's explicit refusal reason (if any) BEFORE leave() clears
+	# the join bookkeeping, so the disconnect is reported with the real cause.
+	var refused_reason: String = _join_refused_reason
+	_join_refused_reason = ""
 	leave()
-	if was_client:
-		session_ended.emit("The host ended the session.")
-		var current: Node = get_tree().current_scene
-		# Reloading the lobby wipes the reason from the fresh instance's
-		# status label. If we are already there, let _on_session_ended show it.
-		if current == null or current.scene_file_path != LOBBY_SCENE:
-			SceneLoader.go_to(LOBBY_SCENE, "SESSION ENDED", "The host disconnected.")
+	if not was_client:
+		return
+	if refused_reason != "" and was_joining:
+		# Dropped during the join handshake: report through the join-failed path
+		# the lobby already renders (no session was ever established).
+		join_failed.emit(refused_reason)
+		return
+	session_ended.emit(refused_reason if refused_reason != "" \
+		else "The host ended the session.")
+	var current: Node = get_tree().current_scene
+	var current_path: String = current.scene_file_path if current != null else ""
+	# WS5-07: the host left mid-match. Keep the frozen match scene (and the
+	# standings it already rendered) visible behind a clear disconnect overlay
+	# instead of destroying the result and reloading an empty lobby.
+	if current_path in MATCH_SCENES:
+		# WS5P3-01: leave() already cancelled a still-streaming match (re)load, so
+		# the pause menu that receives this signal is the live one. The reason is
+		# also kept as a pending notice for the rare case where the scene swap had
+		# already committed: the incoming PauseMenu._ready consumes it.
+		_match_host_lost_pending = "The host left the match."
+		match_host_lost.emit("The host left the match.")
+		return
+	# Reloading the lobby wipes the reason from the fresh instance's
+	# status label. If we are already there, let _on_session_ended show it.
+	if current_path != LOBBY_SCENE:
+		SceneLoader.go_to(LOBBY_SCENE, "SESSION ENDED",
+			refused_reason if refused_reason != "" else "The host disconnected.",
+			SceneLoader.network_priority())
+
+
+func _on_scene_load_failed(path: String, error: int) -> void:
+	## WS5P3-11: a match scene that cannot be swapped in is a dead end. If the
+	## room kept advertising "playing" every peer would wait for a race that
+	## never starts and the host would sit on the result screen with no notice.
+	## Roll the authoritative state back to the lobby and bring everyone home.
+	if path not in MATCH_SCENES:
+		return
+	if not is_session_active():
+		# A SOLO start that failed has no peers to release and no room to roll
+		# back: leave the player on the outgoing menu so they can retry (the
+		# loader restored its focus and released the overlay already).
+		push_warning("Network: solo match scene failed to load (%s, %d)" % [path, error])
+		return
+	push_warning("Network: match scene failed to load (%s, %d); returning the room to the lobby"
+		% [path, error])
+	_session_ended_during_load = false
+	clear_scene_ready()
+	in_game = false
+	_restart_scene_path = ""
+	# A retry of the same match must be allowed again once the failure cleared.
+	_scene_load_path = ""
+	if is_host:
+		set_room_state("lobby")
+		if multiplayer.multiplayer_peer != null:
+			# call_local: this host runs _net_return_lobby too, so peers and the
+			# host converge on the lobby through one authoritative path.
+			rpc("_net_return_lobby")
+		else:
+			_net_return_lobby()
+	else:
+		if multiplayer.multiplayer_peer != null:
+			rpc_id(1, "_net_client_left_scene")
+		SceneLoader.go_to(LOBBY_SCENE, "MULTIPLAYER", "",
+			SceneLoader.network_priority())
 
 
 # --------------------------------------------------------------------------
@@ -4173,14 +5543,18 @@ func _measure_host_ping() -> void:
 		return
 	_host_ping_pending = true
 	var started: int = Time.get_ticks_msec()
-	var status: Dictionary = await _relay_get("/api/status", 2.0)
+	# /api/ping on the persistent connection: the probe now measures the real
+	# server round trip instead of a fresh TCP handshake (~35 ms on Wi-Fi).
+	var status: Dictionary = await _keepalive_json(HTTPClient.METHOD_GET,
+		"/api/ping?t=%d" % started, {}, 2000)
 	_host_ping_pending = false
 	if not is_host or not is_session_active():
 		return
 	if status.is_empty():
 		# Keep the last good value rather than showing 0 for a dropped probe.
 		return
-	host_ping_ms = clampi(Time.get_ticks_msec() - started, 1, 5000)
+	host_ping_ms = _filtered_rtt(
+		clampi(Time.get_ticks_msec() - started, 1, 5000))
 	_note_relay_rtt(host_ping_ms)
 	ping_table[1] = host_ping_ms
 	ping_table_changed.emit()
@@ -4358,3 +5732,143 @@ func spawn_position(peer_id: int) -> Vector3:
 	var column: int = index % 5
 	var row: int = index / 5
 	return Vector3(-6.0 + column * 3.0, 0.25, 64.0 - row * 4.0)
+
+
+# --------------------------------------------------------------------------
+# Lobby pre-game reactions (WS4) — new, self-contained block.
+#
+# A tiny reliable stream-chat emote channel for players waiting in the lobby.
+# Nothing above this line was modified: this block adds one signal, two RPCs,
+# one outbound entry point and its throttle tables. It follows the same relay
+# pattern as the existing name/tag-colour RPCs:
+#
+#   client --(reliable request)--> host --(reliable relay)--> every other peer
+#
+# The sender shows its own bubble immediately (no round-trip lag offline or on
+# the Pi relay), and the host never echoes the relay back to that sender, so
+# each client renders the reaction exactly once. The host relays with the
+# name/colour from ITS authoritative tables, never with the client's copy.
+#
+# Rate limits: per sender one relay per REACTION_COOLDOWN_MS and at most
+# REACTION_WINDOW_CAP relays per REACTION_WINDOW_MS window. The lobby applies a
+# matching client-side cooldown + bounded pending queue (scripts/ui/
+# lobby_reactions.gd) so mashing the button/key/gamepad cannot flood the room.
+# Everything is reliable ENet RPCs: no threads, Web-safe, LAN/Pi/offline-safe.
+
+const REACTION_COOLDOWN_MS: int = 400 ## Host-side per-peer relay spacing.
+const REACTION_WINDOW_MS: int = 10000 ## Amplification window.
+const REACTION_WINDOW_CAP: int = 12 ## Max relays per peer per window.
+const REACTION_ID_MAX_LEN: int = 16 ## Longest accepted reaction id token.
+
+signal lobby_reaction_received(peer_id: int, reaction_id: String,
+	peer_name: String, color_hex: String)
+
+var _reaction_stamp: Dictionary = {} ## peer id -> last relay ms
+var _reaction_window: Dictionary = {} ## peer id -> {start_ms, count}
+
+
+func reaction_throttle_reset() -> void:
+	## Test hook: drop every throttle stamp (also safe to call on teardown).
+	_reaction_stamp.clear()
+	_reaction_window.clear()
+
+
+static func sanitize_reaction_id(raw_id: String) -> String:
+	## Reaction ids are short lowercase tokens; anything else is dropped before
+	## it can reach an RPC payload. Mirrors the strings in
+	## scripts/ui/lobby_reactions.gd, which the UI validates first.
+	var clean: String = raw_id.strip_edges().to_lower()
+	if clean.length() < 1 or clean.length() > REACTION_ID_MAX_LEN:
+		return ""
+	for character: String in clean:
+		if not "abcdefghijklmnopqrstuvwxyz0123456789_".contains(character):
+			return ""
+	return clean
+
+
+func _reaction_allowed(sender_id: int, now_ms: int = -1) -> bool:
+	## Host-side gate. Pure enough to unit-test: pass an explicit `now_ms` to
+	## assert the cooldown/window behaviour without sleeping.
+	if sender_id <= 1:
+		return false
+	if now_ms < 0:
+		now_ms = Time.get_ticks_msec()
+	var window_start: int = int(_reaction_window.get(sender_id, {}).get("start", now_ms))
+	var window_count: int = int(_reaction_window.get(sender_id, {}).get("count", 0))
+	if now_ms - window_start >= REACTION_WINDOW_MS:
+		window_start = now_ms
+		window_count = 0
+	if window_count >= REACTION_WINDOW_CAP:
+		return false
+	if now_ms - int(_reaction_stamp.get(sender_id, -100000)) < REACTION_COOLDOWN_MS:
+		return false
+	_reaction_stamp[sender_id] = now_ms
+	_reaction_window[sender_id] = {"start": window_start, "count": window_count + 1}
+	return true
+
+
+func send_lobby_reaction(reaction_id: String) -> bool:
+	## Outbound entry point used by the lobby UI. Always emits the local bubble
+	## first (so offline/local feedback is instant and a no-op-safe path exists
+	## with no session), then relays the reaction when a room is live.
+	var clean: String = sanitize_reaction_id(reaction_id)
+	if clean == "":
+		return false
+	var local_id: int = multiplayer.get_unique_id() if multiplayer.multiplayer_peer != null else 0
+	if not is_session_active() or multiplayer.multiplayer_peer == null:
+		lobby_reaction_received.emit(0, clean, GameSettings.player_name,
+			GameSettings.player_tag_color)
+		return true
+	var local_name: String = name_of(local_id)
+	var local_color: String = color_of(local_id).to_html(false)
+	lobby_reaction_received.emit(local_id, clean, local_name, local_color)
+	if is_host:
+		# Host is the authority: relay under its own id, no request round trip.
+		rpc("_net_lobby_reaction", local_id, clean, local_name, local_color)
+	else:
+		rpc_id(1, "_net_request_lobby_reaction", clean)
+	return true
+
+
+@rpc("any_peer", "call_remote", "reliable")
+func _net_request_lobby_reaction(reaction_id: String) -> void:
+	## Client -> host. The client's payload is limited to the id token: the
+	## name/colour attached to the relayed bubble come from the host tables.
+	if not is_host or not is_session_active() or multiplayer.multiplayer_peer == null:
+		return
+	if in_game:
+		# Lobby-only feature: a client cannot use the reaction channel as a
+		# mid-race amplifier.
+		return
+	var sender: int = _rpc_sender()
+	if sender <= 1 or not multiplayer.get_peers().has(sender):
+		return
+	if not _reaction_allowed(sender):
+		return
+	var clean: String = sanitize_reaction_id(reaction_id)
+	if clean == "":
+		return
+	var peer_name: String = name_of(sender)
+	var color_hex: String = color_of(sender).to_html(false)
+	# The host renders the relayed bubble too: `call_remote` handlers never run
+	# locally, so the request path has to surface it on the host explicitly.
+	lobby_reaction_received.emit(sender, clean, peer_name, color_hex)
+	for peer_id: int in multiplayer.get_peers():
+		if peer_id == sender:
+			# The sender already rendered its own bubble locally.
+			continue
+		rpc_id(peer_id, "_net_lobby_reaction", sender, clean, peer_name, color_hex)
+
+
+@rpc("authority", "call_remote", "reliable")
+func _net_lobby_reaction(peer_id: int, reaction_id: String,
+		peer_name: String, color_hex: String) -> void:
+	## Host -> clients. Authority RPC: only the host can drive it, but the
+	## payload is still sanitised so a broken/hostile host cannot inject text.
+	if not is_session_active():
+		return
+	var clean: String = sanitize_reaction_id(reaction_id)
+	if clean == "" or peer_id <= 0:
+		return
+	lobby_reaction_received.emit(peer_id, clean,
+		GameSettings.sanitize_name(peer_name), str(color_hex).to_lower())

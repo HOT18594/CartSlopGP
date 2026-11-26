@@ -7,15 +7,28 @@ const PropBatch := preload("res://scripts/minigames/scenery/prop_batch.gd")
 const SceneryKit := preload("res://scripts/minigames/scenery/scenery_kit.gd")
 const LandscapeSculptor := preload("res://scripts/minigames/scenery/landscape_sculptor.gd")
 const ConceptSpectacle := preload("res://scripts/minigames/scenery/concept_spectacle.gd")
+const AmbientParticles := preload("res://scripts/effects/ambient_particles.gd")
+const FxQuality := preload("res://scripts/effects/fx_quality.gd")
+
+## Far enough outside the themed oval that the weather is no longer the subject
+## of the frame, the ambient systems thin out instead of vanishing entirely.
+const FX_LOD_START: float = 2.4
+const FX_LOD_END: float = 4.2
+const FX_LOD_MIN: float = 0.35
 
 var _theme: String = "meadow"
+## Raw theme id before normalisation: `farmyard` folds onto the meadow geometry
+## but needs its own chaff/pollen weather, so the FX palette reads this instead.
+var _raw_theme: String = "meadow"
 var _floor_y: float = -0.1
 var _arena_style: String = ""
-var _weather: MultiMeshInstance3D
-var _weather_seeds: Array[Vector3] = []
-var _weather_anchor: Vector3 = Vector3.ZERO
 var _anim: Dictionary = {}
 var _time: float = 0.0
+var _fx_emitters: Array = []
+var _fx_stats: Dictionary = {}
+var _fx_anchor: Vector3 = Vector3.ZERO
+var _fx_radius: float = 160.0
+var _fx_lod_ratio: float = 1.0
 
 
 static func build_track(parent: Node3D, spline: RefCounted, theme_id: String) -> Node3D:
@@ -66,6 +79,7 @@ func _ready() -> void:
 
 func _build_track(track: RefCounted, theme_id: String) -> void:
 	_theme = _normalise_theme(theme_id)
+	_raw_theme = theme_id
 	_floor_y = 0.0
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 8100 + _theme.hash()
@@ -249,9 +263,7 @@ func _build_track(track: RefCounted, theme_id: String) -> void:
 			ConceptSpectacle.build_track_lanterns(self, track, 40.0, 12.8,
 				Color("ffbf47"), Color("5a3b26"))
 
-	_build_weather(Vector3(center.x, 0.0, center.z))
-	LandscapeSculptor.add_biome_particles(self, _theme,
-		Vector3(center.x, 0.0, center.z), radius_est * 0.85)
+	_build_fx(Vector3(center.x, 0.0, center.z), radius_est * 0.85)
 
 
 func _clear_of_track(position: Vector3, samples: PackedVector3Array,
@@ -267,6 +279,7 @@ func _clear_of_track(position: Vector3, samples: PackedVector3Array,
 
 func _build_arena(theme_id: String, half: float, context: Dictionary) -> void:
 	_theme = _normalise_theme(theme_id)
+	_raw_theme = theme_id
 	_arena_style = str(context.get("style", _theme))
 	_floor_y = float(context.get("floor_y", -0.1))
 	var radius_in: float = float(context.get("radius_in", half + 20.0))
@@ -354,9 +367,7 @@ func _build_arena(theme_id: String, half: float, context: Dictionary) -> void:
 			LandscapeSculptor.build_sky_spotlight(self, s_pos, beam_col, float(si) * 1.3, _anim)
 	LandscapeSculptor.build_slop_blimp(self, Vector3(0.0, 0.0, 0.0),
 		maxf(radius_out * 1.18, 108.0), _floor_y + 56.0, _anim, 2.2)
-	_build_weather(Vector3(0.0, _floor_y, 0.0))
-	LandscapeSculptor.add_biome_particles(self, _arena_style,
-		Vector3(0.0, maxf(_floor_y, 0.0), 0.0), half * 1.45)
+	_build_fx(Vector3(0.0, maxf(_floor_y, 0.0), 0.0), half * 1.45)
 
 
 func _build_far_horizon_ring(inner_r: float, rng: RandomNumberGenerator,
@@ -626,74 +637,71 @@ func _add_landmark(point: Vector3, index: int, yaw: float = 0.0) -> void:
 					col_a, col_b, float(index) * 1.4, _anim)
 
 
-func _build_weather(anchor: Vector3) -> void:
-	_weather_anchor = anchor
-	var mesh := BoxMesh.new()
-	var color := Color.WHITE
-	match _theme:
-		"glacier":
-			mesh.size = Vector3(0.14, 0.14, 0.14)
-		"dockyard":
-			mesh.size = Vector3(0.04, 1.1, 0.04)
-			color = Color("a6d8e8")
-		"canyon":
-			mesh.size = Vector3(0.16, 0.08, 0.16)
-			color = Color("edb276")
-		"foundry":
-			mesh.size = Vector3(0.11, 0.20, 0.11)
-			color = Color("ff9b42")
-		"stadium":
-			mesh.size = Vector3(0.13, 0.05, 0.24)
-			color = Color("ffd45e")
-		_:
-			mesh.size = Vector3(0.11, 0.06, 0.19)
-			color = Color("d8ef87")
-	var rng := RandomNumberGenerator.new()
-	rng.seed = 12000 + _theme.hash()
-	var transforms: Array = []
-	for index in 120:
-		var seed_value := Vector3(rng.randf_range(-34.0, 34.0), rng.randf_range(0.0, 22.0),
-			rng.randf_range(-34.0, 34.0))
-		_weather_seeds.append(seed_value)
-		transforms.append(Transform3D(Basis.IDENTITY, anchor + seed_value))
-	_weather = SceneryKit.multimesh(mesh, _material(color), transforms, "AmbientWeather", false)
-	var material := _weather.material_override as StandardMaterial3D
-	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	add_child(_weather)
+func _build_fx(anchor: Vector3, radius: float) -> void:
+	## One themed weather set per world: 2-3 quality-tiered GPU particle layers
+	## (see scripts/effects/ambient_particles.gd). The previous implementation
+	## updated 120 MultiMesh instances from GDScript every frame; the GPU layers
+	## replace that CPU work and add wind gusts, turbulence and per-map palettes.
+	_fx_anchor = anchor
+	_fx_radius = maxf(radius, 80.0)
+	_fx_lod_ratio = 1.0
+	var biome: String = AmbientParticles.normalise_biome(_fx_biome_id())
+	var stats: Dictionary = AmbientParticles.build(self, biome, anchor, _fx_radius)
+	_fx_emitters = stats.get("emitters", [])
+	_fx_stats = {}
+	for key: String in stats:
+		if key != "emitters":
+			_fx_stats[key] = stats[key]
+	_fx_stats["render_note"] = "one quad pass per layer, 30/60 fixed_fps"
+	print("AMBIENT FX: %s %s, %d layer(s), %d particles, %d draw pass(es), %s" % [
+		biome, _theme, int(_fx_stats.get("layers", 0)),
+		int(_fx_stats.get("amount", 0)), int(_fx_stats.get("draws", 0)),
+		FxQuality.description()])
 
 
-func _material(color: Color) -> StandardMaterial3D:
-	var material := StandardMaterial3D.new()
-	material.albedo_color = color
-	material.roughness = 0.9
-	return material
+func _fx_biome_id() -> String:
+	## Weather palette id. The raw theme keeps `farmyard` distinct from the
+	## meadow geometry it shares, and arena styles map onto the same palettes.
+	if _raw_theme != "" and _raw_theme != _theme:
+		return _raw_theme
+	if _arena_style != "":
+		return _arena_style
+	return _theme
+
+
+func get_fx_stats() -> Dictionary:
+	## Read-only budget report for the FX probe and the audit report.
+	return _fx_stats.duplicate(true)
 
 
 func _process(delta: float) -> void:
 	_time += delta
 	LandscapeSculptor.step_animations(_anim, _time, delta)
-	if _weather == null:
+	if _fx_emitters.is_empty():
 		return
-	var camera: Camera3D = get_viewport().get_camera_3d()
-	var center: Vector3 = camera.global_position if camera != null else _weather_anchor
-	for index in _weather_seeds.size():
-		var seed_value: Vector3 = _weather_seeds[index]
-		var p := seed_value
-		match _theme:
-			"glacier":
-				p.y = fposmod(seed_value.y - _time * 2.2, 22.0)
-				p.x += sin(_time * 0.8 + index) * 1.6
-			"dockyard":
-				p.y = fposmod(seed_value.y - _time * 14.0, 22.0)
-				p.x += _time * 0.8
-			"foundry":
-				p.y = fposmod(seed_value.y + _time * 2.8, 22.0)
-				p.x += sin(_time + index) * 0.8
-			"canyon":
-				p.x = fposmod(seed_value.x + _time * 3.2 + 34.0, 68.0) - 34.0
-				p.y = 1.0 + seed_value.y * 0.4 + sin(_time + index) * 0.6
-			_:
-				p.y = fposmod(seed_value.y - _time * 0.7, 22.0)
-				p.x += sin(_time * 0.45 + index) * 2.2
-		var basis := Basis(Vector3.UP, _time * 0.4 + index)
-		_weather.multimesh.set_instance_transform(index, Transform3D(basis, center + p))
+	# The viewport is queried every frame to anchor the weather on the active
+	# camera. get_viewport() is null once this node is outside the tree, and a
+	# teardown tick that lands between the queue_free and the actual free must
+	# not dereference it (the 0.8.6 macOS EXC_BAD_ACCESS family).
+	var viewport: Viewport = get_viewport()
+	var camera: Camera3D = viewport.get_camera_3d() if viewport != null else null
+	var anchor: Vector3 = camera.global_position if camera != null else _fx_anchor
+	AmbientParticles.update(_fx_emitters, anchor, _time)
+	_update_fx_lod(anchor)
+
+
+func _update_fx_lod(anchor: Vector3) -> void:
+	## Visual LOD: only re-evaluated when the viewer leaves the oval by a wide
+	## margin. Inside the race it always stays at 1.0, so the normal gameplay
+	## path does no per-frame arithmetic beyond one distance check.
+	var flat_distance: float = Vector2(anchor.x - _fx_anchor.x,
+		anchor.z - _fx_anchor.z).length()
+	var ratio: float = 1.0
+	if flat_distance > _fx_radius * FX_LOD_START:
+		ratio = lerpf(1.0, FX_LOD_MIN,
+			clampf((flat_distance - _fx_radius * FX_LOD_START)
+				/ maxf(_fx_radius * (FX_LOD_END - FX_LOD_START), 1.0), 0.0, 1.0))
+	if absf(ratio - _fx_lod_ratio) < 0.02:
+		return
+	_fx_lod_ratio = ratio
+	AmbientParticles.set_density(_fx_emitters, ratio)

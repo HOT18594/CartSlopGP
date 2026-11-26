@@ -170,10 +170,11 @@ class _RosterSlashTab extends Button:
 			])
 			var hcl := halo.duplicate()
 			hcl.append(halo[0])
-			draw_polyline(hcl, Color.WHITE if selected_now else UiPalette.YELLOW, 3.0, true)
+			var ring_col: Color = Color.WHITE if selected_now else UiPalette.YELLOW
+			UiAnim.draw_soft_outline(self, hcl, ring_col, 3.0, ring_col, 3, 2.0, 0.14)
 		var fill: Color = accent_color if selected_now else Color(0.09, 0.10, 0.21, 0.92).lerp(Color(0.16, 0.19, 0.34, 0.96), _hover_t)
 		draw_colored_polygon(pts, fill)
-		# Shine sweep
+		# Shine sweep (soft gradient band; no clipped straight edge)
 		if _shine_t >= -0.35 and _shine_t <= 1.35:
 			var sx: float = lerpf(x0 - 16.0, x0 + bw + 16.0, _shine_t)
 			var sw: float = 20.0
@@ -182,10 +183,10 @@ class _RosterSlashTab extends Button:
 			var x_br: float = clampf(sx + sw, x0, x0 + bw)
 			var x_bl: float = clampf(sx, x0, x0 + bw)
 			if x_tr > x_tl + 2.0 and x_br > x_bl + 2.0:
-				draw_colored_polygon(PackedVector2Array([
+				UiAnim.draw_soft_band(self, PackedVector2Array([
 					Vector2(x_tl, y0 + 2.0), Vector2(x_tr, y0 + 2.0),
 					Vector2(x_br, y0 + bh - 2.0), Vector2(x_bl, y0 + bh - 2.0),
-				]), Color(1.0, 1.0, 1.0, 0.26))
+				]), Color.WHITE, 0.26)
 		var cl := pts.duplicate()
 		cl.append(pts[0])
 		draw_polyline(cl, UiPalette.INK, 3.5, true)

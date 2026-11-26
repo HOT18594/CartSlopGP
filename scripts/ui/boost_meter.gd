@@ -3,6 +3,7 @@ extends Control
 ## Zero outer frame box: every cell is an independent comic-inked power slash
 ## with a hard offset shadow, vibrant cyan/gold/hot-pink fill, and white sheen.
 
+const UiAnim := preload("res://scripts/ui/ui_anim.gd")
 const UiPalette := preload("res://scripts/ui/ui_palette.gd")
 
 @export var ratio: float = 1.0:
@@ -63,7 +64,6 @@ func _draw() -> void:
 	var reduce: bool = _is_reduce_motion()
 	var pulse: float = 1.0 if reduce else (0.5 + 0.5 * sin(_surge_time * 10.0))
 	var filled_cells: float = ratio * float(CELLS)
-	var lead_idx: int = clampi(int(ceilf(filled_cells)) - 1, -1, CELLS - 1)
 	var wave_pos: float = fposmod(_surge_time * 14.0, float(CELLS) + 2.5) - 1.25
 
 	# Pass 1: hard offset comic shadows for all 10 standalone cells.
@@ -85,22 +85,25 @@ func _draw() -> void:
 		if amount > 0.002:
 			var fill: Color = _cell_color(t, index, wave_pos, low, pulse, reduce)
 			var lit_w: float = cell_w * amount
-			var lit_pts: PackedVector2Array = _slanted_points(x0, y0, lit_w, inner_h, SKEW)
-			draw_colored_polygon(lit_pts, fill)
-
-			# Crisp comic white top sheen across each lit power cell.
+			# Soft leading edge (a partial cell ramps out instead of a clipped
+			# straight line) + a vertical-fade top sheen on each lit cell.
+			var soft_w: float = minf(8.0, lit_w)
+			var solid_w: float = maxf(lit_w - soft_w, 0.0)
+			if solid_w > 0.5:
+				draw_colored_polygon(_slanted_points(x0, y0, solid_w, inner_h, SKEW), fill)
+			if soft_w > 0.5:
+				var lead_pts: PackedVector2Array = _slanted_points(
+					x0 + solid_w, y0, soft_w, inner_h, SKEW)
+				draw_polygon(lead_pts, PackedColorArray([
+					fill, Color(fill.r, fill.g, fill.b, 0.0),
+					Color(fill.r, fill.g, fill.b, 0.0), fill,
+				]))
 			if lit_w > 1.6 and inner_h >= 7.0:
 				var sheen_h: float = maxf(inner_h * 0.34, 2.4)
 				var sheen_pts: PackedVector2Array = _slanted_points(
 					x0 + SKEW * 0.64, y0 + 1.4, maxf(lit_w - 1.4, 0.6), sheen_h, SKEW * 0.34)
-				draw_colored_polygon(sheen_pts, Color(1.0, 1.0, 1.0, 0.46 if boosting else 0.34))
-
-			# Bright frontier spark slash on the leading active cell.
-			if index == lead_idx and lit_w >= 2.4:
-				var spark_w: float = minf(3.0, lit_w * 0.45)
-				var spark_pts: PackedVector2Array = _slanted_points(
-					x0 + lit_w - spark_w, y0 + 0.8, spark_w, maxf(inner_h - 1.6, 2.0), SKEW * 0.92)
-				draw_colored_polygon(spark_pts, UiPalette.CREAM)
+				UiAnim.draw_vertical_fade(self, sheen_pts, Color.WHITE,
+					0.46 if boosting else 0.34)
 
 		var rim_col: Color = UiPalette.INK
 		if boosting and amount > 0.5 and pulse > 0.58:

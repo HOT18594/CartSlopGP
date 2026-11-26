@@ -7,13 +7,16 @@ extends SceneTree
 ##     Godot_v4.7.2-stable_win64_console.exe --headless --path godot_project \
 ##         --script res://scripts/tools/preview_verify.gd
 ##
-## It does three independent jobs and exits with the number of failures:
+## It does four independent jobs and exits with the number of failures:
 ##
 ##   * builds every grid race map from its ASCII grid plus its theme, then
 ##     measures the closest approach of every barrier collider to the centreline
 ##     and prints whether the barrier clears the racing surface;
 ##   * builds one grid again with a rolling elevation profile and checks that
 ##     the spline, the road colliders and the barriers all follow the height;
+##   * checks that the centreline's plan-view bucket index (the fast path behind
+##     every prop-clearance query) returns exactly the brute-force distance, so
+##     an index miss can never quietly move a prop onto the road;
 ##   * reloads every generated preview PNG and checks it is a 1600x900 picture
 ##     over 120 KB that is not a flat colour.
 ##
@@ -32,11 +35,23 @@ const MIN_PNG_BYTES: int = 120 * 1024
 const MIN_COLOURS: int = 24
 const MAX_FLAT_RATIO: float = 0.94
 const SAMPLE_STEP: int = 12
+## Random probes per map for the spline-index audit, plus the fixed near/far
+## probes below (a query exactly on the line, 0.5 m beside it and 400 m away).
+const INDEX_PROBES: int = 400
+const INDEX_TOLERANCE: float = 0.001
+const INDEX_NEAR_OFFSETS: Array[Vector3] = [
+	Vector3.ZERO, Vector3(0.5, 0.0, 0.0), Vector3(0.0, 3.0, 0.5),
+	Vector3(400.0, 0.0, -400.0), Vector3(-250.0, 12.0, 90.0),
+]
 ## A solid prop must stay at least this far from the centreline; the lane edge
 ## is TileKit.ROAD_HALF, so 6.02 m leaves half a metre of real margin.
 const SOLID_MARGIN: float = TileKit.ROAD_HALF + 0.5
 ## Colliders whose lowest point is above this are overhead (start gantry beam).
 const DRIVE_UNDER: float = 3.2
+
+## Splines collected by the barrier audit, reused by the index audit so the maps
+## are built once per run.
+var _audit_splines: Dictionary = {}
 
 ## A hill profile used by the terrain audit: two 3 m rises per lap on a clean
 ## single-level test loop (shipped circuits carry `+` overpass tiles with
@@ -63,6 +78,7 @@ func _initialize() -> void:
 	var failures: int = 0
 	failures += _audit_barriers()
 	failures += _audit_terrain()
+	failures += _audit_spline_index()
 	failures += _audit_previews()
 	print("preview_verify: %d failure(s)" % failures)
 	quit(failures)
@@ -96,6 +112,9 @@ func _audit_barriers() -> int:
 			host.free()
 			failures += 1
 			continue
+		# The spline owns no nodes, so it stays valid after host.free() and the
+		# index audit below can reuse it instead of rebuilding every map.
+		_audit_splines[map_id] = spline
 		var theme_path: String = TrackDefs.theme_path_of(preset)
 		if ResourceLoader.exists(theme_path):
 			var theme: Script = load(theme_path) as Script
@@ -331,6 +350,107 @@ static func _world_transform(node: Node3D) -> Transform3D:
 		xform = (current as Node3D).transform * xform
 		current = current.get_parent()
 	return xform
+
+
+# --------------------------------------------------------------------------
+# spline index audit
+# --------------------------------------------------------------------------
+
+
+## Every prop-clearance query, every clearance path and the barrier audits above
+## measure distance to the centreline through GridSpline.plan_distance() /
+## closest(), which answer from a plan-view bucket index instead of scanning all
+## segments. An index that missed a segment would silently pull a prop onto the
+## road, and the only symptom would be a slightly different clearance number, so
+## this compares the indexed answer against a brute-force scan of the same
+## polyline on fixed near/far probes plus random ones over the whole map.
+func _audit_spline_index() -> int:
+	var failures: int = 0
+	if _audit_splines.is_empty():
+		print("SPLINE INDEX: FAIL (the barrier audit built no spline)")
+		return 1
+	for map_id: String in _audit_splines:
+		var spline: RefCounted = _audit_splines[map_id] as RefCounted
+		var points: PackedVector3Array = spline.get("points") as PackedVector3Array
+		if points.size() < 2:
+			print("SPLINE INDEX %s: FAIL (no centreline)" % map_id)
+			failures += 1
+			continue
+		var rng := RandomNumberGenerator.new()
+		rng.seed = 20261126
+		var worst_plan: float = 0.0
+		var worst_space: float = 0.0
+		var bad_probe: String = ""
+		var probes: int = INDEX_PROBES + INDEX_NEAR_OFFSETS.size()
+		for index in probes:
+			var anchor: Vector3 = points[
+				rng.randi_range(0, points.size() - 1)]
+			var offset: Vector3
+			if index < INDEX_NEAR_OFFSETS.size():
+				offset = INDEX_NEAR_OFFSETS[index]
+			else:
+				offset = Vector3(rng.randf_range(-90.0, 90.0),
+					rng.randf_range(-8.0, 8.0),
+					rng.randf_range(-90.0, 90.0))
+			var probe: Vector3 = anchor + offset
+			var plan_error: float = absf(
+				float(spline.call("plan_distance", probe))
+				- _brute_plan_distance(points, probe))
+			var space_error: float = absf(
+				float((spline.call("closest", probe) as Dictionary)["distance"])
+				- _brute_space_distance(points, probe))
+			if plan_error > worst_plan:
+				worst_plan = plan_error
+				bad_probe = "plan %s" % probe
+			if space_error > worst_space:
+				worst_space = space_error
+				bad_probe = "space %s" % probe
+		var ok: bool = worst_plan <= INDEX_TOLERANCE \
+			and worst_space <= INDEX_TOLERANCE
+		print("SPLINE INDEX %s: %d probe(s), worst plan error %.6f m, worst 3D error %.6f m -> %s" % [
+			map_id, probes, worst_plan, worst_space,
+			"OK" if ok else "FAIL (%s)" % bad_probe])
+		if not ok:
+			failures += 1
+	return failures
+
+
+## Brute-force plan-view nearest distance, the reference implementation for
+## GridSpline.plan_distance().
+static func _brute_plan_distance(points: PackedVector3Array,
+		world: Vector3) -> float:
+	var best_sq: float = INF
+	var count: int = points.size()
+	for index in count:
+		var a: Vector3 = points[index]
+		var b: Vector3 = points[(index + 1) % count]
+		var ab := Vector2(b.x - a.x, b.z - a.z)
+		var ap := Vector2(world.x - a.x, world.z - a.z)
+		var length_sq: float = ab.length_squared()
+		var t: float = 0.0
+		if length_sq > 0.000001:
+			t = clampf(ap.dot(ab) / length_sq, 0.0, 1.0)
+		var candidate := Vector2(a.x, a.z) + ab * t
+		var dx: float = world.x - candidate.x
+		var dz: float = world.z - candidate.y
+		best_sq = minf(best_sq, dx * dx + dz * dz)
+	return sqrt(best_sq)
+
+
+## Brute-force 3D nearest distance, the reference for GridSpline.closest().
+static func _brute_space_distance(points: PackedVector3Array,
+		world: Vector3) -> float:
+	var best_sq: float = INF
+	var count: int = points.size()
+	for index in count:
+		var a: Vector3 = points[index]
+		var chord: Vector3 = points[(index + 1) % count] - a
+		var length_sq: float = chord.length_squared()
+		var t: float = 0.0
+		if length_sq > 0.000001:
+			t = clampf((world - a).dot(chord) / length_sq, 0.0, 1.0)
+		best_sq = minf(best_sq, world.distance_squared_to(a + chord * t))
+	return sqrt(best_sq)
 
 
 # --------------------------------------------------------------------------

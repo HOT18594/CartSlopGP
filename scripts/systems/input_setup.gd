@@ -21,6 +21,11 @@ func _ready() -> void:
 	_button("reset_cart", JOY_BUTTON_Y)
 	_button("horn", JOY_BUTTON_RIGHT_SHOULDER)
 	_button("pause", JOY_BUTTON_START)
+	# In-match scoreboard (hold): Tab on keyboard, Select/View on a gamepad.
+	# README documents this control, but the HUD used to read the raw key only,
+	# so pad players could never open it (WS5-05).
+	_button("scoreboard", JOY_BUTTON_BACK)
+	_key("scoreboard", KEY_TAB)
 
 	# Menus: A confirm, B back, d-pad and left stick to move.
 	_button("ui_accept", JOY_BUTTON_A)

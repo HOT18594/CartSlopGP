@@ -2,10 +2,22 @@ class_name CartFeedback
 extends Node3D
 
 const SkidTrailScript := preload("res://scripts/feedback/skid_trail.gd")
+const VehicleCatalog := preload("res://scripts/vehicles/vehicle_catalog.gd")
 ## Every catalog vehicle must leave a visible mark; flavor widths stay wider
 ## for heavier vehicles but never collapse to zero.
 const MIN_SKID_WIDTH: float = 0.12
 const MAX_SKID_WIDTH: float = 0.40
+## Procedural tread styles authored in scripts/effects/skid_mark.gdshader.
+const TREAD_SLICK: int = 0
+const TREAD_STREET: int = 1
+const TREAD_OFFROAD: int = 2
+const TREAD_CASTER: int = 3
+## Rubber tints are near-black per class; the surface palette supplies the rest.
+const RUBBER_CART := Color(0.11, 0.10, 0.09)
+const RUBBER_STREET := Color(0.065, 0.06, 0.055)
+const RUBBER_HEAVY := Color(0.075, 0.065, 0.055)
+const RUBBER_SPORT := Color(0.10, 0.075, 0.06)
+const RUBBER_RACE := Color(0.05, 0.045, 0.04)
 ## Remote ghost ribbons. The state packet arrives at 20 Hz, so the slide flag
 ## is rebuilt at that rate and each ribbon samples at 30 Hz; the point buffers
 ## use the same 128-sample cap as an AI rival. One ribbon pair per ghost, with
@@ -146,12 +158,23 @@ var _chime_ready_ms: int = 0
 ## Remote ghost ribbon bookkeeping: rebuild clock and the shared ribbon budget.
 var _remote_skid_timer: float = 0.0
 var _remote_budget_owner: bool = false
+## Which vehicle/mark profile is currently applied to the ribbons. A remote
+## ghost learns its owner's vehicle after setup_remote(), so the profile is
+## re-synced from the replicated cart state (no extra RPC) at the skid stream's
+## own 20 Hz cadence.
+var _profile_vehicle_id: String = ""
+var _profile_paint_hex: String = ""
+## Cached once: DisplayServer.get_name() allocates a String and the answer can
+## never change while the process lives, so querying it in the per-frame exhaust
+## update was pure per-frame garbage.
+var _headless: bool = false
 static var _remote_ribbon_owners: int = 0
 static var _tier_chime_streams: Array[AudioStreamWAV] = []
 
 
 func _ready() -> void:
 	add_to_group("cart_feedback")
+	_headless = DisplayServer.get_name() == "headless"
 	_cart = get_parent() as CartPlayer
 	if _cart != null:
 		_mesh_root = _cart.get_node_or_null("MeshRoot") as Node3D
@@ -203,21 +226,20 @@ func _ready() -> void:
 
 
 func _spawn_skid_trails() -> void:
-	## One ribbon per rear wheel, in world space so the marks stay put.
-	## Rivals get the same ribbons on a shorter sample window; the local cart
-	## keeps the full-length trail because the player sees it up close.
+	## ONE batched mark node per cart: it owns every wheel's ribbon and emits
+	## them through a single ImmediateMesh surface, so a cart costs one cheap
+	## transparent draw call instead of one per tyre. The per-vehicle width,
+	## tread, rubber tint and wheel layout arrive in apply_vehicle_profile():
+	## rivals and remote ghosts get the same profile, so their marks match.
 	var is_ai: bool = _cart != null and _cart.ai_mode
-	for side: float in [-1.0, 1.0]:
-		var trail: Node3D = SkidTrailScript.new()
-		trail.cart = _cart
-		trail.wheel_offset = Vector3(0.43 * side, 0.0, 0.55)
-		if is_ai:
-			trail.max_points = 128
-			trail.fade_time = 4.5
-			trail.sample_distance = 0.26
-		trail.set_meta("wheel_side", side)
-		add_child(trail)
-		_skid_trails.append(trail)
+	var trail: Node3D = SkidTrailScript.new()
+	trail.cart = _cart
+	if is_ai:
+		trail.max_points = 128
+		trail.fade_time = 4.5
+		trail.sample_distance = 0.26
+	add_child(trail)
+	_skid_trails.append(trail)
 
 
 func _spawn_drift_sparks() -> void:
@@ -443,22 +465,22 @@ func set_remote_mode(remote: bool) -> void:
 				spark.visible = true
 		for trail: Node3D in _skid_trails:
 			if is_instance_valid(trail):
-				trail.set("remote_ghost", false)
+				trail.call("set_remote", false, false)
 		return
 	if not _claim_remote_ribbons():
 		set_physics_process(false)
 		for trail: Node3D in _skid_trails:
 			if is_instance_valid(trail):
-				trail.set("remote_ghost", false)
+				trail.call("set_remote", false, false)
 				trail.set_physics_process(false)
 		return
 	set_physics_process(true)
 	for trail: Node3D in _skid_trails:
 		if is_instance_valid(trail):
-			trail.set("remote_ghost", true)
-			trail.set("remote_sliding", false)
+			trail.call("set_remote", false, true)
 			trail.set("max_points", REMOTE_MAX_POINTS)
 			trail.set_physics_process(true)
+	_refresh_remote_mark_profile()
 	_remote_skid_timer = REMOTE_SKID_INTERVAL
 
 
@@ -488,18 +510,21 @@ func _exit_tree() -> void:
 
 
 func apply_vehicle_profile(entry: Dictionary) -> void:
-	## Per-vehicle feel: smoke volume, skid width/track and its own sound loop.
-	## AI carts take the skid values too; their audio stays disabled.
+	## Per-vehicle feel: smoke volume, skid width/track/tread and its own sound
+	## loop. AI carts take the mark values too; their audio stays disabled. A
+	## remote ghost re-runs this when its replicated vehicle arrives, so a peer's
+	## truck marks like a truck on every client without a new RPC.
 	if entry.is_empty():
 		return
 	var is_ai: bool = _cart != null and _cart.ai_mode
+	var is_ghost: bool = _cart != null and _cart.remote_mode
 	smoke_intensity = clampf(float(entry.get("smoke", smoke_intensity)), 0.05, 1.0)
 	smoke_lifetime = 1.15 + smoke_intensity * 0.55
 	_has_engine = bool(entry.get("has_engine", true))
 	_loop_idle = bool(entry.get("loop_idle", _has_engine))
 	_loop_base_pitch = float(entry.get("loop_pitch", 0.8))
 	_loop_pitch_span = float(entry.get("loop_pitch_span", 0.7))
-	if not is_ai:
+	if not is_ai and not is_ghost:
 		var loop_sound: String = str(entry.get("loop_sound", ""))
 		if loop_sound != "" and ResourceLoader.exists(loop_sound):
 			_set_stream(_engine_audio, loop_sound, "")
@@ -508,15 +533,33 @@ func apply_vehicle_profile(entry: Dictionary) -> void:
 				_engine_audio.stop()
 	var side: float = float(entry.get("skid_side", 0.43))
 	var back: float = float(entry.get("skid_back", 0.55))
+	var track: float = maxf(float(entry.get("track", side * 2.0)), 0.5)
+	var wheelbase: float = maxf(float(entry.get("wheelbase", back * 2.0)), 0.5)
+	# The front axle sits forward of the origin; clamp it so a future catalogue
+	# entry with a short wheelbase still places four distinct stripes.
+	var front: float = -maxf(wheelbase - back, 0.30)
 	_skid_side_cached = side
 	_skid_back_cached = back
 	var mark_width: float = _profile_skid_width(entry)
+	var vehicle_id: String = str(entry.get("id", ""))
+	var tread: int = _profile_tread_style(vehicle_id)
+	var rubber: Color = _profile_rubber_color(vehicle_id)
+	var flair: Color = _profile_flair_color(vehicle_id)
+	_profile_vehicle_id = vehicle_id
+	_profile_paint_hex = str(_cart.custom_paint_hex) if _cart != null else ""
+	var wheel_offsets: Array[Vector3] = [
+		Vector3(-track * 0.5, 0.0, front), Vector3(track * 0.5, 0.0, front),
+		Vector3(-side, 0.0, back), Vector3(side, 0.0, back)]
+	var drift_indices := PackedInt32Array([2, 3])
 	for trail: Node3D in _skid_trails:
-		if is_instance_valid(trail):
-			var trail_side: float = float(trail.get_meta("wheel_side", 1.0))
-			trail.set("wheel_offset", Vector3(side * trail_side, 0.0, back))
-			trail.set("width", mark_width)
-			trail.set("opacity", clampf(0.55 + smoke_intensity * 0.10, 0.58, 0.68))
+		if not is_instance_valid(trail):
+			continue
+		trail.call("set_wheels", wheel_offsets, drift_indices)
+		trail.set("width", mark_width)
+		trail.set("tread_style", tread)
+		trail.set("mark_color", rubber)
+		trail.set("flair_color", flair)
+		trail.set("opacity", clampf(0.55 + smoke_intensity * 0.10, 0.58, 0.68))
 	for spark: GPUParticles3D in _drift_sparks:
 		if is_instance_valid(spark):
 			var spark_side: float = float(spark.get_meta("wheel_side", 1.0))
@@ -550,6 +593,9 @@ func apply_vehicle_profile(entry: Dictionary) -> void:
 				var nozzle_side: float = float(nozzle.get_meta("nozzle_side", 1.0))
 				nozzle.position = Vector3(nozzle_x * nozzle_side, nozzle_y, nozzle_z)
 				nozzle.rotation = Vector3(nozzle_pitch, 0.0, 0.0)
+	# Seed the ground palette for carts that never run the feedback physics pass
+	# (AI rivals keep it disabled); the local cart and ghosts refresh it per tick.
+	_apply_surface_to_trails()
 
 
 static func _profile_skid_width(entry: Dictionary) -> float:
@@ -565,6 +611,111 @@ static func _profile_skid_width(entry: Dictionary) -> float:
 	if not is_finite(mark_width) or mark_width <= 0.0:
 		mark_width = MIN_SKID_WIDTH
 	return clampf(mark_width, MIN_SKID_WIDTH, MAX_SKID_WIDTH)
+
+
+static func _profile_tread_style(vehicle_id: String) -> int:
+	## Per-vehicle tread identity, derived from the (read-only) catalogue id:
+	## casters for the signature cart, chunky offroad blocks for the heavy vans
+	## and truck, racing slicks for the sports car / PRO RACER, street tyres for
+	## everything else. A missing or future id gets the street pattern.
+	match vehicle_id:
+		"shopping_cart":
+			return TREAD_CASTER
+		"van", "truck":
+			return TREAD_OFFROAD
+		"sports", "race_car":
+			return TREAD_SLICK
+		_:
+			return TREAD_STREET
+
+
+static func _profile_rubber_color(vehicle_id: String) -> Color:
+	match vehicle_id:
+		"shopping_cart":
+			return RUBBER_CART
+		"van", "truck":
+			return RUBBER_HEAVY
+		"sports":
+			return RUBBER_SPORT
+		"race_car":
+			return RUBBER_RACE
+		_:
+			return RUBBER_STREET
+
+
+func _profile_flair_color(vehicle_id: String) -> Color:
+	## The PRO RACER picks up a whisper of its own paint in the tyre mark, so the
+	## same chassis reads differently per player. Every other vehicle leaves bare
+	## rubber (alpha 0 disables the blend in the ribbon).
+	if vehicle_id != "race_car":
+		return Color(0.0, 0.0, 0.0, 0.0)
+	var hex: String = ""
+	if _cart != null:
+		hex = str(_cart.custom_paint_hex)
+	if hex == "":
+		hex = GameSettings.racer_color
+	var color: Color = Color.from_string(hex, Color("e63946"))
+	return Color(color.r, color.g, color.b, 0.6)
+
+
+func _refresh_remote_mark_profile() -> void:
+	## A remote ghost's owner streams its vehicle id and paint in the replicated
+	## cart state (player_cart.set_vehicle_id runs after setup_remote), and the
+	## ghost's own feedback node keeps the default profile until then. Re-sync at
+	## the skid stream's 20 Hz cadence: a string compare per tick, no RPC.
+	if _cart == null or not _cart.remote_mode:
+		return
+	var vehicle_id: String = str(_cart.get("_current_vehicle_id"))
+	var paint_hex: String = str(_cart.get("custom_paint_hex"))
+	if vehicle_id == "" or (vehicle_id == _profile_vehicle_id
+			and paint_hex == _profile_paint_hex):
+		return
+	var entry: Dictionary = VehicleCatalog.find(vehicle_id)
+	if not entry.is_empty():
+		apply_vehicle_profile(entry)
+
+
+func _resolve_surface_kind() -> String:
+	## The modes write the exact TrackDefs grip multiplier onto the cart each
+	## frame (0.45 ice, 0.80 wet, 0.86 dirt). A ghost is never written, so a grip
+	## that is still the untouched 1.0 falls back to the scene's visual surface.
+	var grip: float = 1.0
+	if _cart != null and is_finite(_cart.surface_grip):
+		grip = _cart.surface_grip
+	if absf(grip - 0.45) < 0.06:
+		return "ice"
+	if absf(grip - 0.80) < 0.05:
+		return "wet"
+	if absf(grip - 0.86) < 0.05:
+		return "dirt"
+	return _scene_surface_fallback()
+
+
+func _scene_surface_fallback() -> String:
+	## Map-level mark palette, used on dry (grip 1.0) ground and for remote
+	## ghosts. The arena modes use artificial floors, so they stay asphalt.
+	var scene_path: String = ""
+	var tree: SceneTree = get_tree()
+	if tree != null and tree.current_scene != null:
+		scene_path = tree.current_scene.scene_file_path
+	if scene_path.ends_with("grass_race.tscn"):
+		match str(GameSettings.selected_map):
+			"glacier":
+				return "snow"
+			"canyon":
+				return "sand"
+			"meadow":
+				return "dirt"
+			_:
+				return "normal"
+	return "normal"
+
+
+func _apply_surface_to_trails() -> void:
+	var surface: String = _resolve_surface_kind()
+	for trail: Node3D in _skid_trails:
+		if is_instance_valid(trail):
+			trail.set("surface_kind", surface)
 
 
 func _load_audio() -> void:
@@ -651,6 +802,7 @@ func _physics_process(delta: float) -> void:
 	var handbraking: bool = _cart.is_handbraking()
 	var throttle: float = _cart.get_throttle_input()
 	var accelerating: bool = throttle > 0.05
+	_apply_surface_to_trails()
 	_update_smoke(speed, grounded, drifting, handbraking, accelerating)
 	_update_speed_feedback(speed)
 	_update_audio(delta, speed, grounded, drifting, handbraking, throttle)
@@ -662,7 +814,11 @@ func _update_remote_skid(delta: float) -> void:
 	## packet already carries the owner's velocity, so rebuild the bounded
 	## lateral slip from it and let every ribbon know whether to mark. The slip
 	## threshold is the cart's own drift_detection_threshold, so a ghost smears
-	## exactly when its owner's local drift test would.
+	## exactly when its owner's local drift test would. The vehicle profile and
+	## the surface palette are re-synced from the replicated cart state here too,
+	## which is why remote marks need no new RPC.
+	_refresh_remote_mark_profile()
+	_apply_surface_to_trails()
 	_remote_skid_timer += delta
 	if _remote_skid_timer < REMOTE_SKID_INTERVAL:
 		return
@@ -676,7 +832,7 @@ func _update_remote_skid(delta: float) -> void:
 		slide, _cart.drift_detection_threshold)
 	for trail: Node3D in _skid_trails:
 		if is_instance_valid(trail):
-			trail.set("remote_sliding", skidding)
+			trail.call("set_remote", skidding, true)
 
 
 func _update_smoke(speed: float, grounded: bool, drifting: bool, handbraking: bool, accelerating: bool) -> void:
@@ -764,7 +920,7 @@ func _update_exhaust_flames(delta: float) -> void:
 	var want_flame: bool = enable_speed_feedback and _cart.boost_active
 	var ember_trail: GPUParticles3D = get_meta("nitro_ember_trail", null) as GPUParticles3D
 	if ember_trail != null and is_instance_valid(ember_trail):
-		ember_trail.emitting = want_flame and DisplayServer.get_name() != "headless"
+		ember_trail.emitting = want_flame and not _headless
 	var target_blend: float = 1.0 if want_flame else 0.0
 	var rate: float = 22.0 if want_flame else 14.0
 	_exhaust_flame_blend = lerpf(_exhaust_flame_blend, target_blend, 1.0 - exp(-rate * delta))

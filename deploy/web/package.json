@@ -1,0 +1,23 @@
+{
+  "name": "cartslop-web-deploy",
+  "version": "0.8.7",
+  "private": true,
+  "description": "Cloudflare Pages / R2 deployment package for the Cart Slop GP Godot Web client",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "stage": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/stage_release.ps1",
+    "stage:r2": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/stage_release.ps1 -Precompress",
+    "deploy:pages": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/upload_pages.ps1",
+    "deploy:r2": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/upload_r2.ps1",
+    "verify": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify_deploy.ps1",
+    "test:parity": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_version_parity.ps1",
+    "measure": "python scripts/measure_web_release.py --export-dir ../builds/_ws1_web/export/web",
+    "wrangler": "wrangler"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}

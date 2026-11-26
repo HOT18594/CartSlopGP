@@ -6,6 +6,11 @@ signal changed
 signal session_changed
 
 const SETTINGS_PATH: String = "user://settings.cfg"
+## Staging file for the atomic save (WS5-06). ConfigFile.save() truncates its
+## target in place, so a crash or power loss inside a write could leave a
+## partial settings.cfg and lose every setting. The real save is written here
+## first and renamed over SETTINGS_PATH in one directory entry operation.
+const SETTINGS_TMP_PATH: String = "user://settings.cfg.tmp"
 ## A damaged save is copied here before the defaults are written back. The player
 ## keeps a recoverable copy of the old file instead of losing it to the next
 ## save, and support can inspect what was actually on disk.
@@ -87,6 +92,14 @@ const QUALITY_SCALES: PackedFloat32Array = [0.72, 0.92, 1.0]
 
 @export_group("HUD")
 @export var show_fps: bool = false ## Read by the HUD owner; off by default.
+
+@export_group("Comfort")
+## Pause a SOLO game when the window loses focus (Alt-Tab, browser tab blur).
+## Multiplayer never auto-pauses: there the world keeps running for everyone
+## else, so the pause menu only locks local input instead. Read by the shared
+## pause menu (WS5-04); on by default because losing a race to an Alt-Tab is
+## worse than one extra key press.
+@export var pause_on_focus_loss: bool = true
 
 @export_group("Sandbox")
 ## Vehicle id from the catalog. The stock shopping cart is the default for
@@ -186,8 +199,11 @@ func _ready() -> void:
 func _notification(what: int) -> void:
 	## A slider dragged and then followed by ALT+F4, a browser tab pause or an
 	## editor stop must still reach disk, so flush the coalesced save here too.
+	## APPLICATION_FOCUS_OUT also covers Alt-Tab and a tab hidden by the browser,
+	## where a close request may never arrive (WS5-09).
 	match what:
-		NOTIFICATION_WM_CLOSE_REQUEST, NOTIFICATION_APPLICATION_PAUSED, NOTIFICATION_PREDELETE:
+		NOTIFICATION_WM_CLOSE_REQUEST, NOTIFICATION_APPLICATION_PAUSED, \
+				NOTIFICATION_APPLICATION_FOCUS_OUT, NOTIFICATION_PREDELETE:
 			flush_settings()
 
 
@@ -384,6 +400,12 @@ func set_show_fps(value: bool) -> void:
 	changed.emit()
 
 
+func set_pause_on_focus_loss(value: bool) -> void:
+	pause_on_focus_loss = value
+	save_settings()
+	changed.emit()
+
+
 func reset_to_defaults() -> void:
 	## Restores only the settings exposed on the settings screen. Vehicle,
 	## player name, session config and minigame options are deliberately kept.
@@ -401,6 +423,7 @@ func reset_to_defaults() -> void:
 	boost_toggle = false
 	drift_toggle = false
 	show_fps = false
+	pause_on_focus_loss = true
 	save_settings()
 	apply_all()
 
@@ -885,6 +908,8 @@ static func _valid_hex6(text: String) -> bool:
 func load_settings() -> void:
 	## Defensive by design: a truncated, hand-edited or older settings.cfg must
 	## never crash boot or put an out-of-range value into the live settings.
+	## A save interrupted before its rename is recovered first (WS5-06).
+	recover_staged_settings(SETTINGS_PATH, SETTINGS_TMP_PATH)
 	var config := ConfigFile.new()
 	var error: Error = config.load(SETTINGS_PATH)
 	if error == ERR_FILE_NOT_FOUND or error == ERR_FILE_CANT_OPEN:
@@ -916,6 +941,9 @@ func load_settings() -> void:
 	boost_toggle = _cfg_bool(config, "gameplay", "boost_toggle", boost_toggle)
 	drift_toggle = _cfg_bool(config, "gameplay", "drift_toggle", drift_toggle)
 	stick_deadzone = _cfg_num(config, "gameplay", "stick_deadzone", stick_deadzone, 0.0, 0.4)
+	# Missing in older saves: the documented default (auto-pause on) applies.
+	pause_on_focus_loss = _cfg_bool(config, "gameplay", "pause_on_focus_loss",
+		pause_on_focus_loss)
 	selected_vehicle = sanitize_vehicle_id(
 		_cfg_str(config, "gameplay", "vehicle", selected_vehicle))
 	_sandbox_vehicle = selected_vehicle
@@ -1045,6 +1073,7 @@ func save_settings() -> void:
 	config.set_value("gameplay", "boost_toggle", boost_toggle)
 	config.set_value("gameplay", "drift_toggle", drift_toggle)
 	config.set_value("gameplay", "stick_deadzone", stick_deadzone)
+	config.set_value("gameplay", "pause_on_focus_loss", pause_on_focus_loss)
 	config.set_value("ui", "custom_cursor", custom_cursor)
 	# Always persist the last authoritative sandbox pick. grass_race.gd and
 	# cargo_rush.gd both swap selected_vehicle for their own scene, and a save
@@ -1071,10 +1100,59 @@ func save_settings() -> void:
 	# The schema marker is part of the save, not a one-off: every later write
 	# keeps it, which is what makes the vehicle migration above one-time.
 	config.set_value("meta", "version", SETTINGS_VERSION)
-	var error: Error = config.save(SETTINGS_PATH)
+	var error: Error = commit_config_atomic(config, SETTINGS_PATH, SETTINGS_TMP_PATH)
 	if error != OK:
 		# A read-only user:// (or a full disk) must not look like success.
 		push_warning("GameSettings: could not write settings.cfg (%d)" % error)
+
+
+static func commit_config_atomic(config: ConfigFile, final_path: String,
+		tmp_path: String) -> Error:
+	## Atomic save helper (WS5-06): write the complete file to `tmp_path`, flush	## it, then rename it over `final_path`. A crash can then only leave the old
+	## complete file (plus a temp) or, depending on the filesystem's rename
+	## implementation, the complete temp with the final name missing - which
+	## recover_staged_settings() adopts on the next boot. Never a partial file
+	## under the live name.
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(tmp_path))
+	var write_error: Error = config.save(tmp_path)
+	if write_error != OK:
+		return write_error
+	# Godot exposes no fsync; flush via a read handle so the staged bytes leave
+	# the process before the rename. The rename is the durability guarantee.
+	var staged: FileAccess = FileAccess.open(tmp_path, FileAccess.READ)
+	if staged != null:
+		staged.flush()
+		staged.close()
+	var from_abs: String = ProjectSettings.globalize_path(tmp_path)
+	var to_abs: String = ProjectSettings.globalize_path(final_path)
+	var rename_error: Error = DirAccess.rename_absolute(from_abs, to_abs)
+	if rename_error == OK:
+		return OK
+	# A filesystem that refuses the rename gets the old in-place write rather
+	# than losing the player's settings entirely; the temp is cleaned up.
+	var fallback_error: Error = config.save(final_path)
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(tmp_path))
+	return fallback_error
+
+
+static func recover_staged_settings(final_path: String, tmp_path: String) -> bool:
+	## Crash recovery for the atomic save. The live file always wins when it
+	## exists; the staged copy is adopted only when the rename never completed
+	## and the live name is missing. Returns true when a staged save was adopted.
+	var final_exists: bool = FileAccess.file_exists(final_path)
+	var tmp_exists: bool = FileAccess.file_exists(tmp_path)
+	if not tmp_exists:
+		return false
+	var from_abs: String = ProjectSettings.globalize_path(tmp_path)
+	if final_exists:
+		# Leftovers from a save that did not reach the rename: discard.
+		DirAccess.remove_absolute(from_abs)
+		return false
+	var to_abs: String = ProjectSettings.globalize_path(final_path)
+	if DirAccess.rename_absolute(from_abs, to_abs) == OK:
+		return true
+	push_warning("GameSettings: could not recover the staged settings save")
+	return false
 
 
 func _recover_corrupt_settings(error: Error) -> void:

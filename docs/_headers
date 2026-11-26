@@ -1,0 +1,21 @@
+# Cloudflare Pages headers for the marketing site (optional host).
+# The game client's own package lives in web_deploy/; these rules only apply
+# when website/ is uploaded as a Pages project of its own.
+/*
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: camera=(), microphone=(), geolocation=()
+
+/
+  Cache-Control: public, max-age=0, must-revalidate
+
+/index.html
+  Cache-Control: public, max-age=0, must-revalidate
+
+/404.html
+  Cache-Control: public, max-age=0, must-revalidate
+
+/assets/*
+  # Not content-hashed: one day, then revalidate so a rebrand cannot go stale.
+  Cache-Control: public, max-age=86400, must-revalidate

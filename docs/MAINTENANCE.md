@@ -4,8 +4,10 @@ Everything you need to ship a version without breaking the repository.
 
 **Path convention:** this repository is the game (`godot_project/`'s contents).
 Commands and paths below are written relative to the **workspace root** — the
-folder one level up that also holds `builds/`, `pi_setup/` and `downloads/`.
-Those three are deliberately outside version control.
+folder one level up that also holds `builds/`, `pi_setup/`, `downloads/`, and
+the web-release assets **`website/`** (static site) and **`web_deploy/`**
+(Cloudflare R2/Worker release package). Those are deliberately outside version
+control.
 
 Run all commands from the workspace root.
 
@@ -23,14 +25,14 @@ run or ships a mislabelled build.
 
 | # | File | What to change |
 | --- | --- | --- |
-| 1 | `godot_project/version.txt` | the number alone, e.g. `0.8.2` |
-| 2 | `godot_project/project.godot` | `config/version="0.8.2"` under `[application]` |
-| 3 | `godot_project/export_presets.cfg` | four `export_path="../builds/v0.8.2/..."` lines |
-| 4 | `pi_setup/build_0_8_2.ps1` | `[string]$Version = "0.8.2"` (rename the file too, by convention) |
-| 5 | `pi_setup/Deploy-Server.cmd` | the `builds\v0.8.2\web` checks |
-| 6 | `godot_project/CHANGELOG.md` | a new `## [0.8.2] - YYYY-MM-DD` section at the top |
+| 1 | `godot_project/version.txt` | the number alone, e.g. `0.8.7` |
+| 2 | `godot_project/project.godot` | `config/version="0.8.7"` under `[application]` |
+| 3 | `godot_project/export_presets.cfg` | four `export_path="../builds/v0.8.7/..."` lines, plus the Windows `file_version`/`product_version` and macOS `short_version`/`version` fields |
+| 4 | `pi_setup/build_0_8_7.ps1` | `[string]$Version = "0.8.7"` (rename the file too, by convention) |
+| 5 | `pi_setup/Deploy-Server.cmd` | the `builds\v0.8.7\web` checks |
+| 6 | `godot_project/CHANGELOG.md` | a new `## [0.8.7] - YYYY-MM-DD` section at the top |
 
-`build_0_8_2.ps1` compares `version.txt` against its own `-Version` and aborts
+`build_0_8_7.ps1` compares `version.txt` against its own `-Version` and aborts
 on a mismatch, which is the safety net for item 1 vs item 4.
 
 Before any export the script runs a six-place version preflight: it re-reads
@@ -47,7 +49,7 @@ in-game "update available" check needs no edit — just the file.
 ## 2. Building a release
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File pi_setup\build_0_8_2.ps1
+powershell -ExecutionPolicy Bypass -File pi_setup\build_0_8_7.ps1
 ```
 
 Writes `builds/v<version>/`:
@@ -80,15 +82,48 @@ the pack, and the build fails if the binary is too small to contain one.
 **Check before publishing:** open `release\SHA256SUMS` and spot-check that every
 platform zip is dated this run, and that `logs\` has no failed platform.
 
-## 3. Deploying the web build to the Pi
+**The web export is version-stamped at build time.** The build calls
+`pi_setup/sync_web_release.ps1`, which writes `version.json` (game + engine
+version, build id, per-file sha256/sizes) into `builds/v<version>/web/` and
+injects matching meta tags into `index.html`. Any script that later stages,
+uploads or serves that folder re-runs the script with `-Check` and refuses a
+stale or modified export. If you hand-edit or manually re-export the web
+folder, re-stamp it (`sync_web_release.ps1 -WebDir builds\v<version>\web`)
+before deploying, or the deploy will fail — intentionally.
+
+## 3. Deploying the web client and the Pi server
+
+The browser build is **not** served by the Pi in the normal architecture: the
+static `.wasm/.pck/.js` assets are staged for **Cloudflare R2 + a CDN Worker**
+(Cloudflare Pages cannot host this build — 25 MiB per-asset limit vs the
+~121 MB pack). The Pi keeps the relay/HTTP API, the console and the `/play`
+launcher, which points at the CDN via `CARTSLOP_WEB_BASE`.
 
 ```powershell
+# 1. Build (stamps version.json) and stage a versioned CDN tree.
+powershell -ExecutionPolicy Bypass -File pi_setup\build_0_8_7.ps1
+powershell -ExecutionPolicy Bypass -File web_deploy\scripts\stage_release.ps1
+
+# 2. Validate locally (no network): package + version parity + mock edge.
+python web_deploy\scripts\validate_package.py
+powershell -ExecutionPolicy Bypass -File web_deploy\scripts\test_version_parity.ps1
+powershell -ExecutionPolicy Bypass -File web_deploy\scripts\verify_deploy.ps1
+
+# 3. Upload to R2 and prime the Worker (needs a Cloudflare API token).
+powershell -ExecutionPolicy Bypass -File web_deploy\scripts\upload_r2.ps1
+
+# 4. Deploy the Pi server + launcher (prompts for the pi sudo password).
 pi_setup\Deploy-Server.cmd
 ```
 
-It uploads the server and, if `builds\v<version>\web\index.html` exists, the
-browser build too. It prompts for the `pi` sudo password. `pi_setup/` holds the
-SSH key and credentials — it is gitignored and must never be published.
+`deploy_server.ps1` re-checks the web folder's `version.json` **before any
+SSH/upload** and refuses a stale export in under a second. The `/play` launcher
+shows the served web version and a red **STALE WEB BUILD** warning if the served
+build disagrees with the version the Pi knows (`CARTSLOP_GAME_VERSION` or the
+update manifest). `web_deploy/README.md` lists the manual Cloudflare steps
+(account, API token scope, R2 bucket, Worker route/custom domain, DNS, Pi
+environment, rollback). `pi_setup/` holds the SSH key and credentials — it is
+gitignored and must never be published.
 
 ## 4. Tests
 
@@ -107,11 +142,31 @@ All headless tests exit with the number of failures, so `echo $?` (or
 | Mode rules | scene `res://scripts/tools/mode_rules_smoke.tscn` | party-mode rules regressions |
 | Driving physics | scene `res://scripts/tools/driving_smoke.tscn` | real-physics handling checks for every vehicle |
 | Updater | `res://scripts/tools/update_smoke.gd` | 133 archive/hash/installer-staging checks |
-| Networking | scene `res://scripts/tools/net_mac_smoke.tscn` | address/broadcast helpers, IPv6 host syntax, TLS/DNS error mapping |
+| Networking | scene `res://scripts/tools/net_mac_smoke.tscn` | address/broadcast helpers, IPv6 host syntax, TLS/DNS error mapping, host-authoritative standings reconciliation, LAN-route/NODELAY checks |
+| UI layout audit | `res://scripts/ui/ui_layout_audit.gd` | every UI screen/state plus all result-card variants at 1280x720 and 1920x1080: zero legacy-theme controls, zero viewport overflows, closed focus ring, 0 failures |
+| UI motion/loading/reactions | `res://scripts/ui/ws4_ui_smoke.gd` | **75 checks** for hover-backdrop priority, gradient helpers, true-100% loading (monotonic/terminal), lobby reaction limiter/overlay, nav dedup; `WS4_LOAD_TEST=1` adds the real-load mode (86 checks) |
+| Phase-2 behaviour smoke | `res://scripts/tools/phase2_bugfix_smoke.gd` | **76 checks** covering MP rematch restart, RTT-compensated finish ordering, atomic settings save, scoreboard action, web guards, focus pause, lobby ready gate, host-lost overlay; 150 s watchdog |
+| Phase-2 integrate checks | `res://scripts/tools/phase2_verify_checks.gd` | **32 checks** for the 0.8.7 Phase-2 integration invariants |
+| FX budget probe | `res://scripts/effects/fx_budget_probe.gd` | ambient layer/draw/particle budgets per world + menus + forced-Web profile; one scene per process via `CARTSLOP_FX_SCOPE` |
+| Audio fade probe | `res://scripts/effects/audio_fade_probe.gd` | deck pool/crossfade/retire envelope/pause duck checks |
+| Physics probe | `res://scripts/tools/_p2_physics_probe.tscn` | `P2_MODE=ramp|chasm|stadium|ground|flex|maps` — ramp collider vs visible crest, chasm clears per mass, seating facing, vehicle grounding, local+remote flex, map collider audit |
+| Main menu / Mapmaker / caret / backdrop | `res://scripts/ui/ws2_ui_checks.gd` | **116 checks**: rail order/labels, locked Mapmaker + `COMING SOON :D` popup + single confetti burst, caret blink/contrast on every LineEdit, autonomous backdrop (auto-advance, ≥2 slides, hover/focus cannot change it) |
+| Lobby / end-screen flow | `res://scripts/ui/ws3_ui_checks.gd` | **168 checks** (add `CART_WS3_LIVE_MODES=1` for the 192-check live 3D variant): non-host action set + Cancel/Leave confirm, pause-ESC isolation, chrome-free emotes + spawn bounds, slanted preview motion, in-room lobby backdrop independence |
+| Bot slots / teams | `res://scripts/tools/ws4_bot_slots_smoke.tscn` | **299 assertions**: 8-seat budget, `max_humans = 8 - bots`, clamps, BOT labels/icons, deterministic human+bot arrange, config/bot-RPC wire arity + old-host fallback, admission refusal, build-version gate, lobby backdrop contract. Two/four-process LAN runner: `_audit/run_ws4_bot_e2e.ps1` |
+| Phase-3 second-pass smoke | `res://scripts/tools/phase3_bugfix_smoke.gd` | **84 checks** (91 under forced web): host-loss-during-load overlay, priority-aware SceneLoader queue, loading-overlay focus release, session-teardown abort, failed-load room rollback, pause hints, confirm-dialog ESC isolation, `_net_session_config` arity pin |
+| Web release package | `web_deploy/scripts/validate_package.py`, `test_version_parity.ps1`, `verify_deploy.ps1`, `audit_logo_parity.py` (workspace root, Python/PowerShell) | JSONC/TOML/JS/headers validation, stale-vs-current version.json demo, mock-edge route/caching/negotiation checks, 80-point logo/icon parity audit. Not Godot suites |
 
 The networking scene also runs two-process LAN end-to-end checks; run one copy
 with `CSGP_NET_MODE=host` and a second with `CSGP_NET_MODE=client` (both
 headless). Default mode is a fast unit run that needs no second process.
+`scripts/tools/phase2_restart_probe.tscn` is the two-process MP rematch e2e
+(host asserts a new scene instance + room `playing`, client asserts a new
+instance + live session), and `scripts/ui/lobby_reactions.gd` gives the LAN
+reaction e2e its limiter/catalog.
+`scripts/tools/net_ping_probe.tscn` is the two-process live Pi latency harness
+(`CSGP_PING_ROLE=host|client`, optional `CSGP_FORCE_RELAY=1`);
+`scripts/tools/net_lan_probe.tscn` and `net_pi_host_probe.tscn` are route
+diagnostics. None of the three is a pass/fail suite.
 
 Pi-side suites (run on a Python machine, from the workspace root):
 `python pi_setup\cartslop-server\tests_security.py`,

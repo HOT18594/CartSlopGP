@@ -50,6 +50,9 @@ var _loss_reason: String = ""
 var _connect_deadline_ms: int = 0
 var _sockets: Dictionary = {} ## client id -> PacketPeerUDP
 var _socket_seen: Dictionary = {} ## client id -> Time.get_ticks_msec() of last activity
+## TCP_NODELAY is applied after the handshake reports CONNECTED: the engine
+## rejects set_no_delay() on a socket that is not open yet.
+var _nodelay_applied: bool = false
 
 
 func configure(host: String, port: int, token: String, enet_port: int) -> void:
@@ -117,8 +120,12 @@ func _next_retry_delay() -> float:
 
 func _connect() -> void:
 	_tcp = StreamPeerTCP.new()
-	# Nagle would add latency to the 20 Hz ENet frames we relay.
-	_tcp.set_no_delay(true)
+	# StreamPeerTCP.set_no_delay() is only valid on an OPEN socket; calling it
+	# before connect_to_host() is rejected by the engine, which left Nagle
+	# ENABLED on this socket and added up to a delayed-ACK window to every
+	# small tunnel frame the host sends (pongs, 20 Hz state). It is applied in
+	# _process() once the handshake reports CONNECTED (see _apply_no_delay).
+	_nodelay_applied = false
 	var error: Error = _tcp.connect_to_host(_host, _port)
 	if error != OK:
 		_retry_attempt += 1
@@ -128,6 +135,23 @@ func _connect() -> void:
 		tunnel_lost.emit(_loss_reason)
 		return
 	_connect_deadline_ms = Time.get_ticks_msec() + int(CONNECT_TIMEOUT * 1000.0)
+
+
+func _apply_no_delay() -> void:
+	## TCP_NODELAY on the host -> Pi tunnel socket. This is the direction that
+	## carries this host's own pongs and live state to the relay, so leaving
+	## Nagle on added a delayed-ACK window (up to ~40 ms) to small frames. A
+	## CONNECTED socket always accepts it; a very early call can still fail on
+	## some platforms, so retry until it sticks.
+	if _nodelay_applied:
+		return
+	if _tcp.get_status() != StreamPeerTCP.STATUS_CONNECTED:
+		return
+	# StreamPeerTCP.set_no_delay() returns void in Godot 4.7; it is a no-op (and
+	# prints an engine error) on a socket that is not open, which is why this is
+	# called only after STATUS_CONNECTED instead of beside connect_to_host().
+	_tcp.set_no_delay(true)
+	_nodelay_applied = true
 
 
 func _process(delta: float) -> void:
@@ -169,6 +193,7 @@ func _process(delta: float) -> void:
 		# every peer. Idle sockets are reaped below; start()/stop() clear all.
 		return
 	_connect_deadline_ms = 0
+	_apply_no_delay()
 
 	if not _hello_sent:
 		_hello_sent = true
@@ -254,6 +279,7 @@ func _drop_link(force_reconnect: bool = false, reason: String = "dropped") -> vo
 	_tx = PackedByteArray()
 	_tcp.disconnect_from_host()
 	_tcp = StreamPeerTCP.new()
+	_nodelay_applied = false
 	_retry_attempt += 1
 	_retry = _next_retry_delay()
 	_connect_deadline_ms = 0

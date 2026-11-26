@@ -41,12 +41,12 @@ const VisualGrade := preload("res://scripts/systems/visual_grade.gd")
 const SceneryKit := preload("res://scripts/minigames/scenery/scenery_kit.gd")
 const PropBatch := preload("res://scripts/minigames/scenery/prop_batch.gd")
 const UiPalette := preload("res://scripts/ui/ui_palette.gd")
+const ResultScreen := preload("res://scripts/ui/result_screen.gd")
 
 const SCENE_PATH: String = "res://scenes/minigames/cargo_rush.tscn"
 const MAIN_MENU: String = "res://scenes/ui/main_menu.tscn"
 const MINIGAMES_MENU: String = "res://scenes/ui/minigames_menu.tscn"
 const UI_THEME: Theme = preload("res://assets/ui/theme.tres")
-const CANDY_BUTTON := preload("res://scripts/ui/candy_button.gd")
 const TITLE_FONT: Font = preload("res://assets/ui/fonts/LuckiestGuy-Regular.ttf")
 const BODY_FONT: Font = preload("res://assets/ui/fonts/Fredoka-Bold.ttf")
 
@@ -442,6 +442,8 @@ var _last_timer_text: String = ""
 var _last_score_text: PackedStringArray = PackedStringArray()
 
 var _result_root: Control
+var _result_ui ## scripts/ui/result_screen.gd builder for the shared card layout.
+var _result_card: Dictionary = {}
 var _result_title: Label
 var _result_subtitle: Label
 var _result_score_labels: Array[Label] = []
@@ -465,7 +467,21 @@ func _exit_tree() -> void:
 	GameSettings.selected_vehicle = _saved_vehicle
 
 
+## WS5P3-04: the room ended while this scene was streaming. Never start a
+## silent offline match; return to the lobby with the disconnect notice instead.
+func _abort_stale_session_load() -> void:
+	SceneLoader.go_to(Network.LOBBY_SCENE, "SESSION ENDED",
+		"The room ended before the match could start.",
+		SceneLoader.network_priority())
+
+
 func _ready() -> void:
+	# WS5P3-04 guard: only an authoritative (network-priority) load can be
+	# stale-session; a solo start is never cancelled by this check.
+	if SceneLoader.active_priority() > 0 \
+			and Network.consume_session_ended_during_load():
+		call_deferred("_abort_stale_session_load")
+		return
 	_selftest = OS.get_environment("CART_CARGO_SELFTEST") == "1"
 	_debug = OS.get_environment("CART_CARGO_DEBUG") == "1"
 	if OS.get_environment("CART_CARGO_HUD") == "1":
@@ -3156,74 +3172,50 @@ func _pop_text(text: String, position: Vector3, colour: Color, size: int) -> voi
 
 
 func _build_result_card() -> void:
-	_result_root = Control.new()
-	_result_root.name = "ResultCard"
-	_result_root.set_anchors_preset(Control.PRESET_FULL_RECT)
-	_result_root.mouse_filter = Control.MOUSE_FILTER_STOP
-	_result_root.visible = false
-	_result_root.add_to_group("nav_scope")
-	_hud_root.add_child(_result_root)
+	_result_ui = ResultScreen.new()
+	_result_card = _result_ui.build(_hud_root, {
+		"name": "ResultCard",
+		"title": "VICTORY!",
+		"subtitle": "",
+		"multiplayer": _multiplayer,
+		"is_host": _is_host,
+		"panel_width": 760.0,
+		"primary_text": "PLAY AGAIN" if (not _multiplayer or _is_host) else "",
+		"primary_color": UiPalette.YELLOW,
+		"on_primary": _on_play_again,
+		"secondary_text": "BACK TO LOBBY" if _multiplayer else "BACK TO MODES",
+		"secondary_color": UiPalette.CYAN if (not _multiplayer or _is_host) else UiPalette.YELLOW,
+		"on_secondary": _on_back_to_lobby,
+		"tertiary_text": "MAIN MENU",
+		"tertiary_color": UiPalette.RED,
+		"on_tertiary": _on_main_menu,
+		# 0.8.7 host/non-host contract (resolved in result_screen.gd): host MAIN
+		# MENU is confirm-gated in a live room; a client gets the waiting status +
+		# LEAVE LOBBY instead of host-only navigation.
+		"confirm_main_menu": _multiplayer,
+		"on_leave": _on_main_menu,
+	})
+	_result_root = _result_card["root"] as Control
+	_result_title = _result_card["title"] as Label
+	_result_subtitle = _result_card["subtitle"] as Label
+	_result_primary = _result_card.get("primary") as Button
 	var pause_menu: Control = get_node_or_null("PauseMenu/Root") as Control
 	if pause_menu != null and not pause_menu.visibility_changed.is_connected(_on_pause_visibility_changed):
 		pause_menu.visibility_changed.connect(_on_pause_visibility_changed)
 
-	var dim := ColorRect.new()
-	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
-	dim.color = Color(0.06, 0.09, 0.19, 0.55)
-	dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_result_root.add_child(dim)
-
-	var center := CenterContainer.new()
-	center.set_anchors_preset(Control.PRESET_FULL_RECT)
-	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_result_root.add_child(center)
-
-	var panel := PanelContainer.new()
-	panel.custom_minimum_size = Vector2(580, 0)
-	panel.add_theme_stylebox_override("panel",
-		UiKit.slanted_panel(Color(0.056, 0.068, 0.156, 0.95),
-			Color(0.24, 0.84, 0.96, 0.56), 0.055, 4, 6, 36.0, 28.0))
-	center.add_child(panel)
-
-	var body := VBoxContainer.new()
-	body.add_theme_constant_override("separation", int(SPACE_GAP))
-	panel.add_child(body)
-
-	var banner := PanelContainer.new()
-	var banner_style := StyleBoxFlat.new()
-	banner_style.bg_color = UiPalette.YELLOW
-	banner_style.border_color = UiPalette.OUTLINE
-	banner_style.set_border_width_all(3)
-	banner_style.set_corner_radius_all(5)
-	banner_style.skew = Vector2(0.14, 0.0)
-	banner_style.content_margin_left = SPACE_MARGIN
-	banner_style.content_margin_right = SPACE_MARGIN
-	banner_style.content_margin_top = SPACE_GAP_SMALL
-	banner_style.content_margin_bottom = SPACE_GAP_SMALL
-	banner_style.anti_aliasing = true
-	banner.add_theme_stylebox_override("panel", banner_style)
-	body.add_child(banner)
-	_result_title = _label("VICTORY!", 34, UiPalette.INK)
-	_result_title.theme_type_variation = &"TitleLabel"
-	_result_title.add_theme_constant_override("outline_size", 0)
-	_result_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	banner.add_child(_result_title)
-
-	_result_subtitle = _label("", 14, UiPalette.CYAN)
-	_result_subtitle.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	body.add_child(_result_subtitle)
-
+	# Team score plates: the headline telemetry of the Cargo Rush card.
+	var telemetry: VBoxContainer = _result_card["telemetry"] as VBoxContainer
 	var scores := HBoxContainer.new()
 	scores.alignment = BoxContainer.ALIGNMENT_CENTER
-	scores.add_theme_constant_override("separation", 20)
-	body.add_child(scores)
+	scores.add_theme_constant_override("separation", UiKit.SPACING)
+	telemetry.add_child(scores)
 	var team_accents: Array[Color] = [UiPalette.BLUE, UiPalette.RED]
 	for team in TEAM_COUNT:
 		var score_card := PanelContainer.new()
 		score_card.custom_minimum_size = Vector2(180.0, 0.0)
 		score_card.add_theme_stylebox_override("panel",
-			UiKit.slanted_card(Color(0.095, 0.112, 0.228, 0.92),
-				team_accents[team], 0.14, 2, 5, 18.0, 12.0))
+			UiKit.slanted_card(UiPalette.SURFACE_CARD, team_accents[team],
+				0.14, 2, 5, 18.0, 12.0))
 		scores.add_child(score_card)
 		var column := VBoxContainer.new()
 		column.alignment = BoxContainer.ALIGNMENT_CENTER
@@ -3238,59 +3230,10 @@ func _build_result_card() -> void:
 		_result_team_labels.append(team_label)
 		_result_score_labels.append(value)
 
-	_result_note = _label("FIRST TO %d DELIVERIES WINS" % _target, 13,
-		UiPalette.TEXT_DIM)
+	_result_note = _label("FIRST TO %d DELIVERIES WINS" % _target,
+		int(UiKit.CAPTION_SIZE), UiPalette.TEXT_DIM)
 	_result_note.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	body.add_child(_result_note)
-
-	if _multiplayer:
-		if _is_host:
-			_result_primary = _make_button("PLAY AGAIN", UiPalette.YELLOW, 54.0)
-			_result_primary.pressed.connect(_on_play_again)
-			body.add_child(_result_primary)
-			var sec_row := HBoxContainer.new()
-			sec_row.add_theme_constant_override("separation", 14)
-			body.add_child(sec_row)
-			var lobby_btn := _make_button("BACK TO LOBBY", UiPalette.CYAN, 50.0)
-			lobby_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-			lobby_btn.pressed.connect(_on_back_to_lobby)
-			sec_row.add_child(lobby_btn)
-			var menu := _make_button("MAIN MENU", UiPalette.RED, 50.0)
-			menu.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-			menu.pressed.connect(_on_main_menu)
-			sec_row.add_child(menu)
-		else:
-			_result_primary = _make_button("BACK TO LOBBY", UiPalette.YELLOW, 56.0)
-			_result_primary.pressed.connect(_on_back_to_lobby)
-			body.add_child(_result_primary)
-			var menu := _make_button("MAIN MENU", UiPalette.RED, 50.0)
-			menu.pressed.connect(_on_main_menu)
-			body.add_child(menu)
-	else:
-		_result_primary = _make_button("PLAY AGAIN", UiPalette.YELLOW, 56.0)
-		_result_primary.pressed.connect(_on_play_again)
-		body.add_child(_result_primary)
-		var sec_row := HBoxContainer.new()
-		sec_row.add_theme_constant_override("separation", 14)
-		body.add_child(sec_row)
-		var back_btn := _make_button("BACK TO MODES", UiPalette.CYAN, 50.0)
-		back_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		back_btn.pressed.connect(_on_back_to_lobby)
-		sec_row.add_child(back_btn)
-		var menu := _make_button("MAIN MENU", UiPalette.RED, 50.0)
-		menu.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		menu.pressed.connect(_on_main_menu)
-		sec_row.add_child(menu)
-
-
-func _make_button(text: String, colour: Color, height: float) -> Button:
-	var button := Button.new()
-	button.set_script(CANDY_BUTTON)
-	button.set("fill_color", colour)
-	button.text = text
-	button.custom_minimum_size = Vector2(0, height)
-	button.add_theme_font_size_override("font_size", 22)
-	return button
+	telemetry.add_child(_result_note)
 
 
 func _show_result() -> void:
@@ -3307,11 +3250,7 @@ func _show_result() -> void:
 		_result_team_labels[team].text = _team_names[team]
 		_result_score_labels[team].text = str(_score[team])
 	_result_note.text = "FIRST TO %d DELIVERIES WINS" % _target
-	_result_root.visible = true
-	_result_root.modulate.a = 0.0
-	var fade := create_tween()
-	fade.tween_property(_result_root, "modulate:a", 1.0, 0.24) \
-		.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	_result_ui.present(_result_card)
 	CursorController.set_menu_mode(true)
 	var pause_root: Control = get_node_or_null("PauseMenu/Root") as Control
 	if pause_root != null and pause_root.visible:
@@ -3320,8 +3259,9 @@ func _show_result() -> void:
 		if not _result_root.is_in_group("nav_scope"):
 			_result_root.add_to_group("nav_scope")
 		MenuNav.refresh()
-		if _result_primary != null:
-			MenuNav.focus(_result_primary)
+		var focus_btn: Control = _result_ui.focus_default(_result_card)
+		if focus_btn != null:
+			MenuNav.focus(focus_btn)
 	_play_one_shot(FINISH_FANFARE, -7.0, 1.0)
 
 
@@ -3335,8 +3275,10 @@ func _on_pause_visibility_changed() -> void:
 	elif not _result_root.is_in_group("nav_scope"):
 		_result_root.add_to_group("nav_scope")
 	MenuNav.refresh()
-	if not pause_open and _result_primary != null:
-		MenuNav.focus(_result_primary)
+	if not pause_open:
+		var focus_btn: Control = _result_ui.focus_default(_result_card)
+		if focus_btn != null:
+			MenuNav.focus(focus_btn)
 
 
 # --------------------------------------------------------------------------
@@ -3932,7 +3874,9 @@ func _probe_structure() -> void:
 func _on_play_again() -> void:
 	if _multiplayer:
 		if _is_host:
-			Network.start_game(SCENE_PATH, GameSettings.GAME_MINIGAMES)
+			# restart = true: a same-scene rematch must reload the scene; the
+			# plain start would be swallowed by the begin-game retry guard.
+			Network.start_game(SCENE_PATH, GameSettings.GAME_MINIGAMES, true)
 		return
 	SceneLoader.go_to(SCENE_PATH, "CARGO RUSH", "PRESENT RELAY")
 

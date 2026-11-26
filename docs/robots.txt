@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+# No sitemap is generated yet; add one here when the final domain is known.

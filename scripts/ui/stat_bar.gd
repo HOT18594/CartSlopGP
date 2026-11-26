@@ -57,7 +57,6 @@ func _draw() -> void:
 	var filled: float = _shown * float(SEGMENTS)
 	var c_start: Color = fill_color.darkened(0.10)
 	var c_end: Color = fill_color.lightened(0.18)
-	var lead_index: int = clampi(int(ceilf(filled)) - 1, -1, SEGMENTS - 1)
 
 	# Pass 1: Hard comic shadow (2.0, 2.5) behind every slot so the bar pops on cream.
 	for index in SEGMENTS:
@@ -76,20 +75,26 @@ func _draw() -> void:
 			var t: float = float(index) / float(SEGMENTS - 1)
 			var seg_col: Color = c_start.lerp(c_end, t)
 			var lit_w: float = width * amount
-			var active_pts: PackedVector2Array = _cell_poly(x, y, lit_w, height, SKEW)
-			draw_colored_polygon(active_pts, seg_col)
+			# Soft leading edge: a partial cell ramps out instead of ending on a
+			# clipped vertical line (same treatment as the loading bar).
+			var soft_w: float = minf(9.0, lit_w)
+			var solid_w: float = maxf(lit_w - soft_w, 0.0)
+			if solid_w > 0.5:
+				var solid_pts: PackedVector2Array = _cell_poly(x, y, solid_w, height, SKEW)
+				draw_colored_polygon(solid_pts, seg_col)
+			if soft_w > 0.5:
+				var lead_pts: PackedVector2Array = _cell_poly(
+					x + solid_w, y, soft_w, height, SKEW)
+				draw_polygon(lead_pts, PackedColorArray([
+					seg_col, Color(seg_col.r, seg_col.g, seg_col.b, 0.0),
+					Color(seg_col.r, seg_col.g, seg_col.b, 0.0), seg_col,
+				]))
 
 			if lit_w > 1.5 and height >= 8.0:
 				var sheen_h: float = maxf(height * 0.36, 2.2)
 				var sheen_pts: PackedVector2Array = _cell_poly(
 					x + SKEW * 0.62, y + 1.2, maxf(lit_w - 1.5, 0.6), sheen_h, SKEW * 0.34)
-				draw_colored_polygon(sheen_pts, Color(1.0, 1.0, 1.0, 0.38))
-
-			if index == lead_index and lit_w >= 2.2 and amount < 0.995:
-				var spark_w: float = minf(2.4, lit_w * 0.45)
-				var spark_pts: PackedVector2Array = _cell_poly(
-					x + lit_w - spark_w, y + 1.0, spark_w, maxf(height - 2.0, 2.0), SKEW * 0.85)
-				draw_colored_polygon(spark_pts, Color(1.0, 1.0, 1.0, 0.72))
+				UiAnim.draw_vertical_fade(self, sheen_pts, Color.WHITE, 0.38)
 
 		draw_polyline(_closed_poly(slot_pts), UiPalette.INK, 2.0, true)
 

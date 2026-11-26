@@ -167,8 +167,11 @@ func _draw() -> void:
 	if focused:
 		var halo: PackedVector2Array = _para(x0 - 3.5, y0 - 3.0, bw + 7.0, bh + 6.0, sk)
 		var ring_col: Color = Color.WHITE if fill_color.get_luminance() > 0.60 else UiPalette.YELLOW
-		draw_polyline(_closed(halo), Color(0.05, 0.04, 0.14, 0.85), 7.5, true)
-		draw_polyline(_closed(halo), ring_col, 3.6, true)
+		# Soft multi-pass glow (no hard clipped polyline edge in the halo).
+		UiAnim.draw_soft_outline(self, _closed(halo),
+			Color(0.05, 0.04, 0.14, 0.85), 7.5, Color(0.05, 0.04, 0.14), 3, 1.6, 0.18)
+		UiAnim.draw_soft_outline(self, _closed(halo), ring_col, 3.6,
+			ring_col, 4, 2.2, 0.16)
 
 	# 3. Main slanted plate fill
 	var col: Color = fill_color
@@ -181,13 +184,16 @@ func _draw() -> void:
 	draw_colored_polygon(pts, col)
 
 	# 4. Subtle top highlight sheen + bottom lip bevel (clean, zero side-bar clutter)
+	# Both are vertical alpha fades now, so they dissolve into the plate instead
+	# of ending on a hard horizontal line.
 	var gloss_h: float = bh * 0.34
 	var gloss: PackedVector2Array = _para(x0 + sk * 0.66 + 1.5, y0 + 1.5, bw - 3.0, gloss_h, sk * 0.34)
-	draw_colored_polygon(gloss, Color(1.0, 1.0, 1.0, 0.10 if disabled else (0.22 if active else 0.14)))
+	UiAnim.draw_vertical_fade(self, gloss, Color.WHITE,
+		0.10 if disabled else (0.22 if active else 0.14))
 	if not _held and bh > 20.0:
 		var lip_h: float = clampf(bh * 0.14, 3.0, 6.0)
 		var lip: PackedVector2Array = _para(x0 + 1.5, y0 + bh - lip_h - 1.0, bw - 3.0, lip_h, sk * (lip_h / bh))
-		draw_colored_polygon(lip, Color(0.04, 0.03, 0.12, 0.16))
+		UiAnim.draw_vertical_fade(self, lip, Color(0.04, 0.03, 0.12), 0.16)
 
 	# 5. Animated diagonal gloss sweep across the parallelogram on hover
 	if _shine_t >= -0.35 and _shine_t <= 1.35 and not disabled:
@@ -198,12 +204,12 @@ func _draw() -> void:
 		var x_br: float = clampf(sx + sw, x0, x0 + bw)
 		var x_bl: float = clampf(sx, x0, x0 + bw)
 		if x_tr > x_tl + 2.0 and x_br > x_bl + 2.0:
-			draw_colored_polygon(PackedVector2Array([
+			UiAnim.draw_soft_band(self, PackedVector2Array([
 				Vector2(x_tl, y0 + 2.0),
 				Vector2(x_tr, y0 + 2.0),
 				Vector2(x_br, y0 + bh - 2.0),
 				Vector2(x_bl, y0 + bh - 2.0),
-			]), Color(1.0, 1.0, 1.0, 0.26))
+			]), Color.WHITE, 0.26)
 
 	# 6. Crisp inner rim highlight + bold ink outer border
 	var inner_pts: PackedVector2Array = _para(x0 + 2.5, y0 + 2.5, maxf(bw - 5.0, 4.0), maxf(bh - 5.0, 4.0), sk * 0.88)

@@ -4,9 +4,12 @@ const UiAnim := preload("res://scripts/ui/ui_anim.gd")
 ## - Destination-aware full-bleed concept / map preview artwork
 ## - Chunky 16-cell skewed parallelogram progress bar (`SKEW = 10.0`, thick
 ##   `#1e1b3a` ink frame + hard `(5, 6)` comic shadow, vibrant gold->cyan->pink
-##   slanted cells with white top gloss)
+##   slanted cells with a soft vertical-fade top gloss, gradient leading edge)
 ## - Bold 42px LuckiestGuy destination heading + `%` readout aligned above the
 ##   bar, with a concise single-line tip centered below.
+## - `progress` is monotonic within one load (a lower re-send is clamped up; an
+##   explicit immediate 0.0 resets for the next load) and only SceneLoader's
+##   final "gameplay is live" step reports 100%, where the heading gains READY.
 
 const UiPalette := preload("res://scripts/ui/ui_palette.gd")
 const CartDrawing := preload("res://scripts/ui/cart_drawing.gd")
@@ -93,6 +96,7 @@ var indeterminate: bool = false
 
 var _time: float = 0.0
 var _shown: float = 0.0
+var _progress_high: float = 0.0 ## Monotonic floor for one load; reset by 0/immediate.
 var _tip_index: int = 0
 var _tip_timer: float = 0.0
 var _title_label: Label
@@ -169,7 +173,21 @@ func _place_labels() -> void:
 
 
 func set_progress(value: float, immediate: bool = false) -> void:
-	progress = clampf(value, 0.0, 1.0)
+	## A load's bar never moves backwards. SceneLoader's weighted phases are
+	## monotonic by construction, but a loader that reports a dip (or a caller
+	## that re-sends a stale value) must not make the readout jump down.
+	var clamped: float = clampf(value, 0.0, 1.0)
+	if immediate and clamped <= 0.001:
+		_progress_high = 0.0
+		progress = 0.0
+		_shown = 0.0
+		_last_percent = 0
+		_refresh_labels()
+		queue_redraw()
+		return
+	clamped = maxf(clamped, _progress_high)
+	_progress_high = clamped
+	progress = clamped
 	if immediate:
 		_shown = progress
 		_refresh_labels()
@@ -424,7 +442,6 @@ func _draw_bar(area: Vector2) -> void:
 		var total_span: float = float(BAR_SEGMENTS) * cell_w + float(BAR_SEGMENTS - 1) * BAR_GAP + BAR_SKEW
 		var start_x: float = (area.x - total_span) * 0.5
 		var filled: float = ratio * float(BAR_SEGMENTS)
-		var lead_idx: int = clampi(int(ceilf(filled)) - 1, -1, BAR_SEGMENTS - 1)
 
 		for i in BAR_SEGMENTS:
 			var cx: float = start_x + float(i) * (cell_w + BAR_GAP)
@@ -436,22 +453,27 @@ func _draw_bar(area: Vector2) -> void:
 				var t: float = float(i) / float(BAR_SEGMENTS - 1)
 				var seg_col: Color = _cell_color(t)
 				var lit_w: float = cell_w * amount
-				var active_pts: PackedVector2Array = _para_poly(cx, cell_y, lit_w, cell_h, BAR_SKEW)
-				draw_colored_polygon(active_pts, seg_col)
+				var soft_w: float = minf(14.0, lit_w)
+				var solid_w: float = maxf(lit_w - soft_w, 0.0)
+				if solid_w > 0.5:
+					var solid_pts: PackedVector2Array = _para_poly(cx, cell_y, solid_w, cell_h, BAR_SKEW)
+					draw_colored_polygon(solid_pts, seg_col)
+				# Soft leading edge: the partially filled cell fades into the empty
+				# slot instead of ending on a hard vertical line.
+				if soft_w > 0.5:
+					var lead_pts: PackedVector2Array = _para_poly(
+						cx + solid_w, cell_y, soft_w, cell_h, BAR_SKEW)
+					draw_polygon(lead_pts, PackedColorArray([
+						seg_col, Color(seg_col.r, seg_col.g, seg_col.b, 0.0),
+						Color(seg_col.r, seg_col.g, seg_col.b, 0.0), seg_col,
+					]))
 
 				if lit_w > 2.0:
 					var gloss_h: float = maxf(cell_h * 0.36, 3.0)
 					var gloss_pts: PackedVector2Array = _para_poly(
 						cx + BAR_SKEW * 0.62, cell_y + 1.5,
-						maxf(lit_w - 1.5, 0.8), gloss_h, BAR_SKEW * 0.34)
-					draw_colored_polygon(gloss_pts, Color(1.0, 1.0, 1.0, 0.38))
-
-				if i == lead_idx and lit_w >= 2.8 and amount < 0.995:
-					var spark_w: float = minf(3.0, lit_w * 0.45)
-					var spark_pts: PackedVector2Array = _para_poly(
-						cx + lit_w - spark_w, cell_y + 1.0,
-						spark_w, maxf(cell_h - 2.0, 2.0), BAR_SKEW * 0.85)
-					draw_colored_polygon(spark_pts, Color(1.0, 1.0, 1.0, 0.78))
+						maxf(solid_w + soft_w * 0.5 - 1.5, 0.8), gloss_h, BAR_SKEW * 0.34)
+					UiAnim.draw_vertical_fade(self, gloss_pts, Color.WHITE, 0.38)
 
 			draw_polyline(_closed_poly(slot_pts), UiPalette.INK, 2.0, true)
 
@@ -466,6 +488,9 @@ func _draw_bar(area: Vector2) -> void:
 
 	var heading: String = _resolved_heading()
 	var hint: String = _resolved_hint().to_upper()
+	if not indeterminate and _shown >= 0.999 and heading != "LOADING..." \
+			and not _task_mode:
+		heading += "  ·  READY"
 	if hint == heading:
 		hint = ""
 

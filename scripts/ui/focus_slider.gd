@@ -1,13 +1,18 @@
 extends HSlider
-## Tactile arcade settings slider: dark recessed rail, glowing golden fill bar
-## with top specular sheen, and a 4x-supersampled pill grabber with grip ticks.
+## Tactile arcade settings slider: slanted dark recessed rail, glowing golden
+## fill bar with top specular sheen, and a 4x-supersampled slanted pill grabber
+## with grip ticks. Colours come from UiPalette and every plate carries the
+## shared 0.10 skew so the control matches the black-slanted theme.
 ## Mouse-wheel value changes stay disabled so scrolling over a slider never moves it.
 
-const OUTLINE: Color = Color("1e1b3a")
-const FILL: Color = Color("fff6e3")
-const FILL_HOVER: Color = Color("ffd22e")
+const UiPalette := preload("res://scripts/ui/ui_palette.gd")
+
+const OUTLINE: Color = UiPalette.INK
+const FILL: Color = UiPalette.CREAM
+const FILL_HOVER: Color = UiPalette.YELLOW
 const FILL_DISABLED: Color = Color("cfc9da")
-const RING: Color = Color("ffd22e")
+const RING: Color = UiPalette.YELLOW
+const SKEW: float = 0.10
 
 static var _grabber_cache: Dictionary = {}
 
@@ -22,21 +27,24 @@ func _ready() -> void:
 	focus_mode = Control.FOCUS_ALL
 	scrollable = false
 	add_theme_icon_override("grabber", _grabber(OUTLINE, FILL, false))
-	add_theme_icon_override("grabber_highlight", _grabber(OUTLINE, FILL_HOVER, true))
+	add_theme_icon_override("grabber_highlight",
+		_grabber(OUTLINE, UiPalette.CREAM.lightened(0.35), true))
 	add_theme_icon_override("grabber_disabled", _grabber(Color("5a5870"), FILL_DISABLED, false))
 
-	_rail.bg_color = Color(0.12, 0.14, 0.23, 0.90)
+	_rail.bg_color = Color(UiPalette.SURFACE_CHIP, 0.90)
 	_rail.set_border_width_all(2)
 	_rail.border_color = OUTLINE
-	_rail.set_corner_radius_all(7)
+	_rail.set_corner_radius_all(5)
+	_rail.skew = Vector2(SKEW, 0.0)
 	_rail.content_margin_top = 7.0
 	_rail.content_margin_bottom = 7.0
 	_rail.anti_aliasing = true
 
-	_fill_normal.bg_color = Color("ffc629")
+	_fill_normal.bg_color = UiPalette.YELLOW
 	_fill_normal.set_border_width_all(2)
 	_fill_normal.border_color = OUTLINE
-	_fill_normal.set_corner_radius_all(7)
+	_fill_normal.set_corner_radius_all(5)
+	_fill_normal.skew = Vector2(SKEW, 0.0)
 	_fill_normal.content_margin_top = 7.0
 	_fill_normal.content_margin_bottom = 7.0
 	_fill_normal.shadow_color = Color(1.0, 0.78, 0.16, 0.34)
@@ -44,7 +52,7 @@ func _ready() -> void:
 	_fill_normal.anti_aliasing = true
 
 	_fill_hover = _fill_normal.duplicate() as StyleBoxFlat
-	_fill_hover.bg_color = Color("ffe052")
+	_fill_hover.bg_color = FILL_HOVER.lightened(0.10)
 	_fill_hover.shadow_color = Color(1.0, 0.84, 0.22, 0.56)
 	_fill_hover.shadow_size = 6
 
@@ -56,7 +64,8 @@ func _ready() -> void:
 	_ring.bg_color = Color(0, 0, 0, 0)
 	_ring.border_color = RING
 	_ring.set_border_width_all(3)
-	_ring.set_corner_radius_all(9)
+	_ring.set_corner_radius_all(8)
+	_ring.skew = Vector2(SKEW, 0.0)
 	_ring.expand_margin_left = 3.0
 	_ring.expand_margin_top = 3.0
 	_ring.expand_margin_right = 3.0
@@ -119,7 +128,10 @@ func _grabber(ring: Color, fill: Color, lit: bool) -> ImageTexture:
 	for y in ph:
 		for x in pw:
 			var pt := Vector2(float(x) + 0.5, float(y) + 0.5)
-			var sd: float = _pill_sdf(pt - Vector2(cx, cy), half_w, half_h, corner_r)
+			# Slant the pill with the same skew as the rail: undo the shear
+			# before the SDF test so the grabber reads as a parallelogram.
+			var local := Vector2(pt.x - SKEW * (pt.y - cy), pt.y)
+			var sd: float = _pill_sdf(local - Vector2(cx, cy), half_w, half_h, corner_r)
 			if sd <= -border_px:
 				var col: Color = fill
 				if pt.y < cy - half_h * 0.12:

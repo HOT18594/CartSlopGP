@@ -5,10 +5,19 @@ const UiAnim := preload("res://scripts/ui/ui_anim.gd")
 ##   above 3 self-explanatory visual cards (CREATE ONLINE ROOM, CREATE LAN ROOM,
 ##   JOIN A ROOM with 5-letter code + Room Browser).
 ## - Active Room Screen: clean 2-column video-game lobby fitting 1280x720 with
-##   zero scrolling — Left column shows the live 16:9 map screenshot, mode badge,
-##   map title, [CHANGE MODE & MAP], [GARAGE], BOTS & PUBLIC/PRIVATE controls;
-##   Right column shows the Room Code bar + Players list (or ALPHA vs BETA teams
-##   in DELIVER); pinned footer holds [LEAVE ROOM] + [START MATCH].
+##   zero scrolling — Left column shows the slanted live map preview card, mode
+##   badge, map title, [CHANGE MODE & MAP], [GARAGE], BOTS & PUBLIC/PRIVATE
+##   controls; Right column shows the Room Code bar + Players list (or ALPHA vs
+##   BETA teams in DELIVER); pinned footer holds [LEAVE ROOM] + [START MATCH].
+## - One navigation exit per level: header BACK only while idle, footer
+##   LEAVE ROOM (with host confirmation) while in a room.
+## - Pre-game reactions: 5 one-tap emotes in the footer that sync to every player
+##   through a reliable, rate-limited RPC and render as text-only stream-chat
+##   emotes (`scripts/ui/lobby_reactions.gd`, `scripts/ui/lobby_emote_overlay.gd`,
+##   network.gd's isolated reaction block).
+## - The lobby backdrop is its own INDEPENDENT key-art slideshow (the shared
+##   MenuBackground/ArtBackdrop auto-advance timer). Hovering or focusing a card
+##   never changes it: button-local hover animations stay on the buttons.
 
 const PLAY_MENU_SCENE: String = "res://scenes/ui/main_menu.tscn"
 const MINIGAMES_SCENE: String = "res://scenes/ui/minigames_menu.tscn"
@@ -23,6 +32,20 @@ const UiPalette := preload("res://scripts/ui/ui_palette.gd")
 const TrackDefs := preload("res://scripts/minigames/track_defs.gd")
 const VehicleSelect := preload("res://scripts/ui/vehicle_select.gd")
 const MinigamesMenu := preload("res://scripts/ui/minigames_menu.gd")
+const LobbyReactions := preload("res://scripts/ui/lobby_reactions.gd")
+## Phase-3 WS3 visual modules: the stream-chat emote renderer (text only, zero
+## chrome) and the black-slanted map preview card with bounded 3D-like motion.
+const LobbyEmoteOverlay := preload("res://scripts/ui/lobby_emote_overlay.gd")
+const LobbyMapPreview := preload("res://scripts/ui/lobby_map_preview.gd")
+## Independent lobby backdrop cadence + the key-art set it cycles. The shared
+## MenuBackground scene already seeds this list; these constants are the
+## recovery path (and the headless assertion contract) that keeps the lobby on a
+## self-running bg_hero_*.png slideshow that hover/focus cannot influence.
+const BACKDROP_HERO_ART: PackedStringArray = [
+	"bg_hero_paddock.png", "bg_hero_canyon.png",
+	"bg_hero_arena.png", "bg_hero_glacier.png",
+]
+const BACKDROP_SLIDE_SECONDS: float = 8.5
 
 const KIND_SANDBOX: String = "sandbox"
 const KIND_RACE: String = "race"
@@ -47,6 +70,12 @@ const PANEL_MAX_WIDTH: float = 1088.0
 
 const BOT_LABELS: PackedStringArray = ["0", "1", "2", "3", "4", "5"]
 const BOT_VALUES: Array[int] = [0, 1, 2, 3, 4, 5]
+## Phase-3 WS4 bot roster identity: a 24x24 robot head drawn procedurally into
+## an Image at runtime (no new binary asset), cached per accent. It replaces the
+## human tag-colour dot for BOT rows so a scripted cart reads as a robot at a
+## glance, and it uses the same ink outline / cyan accent as the dark slanted UI.
+const BOT_ICON_SIZE: int = 24
+const BOT_ROSTER_ACCENT: Color = Color("8ed8f6")
 const DIFFICULTY_LABELS: PackedStringArray = ["EASY", "NORMAL", "HARD"]
 
 const TAG_COLORS: Array[Dictionary] = [
@@ -178,8 +207,9 @@ var _leave_button: Button
 var _start_button: Button
 var _client_wait_label: Label
 
-var _lobby_preview_tex: TextureRect
-var _lobby_preview_fallback: _LobbyArtFallback
+## Phase-3 WS3: the room preview is one custom-drawn black-slanted card with
+## bounded 3D-like idle motion (screenshot/fallback/scrim/frame in one Control).
+var _map_preview: LobbyMapPreview
 var _lobby_mode_chip_style: StyleBoxFlat
 var _lobby_mode_chip_label: Label
 var _lobby_map_title: Label
@@ -203,13 +233,21 @@ var _host_hint: Label
 var _players_card: PanelContainer
 var _players_box: VBoxContainer
 var _players_header: Label
+## Phase-3: live human+bot composition under the "X / 8" header, e.g.
+## "2 HUMAN + 3 BOT" (turns red and says ROOM FULL at eight seats).
+var _players_breakdown: Label
 
 var _teams_card: PanelContainer
 var _teams_lock_button: Button
+## Phase-3: explicit LOCK toggle next to AUTO ARRANGE, so the host can freeze
+## the split without the arrange action being the only way to touch the lock.
+var _teams_lock_toggle: Button
 var _teams_hint: Label
 var _team_lists: Array[VBoxContainer] = []
 var _team_headers: Array[Label] = []
 var _team_focus_peer: int = 0
+## Accent colour -> procedural robot ImageTexture (see _bot_icon()).
+var _bot_icon_cache: Dictionary = {}
 
 var _browser: Control
 var _browser_mode: String = "all"
@@ -219,12 +257,28 @@ var _server_checked: bool = false
 var _client_code: String = ""
 var _leave_armed: bool = false
 var _leave_ticket: int = 0
+# --- WS5-13: host START gate ------------------------------------------------
+var _start_default_text: String = "START MATCH"
+var _start_armed: bool = false
+var _start_arm_ticket: int = 0
+
+# --- WS4/WS3: pre-game reactions (text-only emote overlay) -------------------
+var _reaction_bar: HBoxContainer = null
+var _reaction_buttons: Array[Button] = []
+var _bubbles: LobbyEmoteOverlay = null
+var _pending_reactions: Array = []
+var _last_reaction_ms: int = -1
+
+# --- WS4: independent menu backdrop (never hover/focus driven) --------------
 
 
 func _ready() -> void:
 	CursorController.set_menu_mode(true)
 	_tune_shell_chrome()
 	_build_ui()
+	_build_reaction_bar()
+	_setup_reaction_overlay()
+	_setup_independent_backdrop()
 	resized.connect(_fit_panel)
 	_fit_panel()
 	Network.host_started.connect(_on_host_started)
@@ -244,6 +298,10 @@ func _ready() -> void:
 	Network.session_ended.connect(_on_session_ended)
 	Network.session_config_changed.connect(_refresh_config)
 	Network.server_status_changed.connect(_on_server_status)
+	# WS5-13: a client's lobby presence changed; the host START gate redraws.
+	Network.lobby_presence_changed.connect(_on_lobby_presence_changed)
+	# WS4: one extra signal from the isolated lobby-reaction RPC block.
+	Network.lobby_reaction_received.connect(_on_lobby_reaction)
 
 	_name_input.text = GameSettings.player_name
 	_local_kind = _detect_initial_kind()
@@ -300,6 +358,21 @@ func _report_layout() -> void:
 	await UiKit.report_screen(self, "lobby:idle")
 
 
+func audit_room_state() -> void:
+	## Headless layout-audit hook (ui_layout_audit.gd): show the in-room lobby so
+	## the reactions strip, room footer and floating bubble overlay are measured
+	## at both resolutions exactly as they appear before a match starts.
+	_set_state("host")
+	_code_label.text = "ABCDE"
+	_code_caption.text = "ROOM CODE"
+	_copy_button.visible = true
+	_set_status("AUDIT: IN-ROOM LOBBY")
+	_on_lobby_reaction(1, "gg", "AUDIT HOST", "4cd964")
+	_on_lobby_reaction(2, "start", "AUDIT CLIENT", "45b6f0")
+	call_deferred("_fit_panel")
+	MenuNav.refresh()
+
+
 func _enter() -> void:
 	UiAnim.modal_open($Frame/Panel)
 	if _idle_box != null and _idle_box.visible:
@@ -338,6 +411,211 @@ func _focus_host() -> void:
 func _focus_client() -> void:
 	if _leave_button != null and _leave_button.visible:
 		MenuNav.focus(_leave_button)
+
+
+# --------------------------------------------------------------------------
+# pre-game reactions (WS4)
+
+
+func _build_reaction_bar() -> void:
+	if _room_footer == null:
+		return
+	_reaction_bar = HBoxContainer.new()
+	_reaction_bar.name = "ReactionBar"
+	_reaction_bar.add_theme_constant_override("separation", 6)
+	_reaction_bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_reaction_bar.visible = false
+	_reaction_buttons.clear()
+	for index in LobbyReactions.REACTIONS.size():
+		var entry: Dictionary = LobbyReactions.REACTIONS[index]
+		var button: Button = _candy(str(entry["label"]),
+			Color(str(entry["accent"])), 44, 14)
+		button.name = "Reaction_%s" % str(entry["id"])
+		button.custom_minimum_size = Vector2(64, 44)
+		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		button.tooltip_text = "%s  ·  key %d" % [str(entry["hint"]), index + 1]
+		button.pressed.connect(_send_reaction.bind(str(entry["id"])))
+		_reaction_bar.add_child(button)
+		_reaction_buttons.append(button)
+	# Sit the reaction strip between LEAVE ROOM and the start/wait area, so the
+	# footer reads left -> right as: exit, play together, start.
+	var anchor_index: int = _leave_button.get_index() + 1 if _leave_button != null else 0
+	_room_footer.add_child(_reaction_bar)
+	_room_footer.move_child(_reaction_bar, anchor_index)
+	# Fit the labels only once the strip is inside the active scene tree:
+	# CandyButton.fit_text() resolves /root/UiKit, and an out-of-tree button logs
+	# a "get_node() with absolute paths" engine error for every reaction button.
+	for reaction_button: Button in _reaction_buttons:
+		reaction_button.fit_text()
+
+
+func _setup_reaction_overlay() -> void:
+	## Phase-3 WS3: the old slanted bubble plate/left-bar renderer is replaced by
+	## the text-only LobbyEmoteOverlay module. Same `push()` signature, same
+	## synced RPC signal, same lifetime/cap contract from lobby_reactions.gd --
+	## only the visuals changed (bold coloured emote text + small sender line,
+	## random safe-margin spawn, upward wiggle + fade, zero boxy chrome).
+	if _panel == null:
+		return
+	_bubbles = LobbyEmoteOverlay.new()
+	_bubbles.name = "EmoteOverlay"
+	_panel.add_child(_bubbles)
+	_bubbles.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+
+
+func _send_reaction(reaction_id: String) -> void:
+	## Click / key / gamepad entry point. Offline-safe: Network emits the local
+	## bubble even with no session; the RPC only goes out when a room is live.
+	if _state == "idle" or SceneLoader.is_busy():
+		return
+	if not LobbyReactions.is_valid(reaction_id):
+		return
+	var now_ms: int = Time.get_ticks_msec()
+	if not LobbyReactions.can_send(now_ms, _last_reaction_ms):
+		# Spam-safe: buffer a few presses instead of dropping input outright.
+		LobbyReactions.push_pending(_pending_reactions, reaction_id, now_ms)
+		return
+	_last_reaction_ms = now_ms
+	Network.send_lobby_reaction(reaction_id)
+	var index: int = LobbyReactions.index_of(reaction_id)
+	if index >= 0 and index < _reaction_buttons.size():
+		var button: Button = _reaction_buttons[index]
+		if button != null and is_instance_valid(button):
+			UiAnim.pulse(button, 0.05, 0.16)
+			UiKit.play_click()
+
+
+func _flush_pending_reactions() -> void:
+	if _pending_reactions.is_empty():
+		return
+	var now_ms: int = Time.get_ticks_msec()
+	if not LobbyReactions.can_send(now_ms, _last_reaction_ms):
+		LobbyReactions.prune_pending(_pending_reactions, now_ms)
+		return
+	var next_id: String = LobbyReactions.next_pending(_pending_reactions, now_ms)
+	if next_id != "":
+		_last_reaction_ms = now_ms
+		Network.send_lobby_reaction(next_id)
+
+
+func _on_lobby_reaction(_peer_id: int, reaction_id: String, peer_name: String,
+		color_hex: String) -> void:
+	if _bubbles == null or _state == "idle":
+		return
+	_bubbles.push(_peer_id, reaction_id, peer_name, color_hex)
+
+
+func _unhandled_input(event: InputEvent) -> void:
+	# Keyboard shortcut 1..5 for the reaction strip. Gamepad players use the
+	# focusable buttons (MenuNav reaches them and ui_accept triggers them).
+	if _state == "idle" or SceneLoader.is_busy():
+		return
+	if not (event is InputEventKey):
+		return
+	var key := event as InputEventKey
+	if not key.pressed or key.echo:
+		return
+	if _name_input != null and _name_input.has_focus():
+		return
+	if _join_input != null and _join_input.has_focus():
+		return
+	var slot: int = -1
+	match key.keycode:
+		KEY_1, KEY_KP_1:
+			slot = 0
+		KEY_2, KEY_KP_2:
+			slot = 1
+		KEY_3, KEY_KP_3:
+			slot = 2
+		KEY_4, KEY_KP_4:
+			slot = 3
+		KEY_5, KEY_KP_5:
+			slot = 4
+	if slot < 0 or slot >= LobbyReactions.REACTIONS.size():
+		return
+	UiKit.consume_input(self)
+	_send_reaction(str(LobbyReactions.REACTIONS[slot]["id"]))
+
+
+# --------------------------------------------------------------------------
+# independent menu backdrop
+#
+# The lobby backdrop is a self-running key-art slideshow. It deliberately has
+# NO hover/focus driving: pointing at a room card must not swap the artwork.
+# (The old shared MenuHoverBackdrop driver did exactly that and made this screen
+# depend on a module that is being retired globally.) Button-local hover
+# animations are unaffected -- they live on the buttons themselves.
+
+
+func _process(_delta: float) -> void:
+	_flush_pending_reactions()
+
+
+func _find_art_backdrop(node: Node) -> Node:
+	## ArtBackdrop is an internal child of the shared MenuBackground scene. Match
+	## on the API this screen actually uses rather than on a node name another
+	## workstream may rename. Returns null when a replacement backdrop keeps its
+	## slideshow private -- that is fine, this screen just does not touch it.
+	if node == null:
+		return null
+	# 0.8.7 shared API (MenuBackground/ArtBackdrop), plus the previous API names
+	# so this screen keeps working across the background refactor.
+	if node.has_method("set_slides") and node.has_method("advance_count"):
+		return node
+	if node.has_method("set_auto_advance") and node.has_method("show_still"):
+		return node
+	for child: Node in node.get_children():
+		var found: Node = _find_art_backdrop(child)
+		if found != null:
+			return found
+	return null
+
+
+func _setup_independent_backdrop() -> void:
+	## Guarantee the backdrop cycles the lobby's hero key-art on its own. The
+	## shared MenuBackground owns the slideshow timing (randomized 8-12 s beats,
+	## auto_advance on); this screen only hands it its art pool through the sole
+	## screen -> backdrop API -- deliberately with no hover/focus entry point.
+	## The recovery path below only covers a background implementation that lost
+	## its pool, so the lobby can never end up a still image (or, worse, hover
+	## driven again).
+	var background: Node = get_node_or_null("Background")
+	if background == null:
+		return
+	if background.has_method("set_slide_pool"):
+		background.call("set_slide_pool", BACKDROP_HERO_ART)
+	var art: Node = _find_art_backdrop(background)
+	if art == null:
+		return
+	var names: PackedStringArray = PackedStringArray()
+	var raw_names: Variant = art.get("texture_names")
+	if raw_names is PackedStringArray:
+		names = raw_names as PackedStringArray
+	if names.size() < 2:
+		if art.has_method("set_slides"):
+			art.call("set_slides", BACKDROP_HERO_ART)
+		else:
+			art.set("texture_names", BACKDROP_HERO_ART)
+			if art.has_method("_load_textures"):
+				art.call("_load_textures")
+	if art.has_method("set_auto_advance"):
+		# Legacy backdrop API: it could be switched off by a previous owner.
+		art.call("set_auto_advance", true)
+	else:
+		# Current shared API: auto_advance always ships on; recover it only if a
+		# host implementation froze the slideshow.
+		if art.get("auto_advance") != null and not bool(art.get("auto_advance")):
+			art.set("auto_advance", true)
+	if art.get("slide_seconds") != null \
+			and float(art.get("slide_seconds")) <= 0.0:
+		art.set("slide_seconds", BACKDROP_SLIDE_SECONDS)
+	if art.get("slide_seconds_min") != null \
+			and float(art.get("slide_seconds_min")) <= 0.0:
+		art.set("slide_seconds_min", BACKDROP_SLIDE_SECONDS)
+	if art.get("slide_seconds_max") != null \
+			and float(art.get("slide_seconds_max")) <= 0.0:
+		art.set("slide_seconds_max", BACKDROP_SLIDE_SECONDS + 3.5)
+	art.call("queue_redraw")
 
 
 # --------------------------------------------------------------------------
@@ -734,7 +1012,13 @@ func _build_room() -> void:
 	left_col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	left_panel.add_child(left_col)
 
-	# Live 16:9 screenshot frame clipped cleanly to a true slanted parallelogram!
+	# Phase-3 WS3: the whole room preview is one black-slanted custom-drawn card
+	# (drop shadow -> dark plate -> slanted textured mask -> gloss -> title scrim
+	# -> ink rim + cyan hairline). It owns the screenshot, the missing-art
+	# fallback and the frame, so no flat texture rectangle or shader-clip seam is
+	# left; the bounded idle sway/tilt/parallax is painted strictly inside the
+	# card's own rect (the map title and mode chip stay sibling Controls above it
+	# and are never clipped by the motion).
 	var shot_frame := PanelContainer.new()
 	shot_frame.custom_minimum_size = Vector2(0.0, 174.0)
 	shot_frame.clip_contents = false
@@ -747,41 +1031,10 @@ func _build_room() -> void:
 	shot_stack.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	shot_frame.add_child(shot_stack)
 
-	_lobby_preview_fallback = _LobbyArtFallback.new()
-	_lobby_preview_fallback.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	shot_stack.add_child(_lobby_preview_fallback)
-
-	var para_mat := ShaderMaterial.new()
-	para_mat.shader = preload("res://assets/materials/parallelogram_clip.gdshader")
-	para_mat.set_shader_parameter("skew_uv", 0.065)
-	para_mat.set_shader_parameter("border_px", 3.0)
-	para_mat.set_shader_parameter("border_color", UiPalette.INK)
-	_lobby_preview_tex = TextureRect.new()
-	_lobby_preview_tex.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	_lobby_preview_tex.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
-	_lobby_preview_tex.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_lobby_preview_tex.material = para_mat
-	_lobby_preview_tex.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	shot_stack.add_child(_lobby_preview_tex)
-
-	# Bottom slanted dark scrim for map title readability over bright screenshots
-	var scrim := PanelContainer.new()
-	var scrim_st := StyleBoxFlat.new()
-	scrim_st.bg_color = Color(0.04, 0.05, 0.14, 0.78)
-	scrim_st.skew = Vector2(0.16, 0.0)
-	scrim_st.set_corner_radius_all(3)
-	scrim_st.anti_aliasing = true
-	scrim.add_theme_stylebox_override("panel", scrim_st)
-	scrim.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	scrim.anchor_left = 0.0
-	scrim.anchor_right = 1.0
-	scrim.anchor_top = 1.0
-	scrim.anchor_bottom = 1.0
-	scrim.offset_left = 10.0
-	scrim.offset_right = -24.0
-	scrim.offset_top = -54.0
-	scrim.offset_bottom = -4.0
-	shot_stack.add_child(scrim)
+	_map_preview = LobbyMapPreview.new()
+	_map_preview.name = "MapPreview"
+	_map_preview.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	shot_stack.add_child(_map_preview)
 
 	var mode_chip := PanelContainer.new()
 	mode_chip.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -982,6 +1235,14 @@ func _build_room() -> void:
 	_players_header = _section("PLAYERS   1 / %d" % MAX_SLOTS)
 	players_col.add_child(_players_header)
 
+	# Phase-3 slot budget: X / 8 counts humans AND bots, and this line spells
+	# the split out so a host can never over-book the room by adding bots (a
+	# full room turns red and says so right where the bot rows are listed).
+	_players_breakdown = _caption("")
+	_players_breakdown.add_theme_font_size_override("font_size", 11)
+	_players_breakdown.visible = false
+	players_col.add_child(_players_breakdown)
+
 	_players_box = VBoxContainer.new()
 	_players_box.add_theme_constant_override("separation", 5)
 	players_col.add_child(_players_box)
@@ -1007,10 +1268,16 @@ func _build_teams(parent: VBoxContainer) -> void:
 	var spacer := Control.new()
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header.add_child(spacer)
-	_teams_lock_button = _candy("AUTO BALANCE", UiPalette.GRASS, 40, 12)
-	_teams_lock_button.custom_minimum_size = Vector2(154, 40)
+	_teams_lock_button = _candy("AUTO ARRANGE", UiPalette.GRASS, 40, 12)
+	_teams_lock_button.custom_minimum_size = Vector2(140, 40)
 	_teams_lock_button.pressed.connect(_on_teams_lock_pressed)
+	_teams_lock_button.tooltip_text = "Distribute humans and bots evenly (respects the LOCK)."
 	header.add_child(_teams_lock_button)
+	_teams_lock_toggle = _candy("LOCK", UiPalette.YELLOW, 40, 12)
+	_teams_lock_toggle.custom_minimum_size = Vector2(78, 40)
+	_teams_lock_toggle.pressed.connect(_on_teams_lock_toggle_pressed)
+	_teams_lock_toggle.tooltip_text = "Freeze the current split: joins and AUTOs leave it alone."
+	header.add_child(_teams_lock_toggle)
 
 	var columns := HBoxContainer.new()
 	columns.add_theme_constant_override("separation", 12)
@@ -1051,9 +1318,8 @@ func _build_room_footer() -> void:
 	_room_footer.add_child(_leave_button)
 	_leave_button.fit_text()
 
-	var spacer := Control.new()
-	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_room_footer.add_child(spacer)
+	# The reaction strip is inserted between LEAVE ROOM and the start area by
+	# _build_reaction_bar(); it expands to fill the middle of the footer.
 
 	_client_wait_label = Label.new()
 	_client_wait_label.text = "WAITING FOR HOST..."
@@ -1075,17 +1341,46 @@ func _build_room_footer() -> void:
 
 
 func _on_teams_lock_pressed() -> void:
+	## AUTO ARRANGE. Distributes humans AND bots with the host-authoritative
+	## deterministic pass. While the split is LOCKED the same button is the
+	## explicit "unlock and arrange" action (the lock itself is the toggle).
+	if not Network.is_host or not Network.is_session_active():
+		return
+	if Network.teams_locked:
+		Network.set_teams_locked(false)
+	else:
+		Network.auto_arrange_teams()
+	_set_teams_hint("")
+	_refresh_teams()
+
+
+func _on_teams_lock_toggle_pressed() -> void:
+	## Black-slanted LOCK: freezes (or unfreezes) the current split. Unlocking
+	## re-runs the same deterministic arrange, exactly like the Phase-2 pass.
 	if not Network.is_host or not Network.is_session_active():
 		return
 	Network.set_teams_locked(not Network.teams_locked)
+	_set_teams_hint("")
+	_refresh_teams()
 
 
-func _on_team_row_pressed(peer_id: int) -> void:
-	_team_focus_peer = peer_id
-	_move_peer_to_team(peer_id, 1 - Network.team_for_peer(peer_id))
+func _set_teams_hint(text: String) -> void:
+	if _teams_hint == null:
+		return
+	_teams_hint.text = text
+	_teams_hint.visible = text != ""
 
 
-func _on_team_row_input(event: InputEvent, peer_id: int) -> void:
+func _on_team_row_pressed(row_key: int) -> void:
+	_team_focus_peer = row_key
+	if row_key < 0:
+		var bot_index: int = -row_key - 1
+		_move_bot_to_team(bot_index, 1 - Network.bot_team(bot_index))
+		return
+	_move_peer_to_team(row_key, 1 - Network.team_for_peer(row_key))
+
+
+func _on_team_row_input(event: InputEvent, row_key: int) -> void:
 	if not (event is InputEventKey):
 		return
 	var key := event as InputEventKey
@@ -1096,11 +1391,23 @@ func _on_team_row_input(event: InputEvent, peer_id: int) -> void:
 		team = 0
 	elif key.keycode == KEY_RIGHT:
 		team = 1
-	if team < 0 or team == Network.team_for_peer(peer_id):
+	if team < 0 or team == _team_side_for_key(row_key):
 		return
-	_team_focus_peer = peer_id
-	_move_peer_to_team(peer_id, team)
+	_team_focus_peer = row_key
+	if row_key < 0:
+		_move_bot_to_team(-row_key - 1, team)
+	else:
+		_move_peer_to_team(row_key, team)
 	accept_event()
+
+
+func _team_side_for_key(row_key: int) -> int:
+	## Team-row keys are positive ENet peer ids for humans and -1-index for
+	## bots (BOT 1 is -1, BOT 2 is -2, ...), so one row builder/handler pair
+	## moves both kinds of occupant without a second control style.
+	if row_key < 0:
+		return Network.bot_team(-row_key - 1)
+	return Network.team_for_peer(row_key)
 
 
 func _move_peer_to_team(peer_id: int, team: int) -> void:
@@ -1109,6 +1416,72 @@ func _move_peer_to_team(peer_id: int, team: int) -> void:
 	if not Network.is_session_active():
 		return
 	Network.set_peer_team(peer_id, team)
+
+
+func _move_bot_to_team(bot_index: int, team: int) -> void:
+	## Bots are moved exactly like humans: same row click, same left/right key
+	## input, same host-authoritative session-config packet.
+	if not Network.is_host or _state != "host":
+		return
+	if not Network.is_session_active():
+		return
+	Network.set_bot_team(bot_index, team)
+
+
+# --- Phase-3 WS4: procedural robot head ------------------------------------
+
+
+func _fill_icon_rect(image: Image, rect: Rect2i, color: Color) -> void:
+	for y in range(rect.position.y, rect.position.y + rect.size.y):
+		for x in range(rect.position.x, rect.position.x + rect.size.x):
+			if x >= 0 and y >= 0 and x < image.get_width() and y < image.get_height():
+				image.set_pixel(x, y, color)
+
+
+func _bot_icon(accent: Color = BOT_ROSTER_ACCENT) -> ImageTexture:
+	## Procedural robot head, 24x24, built once per accent and cached. No binary
+	## asset: ink outline + accent shell + two bright eyes + antenna, so a BOT
+	## row is instantly distinguishable from a human tag-colour dot at 720p.
+	var key: String = accent.to_html(false)
+	if _bot_icon_cache.has(key):
+		return _bot_icon_cache[key] as ImageTexture
+	var px: int = BOT_ICON_SIZE
+	var image := Image.create(px, px, false, Image.FORMAT_RGBA8)
+	var ink: Color = UiPalette.INK
+	var shell: Color = accent.darkened(0.24)
+	var face: Color = accent.lightened(0.42)
+	var shadow: Color = Color(0.03, 0.04, 0.10, 1.0)
+	# Antenna + glowing tip.
+	_fill_icon_rect(image, Rect2i(11, 2, 2, 6), ink)
+	_fill_icon_rect(image, Rect2i(10, 1, 4, 2), accent.lightened(0.55))
+	# Head shell with an ink outline and a darker chin band.
+	_fill_icon_rect(image, Rect2i(3, 7, 18, 14), ink)
+	_fill_icon_rect(image, Rect2i(4, 8, 16, 12), shell)
+	_fill_icon_rect(image, Rect2i(4, 16, 16, 4), shadow)
+	# Ear pods.
+	_fill_icon_rect(image, Rect2i(1, 11, 2, 6), ink)
+	_fill_icon_rect(image, Rect2i(21, 11, 2, 6), ink)
+	# Two bright eyes (the only bright pixels: readable at any scale).
+	_fill_icon_rect(image, Rect2i(6, 10, 4, 3), face)
+	_fill_icon_rect(image, Rect2i(14, 10, 4, 3), face)
+	# Mouth grille: three dark slots in the chin band.
+	for x in [8, 11, 14]:
+		_fill_icon_rect(image, Rect2i(x, 18, 2, 2), Color(0.02, 0.03, 0.08, 1.0))
+	var texture := ImageTexture.create_from_image(image)
+	_bot_icon_cache[key] = texture
+	return texture
+
+
+func _make_bot_row_icon(texture: Texture2D, size_px: float) -> TextureRect:
+	var icon := TextureRect.new()
+	icon.texture = texture
+	icon.custom_minimum_size = Vector2(size_px, size_px)
+	icon.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	icon.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return icon
 
 
 func _refresh_teams() -> void:
@@ -1121,12 +1494,21 @@ func _refresh_teams() -> void:
 	if not deliver_mode:
 		return
 	var ids: Array[int] = []
+	var bots: int = 0
 	if Network.is_session_active():
 		ids = Network.participants()
+		bots = Network.active_bot_count()
 	var counts: Array[int] = [0, 0]
 	for peer_id: int in ids:
 		var side: int = clampi(Network.team_for_peer(peer_id), 0, 1)
 		counts[side] = counts[side] + 1
+	# Bots are seats in the team split too: every peer derives their rows from
+	# the replicated bot count + bot team table, so the columns match everywhere.
+	var bot_rows: Array[int] = []
+	for bot_index in bots:
+		var side: int = clampi(Network.bot_team(bot_index), 0, 1)
+		counts[side] = counts[side] + 1
+		bot_rows.append(bot_index)
 	for list: VBoxContainer in _team_lists:
 		for child: Node in list.get_children():
 			list.remove_child(child)
@@ -1157,6 +1539,27 @@ func _refresh_teams() -> void:
 		_team_lists[side].add_child(row)
 		if peer_id == _team_focus_peer:
 			call_deferred("_focus_team_row", row)
+	for bot_index: int in bot_rows:
+		var side: int = clampi(Network.bot_team(bot_index), 0, 1)
+		if side >= _team_lists.size():
+			continue
+		var row_key: int = -bot_index - 1
+		var row: Button = _candy(Network.bot_label(bot_index),
+			TEAM_COLORS[side].lightened(0.08), 40, 13)
+		row.set_meta("keep_align", true)
+		row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		row.disabled = not movable
+		row.icon = _bot_icon(TEAM_COLORS[side].lightened(0.28))
+		row.expand_icon = true
+		row.icon_max_width = 16
+		row.fit_text()
+		row.tooltip_text = "BOT %d — click (or Left/Right) to move this bot." % (bot_index + 1)
+		row.pressed.connect(_on_team_row_pressed.bind(row_key))
+		row.gui_input.connect(_on_team_row_input.bind(row_key))
+		_team_lists[side].add_child(row)
+		if row_key == _team_focus_peer:
+			call_deferred("_focus_team_row", row)
 	for team in TEAM_LABELS.size():
 		if counts[team] > 0:
 			continue
@@ -1164,13 +1567,20 @@ func _refresh_teams() -> void:
 		empty_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		_team_lists[team].add_child(empty_label)
 	if _teams_lock_button != null:
+		# AUTO ARRANGE is the arrange action; while locked it unlocks + arranges.
 		_teams_lock_button.visible = movable
 		_teams_lock_button.disabled = not movable
-		_teams_lock_button.text = "LOCKED" if Network.teams_locked \
-			else "AUTO BALANCE"
-		_teams_lock_button.set("fill_color",
-			UiPalette.YELLOW if Network.teams_locked else UiPalette.GRASS)
+		_teams_lock_button.text = "UNLOCK + ARRANGE" if Network.teams_locked \
+			else "AUTO ARRANGE"
+		_teams_lock_button.set("fill_color", UiPalette.GRASS)
 		_teams_lock_button.fit_text()
+	if _teams_lock_toggle != null:
+		_teams_lock_toggle.visible = movable
+		_teams_lock_toggle.disabled = not movable
+		_teams_lock_toggle.text = "LOCKED" if Network.teams_locked else "LOCK"
+		_teams_lock_toggle.set("fill_color",
+			UiPalette.RED if Network.teams_locked else UiPalette.YELLOW)
+		_teams_lock_toggle.fit_text()
 	if _teams_hint != null:
 		_teams_hint.visible = false
 		_teams_hint.text = ""
@@ -1517,11 +1927,27 @@ func _set_server_status(online: bool, detail: String) -> void:
 
 func _set_state(state: String) -> void:
 	_state = state
+	# WS5-13: a client is "ready to start" only while it sits in the room lobby.
+	# Leaving for the Garage/map picker (scene exit) or back to idle reports away.
+	if Network.is_client and not Network.is_host:
+		Network.set_lobby_presence(state == "client")
 	var idle: bool = state == "idle"
 	_idle_box.visible = idle
 	_room_box.visible = not idle
 	if _room_footer != null:
 		_room_footer.visible = not idle
+	# Navigation dedup: one exit control per level. In the room the pinned
+	# footer's LEAVE ROOM is the single way out; the header BACK button only
+	# exists while idle (where it goes one level up, back to the main menu).
+	if _back_button != null:
+		_back_button.visible = idle
+	if _reaction_bar != null:
+		_reaction_bar.visible = not idle
+	if idle:
+		_pending_reactions.clear()
+		_last_reaction_ms = -1
+		if _bubbles != null:
+			_bubbles.clear()
 	_profile_row.visible = idle
 	_start_button.visible = state == "host"
 	if _client_wait_label != null:
@@ -1563,15 +1989,22 @@ func _refresh_config() -> void:
 	_game_pill.call("set_index", maxi(kind_index, 0))
 	_game_pill.disabled = not host
 
-	var bots: int = Network.session_bot_count if active else GameSettings.effective_bot_count()
-	_set_bots_views(clampi(bots, 0, 5))
+	# Bots are real seats: show the live clamped field (not the host's saved
+	# pick), so a room that lost seats to joining humans displays 8 - humans.
+	var bots: int = Network.active_bot_count() if active \
+		else GameSettings.effective_bot_count()
+	_set_bots_views(clampi(bots, 0, Network.MAX_BOT_COUNT))
 	if _room_bots_pill != null:
 		_room_bots_pill.disabled = not host
+		_room_bots_pill.tooltip_text = \
+			"Bots share the room's 8 seats with players."
 	if _difficulty_pill != null:
 		_difficulty_pill.call("set_index", Network.bot_difficulty())
 		_difficulty_pill.disabled = not host
 
-	# Update live 16:9 screenshot + mode badge + map title
+	# Update the slanted preview card (screenshot OR slanted fallback), mode
+	# badge, map title and sub-line. The card bumps its tilt when the texture /
+	# accent actually changes, so map or mode switches read as a live refresh.
 	var display: Dictionary = _lobby_display_for_kind(kind, active)
 	var accent: Color = display.get("accent", UiPalette.GRASS) as Color
 	if _lobby_mode_chip_style != null:
@@ -1583,12 +2016,9 @@ func _refresh_config() -> void:
 	if _lobby_map_sub != null:
 		_lobby_map_sub.text = str(display.get("sub", ""))
 	var tex: Texture2D = display.get("texture", null) as Texture2D
-	if _lobby_preview_tex != null:
-		_lobby_preview_tex.texture = tex
-		_lobby_preview_tex.visible = tex != null
-	if _lobby_preview_fallback != null:
-		_lobby_preview_fallback.accent = accent
-		_lobby_preview_fallback.queue_redraw()
+	if _map_preview != null:
+		_map_preview.set_texture(tex)
+		_map_preview.set_accent(accent)
 
 	if _change_mode_button != null:
 		_change_mode_button.disabled = not host
@@ -1631,17 +2061,64 @@ func _refresh_config() -> void:
 
 	match kind:
 		KIND_RACE:
-			_start_button.text = "START RACE"
+			_start_default_text = "START RACE"
 		KIND_DELIVER:
-			_start_button.text = "START DELIVER"
+			_start_default_text = "START DELIVER"
 		KIND_KNOCKOUT:
-			_start_button.text = "START KNOCKOUT"
+			_start_default_text = "START KNOCKOUT"
 		KIND_BOMB_TAG:
-			_start_button.text = "START BLAST TAG"
+			_start_default_text = "START BLAST TAG"
 		_:
-			_start_button.text = "START SANDBOX"
+			_start_default_text = "START SANDBOX"
+	_start_button.text = _start_default_text
 	_start_button.fit_text()
+	_refresh_start_gate()
 	_refresh_teams()
+	_refresh_players()
+
+
+static func start_gate_text(default_text: String, missing_count: int,
+		armed: bool) -> String:
+	## WS5-13 host START label. Pure so the gate wording and the deliberate
+	## "start anyway" second-press state can be asserted headlessly without a
+	## second peer process.
+	if missing_count <= 0:
+		return default_text
+	if armed:
+		return "START ANYWAY · %d AWAY" % missing_count
+	return "WAITING FOR %d PLAYER%s" % [missing_count,
+		"S" if missing_count != 1 else ""]
+
+
+func _refresh_start_gate() -> void:
+	## WS5-13. Host-only START gate: while any connected peer has not reported
+	## being in the room lobby (still connecting/loading, or away in the Garage),
+	## the button says so and a second deliberate press is needed to launch.
+	if _start_button == null:
+		return
+	# Typed assignment must be explicit: a ternary's `[]` branch is an untyped
+	# Array and cannot be assigned to Array[int] (that aborted this function at
+	# runtime, so the gate never actually ran in a host lobby).
+	var missing: Array[int] = []
+	if _state == "host":
+		missing = Network.lobby_peers_not_present()
+	if missing.is_empty():
+		_start_armed = false
+	_start_button.text = start_gate_text(_start_default_text, missing.size(),
+		_start_armed)
+	if missing.is_empty():
+		_start_button.tooltip_text = ""
+	elif _start_armed:
+		_start_button.tooltip_text = "Press again to launch without players still away."
+	else:
+		_start_button.tooltip_text = "Players are still loading or in the Garage. Press again to start anyway."
+	_start_button.fit_text()
+
+
+func _on_lobby_presence_changed() -> void:
+	if not is_inside_tree():
+		return
+	_refresh_start_gate()
 	_refresh_players()
 
 
@@ -1705,6 +2182,8 @@ func _on_host_pi() -> void:
 
 
 func _begin_host(mode: String) -> void:
+	if SceneLoader.is_busy():
+		return
 	if Network.join_pending:
 		_set_status("A join is already in progress. Wait for it to finish or press LEAVE.")
 		return
@@ -1777,6 +2256,8 @@ func _on_copy_code() -> void:
 
 
 func _on_join_pressed() -> void:
+	if SceneLoader.is_busy():
+		return
 	if Network.join_pending:
 		_set_join_status("A join is already in progress.")
 		return
@@ -1922,9 +2403,21 @@ func _apply_bot_total(total: int) -> void:
 	if _state != "idle" and not Network.is_host:
 		_refresh_config()
 		return
-	var clean: int = clampi(total, 0, 5)
+	# Bots take real seats: never allow a click that overbooks the room. The
+	# cap is 8 - humans, and the picker snaps back to it when the host asks for
+	# too many; the roster/full line below explains why.
+	var cap: int = Network.MAX_BOT_COUNT
+	if Network.is_host and Network.is_session_active():
+		cap = Network.bot_cap_for_humans(Network.human_count())
+	var clean: int = clampi(total, 0, cap)
+	if clean != clampi(total, 0, Network.MAX_BOT_COUNT) and Network.is_host:
+		_set_status("BOTS CAPPED: %d of %d slots are taken by players, so this room can field at most %d bot%s." % [
+			Network.lobby_slots_used() - Network.active_bot_count(), MAX_SLOTS,
+			cap, "" if cap == 1 else "s"])
 	GameSettings.set_bot_total(clean)
 	_set_bots_views(clean)
+	_refresh_players()
+	_refresh_teams()
 	if Network.is_host and Network.is_session_active():
 		Network.configure_session(Network.session_mode,
 			GameSettings.bots_enabled, GameSettings.effective_bot_count())
@@ -1939,6 +2432,11 @@ func _set_bots_views(total: int) -> void:
 func _on_open_all_modes() -> void:
 	## Opens Page 1 (SELECT MODE) of MinigamesMenu so the host sees all 5 modes
 	## and can pick any mode & map visually with screenshots.
+	# WS5P3-03: a focused button can still receive ui_accept while the loading
+	# overlay covers the screen (focus lives on the viewport). Refuse navigation
+	# while a transition owns the tree instead of queueing a second one.
+	if SceneLoader.is_busy():
+		return
 	if Network.is_session_active() and not Network.is_host:
 		_set_status("Only the host can change the mode or map.")
 		return
@@ -1948,6 +2446,8 @@ func _on_open_all_modes() -> void:
 
 
 func _on_choose_map() -> void:
+	if SceneLoader.is_busy():
+		return
 	if Network.is_session_active() and not Network.is_host:
 		_set_status("Only the host can change the map.")
 		return
@@ -1979,6 +2479,8 @@ func _on_vehicle_mode_changed(value: Variant) -> void:
 
 
 func _on_change_vehicle() -> void:
+	if SceneLoader.is_busy():
+		return
 	var kind: String = _current_kind()
 	if _state == "client" and Network.is_shared_vehicle_mode():
 		return
@@ -1992,6 +2494,26 @@ func _on_change_vehicle() -> void:
 func _on_start_pressed() -> void:
 	if not Network.is_host:
 		return
+	if SceneLoader.is_busy():
+		# WS5P3-03: START must never fire a second authoritative load while one
+		# is already streaming (the button keeps viewport focus under the overlay).
+		return
+	# WS5-13 ready gate: never launch silently past a client that is still
+	# connecting/loading or away in the Garage. The first press warns, a second
+	# deliberate press within the arm window starts anyway.
+	var missing: Array[int] = Network.lobby_peers_not_present()
+	if not missing.is_empty() and not _start_armed:
+		_start_armed = true
+		_start_arm_ticket += 1
+		var ticket: int = _start_arm_ticket
+		_refresh_start_gate()
+		await get_tree().create_timer(4.0).timeout
+		if is_inside_tree() and _start_armed and ticket == _start_arm_ticket:
+			_start_armed = false
+			_refresh_start_gate()
+		return
+	_start_armed = false
+	_start_arm_ticket += 1
 	var kind: String = _current_kind()
 	var mode: String = GameSettings.GAME_SANDBOX if kind == KIND_SANDBOX \
 		else GameSettings.GAME_MINIGAMES
@@ -2018,11 +2540,23 @@ func _refresh_players() -> void:
 		child.queue_free()
 	var ids: Array[int] = []
 	if Network.is_session_active():
-		ids.append(multiplayer.get_unique_id())
-		for peer_id: int in multiplayer.get_peers():
-			ids.append(peer_id)
-		ids.sort()
-	_players_header.text = "PLAYERS   %d / %d" % [ids.size(), MAX_SLOTS]
+		ids = Network.participants()
+	var humans: int = ids.size() if Network.is_session_active() else 0
+	var bots: int = Network.active_bot_count()
+	var slots: int = humans + bots
+	var full: bool = slots >= MAX_SLOTS
+	# X / 8 counts HUMANS + BOTS: a bot occupies a real seat, so the old
+	# human-only counter would have lied about joinable capacity.
+	if _players_header != null:
+		_players_header.text = "PLAYERS   %d / %d" % [mini(slots, MAX_SLOTS), MAX_SLOTS]
+	if _players_breakdown != null:
+		_players_breakdown.visible = Network.is_session_active() and slots > 0
+		_players_breakdown.text = "%d PLAYER%s + %d BOT%s%s" % [
+			humans, "" if humans == 1 else "S",
+			bots, "" if bots == 1 else "S",
+			"   ·   ROOM FULL" if full else ""]
+		_players_breakdown.add_theme_color_override("font_color",
+			UiPalette.RED if full else Color(0.62, 0.78, 0.96, 0.86))
 	for peer_id: int in ids:
 		var is_local: bool = peer_id == multiplayer.get_unique_id()
 		var row_panel := PanelContainer.new()
@@ -2078,6 +2612,14 @@ func _refresh_players() -> void:
 		p_car_lbl.add_theme_font_size_override("font_size", 11)
 		p_car_lbl.add_theme_color_override("font_color", Color(0.76, 0.86, 1.0, 0.84))
 		row.add_child(p_car_lbl)
+		# WS5-13: show the host why START is gated, right on the player row.
+		if Network.is_host and peer_id != 1 and not Network.is_lobby_peer_present(peer_id):
+			var away_lbl := Label.new()
+			away_lbl.text = "AWAY"
+			away_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+			away_lbl.add_theme_font_size_override("font_size", 11)
+			away_lbl.add_theme_color_override("font_color", UiPalette.RED)
+			row.add_child(away_lbl)
 
 		if Network.is_session_active() and Network.is_connected_to_server():
 			var ms: int = int(Network.ping_table.get(peer_id, 0))
@@ -2094,16 +2636,69 @@ func _refresh_players() -> void:
 				row.add_child(ping_label)
 		_players_box.add_child(row_panel)
 
-	var open_slots: int = maxi(MAX_SLOTS - ids.size(), 0)
+	# Phase-3 WS4: active bots are listed in the lobby roster exactly like the
+	# host sees them in the match. Identity is the slot index (BOT 1..N), the
+	# robot icon is procedural, and every peer renders the same rows because
+	# both the count and the team table are replicated session state.
+	for bot_index in bots:
+		var row_panel := PanelContainer.new()
+		var row_style := StyleBoxFlat.new()
+		row_style.bg_color = Color(0.10, 0.13, 0.24, 0.86)
+		row_style.border_color = Color(BOT_ROSTER_ACCENT.r, BOT_ROSTER_ACCENT.g,
+			BOT_ROSTER_ACCENT.b, 0.38)
+		row_style.set_border_width_all(2)
+		row_style.set_corner_radius_all(4)
+		row_style.skew = Vector2(0.14, 0.0)
+		row_style.content_margin_left = 16.0
+		row_style.content_margin_right = 16.0
+		row_style.content_margin_top = 8.0
+		row_style.content_margin_bottom = 8.0
+		row_style.anti_aliasing = true
+		row_panel.add_theme_stylebox_override("panel", row_style)
+
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 8)
+		row.custom_minimum_size = Vector2(0, 24)
+		row_panel.add_child(row)
+		row.add_child(_make_bot_row_icon(_bot_icon(), 20.0))
+
+		var bot_label := Label.new()
+		bot_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		bot_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		bot_label.text = Network.bot_label(bot_index)
+		bot_label.add_theme_font_size_override("font_size", 15)
+		bot_label.add_theme_color_override("font_color", BOT_ROSTER_ACCENT)
+		row.add_child(bot_label)
+
+		var ai_label := Label.new()
+		ai_label.text = "AI"
+		ai_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		ai_label.add_theme_font_size_override("font_size", 11)
+		ai_label.add_theme_color_override("font_color", Color(0.62, 0.76, 0.92, 0.78))
+		row.add_child(ai_label)
+		_players_box.add_child(row_panel)
+
+	var open_slots: int = maxi(MAX_SLOTS - slots, 0)
 	if open_slots > 0:
 		var open_label := Label.new()
 		open_label.text = "%d OPEN SLOT%s" % [open_slots, "" if open_slots == 1 else "S"]
 		open_label.add_theme_font_size_override("font_size", 12)
 		open_label.add_theme_color_override("font_color", Color(0.68, 0.74, 0.88, 0.72))
 		_players_box.add_child(open_label)
+	elif Network.is_session_active():
+		# Requirement: a full room is flagged in place, not just refused later.
+		var full_label := Label.new()
+		full_label.text = "ROOM FULL — NO MORE PLAYERS CAN JOIN"
+		full_label.add_theme_font_size_override("font_size", 12)
+		full_label.add_theme_color_override("font_color", UiPalette.RED)
+		_players_box.add_child(full_label)
 
 
 func _on_leave_pressed() -> void:
+	if SceneLoader.is_busy():
+		# The session is already coming apart / a match is streaming: leave the
+		# authoritative transition in charge instead of queueing a local nav.
+		return
 	if _state == "host" and not _leave_armed:
 		_leave_armed = true
 		_leave_ticket += 1
@@ -2136,9 +2731,20 @@ func _reset_leave_button() -> void:
 
 
 func _on_back_pressed() -> void:
-	if _state == "host" and Network.is_session_active() and not _leave_armed:
-		_on_leave_pressed()
+	## Header BACK is only visible while idle (see _set_state): in a room the
+	## footer's LEAVE ROOM is the one exit. Defensive guard for stale signal
+	## re-entry during the leave transition.
+	if _state != "idle" or SceneLoader.is_busy():
 		return
 	Network.leave()
 	SceneLoader.end_task()
 	SceneLoader.go_to(PLAY_MENU_SCENE, "PLAY")
+
+
+func _exit_tree() -> void:
+	## WS5-13: leaving the lobby scene (Garage, map picker, match start or the
+	## main menu) reports the client as not-ready, so the host's START warns
+	## instead of launching silently past a player who cannot see the grid.
+	## No-op when the session is already gone (leave() clears the same state).
+	if Network.is_client and not Network.is_host:
+		Network.set_lobby_presence(false)
